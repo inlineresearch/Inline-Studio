@@ -5,7 +5,7 @@
  */
 import type BetterSqlite3 from 'better-sqlite3'
 
-export const SCHEMA_VERSION = 12
+export const SCHEMA_VERSION = 14
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS project (
@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS frames (
   position             INTEGER NOT NULL,
   input_asset_id       TEXT,
   hero_take_id         TEXT,
+  provider             TEXT NOT NULL DEFAULT 'comfy',
+  model_id             TEXT,
+  params               TEXT NOT NULL DEFAULT '{}',
   workflow_template_id TEXT,
   comfy_workflow_name  TEXT,
   comfy_workflow_ready INTEGER NOT NULL DEFAULT 0,
@@ -109,6 +112,20 @@ CREATE TABLE IF NOT EXISTS workflow_templates (
   name        TEXT NOT NULL,
   graph       TEXT NOT NULL,
   params      TEXT NOT NULL
+);
+
+-- In-flight fal generations, so a run survives an app restart: on reopen we re-poll each
+-- request id and finish it (download the take) or resume its progress. Cleared on completion.
+CREATE TABLE IF NOT EXISTS pending_generation (
+  id           TEXT PRIMARY KEY,
+  frame_id     TEXT NOT NULL,
+  model_id     TEXT NOT NULL,
+  endpoint     TEXT NOT NULL,
+  request_id   TEXT NOT NULL,
+  status_url   TEXT NOT NULL,
+  response_url TEXT NOT NULL,
+  params       TEXT NOT NULL,
+  created_at   INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_frames_sequence ON frames(sequence_id);
@@ -203,6 +220,13 @@ function migrateColumns(db: BetterSqlite3.Database): void {
   // v11 → v12: the director node stores its state on the moodboard item + derives its
   // timeline from connections, so no table change is needed (the old, never-shipped
   // timeline_clips table is simply left unused if a test DB created one).
+
+  // v12 → v13: frames gain a generation provider (comfy|fal) plus, for fal frames, the
+  // registry model id + its editable param values. Existing frames default to comfy, so
+  // every ComfyUI code path is untouched.
+  addColumnIfMissing(db, 'frames', 'provider', "TEXT NOT NULL DEFAULT 'comfy'")
+  addColumnIfMissing(db, 'frames', 'model_id', 'TEXT')
+  addColumnIfMissing(db, 'frames', 'params', "TEXT NOT NULL DEFAULT '{}'")
 }
 
 /** Rebuild frame_inputs to drop a legacy NOT NULL on asset_id. Idempotent. */

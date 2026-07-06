@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { existsSync, unlinkSync, mkdirSync, copyFileSync } from 'node:fs'
 import type { Frame, Take, FrameInput, FrameKind, AssetKind } from '@shared/types'
+import { getNodeDef } from '@shared/nodes/registry'
+import { defaultParams } from '@shared/nodes/types'
 import { takeWaveformPath } from '@shared/media'
 import { getDb, getOpenProjectFolder } from '../db'
 import { importViaDialog } from '../assets/store'
@@ -20,6 +22,9 @@ interface FrameRow {
   position: number
   input_asset_id: string | null
   hero_take_id: string | null
+  provider: string | null
+  model_id: string | null
+  params: string | null
   workflow_template_id: string | null
   comfy_workflow_name: string | null
   comfy_workflow_ready: number
@@ -37,6 +42,16 @@ interface TakeRow {
   created_at: number
 }
 
+function parseParams(raw: string | null): Record<string, unknown> {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
+}
+
 function rowToFrame(row: FrameRow): Frame {
   return {
     id: row.id,
@@ -46,6 +61,9 @@ function rowToFrame(row: FrameRow): Frame {
     position: row.position,
     inputAssetId: row.input_asset_id,
     heroTakeId: row.hero_take_id,
+    provider: row.provider === 'fal' ? 'fal' : 'comfy',
+    modelId: row.model_id,
+    params: parseParams(row.params),
     workflowTemplateId: row.workflow_template_id,
     comfyWorkflowName: row.comfy_workflow_name,
     comfyWorkflowReady: row.comfy_workflow_ready === 1,
@@ -153,7 +171,7 @@ function createFrame(asset: { id: string; kind: AssetKind }): Frame {
     frame.id,
     asset.id,
   )
-  return { ...frame, comfyWorkflowReady: false }
+  return { ...frame, provider: 'comfy', modelId: null, params: {}, comfyWorkflowReady: false }
 }
 
 function assetById(id: string): { id: string; kind: AssetKind } {
@@ -195,7 +213,85 @@ export function createEmptyFrame(): Frame {
        (id, sequence_id, name, kind, position, input_asset_id, hero_take_id, workflow_template_id, comfy_workflow_name, created_at, updated_at)
      VALUES (@id, @sequenceId, @name, @kind, @position, @inputAssetId, @heroTakeId, @workflowTemplateId, @comfyWorkflowName, @createdAt, @updatedAt)`,
   ).run(frame)
-  return { ...frame, comfyWorkflowReady: false }
+  return { ...frame, provider: 'comfy', modelId: null, params: {}, comfyWorkflowReady: false }
+}
+
+/**
+ * Create a fal generation frame for a registry model. Its `kind` comes from the node def's
+ * output kind (image/video/audio), `params` are seeded from the def's field defaults, and it
+ * starts with no inputs (fed later by a dropped asset or an upstream flow link).
+ */
+export function createFalFrame(modelId: string): Frame {
+  const def = getNodeDef(modelId)
+  if (!def) throw new Error(`Unknown generation model: ${modelId}`)
+  const db = getDb()
+  const seqId = defaultSequenceId()
+  const count = (
+    db.prepare('SELECT COUNT(*) AS n FROM frames WHERE sequence_id = ?').get(seqId) as { n: number }
+  ).n
+  const now = Date.now()
+  const params = defaultParams(def)
+  const frame = {
+    id: randomUUID(),
+    sequenceId: seqId,
+    name: def.title,
+    kind: def.outputKind as FrameKind,
+    position: count,
+    inputAssetId: null,
+    heroTakeId: null,
+    provider: 'fal',
+    modelId,
+    params: JSON.stringify(params),
+    workflowTemplateId: null,
+    comfyWorkflowName: null,
+    createdAt: now,
+    updatedAt: now,
+  }
+  db.prepare(
+    `INSERT INTO frames
+       (id, sequence_id, name, kind, position, input_asset_id, hero_take_id, provider, model_id, params, workflow_template_id, comfy_workflow_name, created_at, updated_at)
+     VALUES (@id, @sequenceId, @name, @kind, @position, @inputAssetId, @heroTakeId, @provider, @modelId, @params, @workflowTemplateId, @comfyWorkflowName, @createdAt, @updatedAt)`,
+  ).run(frame)
+  return {
+    ...frame,
+    provider: 'fal',
+    modelId,
+    params,
+    comfyWorkflowReady: false,
+  }
+}
+
+/**
+ * Switch a fal frame to a different registry model: resets its params to the new model's defaults
+ * and updates its output kind (image/video/audio). Keeps the frame's inputs + take history.
+ */
+export function setModel(frameId: string, modelId: string): Frame {
+  const def = getNodeDef(modelId)
+  if (!def) throw new Error(`Unknown generation model: ${modelId}`)
+  getFrame(frameId)
+  getDb()
+    .prepare('UPDATE frames SET model_id = ?, params = ?, kind = ?, updated_at = ? WHERE id = ?')
+    .run(modelId, JSON.stringify(defaultParams(def)), def.outputKind, Date.now(), frameId)
+  return getFrame(frameId)
+}
+
+/** Persist a fal frame's param values (from the GenNode widgets). Returns the updated frame. */
+export function setFalParams(frameId: string, params: Record<string, unknown>): Frame {
+  getFrame(frameId)
+  getDb()
+    .prepare('UPDATE frames SET params = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(params ?? {}), Date.now(), frameId)
+  return getFrame(frameId)
+}
+
+/** The fal generation fields of a frame — used by the executor. */
+export function getFalFrame(frameId: string): {
+  provider: 'comfy' | 'fal'
+  modelId: string | null
+  params: Record<string, unknown>
+} {
+  const frame = getFrame(frameId)
+  return { provider: frame.provider, modelId: frame.modelId, params: frame.params }
 }
 
 /**
@@ -626,5 +722,5 @@ export function cloneFrame(frameId: string): Frame {
       copyFileSync(srcWf, join(folder, 'workflows', `${clone.id}.json`))
     }
   }
-  return { ...clone, comfyWorkflowReady: false }
+  return { ...clone, provider: 'comfy', modelId: null, params: {}, comfyWorkflowReady: false }
 }

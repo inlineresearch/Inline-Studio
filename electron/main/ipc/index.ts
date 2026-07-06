@@ -7,7 +7,8 @@ import { registerTimelineHandlers } from './timeline'
 import { registerFrameHandlers } from './frames'
 import { registerComfyHandlers } from './comfy'
 import { registerSettingsHandlers } from './settings'
-import { registerClaudeHandlers } from './claude'
+import { registerFalSettingsHandlers } from './falSettings'
+import { registerGenerationHandlers } from './generation'
 import { registerExportHandlers } from './export'
 import { registerClipboardHandlers } from './clipboard'
 import { registerMediaHandlers } from './media'
@@ -24,7 +25,8 @@ export function registerIpcHandlers(): void {
   registerFrameHandlers()
   registerComfyHandlers()
   registerSettingsHandlers()
-  registerClaudeHandlers()
+  registerFalSettingsHandlers()
+  registerGenerationHandlers()
   registerExportHandlers()
   registerClipboardHandlers()
   registerMediaHandlers()

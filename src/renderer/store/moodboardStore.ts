@@ -48,6 +48,10 @@ interface MoodboardState {
   addLayer: (x: number, y: number) => Promise<void>
   addDirector: (x: number, y: number) => Promise<MoodboardItem | null>
   addTrim: (x: number, y: number) => Promise<MoodboardItem | null>
+  /** Create a fal generation node for `modelId` and place it on the canvas. Returns the new item. */
+  addGenNode: (modelId: string, x: number, y: number) => Promise<MoodboardItem | null>
+  /** Create a text-prompt node (feeds a Generate node's prompt input). Returns the new item. */
+  addPrompt: (x: number, y: number) => Promise<MoodboardItem | null>
   /** Place an existing asset on the board, parented to a layer when given. */
   addFrameFromAssetInLayer: (
     assetId: string,
@@ -343,6 +347,40 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     try {
       get().record()
       const res = await window.inlineStudio.moodboard.addTrim(x, y)
+      if (!res.ok) {
+        set({ error: res.error })
+        return null
+      }
+      set((s) => ({ items: [...s.items, res.value] }))
+      return res.value
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+      return null
+    }
+  },
+
+  addGenNode: async (modelId, x, y) => {
+    try {
+      get().record()
+      const res = await window.inlineStudio.moodboard.addGenNode(modelId, x, y)
+      if (!res.ok) {
+        set({ error: res.error })
+        return null
+      }
+      set((s) => ({ items: [...s.items, res.value] }))
+      // The backing fal frame was created in main — refresh the frame store so the node resolves.
+      await useFrameStore.getState().load()
+      return res.value
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+      return null
+    }
+  },
+
+  addPrompt: async (x, y) => {
+    try {
+      get().record()
+      const res = await window.inlineStudio.moodboard.addPrompt(x, y)
       if (!res.ok) {
         set({ error: res.error })
         return null

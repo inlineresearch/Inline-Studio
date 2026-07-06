@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { NodeResizer } from '@xyflow/react'
 import { useMoodboardStore } from '../../../store/moodboardStore'
+import { XIcon } from './NodeBadge'
 
 /**
  * Shared chrome for every moodboard node: a fill container, a resize handle +
@@ -19,6 +20,7 @@ export function NodeFrame({
   minHeight = 40,
   padded = true,
   transparent = false,
+  subtleSelect = false,
   onResizeStart,
   onResize,
   onResizeEnd,
@@ -31,6 +33,8 @@ export function NodeFrame({
   padded?: boolean
   /** Drop the surface box (border + background) — used by text, which floats bare on the canvas. */
   transparent?: boolean
+  /** Use a soft light-grey selection outline instead of the loud accent (for media-heavy nodes). */
+  subtleSelect?: boolean
   /** Resize hooks. When `onResizeEnd` is given it replaces the default width/height persist. */
   onResizeStart?: (size: ResizeSize) => void
   onResize?: (size: ResizeSize) => void
@@ -40,9 +44,10 @@ export function NodeFrame({
   const updateItem = useMoodboardStore((s) => s.updateItem)
   const deleteItem = useMoodboardStore((s) => s.deleteItem)
 
+  const selBorder = subtleSelect ? 'border-zinc-600' : 'border-accent'
   const box = transparent
-    ? `bg-transparent ${selected ? 'border border-dashed border-accent/60' : 'border border-transparent'}`
-    : `border bg-surface ${selected ? 'border-accent' : 'border-border'}`
+    ? `bg-transparent ${selected ? `border border-dashed ${subtleSelect ? 'border-zinc-600/70' : 'border-accent/60'}` : 'border border-transparent'}`
+    : `border bg-surface ${selected ? selBorder : 'border-border'}`
 
   return (
     <>
@@ -50,8 +55,8 @@ export function NodeFrame({
         isVisible={selected}
         minWidth={minWidth}
         minHeight={minHeight}
-        lineClassName="!border-accent"
-        handleClassName="!bg-accent !border-white"
+        lineClassName={subtleSelect ? '!border-zinc-600' : '!border-accent'}
+        handleClassName={subtleSelect ? '!bg-zinc-500 !border-white' : '!bg-accent !border-white'}
         onResizeStart={(_e, p) => onResizeStart?.({ width: p.width, height: p.height })}
         onResize={(_e, p) => onResize?.({ width: p.width, height: p.height })}
         onResizeEnd={(_e, p) => {
@@ -67,9 +72,9 @@ export function NodeFrame({
         <button
           onClick={() => void deleteItem(id)}
           title="Delete"
-          className="absolute -right-2 -top-2 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/80 text-xs text-zinc-200 hover:text-red-400"
+          className="absolute -right-2 -top-2 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/80 text-zinc-200 hover:text-red-400"
         >
-          ✕
+          <XIcon className="h-3 w-3" />
         </button>
       )}
     </>

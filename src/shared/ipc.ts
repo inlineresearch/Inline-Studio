@@ -18,15 +18,15 @@ import type {
   DirectorTimeline,
   TrimResolved,
   TimelineProgressEvent,
+  GenerationProgressEvent,
+  GenerationNodeDoneEvent,
+  GenerationDoneEvent,
+  GenerationErrorEvent,
   Frame,
   Take,
   FrameInput,
   AppSettings,
-  ClaudeStatus,
-  ClaudeSendInput,
-  ClaudeDeltaEvent,
-  ClaudeDoneEvent,
-  ClaudeErrorEvent,
+  ApiKeyStatus,
   UpdateAvailableEvent,
   UpdateProgressEvent,
   UpdateDownloadedEvent,
@@ -37,7 +37,6 @@ import type {
   ProjectExportResult,
   ProjectMediaDirs,
 } from './types'
-import type { ClaudeProposal } from './claudeActions'
 import type { Result } from './result'
 
 export const IpcChannels = {
@@ -85,6 +84,21 @@ export const IpcChannels = {
     reorderInputs: 'frames:reorderInputs',
     listAllTakes: 'frames:listAllTakes',
     deleteTake: 'frames:deleteTake',
+    setFalParams: 'frames:setFalParams',
+    setModel: 'frames:setModel',
+  },
+  generation: {
+    /** Run a fal frame and its upstream chain (topologically). Streams progress via events. */
+    run: 'generation:run',
+    /** Abort the in-flight generation run (optionally just one frame's). */
+    cancel: 'generation:cancel',
+    /** Re-poll + finish any runs that were in flight when the app last closed. */
+    resumePending: 'generation:resumePending',
+  },
+  falSettings: {
+    status: 'falSettings:status',
+    setApiKey: 'falSettings:setApiKey',
+    clearApiKey: 'falSettings:clearApiKey',
   },
   comfy: {
     status: 'comfy:status',
@@ -101,13 +115,6 @@ export const IpcChannels = {
     get: 'settings:get',
     setComfyUrl: 'settings:setComfyUrl',
   },
-  claude: {
-    status: 'claude:status',
-    setApiKey: 'claude:setApiKey',
-    clearApiKey: 'claude:clearApiKey',
-    send: 'claude:send',
-    cancel: 'claude:cancel',
-  },
   export: {
     exportFrames: 'export:exportFrames',
   },
@@ -122,6 +129,8 @@ export const IpcChannels = {
     addLayer: 'moodboard:addLayer',
     addDirector: 'moodboard:addDirector',
     addTrim: 'moodboard:addTrim',
+    addGenNode: 'moodboard:addGenNode',
+    addPrompt: 'moodboard:addPrompt',
     updateItem: 'moodboard:updateItem',
     deleteItem: 'moodboard:deleteItem',
     importAndPlace: 'moodboard:importAndPlace',
@@ -160,13 +169,13 @@ export const IpcChannels = {
   events: {
     /** Main → renderer: the asset library changed (e.g. a video poster/transcode is ready). */
     libraryChanged: 'events:libraryChanged',
-    /** Main → renderer: streamed Claude assistant output. */
-    claudeDelta: 'events:claudeDelta',
-    claudeProposal: 'events:claudeProposal',
-    claudeDone: 'events:claudeDone',
-    claudeError: 'events:claudeError',
     /** Main → renderer: director timeline render progress. */
     timelineProgress: 'events:timelineProgress',
+    /** Main → renderer: fal generation lifecycle (per-node progress, node done, done, error). */
+    generationProgress: 'events:generationProgress',
+    generationNodeDone: 'events:generationNodeDone',
+    generationDone: 'events:generationDone',
+    generationError: 'events:generationError',
     /** Main → renderer: auto-update lifecycle. */
     updateAvailable: 'events:updateAvailable',
     updateProgress: 'events:updateProgress',
@@ -276,6 +285,26 @@ export interface InlineStudioApi {
     listAllTakes(): Promise<Result<Take[]>>
     /** Delete a generated take (clears it as hero if it was). */
     deleteTake(takeId: string): Promise<Result<void>>
+    /** Persist a fal frame's param values (from the GenNode widgets). Returns the updated frame. */
+    setFalParams(frameId: string, params: Record<string, unknown>): Promise<Result<Frame>>
+    /** Switch a fal frame to a different model (resets params + output kind). Returns the frame. */
+    setModel(frameId: string, modelId: string): Promise<Result<Frame>>
+  }
+  generation: {
+    /** Run a fal frame + its upstream chain. Resolves immediately; progress arrives via events. */
+    run(frameId: string): Promise<Result<void>>
+    /** Abort the in-flight run — a specific frame's, or all when no id is given. */
+    cancel(frameId?: string): Promise<Result<void>>
+    /** Re-poll + finish any generations that were in flight when the app last closed. */
+    resumePending(): Promise<Result<void>>
+  }
+  falSettings: {
+    /** Is a fal API key saved, and is it stored encrypted? */
+    status(): Promise<Result<ApiKeyStatus>>
+    /** Store the fal API key (encrypted via safeStorage when available). */
+    setApiKey(key: string): Promise<Result<ApiKeyStatus>>
+    /** Forget the stored fal key. */
+    clearApiKey(): Promise<Result<ApiKeyStatus>>
   }
   comfy: {
     /** Is the configured ComfyUI reachable? */
@@ -290,11 +319,7 @@ export interface InlineStudioApi {
      * Capture the live (possibly unsaved) graph serialized off the ComfyUI canvas into
      * the project copy. Returns the updated frame if anything changed, else null.
      */
-    saveLiveWorkflow(
-      frameId: string,
-      workflow: unknown,
-      intent?: string,
-    ): Promise<Result<Frame | null>>
+    saveLiveWorkflow(frameId: string, workflow: unknown): Promise<Result<Frame | null>>
     /** Push the project's copy of the frame's workflow to ComfyUI. */
     pushWorkflow(frameId: string): Promise<Result<void>>
     /** Pull ComfyUI's latest output and attach it to the frame as its Output take. */
@@ -307,18 +332,6 @@ export interface InlineStudioApi {
   settings: {
     get(): Promise<Result<AppSettings>>
     setComfyUrl(url: string): Promise<Result<AppSettings>>
-  }
-  claude: {
-    /** Is a (validated) Anthropic API key saved, and is it stored encrypted? */
-    status(): Promise<Result<ClaudeStatus>>
-    /** Validate the key against Anthropic, then store it encrypted. Rejects bad keys. */
-    setApiKey(key: string): Promise<Result<ClaudeStatus>>
-    /** Forget the stored key. */
-    clearApiKey(): Promise<Result<ClaudeStatus>>
-    /** Start a streaming assistant turn; results arrive via the onDelta/onDone/onError events. */
-    send(input: ClaudeSendInput): Promise<Result<void>>
-    /** Abort the in-flight turn. */
-    cancel(): Promise<Result<void>>
   }
   export: {
     /** Pick a folder and write each frame's Output in order; null if cancelled. */
@@ -345,6 +358,10 @@ export interface InlineStudioApi {
     addDirector(x: number, y: number): Promise<Result<MoodboardItem>>
     /** Add an "Edit Video/Audio" (trim) node at (x, y). */
     addTrim(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Create a fal generation frame for `modelId` AND place its node on the canvas at (x, y). */
+    addGenNode(modelId: string, x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Add a text-prompt node (feeds a Generate node's prompt input) at (x, y). */
+    addPrompt(x: number, y: number): Promise<Result<MoodboardItem>>
     updateItem(id: string, patch: MoodboardItemPatch): Promise<Result<MoodboardItem>>
     deleteItem(id: string): Promise<Result<void>>
     /** Import media into the shared library AND place it on the board near (x, y). */
@@ -409,11 +426,11 @@ export interface InlineStudioApi {
   events: {
     /** Subscribe to "asset library changed" pushes from main. Returns an unsubscribe fn. */
     onLibraryChanged(callback: () => void): () => void
-    /** Subscribe to streamed Claude output. Each returns an unsubscribe fn. */
-    onClaudeDelta(callback: (e: ClaudeDeltaEvent) => void): () => void
-    onClaudeProposal(callback: (p: ClaudeProposal) => void): () => void
-    onClaudeDone(callback: (e: ClaudeDoneEvent) => void): () => void
-    onClaudeError(callback: (e: ClaudeErrorEvent) => void): () => void
+    /** Subscribe to fal generation lifecycle pushes. Each returns an unsubscribe fn. */
+    onGenerationProgress(callback: (e: GenerationProgressEvent) => void): () => void
+    onGenerationNodeDone(callback: (e: GenerationNodeDoneEvent) => void): () => void
+    onGenerationDone(callback: (e: GenerationDoneEvent) => void): () => void
+    onGenerationError(callback: (e: GenerationErrorEvent) => void): () => void
     /** Subscribe to auto-update lifecycle pushes. Each returns an unsubscribe fn. */
     onUpdateAvailable(callback: (e: UpdateAvailableEvent) => void): () => void
     onUpdateProgress(callback: (e: UpdateProgressEvent) => void): () => void

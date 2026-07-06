@@ -7,10 +7,13 @@ import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useUiStore } from '../../../store/uiStore'
 import { getAssetDragIds } from '../../../lib/dnd'
 import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
+import { useLightboxStore } from '../../../store/lightboxStore'
 import { requireComfyConnected } from '../../../lib/requireComfyConnected'
 import { VideoPreview } from '../../../components/VideoPreview'
 import { Waveform } from '../../../components/Waveform'
 import { NodeFrame } from './NodeFrame'
+import { FilmIcon, LinkIcon, NodeBadge, NodeBadgeRow, StarIcon } from './NodeBadge'
+import { ThumbStrip } from './ThumbStrip'
 
 interface FrameNodeData extends Record<string, unknown> {
   frameId: string
@@ -36,12 +39,21 @@ const MIN_BODY = 160
 const MAX_BODY = 480
 
 /** Small, both-source-and-target (loose mode) handle for purely-visual frame links. */
-function VisualHandle({ id, position }: { id: string; position: Position }): React.JSX.Element {
+function VisualHandle({
+  id,
+  position,
+  style,
+}: {
+  id: string
+  position: Position
+  style?: React.CSSProperties
+}): React.JSX.Element {
   return (
     <Handle
       type="source"
       id={id}
       position={position}
+      style={style}
       className="!h-2.5 !w-2.5 !border !border-zinc-800 !bg-zinc-500 opacity-60 hover:!bg-accent hover:opacity-100"
     />
   )
@@ -72,6 +84,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const setLinkedWorkflow = useUiStore((s) => s.setLinkedWorkflow)
   const setActiveFrame = useUiStore((s) => s.setActiveFrame)
   const onMediaContextMenu = useMediaContextMenu()
+  const openLightbox = useLightboxStore((s) => s.open)
   const [idx, setIdx] = useState(0)
   // True while assets are dragged over the frame — highlights it as a drop target.
   const [dropActive, setDropActive] = useState(false)
@@ -231,54 +244,27 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   return (
     <>
-      <NodeFrame id={id} selected={!!selected} minWidth={200} minHeight={170} padded={false}>
+      {/* Title badge — floats above the node, matching the Generate node. */}
+      <NodeBadgeRow>
+        <NodeBadge icon={<FilmIcon />} title={frame ? `Frame ${frame.name}` : undefined}>
+          Frame {frame?.name ?? '—'}
+        </NodeBadge>
+      </NodeBadgeRow>
+
+      <NodeFrame
+        id={id}
+        selected={!!selected}
+        minWidth={200}
+        minHeight={170}
+        padded={false}
+        subtleSelect
+      >
         <div
           className="relative flex h-full w-full flex-col"
           onDragOver={onDragOver}
           onDragLeave={() => setDropActive(false)}
           onDrop={onDrop}
         >
-          <div className="flex items-center gap-1.5 border-b border-border bg-panel px-2 py-1">
-            <span
-              className="flex shrink-0 items-center gap-1 text-[10px] font-medium text-emerald-300"
-              title="Connect a Preview's output here to feed this frame"
-            >
-              <Handle
-                type="target"
-                id="in"
-                position={Position.Left}
-                style={{
-                  position: 'relative',
-                  top: 'auto',
-                  right: 'auto',
-                  left: 'auto',
-                  transform: 'none',
-                }}
-                className="!h-3 !w-3 !border-2 !border-surface !bg-emerald-400"
-              />
-              Input
-            </span>
-            <span className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-100">
-              Frame {frame?.name ?? '—'}
-            </span>
-            <span className="flex shrink-0 items-center gap-1 text-[10px] font-medium text-indigo-300">
-              Output
-              <Handle
-                type="source"
-                id="out"
-                position={Position.Right}
-                style={{
-                  position: 'relative',
-                  top: 'auto',
-                  right: 'auto',
-                  left: 'auto',
-                  transform: 'none',
-                }}
-                className="!h-3 !w-3 !border-2 !border-surface !bg-indigo-400"
-              />
-            </span>
-          </div>
-
           <div
             ref={bodyRef}
             className="relative flex flex-1 items-center justify-center overflow-hidden bg-black"
@@ -299,6 +285,13 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       src: cur.saveSrc,
                       name: frame ? `Frame ${frame.name}` : 'input',
                       kind: 'video',
+                    })
+                  }
+                  onDoubleClick={() =>
+                    openLightbox({
+                      src: cur.saveSrc,
+                      kind: 'video',
+                      name: frame ? `Frame ${frame.name}` : 'input',
                     })
                   }
                   className="h-full w-full object-cover"
@@ -323,6 +316,13 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       kind: 'image',
                     })
                   }
+                  onDoubleClick={() =>
+                    openLightbox({
+                      src: cur.saveSrc,
+                      kind: 'image',
+                      name: frame ? `Frame ${frame.name}` : 'input',
+                    })
+                  }
                   className="h-full w-full object-cover"
                 />
               )
@@ -337,46 +337,44 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
               onClick={() => void onLink()}
               disabled={busy}
               title={linked ? 'Open the linked ComfyUI workflow' : 'Link a ComfyUI workflow'}
-              className="nodrag absolute bottom-1 right-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-black/90 disabled:opacity-40"
+              className="nodrag absolute bottom-1 right-1 flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-black/90 disabled:opacity-40"
             >
-              {busy ? '…' : linked ? '🔗 Open Workflow' : '⛓ Link Workflow'}
+              {busy ? (
+                '…'
+              ) : (
+                <>
+                  <LinkIcon className="h-3 w-3" />
+                  {linked ? 'Open Workflow' : 'Link Workflow'}
+                </>
+              )}
             </button>
 
             {count > 1 && (
               <>
-                <button
-                  onClick={() => setIdx(() => (safeIdx - 1 + count) % count)}
-                  className="nodrag absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-1.5 text-sm text-white hover:bg-black/80"
-                >
-                  ‹
-                </button>
-                <button
-                  onClick={() => setIdx(() => (safeIdx + 1) % count)}
-                  className="nodrag absolute right-1 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-1.5 text-sm text-white hover:bg-black/80"
-                >
-                  ›
-                </button>
-                <div className="absolute bottom-1 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/60 px-2 py-0.5">
-                  {thumbs.map((a, i) => (
-                    <span
-                      key={a.id}
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        i === safeIdx ? 'bg-white' : 'bg-zinc-500'
-                      }`}
-                    />
-                  ))}
-                </div>
+                {/* Thumbnail strip — click an input to show it as this frame's main media. */}
+                <ThumbStrip
+                  items={thumbs.map((t) => ({
+                    id: t.id,
+                    url: t.url,
+                    kind: t.kind,
+                    poster: t.poster,
+                  }))}
+                  selected={safeIdx}
+                  onSelect={setIdx}
+                />
                 {safeIdx === 0 ? (
-                  <span className="absolute left-1 top-1 rounded bg-emerald-500/80 px-1 text-[9px] font-medium text-white">
+                  <span className="absolute left-1 top-1 flex items-center gap-1 rounded bg-emerald-500/80 px-1 py-0.5 text-[9px] font-medium text-white">
+                    <StarIcon filled className="h-2.5 w-2.5" />
                     Hero
                   </span>
                 ) : canReorder ? (
                   <button
                     onClick={makeHero}
                     title="Use this input as the hero"
-                    className="nodrag absolute left-1 top-1 rounded bg-black/60 px-1 text-[9px] text-amber-300 hover:bg-black/80"
+                    className="nodrag absolute left-1 top-1 flex items-center gap-1 rounded bg-black/60 px-1 py-0.5 text-[9px] text-amber-300 hover:bg-black/80"
                   >
-                    ★ Set hero
+                    <StarIcon className="h-2.5 w-2.5" />
+                    Set hero
                   </button>
                 ) : null}
               </>
@@ -391,10 +389,28 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
         </div>
       </NodeFrame>
 
-      {/* Visual-only links (no data flow), connectable on all four sides. */}
+      {/* Functional data handles — bare dots on the edges (Generate-node style): an Input on the
+          left (feed a Preview's output here) and the frame's Output on the right. */}
+      <Handle
+        type="target"
+        id="in"
+        position={Position.Left}
+        className="!h-3 !w-3 !border-2 !border-surface !bg-emerald-400"
+        title="Input — connect a Preview's output here to feed this frame"
+      />
+      <Handle
+        type="source"
+        id="out"
+        position={Position.Right}
+        className="!h-3 !w-3 !border-2 !border-surface !bg-indigo-400"
+        title="Output — wire to a Preview to see the result"
+      />
+
+      {/* Visual-only links (no data flow). The centre of each side is reserved for the data
+          handles above, so the left/right visual dots sit in the upper corners. */}
       <VisualHandle id="vt" position={Position.Top} />
-      <VisualHandle id="vl" position={Position.Left} />
-      <VisualHandle id="vr" position={Position.Right} />
+      <VisualHandle id="vl" position={Position.Left} style={{ top: '22%' }} />
+      <VisualHandle id="vr" position={Position.Right} style={{ top: '22%' }} />
       <VisualHandle id="vb" position={Position.Bottom} />
     </>
   )

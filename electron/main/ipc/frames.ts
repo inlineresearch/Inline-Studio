@@ -21,6 +21,8 @@ import {
   reorderInputs,
   listAllTakes,
   deleteTake,
+  setFalParams,
+  setModel,
 } from '../frames/store'
 
 function str(v: unknown, label: string): string {
@@ -76,5 +78,15 @@ export function registerFrameHandlers(): void {
   handle<[], Take[]>(IpcChannels.frames.listAllTakes, () => listAllTakes())
   handle<[string], void>(IpcChannels.frames.deleteTake, (takeId) =>
     deleteTake(str(takeId, 'take id')),
+  )
+  handle<[string, Record<string, unknown>], Frame>(
+    IpcChannels.frames.setFalParams,
+    (frameId, params) => {
+      if (typeof params !== 'object' || params === null) throw new Error('Invalid params.')
+      return setFalParams(str(frameId, 'frame id'), params)
+    },
+  )
+  handle<[string, string], Frame>(IpcChannels.frames.setModel, (frameId, modelId) =>
+    setModel(str(frameId, 'frame id'), str(modelId, 'model id')),
   )
 }

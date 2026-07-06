@@ -3,6 +3,7 @@ import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react'
 import { mediaUrl } from '@shared/media'
 import type { DirectorClip } from '@shared/types'
 import { NodeFrame } from './NodeFrame'
+import { ClapperIcon, NodeBadge, NodeBadgeRow } from './NodeBadge'
 import { Waveform } from '../../../components/Waveform'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useTimelineStore } from '../../../store/timelineStore'
@@ -155,148 +156,162 @@ export function DirectorNode({ id, data, selected }: NodeProps): React.JSX.Eleme
   const [playhead, setPlayhead] = useState(0)
 
   return (
-    <NodeFrame id={id} selected={!!selected} minWidth={360} minHeight={320} padded={false}>
-      <div className="flex h-full w-full text-zinc-300">
-        {/* Left gutter — a dedicated side panel for the input dots (not on the border). */}
-        <div className="flex w-11 shrink-0 flex-col items-center gap-1.5 overflow-y-auto border-r border-border bg-panel py-1">
-          {Array.from({ length: videoHandles }).map((_, i) => (
-            <GutterDot
-              key={`vin-${i}`}
-              handleId={`${VIDEO_PREFIX}${i}`}
-              type="target"
-              position={Position.Left}
-              label={`V${i + 1}`}
-              dotClass="!bg-indigo-400"
-            />
-          ))}
-          {Array.from({ length: audioHandles }).map((_, i) => (
-            <GutterDot
-              key={`ain-${i}`}
-              handleId={`${AUDIO_PREFIX}${i}`}
-              type="target"
-              position={Position.Left}
-              label={`A${i + 1}`}
-              dotClass="!bg-emerald-400"
-            />
-          ))}
-        </div>
+    <>
+      {/* Title badge — floats above the node, matching the Generate node. */}
+      <NodeBadgeRow>
+        <NodeBadge icon={<ClapperIcon />} title={name || 'Director'}>
+          {name || 'Director'}
+        </NodeBadge>
+      </NodeBadgeRow>
 
-        {/* Center column */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          {/* Header */}
-          <div className="flex shrink-0 items-center gap-1 border-b border-border bg-panel px-2 py-1">
-            <span className="text-[10px] text-amber-400">🎬</span>
-            <span className="min-w-0 flex-1 truncate text-[11px] font-medium">
-              {name || 'Director'}
-            </span>
-            {rendering && (
-              <span className="text-[10px] text-amber-400">
-                {Math.round((progress ?? 0) * 100)}%
-              </span>
-            )}
-            <button
-              onClick={async () => {
-                const path = await exportTimeline(id)
-                if (path) await reloadBoard()
-              }}
-              disabled={rendering || !hasClips}
-              className="nodrag rounded bg-accent px-1.5 py-0.5 text-[10px] text-panel hover:brightness-110 disabled:opacity-40"
-            >
-              Export
-            </button>
-            {/* Output link, after the Export button. */}
-            <span
-              className="flex items-center gap-1 text-[11px] font-medium text-zinc-300"
-              title="Video output"
-            >
-              Out
-              <Handle
-                type="source"
-                position={Position.Right}
-                id="out"
-                style={{ position: 'relative', left: 0, top: 0, transform: 'none' }}
-                className="!h-3.5 !w-3.5 !min-h-0 !min-w-0 !border-2 !border-surface !bg-amber-400"
+      <NodeFrame
+        id={id}
+        selected={!!selected}
+        minWidth={360}
+        minHeight={320}
+        padded={false}
+        subtleSelect
+      >
+        <div className="flex h-full w-full text-zinc-300">
+          {/* Left gutter — a dedicated side panel for the input dots (not on the border). */}
+          <div className="flex w-11 shrink-0 flex-col items-center gap-1.5 overflow-y-auto border-r border-border bg-panel py-1">
+            {Array.from({ length: videoHandles }).map((_, i) => (
+              <GutterDot
+                key={`vin-${i}`}
+                handleId={`${VIDEO_PREFIX}${i}`}
+                type="target"
+                position={Position.Left}
+                label={`V${i + 1}`}
+                dotClass="!bg-indigo-400"
               />
-            </span>
+            ))}
+            {Array.from({ length: audioHandles }).map((_, i) => (
+              <GutterDot
+                key={`ain-${i}`}
+                handleId={`${AUDIO_PREFIX}${i}`}
+                type="target"
+                position={Position.Left}
+                label={`A${i + 1}`}
+                dotClass="!bg-emerald-400"
+              />
+            ))}
           </div>
 
-          {/* Preview — sized to the 16:9 proxy so the video fills it (no black bars). */}
-          <div className="relative aspect-video w-full shrink-0 bg-black">
-            {previewUrl ? (
-              <video
-                ref={videoRef}
-                src={mediaUrl(previewUrl)}
-                controls
-                onTimeUpdate={() => {
-                  const v = videoRef.current
-                  if (v && v.duration > 0) setPlayhead(v.currentTime / v.duration)
-                }}
-                className="nodrag absolute inset-0 h-full w-full object-contain"
-              />
-            ) : (
-              <span className="absolute inset-0 flex items-center justify-center px-3 text-center text-[11px] text-zinc-500">
-                {!hasClips
-                  ? 'Wire frames into the V (video) or A (audio) inputs on the left'
-                  : rendering
-                    ? 'Rendering preview…'
-                    : 'Building preview…'}
-              </span>
-            )}
-          </div>
-
-          {/* Tracks */}
-          <div className="nodrag relative flex-1 overflow-auto py-1.5">
-            {/* Shared playhead across the tracks (aligned to the track lanes' inner width). */}
-            {hasClips && (
-              <div
-                className="pointer-events-none absolute inset-y-0 z-10 w-px bg-red-500"
-                style={{ left: `${(playhead * 100).toFixed(2)}%` }}
-              />
-            )}
-
-            {hasClips && <Ruler total={total} />}
-
-            <TrackRow label="VIDEO">
-              {video.map((c) => (
-                <ClipBlock
-                  key={c.key}
-                  clip={c}
-                  total={total}
-                  kind="video"
-                  onNavigate={navigateToFrame}
-                />
-              ))}
-            </TrackRow>
-
-            <TrackRow
-              label="AUDIO L1"
-              control={<VolumeSlider value={l1} onChange={(v) => void setVolumes(id, v, l2)} />}
-            >
-              {video.map((c) => (
-                <ClipBlock
-                  key={c.key}
-                  clip={c}
-                  total={total}
-                  kind="audio"
-                  onSetVolume={(v) => void setConnectorVolume(c.connectorId, v)}
-                />
-              ))}
-            </TrackRow>
-
-            <TrackRow
-              label="AUDIO L2"
-              control={<VolumeSlider value={l2} onChange={(v) => void setVolumes(id, l1, v)} />}
-            >
-              {l2clips.length === 0 ? (
-                <span className="px-1 text-[9px] text-zinc-600">Wire audio into a green input</span>
-              ) : (
-                l2clips.map((c) => <ClipBlock key={c.key} clip={c} total={total} kind="audio" />)
+          {/* Center column */}
+          <div className="flex min-w-0 flex-1 flex-col">
+            {/* Header — a controls bar (the title lives in the floating badge above). */}
+            <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border bg-panel px-2 py-1">
+              {rendering && (
+                <span className="mr-auto text-[10px] text-amber-400">
+                  {Math.round((progress ?? 0) * 100)}%
+                </span>
               )}
-            </TrackRow>
+              <button
+                onClick={async () => {
+                  const path = await exportTimeline(id)
+                  if (path) await reloadBoard()
+                }}
+                disabled={rendering || !hasClips}
+                className="nodrag rounded bg-accent px-1.5 py-0.5 text-[10px] text-panel hover:brightness-110 disabled:opacity-40"
+              >
+                Export
+              </button>
+              {/* Output link, after the Export button. */}
+              <span
+                className="flex items-center gap-1 text-[11px] font-medium text-zinc-300"
+                title="Video output"
+              >
+                Out
+                <Handle
+                  type="source"
+                  position={Position.Right}
+                  id="out"
+                  style={{ position: 'relative', left: 0, top: 0, transform: 'none' }}
+                  className="!h-3.5 !w-3.5 !min-h-0 !min-w-0 !border-2 !border-surface !bg-amber-400"
+                />
+              </span>
+            </div>
+
+            {/* Preview — sized to the 16:9 proxy so the video fills it (no black bars). */}
+            <div className="relative aspect-video w-full shrink-0 bg-black">
+              {previewUrl ? (
+                <video
+                  ref={videoRef}
+                  src={mediaUrl(previewUrl)}
+                  controls
+                  onTimeUpdate={() => {
+                    const v = videoRef.current
+                    if (v && v.duration > 0) setPlayhead(v.currentTime / v.duration)
+                  }}
+                  className="nodrag absolute inset-0 h-full w-full object-contain"
+                />
+              ) : (
+                <span className="absolute inset-0 flex items-center justify-center px-3 text-center text-[11px] text-zinc-500">
+                  {!hasClips
+                    ? 'Wire frames into the V (video) or A (audio) inputs on the left'
+                    : rendering
+                      ? 'Rendering preview…'
+                      : 'Building preview…'}
+                </span>
+              )}
+            </div>
+
+            {/* Tracks */}
+            <div className="nodrag relative flex-1 overflow-auto py-1.5">
+              {/* Shared playhead across the tracks (aligned to the track lanes' inner width). */}
+              {hasClips && (
+                <div
+                  className="pointer-events-none absolute inset-y-0 z-10 w-px bg-red-500"
+                  style={{ left: `${(playhead * 100).toFixed(2)}%` }}
+                />
+              )}
+
+              {hasClips && <Ruler total={total} />}
+
+              <TrackRow label="VIDEO">
+                {video.map((c) => (
+                  <ClipBlock
+                    key={c.key}
+                    clip={c}
+                    total={total}
+                    kind="video"
+                    onNavigate={navigateToFrame}
+                  />
+                ))}
+              </TrackRow>
+
+              <TrackRow
+                label="AUDIO L1"
+                control={<VolumeSlider value={l1} onChange={(v) => void setVolumes(id, v, l2)} />}
+              >
+                {video.map((c) => (
+                  <ClipBlock
+                    key={c.key}
+                    clip={c}
+                    total={total}
+                    kind="audio"
+                    onSetVolume={(v) => void setConnectorVolume(c.connectorId, v)}
+                  />
+                ))}
+              </TrackRow>
+
+              <TrackRow
+                label="AUDIO L2"
+                control={<VolumeSlider value={l2} onChange={(v) => void setVolumes(id, l1, v)} />}
+              >
+                {l2clips.length === 0 ? (
+                  <span className="px-1 text-[9px] text-zinc-600">
+                    Wire audio into a green input
+                  </span>
+                ) : (
+                  l2clips.map((c) => <ClipBlock key={c.key} clip={c} total={total} kind="audio" />)
+                )}
+              </TrackRow>
+            </div>
           </div>
         </div>
-      </div>
-    </NodeFrame>
+      </NodeFrame>
+    </>
   )
 }
 

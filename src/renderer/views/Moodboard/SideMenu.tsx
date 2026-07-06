@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { mediaUrl, takeWaveformPath } from '@shared/media'
 import type { Frame } from '@shared/types'
 import { useFrameStore } from '../../store/frameStore'
@@ -6,16 +6,31 @@ import { useAssetStore } from '../../store/assetStore'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useUiStore } from '../../store/uiStore'
 import { LibraryPanel } from '../Library/LibraryPanel'
+import { OutputThumb } from '../Library/OutputThumb'
 import { setFrameDragPayload } from '../../lib/dnd'
-import { EditIcon, FolderIcon, HistoryIcon, ImageIcon, WorkflowIcon } from '../../components/icons'
+import {
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CloseIcon,
+  EditIcon,
+  FolderIcon,
+  HistoryIcon,
+  ImageIcon,
+  MusicNoteIcon,
+  SparklesIcon,
+  StarIcon,
+  WorkflowIcon,
+} from '../../components/icons'
 import { Waveform } from '../../components/Waveform'
 
-type Tab = 'assets' | 'timeline'
+type Tab = 'assets' | 'outputs' | 'timeline'
 type SortKey = 'updated' | 'name'
 
 const TABS: { key: Tab; label: string; Icon: (p: { className?: string }) => React.JSX.Element }[] =
   [
     { key: 'assets', label: 'Assets', Icon: ImageIcon },
+    { key: 'outputs', label: 'Outputs', Icon: SparklesIcon },
     { key: 'timeline', label: 'Timeline', Icon: HistoryIcon },
   ]
 
@@ -64,9 +79,10 @@ export function SideMenu(): React.JSX.Element {
         <button
           onClick={() => setOpen(true)}
           title="Expand menu"
-          className="mb-1 text-zinc-400 hover:text-white"
+          aria-label="Expand menu"
+          className="mb-1 flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 hover:bg-panel hover:text-white"
         >
-          ▸
+          <ChevronRightIcon className="h-5 w-5" />
         </button>
         {TABS.map((t) => (
           <button
@@ -76,8 +92,11 @@ export function SideMenu(): React.JSX.Element {
               setOpen(true)
             }}
             title={t.label}
-            className={`flex h-9 w-9 items-center justify-center rounded ${
-              tab === t.key ? 'bg-accent text-panel' : 'text-zinc-400 hover:bg-surface'
+            aria-pressed={tab === t.key}
+            className={`flex h-9 w-9 items-center justify-center rounded-md transition-colors ${
+              tab === t.key
+                ? 'bg-accent text-panel shadow-sm'
+                : 'text-zinc-400 hover:bg-panel hover:text-zinc-200'
             }`}
           >
             <t.Icon className="h-5 w-5" />
@@ -92,34 +111,44 @@ export function SideMenu(): React.JSX.Element {
       className="relative flex shrink-0 flex-col border-r border-border bg-surface"
       style={{ width }}
     >
-      <div className="flex items-center justify-between border-b border-border px-1 py-1">
-        <div className="flex gap-0.5">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              title={t.label}
-              className={`flex items-center gap-1 rounded px-2 py-1 text-[13px] font-medium ${
-                tab === t.key ? 'bg-accent text-panel' : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              <t.Icon className="h-3.5 w-3.5" />
-              {t.label}
-            </button>
-          ))}
+      <div className="flex items-center gap-1 border-b border-border px-1.5 py-1.5">
+        {/* Segmented tab control: the active tab shows its label, the rest stay icon-only so
+            the row never outgrows the panel and the collapse control is always reachable. */}
+        <div className="flex min-w-0 flex-1 items-center gap-0.5 rounded-lg bg-black/20 p-0.5">
+          {TABS.map((t) => {
+            const active = tab === t.key
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                title={t.label}
+                aria-pressed={active}
+                className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                  active
+                    ? 'bg-accent text-panel shadow-sm'
+                    : 'text-zinc-400 hover:bg-panel hover:text-zinc-200'
+                }`}
+              >
+                <t.Icon className="h-4 w-4 shrink-0" />
+                {active && <span className="truncate">{t.label}</span>}
+              </button>
+            )
+          })}
         </div>
         <button
           onClick={() => setOpen(false)}
           title="Collapse menu"
-          className="px-1 text-zinc-500 hover:text-white"
+          aria-label="Collapse menu"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-panel hover:text-white"
         >
-          ◂
+          <ChevronLeftIcon className="h-4 w-4" />
         </button>
       </div>
 
       <div className="min-h-0 flex-1">
         {/* Assets reuses the full library panel — drag a tile onto the canvas to create a frame. */}
         {tab === 'assets' && <LibraryPanel />}
+        {tab === 'outputs' && <OutputsTab />}
         {tab === 'timeline' && <TimelineTab />}
       </div>
 
@@ -129,6 +158,51 @@ export function SideMenu(): React.JSX.Element {
         title="Drag to resize"
         className="absolute -right-0.5 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-accent/40"
       />
+    </div>
+  )
+}
+
+/**
+ * Outputs tab — a flat gallery of every generated take across all frames, newest first.
+ * Each tile drags onto a generation node to feed it as an input (via its frame's flow link).
+ */
+function OutputsTab(): React.JSX.Element {
+  const frames = useFrameStore((s) => s.frames)
+  const takesByFrame = useFrameStore((s) => s.takesByFrame)
+
+  // Ensure frames + their takes are loaded even when the user opens this tab first.
+  useEffect(() => {
+    void useFrameStore.getState().load()
+  }, [])
+
+  const outputs = frames
+    .flatMap((f) => (takesByFrame[f.id] ?? []).map((take) => ({ take, frameName: f.name })))
+    .sort((a, b) => b.take.createdAt - a.take.createdAt)
+
+  if (outputs.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center">
+        <SparklesIcon className="h-7 w-7 text-zinc-600" />
+        <p className="text-sm text-zinc-500">No outputs yet</p>
+        <p className="text-xs text-zinc-600">Generate a frame and its takes show up here.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b border-border px-2 py-1.5">
+        <span className="text-[10px] uppercase tracking-wide text-zinc-500">
+          {outputs.length} output{outputs.length === 1 ? '' : 's'}
+        </span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        <div className="grid grid-cols-2 gap-2">
+          {outputs.map(({ take, frameName }) => (
+            <OutputThumb key={take.id} take={take} frameName={frameName} />
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
@@ -224,7 +298,11 @@ function FrameFolder({
           className="flex min-w-0 flex-1 items-center gap-1 text-left"
           title="Toggle"
         >
-          <span className="text-zinc-500">{open ? '▾' : '▸'}</span>
+          {open ? (
+            <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+          ) : (
+            <ChevronRightIcon className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+          )}
           <FolderIcon className="h-3 w-3 shrink-0 text-zinc-500" />
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-200">
             Frame {frame.name}
@@ -245,9 +323,9 @@ function FrameFolder({
         <button
           onClick={onDelete}
           title="Delete frame"
-          className="px-1 text-[11px] text-zinc-400 hover:text-red-400"
+          className="flex items-center px-1 text-zinc-400 hover:text-red-400"
         >
-          ✕
+          <CloseIcon className="h-3.5 w-3.5" />
         </button>
       </div>
 
@@ -280,7 +358,7 @@ function FrameFolder({
                   name={t.filePath.split('/').pop() ?? 'take'}
                   thumb={mediaUrl(t.filePath)}
                   kind={t.kind}
-                  badge={t.id === frame.heroTakeId ? '★' : undefined}
+                  hero={t.id === frame.heroTakeId}
                   waveform={t.kind === 'audio' ? mediaUrl(takeWaveformPath(t.id)) : undefined}
                 />
               ))
@@ -322,7 +400,11 @@ function Folder({
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-1 py-0.5 text-left text-[10px] uppercase tracking-wide text-zinc-500 hover:text-zinc-300"
       >
-        <span>{open ? '▾' : '▸'}</span>
+        {open ? (
+          <ChevronDownIcon className="h-3 w-3 shrink-0" />
+        ) : (
+          <ChevronRightIcon className="h-3 w-3 shrink-0" />
+        )}
         <FolderIcon className="h-3 w-3 shrink-0 text-zinc-500" />
         {label}
         <span className="text-zinc-600">({count})</span>
@@ -336,14 +418,15 @@ function FileRow({
   name,
   thumb,
   kind,
-  badge,
+  hero,
   poster,
   waveform,
 }: {
   name: string
   thumb: string
   kind: 'image' | 'video' | 'audio'
-  badge?: string
+  /** Marks the frame's chosen hero take with a star. */
+  hero?: boolean
   poster?: string
   waveform?: string
 }): React.JSX.Element {
@@ -364,13 +447,19 @@ function FileRow({
           (waveform ? (
             <Waveform url={waveform} bars={24} className="h-full w-full p-0.5 text-emerald-400" />
           ) : (
-            <span className="flex h-full w-full items-center justify-center text-xs">🎵</span>
+            <span className="flex h-full w-full items-center justify-center text-zinc-500">
+              <MusicNoteIcon className="h-4 w-4" />
+            </span>
           ))}
       </div>
       <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-400" title={name}>
         {name}
       </span>
-      {badge && <span className="text-[10px] text-amber-300">{badge}</span>}
+      {hero && (
+        <span title="Hero take" className="shrink-0 text-amber-300">
+          <StarIcon className="h-3 w-3" />
+        </span>
+      )}
     </div>
   )
 }

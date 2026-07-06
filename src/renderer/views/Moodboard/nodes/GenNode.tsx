@@ -1,0 +1,425 @@
+import { useState } from 'react'
+import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { mediaUrl, takeWaveformPath } from '@shared/media'
+import { getNodeDef } from '@shared/nodes/registry'
+import { formatPrice } from '@shared/nodes/types'
+import { useFrameStore } from '../../../store/frameStore'
+import { useMoodboardStore } from '../../../store/moodboardStore'
+import { useGenerationStore } from '../../../store/generationStore'
+import { useLightboxStore } from '../../../store/lightboxStore'
+import { getAssetDragIds, getFrameDragId, ASSET_DND_TYPE, FRAME_DND_TYPE } from '../../../lib/dnd'
+import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
+import { VideoPreview } from '../../../components/VideoPreview'
+import { Waveform } from '../../../components/Waveform'
+import { NodeFrame } from './NodeFrame'
+import { AudioGlyph, ImageGlyph, NodeBadge, NodeBadgeRow, VideoGlyph } from './NodeBadge'
+import { ThumbStrip } from './ThumbStrip'
+import { ModelPicker } from '../ModelPicker'
+
+interface GenNodeData extends Record<string, unknown> {
+  frameId: string
+}
+
+function PlayIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  )
+}
+
+function StopIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="h-[18px] w-[18px]">
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+    </svg>
+  )
+}
+
+/** Two-sparkle mark flagging an AI/API-backed node. Matches the toolbar's create button. */
+function SparkleIcon(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5 shrink-0 text-emerald-400"
+    >
+      <path d="M12 3l1.9 4.8L18.6 9.7 13.9 11.6 12 16.4 10.1 11.6 5.4 9.7 10.1 7.8Z" />
+      <path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9Z" />
+    </svg>
+  )
+}
+
+/** Sliders/adjust icon — opens the settings sidebar. */
+function AdjustIcon(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+    >
+      <line x1="4" y1="8" x2="20" y2="8" />
+      <line x1="4" y1="16" x2="20" y2="16" />
+      <circle cx="9" cy="8" r="2" fill="currentColor" />
+      <circle cx="15" cy="16" r="2" fill="currentColor" />
+    </svg>
+  )
+}
+
+/**
+ * A left-edge input dot that reveals a small hint chip on hover — an icon + label naming what to
+ * connect (a "T" for the text prompt, an image/video icon for the media input).
+ */
+function InputHandle({
+  id,
+  top,
+  colorClass,
+  icon,
+  label,
+}: {
+  id: string
+  top: string
+  colorClass: string
+  icon: React.ReactNode
+  label: string
+}): React.JSX.Element {
+  return (
+    <Handle
+      type="target"
+      id={id}
+      position={Position.Left}
+      style={{ top }}
+      title={label}
+      className={`group !h-3 !w-3 !border-2 !border-surface ${colorClass}`}
+    >
+      <span className="pointer-events-none absolute right-full top-1/2 mr-1.5 hidden -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded-md border border-border bg-panel/95 px-1.5 py-0.5 text-[10px] font-medium text-zinc-200 shadow-sm backdrop-blur group-hover:flex">
+        {icon}
+        {label}
+      </span>
+    </Handle>
+  )
+}
+
+/**
+ * A "Generate" node: a portrait card whose body is the edge-to-edge output preview, a title badge
+ * + live price estimate above it, a selection-only play control on the right, and a footer that
+ * holds the model picker + a settings (adjust) button. Inputs are bare dots — a prompt (fed by a
+ * Prompt node) and, for image models, an image. Backed by a `provider:'fal'` frame.
+ */
+export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
+  const { frameId } = data as GenNodeData
+  const frame = useFrameStore((s) => s.frames.find((f) => f.id === frameId))
+  const takes = useFrameStore((s) => s.takesByFrame[frameId]) ?? []
+  const inputs = useFrameStore((s) => s.inputsByFrame[frameId]) ?? []
+  const addInputs = useFrameStore((s) => s.addInputs)
+  const addSourceInput = useFrameStore((s) => s.addSourceInput)
+  const connectors = useMoodboardStore((s) => s.connectors)
+  const run = useGenerationStore((s) => s.run)
+  const cancel = useGenerationStore((s) => s.cancel)
+  const setModel = useGenerationStore((s) => s.setModel)
+  const toggleSettings = useGenerationStore((s) => s.toggleSettings)
+  const openModelInfo = useGenerationStore((s) => s.openModelInfo)
+  const busy = useGenerationStore((s) => s.busyByFrame[frameId] ?? false)
+  const progress = useGenerationStore((s) => s.progressByFrame[frameId])
+  const status = useGenerationStore((s) => s.statusByFrame[frameId])
+  const onMediaContextMenu = useMediaContextMenu()
+  const openLightbox = useLightboxStore((s) => s.open)
+  const [dropActive, setDropActive] = useState(false)
+  // Which take is shown as the large preview (index into the hero-first ordering below).
+  const [takeIdx, setTakeIdx] = useState(0)
+
+  const def = frame?.modelId ? getNodeDef(frame.modelId) : undefined
+
+  if (!frame || !def) {
+    return (
+      <NodeFrame id={id} selected={!!selected} minWidth={200} minHeight={120} subtleSelect>
+        <div className="flex h-full items-center justify-center p-3 text-center text-[11px] text-zinc-500">
+          Unknown generation model.
+        </div>
+      </NodeFrame>
+    )
+  }
+
+  // Takes newest-first with the hero floated to the front, so the chosen output shows by default.
+  const ordered = [...takes]
+  if (frame.heroTakeId) {
+    const i = ordered.findIndex((t) => t.id === frame.heroTakeId)
+    if (i > 0) ordered.unshift(ordered.splice(i, 1)[0])
+  }
+  const safeTakeIdx = ordered.length ? Math.min(takeIdx, ordered.length - 1) : 0
+  const take = ordered.length ? ordered[safeTakeIdx] : undefined
+  // Input dots are driven by the model's API: each only shows when the model actually takes that
+  // kind of input. The media dot is typed to match (image vs video); audio gets its own dot.
+  const imageInput = def.inputs.some((p) => p.kind === 'image' || p.kind === 'image[]')
+  const videoInput = def.inputs.some((p) => p.kind === 'video')
+  const audioInput = def.inputs.some((p) => p.kind === 'audio')
+  const wantsMedia = imageInput || videoInput
+  const mediaIsVideo = videoInput && !imageInput
+  const requiresMedia = def.inputs.some(
+    (p) => p.required && (p.kind === 'image' || p.kind === 'image[]' || p.kind === 'video'),
+  )
+  const requiresAudio = def.inputs.some((p) => p.required && p.kind === 'audio')
+  const hasPrompt = connectors.some(
+    (c) => c.toItemId === id && (c.data?.targetHandle as string | undefined) === 'prompt',
+  )
+  // Coarse: inputs aren't tagged by kind, so we only nudge when nothing is wired at all.
+  const requiredKinds = [
+    ...(requiresMedia ? [mediaIsVideo ? 'video' : 'image'] : []),
+    ...(requiresAudio ? ['audio'] : []),
+  ]
+  const missing = !hasPrompt
+    ? 'Connect a Prompt node'
+    : requiredKinds.length > 0 && inputs.length === 0
+      ? `Wire ${requiredKinds.join(' & ')} input${requiredKinds.length > 1 ? 's' : ''}`
+      : null
+  const pct = typeof progress === 'number' ? Math.round(progress * 100) : null
+  const price = def.estimatePrice?.(frame.params) ?? null
+
+  // Left-edge input dots, in order — each only appears when the model's API takes that input.
+  // They're spaced evenly down the edge (rendered below), so 1/2/3 dots lay out cleanly.
+  const inputDots = [
+    {
+      id: 'prompt',
+      colorClass: '!bg-amber-400',
+      icon: <span className="text-xs font-bold leading-none">T</span>,
+      label: 'Prompt',
+    },
+    ...(wantsMedia
+      ? [
+          {
+            id: 'in',
+            colorClass: '!bg-emerald-400',
+            icon: mediaIsVideo ? (
+              <VideoGlyph className="h-3.5 w-3.5" />
+            ) : (
+              <ImageGlyph className="h-3.5 w-3.5" />
+            ),
+            label: mediaIsVideo ? 'Video' : 'Image',
+          },
+        ]
+      : []),
+    ...(audioInput
+      ? [
+          {
+            id: 'audio',
+            colorClass: '!bg-violet-400',
+            icon: <AudioGlyph className="h-3.5 w-3.5" />,
+            label: 'Audio',
+          },
+        ]
+      : []),
+  ]
+
+  const canDrop = (e: React.DragEvent): boolean =>
+    e.dataTransfer.types.includes(ASSET_DND_TYPE) || e.dataTransfer.types.includes(FRAME_DND_TYPE)
+  const onDragOver = (e: React.DragEvent): void => {
+    if (!canDrop(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'copy'
+    if (!dropActive) setDropActive(true)
+  }
+  const onDrop = (e: React.DragEvent): void => {
+    if (!canDrop(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    setDropActive(false)
+    const droppedFrameId = getFrameDragId(e.dataTransfer)
+    if (droppedFrameId) {
+      if (droppedFrameId !== frameId) void addSourceInput(frameId, droppedFrameId)
+      return
+    }
+    const existing = new Set(inputs.map((i) => i.assetId))
+    const ids = getAssetDragIds(e.dataTransfer).filter((x) => !existing.has(x))
+    if (ids.length) void addInputs(frameId, ids)
+  }
+
+  return (
+    <>
+      {/* Title + live price-estimate badges — float above the node. */}
+      <NodeBadgeRow>
+        <NodeBadge icon={<SparkleIcon />}>Generate</NodeBadge>
+        {price && (
+          <NodeBadge
+            tone="info"
+            accent="text-emerald-300"
+            title="Estimated cost per generation — fal pricing; actual may vary with output size"
+          >
+            {formatPrice(price)}
+          </NodeBadge>
+        )}
+      </NodeBadgeRow>
+
+      <NodeFrame
+        id={id}
+        selected={!!selected}
+        minWidth={200}
+        minHeight={220}
+        padded={false}
+        subtleSelect
+      >
+        <div
+          className="relative flex h-full w-full flex-col"
+          onDragOver={onDragOver}
+          onDragLeave={() => setDropActive(false)}
+          onDrop={onDrop}
+        >
+          {/* Edge-to-edge output preview. */}
+          <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
+            {take ? (
+              take.kind === 'video' ? (
+                <VideoPreview
+                  src={mediaUrl(take.filePath)}
+                  onContextMenu={(e) =>
+                    onMediaContextMenu(e, {
+                      src: mediaUrl(take.filePath),
+                      name: def.title,
+                      kind: 'video',
+                    })
+                  }
+                  onDoubleClick={() =>
+                    openLightbox({ src: mediaUrl(take.filePath), kind: 'video', name: def.title })
+                  }
+                  className="h-full w-full object-cover"
+                />
+              ) : take.kind === 'audio' ? (
+                <div className="flex h-full w-full items-center px-3">
+                  <Waveform
+                    url={mediaUrl(takeWaveformPath(take.id))}
+                    className="h-1/2 w-full text-emerald-400"
+                  />
+                </div>
+              ) : (
+                <img
+                  src={mediaUrl(take.filePath)}
+                  alt=""
+                  onContextMenu={(e) =>
+                    onMediaContextMenu(e, {
+                      src: mediaUrl(take.filePath),
+                      name: def.title,
+                      kind: 'image',
+                    })
+                  }
+                  onDoubleClick={() =>
+                    openLightbox({ src: mediaUrl(take.filePath), kind: 'image', name: def.title })
+                  }
+                  className="h-full w-full object-cover"
+                />
+              )
+            ) : (
+              <div className="flex h-full w-full items-center justify-center px-4">
+                <span className="text-center text-[10px] text-zinc-600">
+                  {busy ? (status ?? 'Generating…') : (missing ?? 'Run to generate')}
+                </span>
+              </div>
+            )}
+
+            {busy && (
+              <>
+                {/* Live phase + progress (e.g. "Queued", "Generating 40%") — always visible, even
+                    over a previous take while re-generating. */}
+                <span className="absolute left-2 top-2 flex max-w-[calc(100%-1rem)] items-center gap-1 rounded-full bg-black/75 px-2 py-0.5 text-[10px] font-medium text-emerald-300 backdrop-blur">
+                  <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />
+                  <span className="truncate">
+                    {status ?? (pct != null ? `${pct}%` : 'Working…')}
+                  </span>
+                </span>
+                <div className="absolute inset-x-0 bottom-0 h-1 bg-black/40">
+                  <div
+                    className="h-full bg-emerald-400 transition-all"
+                    style={{ width: `${pct ?? 0}%` }}
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Multiple takes → a thumbnail strip; click one to make it the main preview. */}
+            {!busy && (
+              <ThumbStrip
+                items={ordered.map((t) => ({
+                  id: t.id,
+                  url: mediaUrl(t.filePath),
+                  kind: t.kind,
+                }))}
+                selected={safeTakeIdx}
+                onSelect={setTakeIdx}
+              />
+            )}
+          </div>
+
+          {/* Footer: model picker + run/stop + settings. */}
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface/90 px-1.5 py-1">
+            <ModelPicker
+              modelId={frame.modelId}
+              onSelect={(m) => void setModel(frameId, m)}
+              onShowInfo={openModelInfo}
+            />
+            <div className="flex shrink-0 items-center gap-0.5">
+              {/* Run / Stop — sits just before the settings (adjust) icon. */}
+              {busy ? (
+                <button
+                  onClick={() => void cancel(frameId)}
+                  title="Cancel generation"
+                  className="nodrag flex h-6 w-6 items-center justify-center rounded text-zinc-300 hover:bg-black/40 hover:text-white"
+                >
+                  <StopIcon />
+                </button>
+              ) : (
+                <button
+                  onClick={() => void run(frameId)}
+                  disabled={!!missing}
+                  title={missing ?? 'Generate this node'}
+                  className="nodrag flex h-6 w-6 items-center justify-center rounded text-emerald-400 hover:bg-black/40 hover:text-emerald-300 disabled:opacity-40"
+                >
+                  <PlayIcon />
+                </button>
+              )}
+              <button
+                onClick={() => toggleSettings(frameId)}
+                title="Settings"
+                data-gen-settings-toggle
+                className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:bg-black/40 hover:text-zinc-100"
+              >
+                <AdjustIcon />
+              </button>
+            </div>
+          </div>
+
+          {dropActive && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center border-2 border-dashed border-accent bg-accent/15 text-[11px] font-medium text-panel">
+              Add as input
+            </div>
+          )}
+        </div>
+      </NodeFrame>
+
+      {/* Input dots — hover reveals what to connect. Prompt (amber, text) is universal; media
+          (emerald, image/video) and audio (violet) appear only when the model declares that input.
+          Evenly spaced down the left edge. Output: indigo. */}
+      {inputDots.map((d, i) => (
+        <InputHandle
+          key={d.id}
+          id={d.id}
+          top={`${(((i + 1) / (inputDots.length + 1)) * 100).toFixed(2)}%`}
+          colorClass={d.colorClass}
+          icon={d.icon}
+          label={d.label}
+        />
+      ))}
+      <Handle
+        type="source"
+        id="out"
+        position={Position.Right}
+        className="!h-3 !w-3 !border-2 !border-surface !bg-indigo-400"
+      />
+    </>
+  )
+}

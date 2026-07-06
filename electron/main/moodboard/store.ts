@@ -15,7 +15,11 @@ import type {
 import type { MoodboardItemPatch } from '@shared/ipc'
 import { getDb } from '../db'
 import { importViaDialog } from '../assets/store'
-import { addFromAsset as createFrameFromAsset, createEmptyFrame } from '../frames/store'
+import {
+  addFromAsset as createFrameFromAsset,
+  createEmptyFrame,
+  createFalFrame,
+} from '../frames/store'
 
 const DEFAULT_SIZE: Record<'image' | 'video' | 'audio', { w: number; h: number }> = {
   image: { w: 320, h: 180 },
@@ -262,6 +266,34 @@ export function addEmptyFrame(x: number, y: number): MoodboardItem {
   return addFrameItem(frame.id, x, y)
 }
 
+/**
+ * Create a fal generation frame for `modelId` AND place its node on the canvas. It's a regular
+ * `type:'frame'` item (so it inherits the frame delete/flow-link machinery); the renderer renders
+ * it as a GenNode because its backing frame is `provider:'fal'`. Sized taller for param widgets.
+ */
+export function addGenNode(modelId: string, x: number, y: number): MoodboardItem {
+  const frame = createFalFrame(modelId)
+  const now = Date.now()
+  return insertItem({
+    id: randomUUID(),
+    projectId: projectId(),
+    type: 'frame',
+    assetId: null,
+    frameId: frame.id,
+    parentId: null,
+    data: {},
+    x,
+    y,
+    // Portrait by default — the output preview is the hero, params tuck underneath.
+    width: 240,
+    height: 380,
+    rotation: 0,
+    zIndex: nextZIndex(),
+    createdAt: now,
+    updatedAt: now,
+  })
+}
+
 /** Add a resizable layer group container (frames can be dropped inside it). */
 export function addLayer(x: number, y: number): MoodboardItem {
   const now = Date.now()
@@ -350,6 +382,58 @@ export function addTrim(x: number, y: number): MoodboardItem {
     createdAt: now,
     updatedAt: now,
   })
+}
+
+/** Add a text-prompt node: a textarea whose output feeds a Generate node's prompt input. */
+export function addPrompt(x: number, y: number): MoodboardItem {
+  const now = Date.now()
+  return insertItem({
+    id: randomUUID(),
+    projectId: projectId(),
+    type: 'prompt',
+    assetId: null,
+    frameId: null,
+    parentId: null,
+    data: { promptText: '' },
+    x,
+    y,
+    width: 240,
+    height: 120,
+    rotation: 0,
+    zIndex: nextZIndex(),
+    createdAt: now,
+    updatedAt: now,
+  })
+}
+
+/**
+ * The prompt text feeding a Generate frame — the text of a Prompt node wired into the frame's
+ * canvas node on the `prompt` handle. Null if nothing is connected. Used by the executor to inject
+ * the prompt at run time (the Prompt node is the single source of truth, not a copied param).
+ */
+export function promptTextForFrame(frameId: string): string | null {
+  const db = getDb()
+  const nodes = db
+    .prepare("SELECT id FROM moodboard_items WHERE frame_id = ? AND type = 'frame'")
+    .all(frameId) as Array<{ id: string }>
+  for (const node of nodes) {
+    const conns = db
+      .prepare('SELECT from_item_id, data FROM moodboard_connectors WHERE to_item_id = ?')
+      .all(node.id) as Array<{ from_item_id: string; data: string | null }>
+    for (const conn of conns) {
+      const cdata = (conn.data ? JSON.parse(conn.data) : {}) as { targetHandle?: string }
+      if (cdata.targetHandle !== 'prompt') continue
+      const src = db
+        .prepare("SELECT data FROM moodboard_items WHERE id = ? AND type = 'prompt'")
+        .get(conn.from_item_id) as { data: string | null } | undefined
+      if (!src) continue
+      const sdata = (src.data ? JSON.parse(src.data) : {}) as MoodboardItemData
+      if (typeof sdata.promptText === 'string' && sdata.promptText.trim().length > 0) {
+        return sdata.promptText
+      }
+    }
+  }
+  return null
 }
 
 export function updateItem(id: string, patch: MoodboardItemPatch): MoodboardItem {

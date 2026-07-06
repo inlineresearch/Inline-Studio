@@ -19,7 +19,6 @@ import {
   frameInputAssetPaths,
 } from '../frames/store'
 import { getCurrentProject } from '../project/store'
-import { recordWorkflowMemory } from './workflowMemory'
 
 function baseUrl(): string {
   return getSettings().comfyUrl.replace(/\/+$/, '')
@@ -54,10 +53,9 @@ export async function ping(): Promise<ComfyStatus> {
 }
 
 // ── Capability detection ──────────────────────────────────────────────────────
-// Claude authors much better workflows when it only references nodes and model files
-// that actually exist in THIS ComfyUI. `/object_info` is the source of truth: the full
-// node catalogue, with installed model filenames appearing as enum options on loader
-// widgets (ckpt_name, lora_name, vae_name, ...).
+// Seeded workflows must only reference nodes and model files that actually exist in THIS
+// ComfyUI. `/object_info` is the source of truth: the full node catalogue, with installed
+// model filenames appearing as enum options on loader widgets (ckpt_name, lora_name, vae_name, ...).
 
 /** A compact snapshot of what a ComfyUI install can do. */
 export interface ComfyCapabilities {
@@ -451,11 +449,7 @@ export async function pullWorkflowToProject(frameId: string): Promise<boolean> {
  * Ignores blank/non-workflow payloads. Returns the updated frame if anything changed,
  * else null.
  */
-export async function saveLiveWorkflow(
-  frameId: string,
-  workflow: unknown,
-  intent?: string,
-): Promise<Frame | null> {
+export async function saveLiveWorkflow(frameId: string, workflow: unknown): Promise<Frame | null> {
   const frame = getFrameById(frameId)
   if (!frame.comfyWorkflowName) return null
   if (!isMeaningfulWorkflow(workflow)) return null
@@ -476,36 +470,8 @@ export async function saveLiveWorkflow(
       // ignore — comfy momentarily unreachable; the project copy is already saved
     }
   }
-  if (becameReady) {
-    // The workflow just became built — remember it so Claude can recall/adapt it later.
-    const { nodeTypes, modelsUsed } = summarizeGraph(workflow)
-    recordWorkflowMemory({
-      intent: intent?.trim() || frame.name,
-      frameName: frame.name,
-      nodeTypes,
-      modelsUsed,
-      graph: workflow,
-    })
-    return setWorkflowReady(frameId, true)
-  }
+  if (becameReady) return setWorkflowReady(frameId, true)
   return getFrameById(frameId)
-}
-
-/** Distinct node types + model filenames in a graph, for usage memory. */
-function summarizeGraph(workflow: unknown): { nodeTypes: string[]; modelsUsed: string[] } {
-  const nodes = workflowNodes(workflow) ?? []
-  const types = new Set<string>()
-  const models = new Set<string>()
-  const isModelFile = /\.(safetensors|ckpt|pt|pth|bin|gguf|sft)$/i
-  for (const n of nodes) {
-    const t = (n as { type?: unknown }).type
-    if (typeof t === 'string') types.add(t)
-    const wv = (n as { widgets_values?: unknown }).widgets_values
-    if (Array.isArray(wv)) {
-      for (const v of wv) if (typeof v === 'string' && isModelFile.test(v)) models.add(v)
-    }
-  }
-  return { nodeTypes: [...types], modelsUsed: [...models] }
 }
 
 /** Push the project's copy of the frame's workflow to ComfyUI. */
