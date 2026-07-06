@@ -1,6 +1,6 @@
 import { mediaUrl, takeWaveformPath } from '@shared/media'
 import type { Take } from '@shared/types'
-import { setFrameDragPayload } from '../../lib/dnd'
+import { setFrameDragPayload, setOutputDragPayload } from '../../lib/dnd'
 import { useMediaContextMenu } from '../../lib/mediaContextMenu'
 import { VideoPreview } from '../../components/VideoPreview'
 import { AudioPreview } from '../../components/AudioPreview'
@@ -21,9 +21,14 @@ export function OutputThumb({
   return (
     <div
       draggable
-      onDragStart={(e) => setFrameDragPayload(e.dataTransfer, take.frameId)}
+      onDragStart={(e) => {
+        // Frame payload → drop on a node feeds it as input; output payload → drop on canvas
+        // creates a new frame fed by this output.
+        setFrameDragPayload(e.dataTransfer, take.frameId)
+        setOutputDragPayload(e.dataTransfer, take.frameId)
+      }}
       onContextMenu={(e) => onContextMenu(e, { src, name: frameName, kind: take.kind })}
-      title={`${frameName} — drag onto a generation node to use as its input`}
+      title={`${frameName} — drag onto a node to use as input, or onto the canvas to make a frame`}
       className="flex w-full cursor-grab flex-col overflow-hidden rounded-md border border-border hover:border-zinc-600"
     >
       <div className="flex aspect-video items-center justify-center bg-black/40">

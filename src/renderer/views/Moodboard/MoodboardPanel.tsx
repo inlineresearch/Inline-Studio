@@ -29,7 +29,7 @@ import { useFrameStore } from '../../store/frameStore'
 import { useGenerationStore } from '../../store/generationStore'
 import { useTimelineStore } from '../../store/timelineStore'
 import { useUiStore } from '../../store/uiStore'
-import { getAssetDragIds, getFrameDragId } from '../../lib/dnd'
+import { getAssetDragIds, getFrameDragId, getOutputDragId } from '../../lib/dnd'
 import { ImageNode } from './nodes/ImageNode'
 import { VideoNode } from './nodes/VideoNode'
 import { AudioNode } from './nodes/AudioNode'
@@ -645,6 +645,17 @@ function Board(): React.JSX.Element {
   const onDrop = (e: React.DragEvent): void => {
     e.preventDefault()
     const drop = screenToFlowPosition({ x: e.clientX, y: e.clientY })
+
+    // A generated output dragged from the Outputs tab → create a NEW frame at the drop, fed by
+    // that output (its producing frame's hero take), just like dropping a library asset.
+    const outputFrameId = getOutputDragId(e.dataTransfer)
+    if (outputFrameId) {
+      void (async () => {
+        const item = await addEmptyFrame(drop.x, drop.y)
+        if (item?.frameId) await addSourceInput(item.frameId, outputFrameId)
+      })()
+      return
+    }
 
     // A frame dragged from the Timeline tab → place its node on the canvas (skip if
     // it's already placed, to avoid two nodes pointing at the same frame).
