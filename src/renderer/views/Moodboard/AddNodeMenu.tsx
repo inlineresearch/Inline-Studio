@@ -1,37 +1,27 @@
 /**
  * The "Add node" popup opened from the toolbar's + button, or by double-clicking empty canvas in
- * Select mode. Lists every node type; the "Generate" row drills into the model list (grouped by
- * provider). Picking creates the node at the caller-supplied flow position. Positioning mirrors
- * MoodboardPanel's "Connect to…" menu (container-relative left/top).
+ * Select mode. Lists every node type. The single "Generate" row creates a unified generation frame
+ * (a chooser — Link a ComfyUI Workflow or Generate with Fal API — resolved on the node itself).
+ * Positioning mirrors MoodboardPanel's "Connect to…" menu (container-relative left/top).
  */
-import { useState } from 'react'
-import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
-export type AddNodeKind =
-  | 'frame'
-  | 'layer'
-  | 'preview'
-  | 'director'
-  | 'trim'
-  | 'generate'
-  | 'prompt'
+export type AddNodeKind = 'frame' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
 
 interface Entry {
   kind: AddNodeKind
   label: string
   icon: React.JSX.Element
-  /** Accent the row (Generate is the AI action). */
+  /** Accent the row (the generation node is the AI action). */
   accent?: boolean
 }
 
 const ENTRIES: Entry[] = [
-  { kind: 'frame', label: 'Frame', icon: <FrameIcon /> },
+  { kind: 'frame', label: 'Generate', icon: <SparklesIcon />, accent: true },
   { kind: 'layer', label: 'Layer', icon: <LayerIcon /> },
   { kind: 'preview', label: 'Preview', icon: <ImageIcon /> },
   { kind: 'director', label: 'Video Director', icon: <ClapperboardIcon /> },
   { kind: 'trim', label: 'Edit Video/Audio', icon: <ScissorsIcon /> },
-  { kind: 'generate', label: 'Generate', icon: <SparklesIcon />, accent: true },
   { kind: 'prompt', label: 'Prompt', icon: <PromptIcon /> },
 ]
 
@@ -40,7 +30,6 @@ export function AddNodeMenu({
   y,
   above = false,
   onPick,
-  onPickModel,
   onClose,
 }: {
   /** Container-relative anchor point (px). */
@@ -49,11 +38,8 @@ export function AddNodeMenu({
   /** When true the menu is centered on x and grows upward from y (used by the toolbar button). */
   above?: boolean
   onPick: (kind: AddNodeKind) => void
-  /** Create a Generate node with a specific model id. */
-  onPickModel: (modelId: string) => void
   onClose: () => void
 }): React.JSX.Element {
-  const [view, setView] = useState<'root' | 'models'>('root')
   return (
     <>
       <div className="absolute inset-0 z-20" onClick={onClose} />
@@ -63,82 +49,27 @@ export function AddNodeMenu({
         }`}
         style={{ left: x, top: y }}
       >
-        {view === 'root' ? (
-          <>
-            <div className="border-b border-border px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-              Add node
-            </div>
-            {ENTRIES.map((e) =>
-              e.kind === 'generate' ? (
-                <button
-                  key={e.kind}
-                  onClick={() => setView('models')}
-                  className="flex items-center gap-2 px-2.5 py-1.5 text-left text-emerald-300 hover:bg-surface"
-                >
-                  <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                    {e.icon}
-                  </span>
-                  <span className="flex-1">{e.label}</span>
-                  <ChevronRightIcon />
-                </button>
-              ) : (
-                <button
-                  key={e.kind}
-                  onClick={() => onPick(e.kind)}
-                  className="flex items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
-                >
-                  <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                    {e.icon}
-                  </span>
-                  {e.label}
-                </button>
-              ),
-            )}
-          </>
-        ) : (
-          <>
-            <button
-              onClick={() => setView('root')}
-              className="flex items-center gap-1 border-b border-border px-2 py-1 text-left text-[10px] uppercase tracking-wide text-zinc-500 hover:text-zinc-300"
-            >
-              <ChevronLeftIcon /> Generate
-            </button>
-            <div className="max-h-72 overflow-y-auto py-0.5">
-              {groupByOwner(listNodeDefs()).map((group) => (
-                <div key={group.owner}>
-                  <div className="px-2.5 pb-0.5 pt-1.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-500">
-                    {group.label}
-                  </div>
-                  {group.defs.map((d) => (
-                    <button
-                      key={d.id}
-                      onClick={() => onPickModel(d.id)}
-                      className="flex w-full flex-col items-start px-2.5 py-1.5 text-left hover:bg-surface"
-                    >
-                      <span className="w-full truncate text-[11px] text-zinc-100">{d.title}</span>
-                      <span className="text-[10px] text-zinc-500">{d.category}</span>
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
+        <div className="border-b border-border px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+          Add node
+        </div>
+        {ENTRIES.map((e) => (
+          <button
+            key={e.kind}
+            onClick={() => onPick(e.kind)}
+            className={`flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-surface ${
+              e.accent ? 'text-emerald-300' : 'text-zinc-200'
+            }`}
+          >
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center">{e.icon}</span>
+            {e.label}
+          </button>
+        ))}
       </div>
     </>
   )
 }
 
 // ── Node icons (moved here from CanvasToolbar, which no longer shows per-node buttons) ──
-
-function FrameIcon(): React.JSX.Element {
-  return (
-    <Svg>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <path d="M3 9h18M3 15h18M9 4v16" />
-    </Svg>
-  )
-}
 
 function LayerIcon(): React.JSX.Element {
   return (
@@ -198,38 +129,6 @@ function PromptIcon(): React.JSX.Element {
       <path d="M4 5h16M4 5v14M4 12h10" />
       <path d="M15 19l2 2 4-4" />
     </Svg>
-  )
-}
-
-function ChevronRightIcon(): React.JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-3 w-3 shrink-0 text-zinc-500"
-    >
-      <path d="m9 18 6-6-6-6" />
-    </svg>
-  )
-}
-
-function ChevronLeftIcon(): React.JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-3 w-3 shrink-0"
-    >
-      <path d="m15 18-6-6 6-6" />
-    </svg>
   )
 }
 

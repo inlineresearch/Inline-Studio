@@ -79,13 +79,16 @@ export const IpcChannels = {
     heroTakes: 'frames:heroTakes',
     listInputs: 'frames:listInputs',
     addInput: 'frames:addInput',
+    addInputs: 'frames:addInputs',
     addSourceInput: 'frames:addSourceInput',
     removeInput: 'frames:removeInput',
+    removeInputById: 'frames:removeInputById',
     reorderInputs: 'frames:reorderInputs',
     listAllTakes: 'frames:listAllTakes',
     deleteTake: 'frames:deleteTake',
     setFalParams: 'frames:setFalParams',
     setModel: 'frames:setModel',
+    setProvider: 'frames:setProvider',
   },
   generation: {
     /** Run a fal frame and its upstream chain (topologically). Streams progress via events. */
@@ -275,10 +278,14 @@ export interface InlineStudioApi {
     listInputs(): Promise<Result<FrameInput[]>>
     /** Append a library asset as an input of the frame. */
     addInput(frameId: string, assetId: string): Promise<Result<FrameInput>>
+    /** Append several library assets as inputs at once (atomic; skips duplicates). */
+    addInputs(frameId: string, assetIds: string[]): Promise<Result<FrameInput[]>>
     /** Link another frame's output as an input (resolves to its hero take). */
     addSourceInput(frameId: string, sourceFrameId: string): Promise<Result<FrameInput>>
-    /** Remove an input; refused if it's the frame's last input. */
+    /** Remove an input by its library asset id (Frame Inspector). */
     removeInput(frameId: string, assetId: string): Promise<Result<void>>
+    /** Remove one input by its row id — works for asset AND flow-link inputs. */
+    removeInputById(frameId: string, inputId: string): Promise<Result<void>>
     /** Persist a new input ordering for the frame. */
     reorderInputs(frameId: string, orderedAssetIds: string[]): Promise<Result<void>>
     /** All takes across the project (group by frameId in the renderer). */
@@ -289,6 +296,15 @@ export interface InlineStudioApi {
     setFalParams(frameId: string, params: Record<string, unknown>): Promise<Result<Frame>>
     /** Switch a fal frame to a different model (resets params + output kind). Returns the frame. */
     setModel(frameId: string, modelId: string): Promise<Result<Frame>>
+    /**
+     * Resolve an `unset` chooser frame to an engine: `comfy` (embedded ComfyUI) or `fal` (a
+     * declarative model — `modelId` defaults to the first registered model). Returns the frame.
+     */
+    setProvider(
+      frameId: string,
+      provider: 'comfy' | 'fal',
+      modelId?: string,
+    ): Promise<Result<Frame>>
   }
   generation: {
     /** Run a fal frame + its upstream chain. Resolves immediately; progress arrives via events. */

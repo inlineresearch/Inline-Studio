@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { existsSync, unlinkSync, mkdirSync, copyFileSync } from 'node:fs'
 import type { Frame, Take, FrameInput, FrameKind, AssetKind } from '@shared/types'
-import { getNodeDef } from '@shared/nodes/registry'
+import { getNodeDef, listNodeDefs } from '@shared/nodes/registry'
 import { defaultParams } from '@shared/nodes/types'
 import { takeWaveformPath } from '@shared/media'
 import { getDb, getOpenProjectFolder } from '../db'
@@ -61,7 +61,7 @@ function rowToFrame(row: FrameRow): Frame {
     position: row.position,
     inputAssetId: row.input_asset_id,
     heroTakeId: row.hero_take_id,
-    provider: row.provider === 'fal' ? 'fal' : 'comfy',
+    provider: row.provider === 'fal' ? 'fal' : row.provider === 'unset' ? 'unset' : 'comfy',
     modelId: row.model_id,
     params: parseParams(row.params),
     workflowTemplateId: row.workflow_template_id,
@@ -146,7 +146,8 @@ function createFrame(asset: { id: string; kind: AssetKind }): Frame {
     db.prepare('SELECT COUNT(*) AS n FROM frames WHERE sequence_id = ?').get(seqId) as { n: number }
   ).n
   const now = Date.now()
-  // Bound params (no comfy_workflow_ready: it defaults to 0 in the schema).
+  // Bound params (no comfy_workflow_ready: it defaults to 0 in the schema). New frames start
+  // `unset` — a chooser node the user resolves to ComfyUI or fal (see setProvider).
   const frame = {
     id: randomUUID(),
     sequenceId: seqId,
@@ -155,6 +156,7 @@ function createFrame(asset: { id: string; kind: AssetKind }): Frame {
     position: count,
     inputAssetId: asset.id,
     heroTakeId: null,
+    provider: 'unset',
     workflowTemplateId: null,
     comfyWorkflowName: null,
     createdAt: now,
@@ -162,8 +164,8 @@ function createFrame(asset: { id: string; kind: AssetKind }): Frame {
   }
   db.prepare(
     `INSERT INTO frames
-       (id, sequence_id, name, kind, position, input_asset_id, hero_take_id, workflow_template_id, comfy_workflow_name, created_at, updated_at)
-     VALUES (@id, @sequenceId, @name, @kind, @position, @inputAssetId, @heroTakeId, @workflowTemplateId, @comfyWorkflowName, @createdAt, @updatedAt)`,
+       (id, sequence_id, name, kind, position, input_asset_id, hero_take_id, provider, workflow_template_id, comfy_workflow_name, created_at, updated_at)
+     VALUES (@id, @sequenceId, @name, @kind, @position, @inputAssetId, @heroTakeId, @provider, @workflowTemplateId, @comfyWorkflowName, @createdAt, @updatedAt)`,
   ).run(frame)
   // Every frame starts with exactly one input (the asset it was created from).
   db.prepare('INSERT INTO frame_inputs (id, frame_id, asset_id, position) VALUES (?, ?, ?, 0)').run(
@@ -171,7 +173,7 @@ function createFrame(asset: { id: string; kind: AssetKind }): Frame {
     frame.id,
     asset.id,
   )
-  return { ...frame, provider: 'comfy', modelId: null, params: {}, comfyWorkflowReady: false }
+  return { ...frame, provider: 'unset', modelId: null, params: {}, comfyWorkflowReady: false }
 }
 
 function assetById(id: string): { id: string; kind: AssetKind } {
@@ -194,7 +196,8 @@ export function createEmptyFrame(): Frame {
     db.prepare('SELECT COUNT(*) AS n FROM frames WHERE sequence_id = ?').get(seqId) as { n: number }
   ).n
   const now = Date.now()
-  // Bound params (no comfy_workflow_ready: it defaults to 0 in the schema).
+  // Bound params (no comfy_workflow_ready: it defaults to 0 in the schema). Starts `unset` — a
+  // chooser node the user resolves to ComfyUI or fal (see setProvider).
   const frame = {
     id: randomUUID(),
     sequenceId: seqId,
@@ -203,6 +206,7 @@ export function createEmptyFrame(): Frame {
     position: count,
     inputAssetId: null,
     heroTakeId: null,
+    provider: 'unset',
     workflowTemplateId: null,
     comfyWorkflowName: null,
     createdAt: now,
@@ -210,10 +214,10 @@ export function createEmptyFrame(): Frame {
   }
   db.prepare(
     `INSERT INTO frames
-       (id, sequence_id, name, kind, position, input_asset_id, hero_take_id, workflow_template_id, comfy_workflow_name, created_at, updated_at)
-     VALUES (@id, @sequenceId, @name, @kind, @position, @inputAssetId, @heroTakeId, @workflowTemplateId, @comfyWorkflowName, @createdAt, @updatedAt)`,
+       (id, sequence_id, name, kind, position, input_asset_id, hero_take_id, provider, workflow_template_id, comfy_workflow_name, created_at, updated_at)
+     VALUES (@id, @sequenceId, @name, @kind, @position, @inputAssetId, @heroTakeId, @provider, @workflowTemplateId, @comfyWorkflowName, @createdAt, @updatedAt)`,
   ).run(frame)
-  return { ...frame, provider: 'comfy', modelId: null, params: {}, comfyWorkflowReady: false }
+  return { ...frame, provider: 'unset', modelId: null, params: {}, comfyWorkflowReady: false }
 }
 
 /**
@@ -275,6 +279,30 @@ export function setModel(frameId: string, modelId: string): Frame {
   return getFrame(frameId)
 }
 
+/**
+ * Resolve an `unset` chooser frame to a generation engine (or switch an existing frame).
+ * `fal` seeds the given model's defaults (params + output kind), like createFalFrame but on an
+ * existing frame; `comfy` clears any fal model and keeps the frame's kind. Keeps inputs + takes.
+ */
+export function setProvider(frameId: string, provider: 'comfy' | 'fal', modelId?: string): Frame {
+  getFrame(frameId)
+  const db = getDb()
+  const now = Date.now()
+  if (provider === 'fal') {
+    const id = modelId ?? listNodeDefs()[0]?.id
+    const def = id ? getNodeDef(id) : undefined
+    if (!def) throw new Error('No generation model is available.')
+    db.prepare(
+      'UPDATE frames SET provider = ?, model_id = ?, params = ?, kind = ?, updated_at = ? WHERE id = ?',
+    ).run('fal', def.id, JSON.stringify(defaultParams(def)), def.outputKind, now, frameId)
+  } else {
+    db.prepare(
+      "UPDATE frames SET provider = 'comfy', model_id = NULL, updated_at = ? WHERE id = ?",
+    ).run(now, frameId)
+  }
+  return getFrame(frameId)
+}
+
 /** Persist a fal frame's param values (from the GenNode widgets). Returns the updated frame. */
 export function setFalParams(frameId: string, params: Record<string, unknown>): Frame {
   getFrame(frameId)
@@ -286,7 +314,7 @@ export function setFalParams(frameId: string, params: Record<string, unknown>): 
 
 /** The fal generation fields of a frame — used by the executor. */
 export function getFalFrame(frameId: string): {
-  provider: 'comfy' | 'fal'
+  provider: 'comfy' | 'fal' | 'unset'
   modelId: string | null
   params: Record<string, unknown>
 } {
@@ -320,60 +348,22 @@ export function addSourceInput(frameId: string, sourceFrameId: string): FrameInp
   return input
 }
 
+const basename = (p: string): string => p.split('/').pop() ?? p
+
 /**
- * A frame's first input asset (the imported source it was created from), resolved to a
- * file + kind. This is a frame's output when it has no takes yet — an imported frame
- * doesn't need a workflow; it passes its own asset through until it's generated.
+ * Resolve a frame's output file to feed downstream (director timeline) or upload to ComfyUI:
+ * its hero take, else its newest take, else — when it has never been generated — its first
+ * input, following a flow link (`source_frame_id`) up the chain to a real asset/take. So a
+ * frame fed only by another frame's output still resolves to a file even before that source has
+ * generated (as long as SOME upstream asset/take exists). Returns the relative path + kind +
+ * basename, or null when nothing resolves. `seen` guards against cyclic flow links.
  */
-function firstInputAsset(
+function resolveFrameFile(
   frameId: string,
+  seen: Set<string> = new Set(),
 ): { filePath: string; kind: AssetKind; name: string } | null {
-  const db = getDb()
-  for (const row of frameInputRows(frameId)) {
-    if (!row.asset_id) continue
-    const a = db.prepare('SELECT file_path, kind FROM assets WHERE id = ?').get(row.asset_id) as
-      | { file_path: string; kind: AssetKind }
-      | undefined
-    if (a)
-      return {
-        filePath: a.file_path,
-        kind: a.kind,
-        name: a.file_path.split('/').pop() ?? a.file_path,
-      }
-  }
-  return null
-}
-
-/**
- * The file path + basename of a frame's output to feed downstream — the hero take, the
- * newest take, or (when the frame has never been generated) its imported input asset.
- * Null only if the frame has neither a take nor an asset input.
- */
-function heroTakeFile(frameId: string): { filePath: string; name: string } | null {
-  const db = getDb()
-  const fr = db.prepare('SELECT hero_take_id FROM frames WHERE id = ?').get(frameId) as
-    | { hero_take_id: string | null }
-    | undefined
-  let tk = fr?.hero_take_id
-    ? (db.prepare('SELECT file_path FROM takes WHERE id = ?').get(fr.hero_take_id) as
-        | { file_path: string }
-        | undefined)
-    : undefined
-  if (!tk) {
-    tk = db
-      .prepare('SELECT file_path FROM takes WHERE frame_id = ? ORDER BY created_at DESC LIMIT 1')
-      .get(frameId) as { file_path: string } | undefined
-  }
-  if (tk) return { filePath: tk.file_path, name: tk.file_path.split('/').pop() ?? tk.file_path }
-  const input = firstInputAsset(frameId)
-  return input ? { filePath: input.filePath, name: input.name } : null
-}
-
-/**
- * Resolve a frame's output (hero take, else newest take, else its imported input asset)
- * to a relative path + kind, for the director timeline.
- */
-export function resolveFrameOutput(frameId: string): { filePath: string; kind: AssetKind } | null {
+  if (seen.has(frameId)) return null
+  seen.add(frameId)
   const db = getDb()
   const fr = db.prepare('SELECT hero_take_id FROM frames WHERE id = ?').get(frameId) as
     | { hero_take_id: string | null }
@@ -390,9 +380,39 @@ export function resolveFrameOutput(frameId: string): { filePath: string; kind: A
       )
       .get(frameId) as { file_path: string; kind: AssetKind } | undefined
   }
-  if (tk) return { filePath: tk.file_path, kind: tk.kind }
-  const input = firstInputAsset(frameId)
-  return input ? { filePath: input.filePath, kind: input.kind } : null
+  if (tk) return { filePath: tk.file_path, kind: tk.kind, name: basename(tk.file_path) }
+  // Never generated: resolve the first input — an imported asset directly, or an upstream frame's
+  // output followed up the flow chain (so a linked input still uploads before its source has run).
+  for (const row of frameInputRows(frameId)) {
+    if (row.asset_id) {
+      const a = db.prepare('SELECT file_path, kind FROM assets WHERE id = ?').get(row.asset_id) as
+        | { file_path: string; kind: AssetKind }
+        | undefined
+      if (a) return { filePath: a.file_path, kind: a.kind, name: basename(a.file_path) }
+    } else if (row.source_frame_id) {
+      const up = resolveFrameFile(row.source_frame_id, seen)
+      if (up) return up
+    }
+  }
+  return null
+}
+
+/**
+ * The file path + basename of a frame's output to feed downstream — the hero take, the newest
+ * take, or (when never generated) its first resolvable input (asset or upstream flow link).
+ */
+function heroTakeFile(frameId: string): { filePath: string; name: string } | null {
+  const f = resolveFrameFile(frameId)
+  return f ? { filePath: f.filePath, name: f.name } : null
+}
+
+/**
+ * Resolve a frame's output (hero take, else newest take, else its first resolvable input,
+ * following flow links) to a relative path + kind, for the director timeline.
+ */
+export function resolveFrameOutput(frameId: string): { filePath: string; kind: AssetKind } | null {
+  const f = resolveFrameFile(frameId)
+  return f ? { filePath: f.filePath, kind: f.kind } : null
 }
 
 export async function importAsFrames(): Promise<Frame[]> {
@@ -479,12 +499,49 @@ export function addInput(frameId: string, assetId: string): FrameInput {
   return input
 }
 
+/**
+ * Append several library assets as inputs in a single transaction (skips already-present ones),
+ * assigning sequential positions. One atomic call avoids the position race when the renderer used
+ * to fire per-asset `addInput`s in parallel. Returns the rows actually inserted, in order.
+ */
+export function addInputs(frameId: string, assetIds: string[]): FrameInput[] {
+  getFrame(frameId)
+  const db = getDb()
+  const added: FrameInput[] = []
+  const ins = db.prepare(
+    'INSERT INTO frame_inputs (id, frame_id, asset_id, position) VALUES (?, ?, ?, ?)',
+  )
+  db.transaction(() => {
+    const existing = frameInputRows(frameId)
+    const have = new Set(existing.map((r) => r.asset_id).filter((x): x is string => !!x))
+    let pos = existing.length
+    for (const assetId of assetIds) {
+      if (have.has(assetId)) continue
+      have.add(assetId)
+      const input: FrameInput = {
+        id: randomUUID(),
+        frameId,
+        assetId,
+        sourceFrameId: null,
+        position: pos++,
+      }
+      ins.run(input.id, frameId, assetId, input.position)
+      added.push(input)
+    }
+  })()
+  return added
+}
+
+/** Remove an input by its library asset id (kept for the Frame Inspector). Allows removing all. */
 export function removeInput(frameId: string, assetId: string): void {
-  const rows = frameInputRows(frameId)
-  if (rows.length <= 1) throw new Error('A frame must keep at least one input.')
   getDb()
     .prepare('DELETE FROM frame_inputs WHERE frame_id = ? AND asset_id = ?')
     .run(frameId, assetId)
+}
+
+/** Remove one input by its row id — works for asset inputs AND flow (`source_frame_id`) links. */
+export function removeInputById(frameId: string, inputId: string): void {
+  getDb().prepare('DELETE FROM frame_inputs WHERE frame_id = ? AND id = ?').run(frameId, inputId)
 }
 
 export function reorderInputs(frameId: string, orderedAssetIds: string[]): void {
@@ -687,6 +744,9 @@ export function cloneFrame(frameId: string): Frame {
     position: count,
     inputAssetId: src.inputAssetId,
     heroTakeId: null,
+    provider: src.provider,
+    modelId: src.modelId,
+    params: JSON.stringify(src.params ?? {}),
     workflowTemplateId: src.workflowTemplateId,
     comfyWorkflowName: null,
     createdAt: now,
@@ -695,8 +755,8 @@ export function cloneFrame(frameId: string): Frame {
   const tx = db.transaction(() => {
     db.prepare(
       `INSERT INTO frames
-         (id, sequence_id, name, kind, position, input_asset_id, hero_take_id, workflow_template_id, comfy_workflow_name, created_at, updated_at)
-       VALUES (@id, @sequenceId, @name, @kind, @position, @inputAssetId, @heroTakeId, @workflowTemplateId, @comfyWorkflowName, @createdAt, @updatedAt)`,
+         (id, sequence_id, name, kind, position, input_asset_id, hero_take_id, provider, model_id, params, workflow_template_id, comfy_workflow_name, created_at, updated_at)
+       VALUES (@id, @sequenceId, @name, @kind, @position, @inputAssetId, @heroTakeId, @provider, @modelId, @params, @workflowTemplateId, @comfyWorkflowName, @createdAt, @updatedAt)`,
     ).run(clone)
     const inputs = db
       .prepare('SELECT asset_id, source_frame_id, position FROM frame_inputs WHERE frame_id = ?')
@@ -722,5 +782,5 @@ export function cloneFrame(frameId: string): Frame {
       copyFileSync(srcWf, join(folder, 'workflows', `${clone.id}.json`))
     }
   }
-  return { ...clone, provider: 'comfy', modelId: null, params: {}, comfyWorkflowReady: false }
+  return getFrame(clone.id)
 }

@@ -12,6 +12,8 @@ import type { Project } from '@shared/types'
 import { openProjectDb, getDb } from '../db'
 import { recordRecent } from './recents'
 import { backfillVideoAssets, backfillAudioAssets, backfillImageAssets } from '../assets/store'
+import { createEmptyFrame } from '../frames/store'
+import { addFrameItem } from '../moodboard/store'
 
 /** Extension for newly-created projects. */
 const PROJECT_EXT = '.inlinestudio'
@@ -74,6 +76,11 @@ export function createProject(input: { name: string; parentDir: string }): Proje
     now,
     now,
   )
+
+  // Start every project with one empty chooser node on the canvas, so the user lands on the
+  // "Link a ComfyUI Workflow / Generate with Fal" prompt instead of a blank board.
+  const frame = createEmptyFrame()
+  addFrameItem(frame.id, 80, 80)
 
   const project: Project = { id, name: input.name, path: folder, createdAt: now, updatedAt: now }
   currentProject = project

@@ -4,6 +4,7 @@ import { mediaUrl, takeWaveformPath } from '@shared/media'
 import { getNodeDef } from '@shared/nodes/registry'
 import { formatPrice } from '@shared/nodes/types'
 import { useFrameStore } from '../../../store/frameStore'
+import { useAssetStore } from '../../../store/assetStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useGenerationStore } from '../../../store/generationStore'
 import { useLightboxStore } from '../../../store/lightboxStore'
@@ -14,6 +15,7 @@ import { Waveform } from '../../../components/Waveform'
 import { NodeFrame } from './NodeFrame'
 import { AudioGlyph, ImageGlyph, NodeBadge, NodeBadgeRow, VideoGlyph } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
+import { resolveInputThumbs } from './inputThumbs'
 import { ModelPicker } from '../ModelPicker'
 
 interface GenNodeData extends Record<string, unknown> {
@@ -121,6 +123,11 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
   const inputs = useFrameStore((s) => s.inputsByFrame[frameId]) ?? []
   const addInputs = useFrameStore((s) => s.addInputs)
   const addSourceInput = useFrameStore((s) => s.addSourceInput)
+  const removeInputById = useFrameStore((s) => s.removeInputById)
+  const allFrames = useFrameStore((s) => s.frames)
+  const takesByFrame = useFrameStore((s) => s.takesByFrame)
+  const inputsByFrame = useFrameStore((s) => s.inputsByFrame)
+  const assets = useAssetStore((s) => s.assets)
   const connectors = useMoodboardStore((s) => s.connectors)
   const run = useGenerationStore((s) => s.run)
   const cancel = useGenerationStore((s) => s.cancel)
@@ -156,6 +163,9 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
   }
   const safeTakeIdx = ordered.length ? Math.min(takeIdx, ordered.length - 1) : 0
   const take = ordered.length ? ordered[safeTakeIdx] : undefined
+  // The node's wired/dropped inputs, resolved to thumbnails (same as the Frame node). Shown as a
+  // strip at the top so dropping several images one-by-one visibly accumulates and each is removable.
+  const inputThumbs = resolveInputThumbs(inputs, { assets, allFrames, takesByFrame, inputsByFrame })
   // Input dots are driven by the model's API: each only shows when the model actually takes that
   // kind of input. The media dot is typed to match (image vs video); audio gets its own dot.
   const imageInput = def.inputs.some((p) => p.kind === 'image' || p.kind === 'image[]')
@@ -251,7 +261,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
           <NodeBadge
             tone="info"
             accent="text-emerald-300"
-            title="Estimated cost per generation — fal pricing; actual may vary with output size"
+            tooltip="Rough estimate only — the actual generation cost can differ with resolution, output size and options. Check fal.ai's pricing page for accurate, up-to-date rates."
           >
             {formatPrice(price)}
           </NodeBadge>
@@ -274,6 +284,17 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
         >
           {/* Edge-to-edge output preview. */}
           <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
+            {/* Input thumbnails (top) — dropped/wired inputs; hover an item to remove it. */}
+            <ThumbStrip
+              items={inputThumbs.map((t) => ({
+                id: t.id,
+                url: t.url,
+                kind: t.kind,
+                poster: t.poster,
+              }))}
+              onRemove={(i) => void removeInputById(frameId, inputThumbs[i].id)}
+              edge="top"
+            />
             {take ? (
               take.kind === 'video' ? (
                 <VideoPreview

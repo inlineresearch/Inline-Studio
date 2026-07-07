@@ -21,6 +21,7 @@ export function NodeFrame({
   padded = true,
   transparent = false,
   subtleSelect = false,
+  overflowVisible = false,
   onResizeStart,
   onResize,
   onResizeEnd,
@@ -35,6 +36,8 @@ export function NodeFrame({
   transparent?: boolean
   /** Use a soft light-grey selection outline instead of the loud accent (for media-heavy nodes). */
   subtleSelect?: boolean
+  /** Let content overflow the card (e.g. a dropdown that spills past the frame). Off by default. */
+  overflowVisible?: boolean
   /** Resize hooks. When `onResizeEnd` is given it replaces the default width/height persist. */
   onResizeStart?: (size: ResizeSize) => void
   onResize?: (size: ResizeSize) => void
@@ -65,7 +68,9 @@ export function NodeFrame({
           else void updateItem(id, size)
         }}
       />
-      <div className={`h-full w-full overflow-hidden rounded-md ${box} ${padded ? 'p-1' : ''}`}>
+      <div
+        className={`h-full w-full rounded-md ${overflowVisible ? 'overflow-visible' : 'overflow-hidden'} ${box} ${padded ? 'p-1' : ''}`}
+      >
         {children}
       </div>
       {selected && (

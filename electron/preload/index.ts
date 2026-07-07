@@ -70,10 +70,14 @@ const api: InlineStudioApi = {
     listInputs: () => ipcRenderer.invoke(IpcChannels.frames.listInputs),
     addInput: (frameId: string, assetId: string) =>
       ipcRenderer.invoke(IpcChannels.frames.addInput, frameId, assetId),
+    addInputs: (frameId: string, assetIds: string[]) =>
+      ipcRenderer.invoke(IpcChannels.frames.addInputs, frameId, assetIds),
     addSourceInput: (frameId: string, sourceFrameId: string) =>
       ipcRenderer.invoke(IpcChannels.frames.addSourceInput, frameId, sourceFrameId),
     removeInput: (frameId: string, assetId: string) =>
       ipcRenderer.invoke(IpcChannels.frames.removeInput, frameId, assetId),
+    removeInputById: (frameId: string, inputId: string) =>
+      ipcRenderer.invoke(IpcChannels.frames.removeInputById, frameId, inputId),
     reorderInputs: (frameId: string, orderedAssetIds: string[]) =>
       ipcRenderer.invoke(IpcChannels.frames.reorderInputs, frameId, orderedAssetIds),
     listAllTakes: () => ipcRenderer.invoke(IpcChannels.frames.listAllTakes),
@@ -82,6 +86,8 @@ const api: InlineStudioApi = {
       ipcRenderer.invoke(IpcChannels.frames.setFalParams, frameId, params),
     setModel: (frameId: string, modelId: string) =>
       ipcRenderer.invoke(IpcChannels.frames.setModel, frameId, modelId),
+    setProvider: (frameId: string, provider: 'comfy' | 'fal', modelId?: string) =>
+      ipcRenderer.invoke(IpcChannels.frames.setProvider, frameId, provider, modelId),
   },
   generation: {
     run: (frameId: string) => ipcRenderer.invoke(IpcChannels.generation.run, frameId),

@@ -1,11 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { mediaUrl, takeWaveformPath } from '@shared/media'
 import { useFrameStore } from '../../../store/frameStore'
 import { useAssetStore } from '../../../store/assetStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useUiStore } from '../../../store/uiStore'
-import { getAssetDragIds } from '../../../lib/dnd'
+import { getAssetDragIds, getFrameDragId, ASSET_DND_TYPE, FRAME_DND_TYPE } from '../../../lib/dnd'
 import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
 import { useLightboxStore } from '../../../store/lightboxStore'
 import { requireComfyConnected } from '../../../lib/requireComfyConnected'
@@ -14,23 +13,10 @@ import { Waveform } from '../../../components/Waveform'
 import { NodeFrame } from './NodeFrame'
 import { FilmIcon, LinkIcon, NodeBadge, NodeBadgeRow, StarIcon } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
+import { resolveInputThumbs } from './inputThumbs'
 
 interface FrameNodeData extends Record<string, unknown> {
   frameId: string
-}
-
-/** A resolved carousel thumbnail (from an asset input or a flow/source-frame input). */
-type Thumb = {
-  id: string
-  assetId: string | null
-  url: string
-  /** The original media to save on right-click (not the transcoded video preview). */
-  saveSrc: string
-  kind: 'image' | 'video' | 'audio'
-  /** Poster image for a video, so it renders even when the codec can't be decoded. */
-  poster?: string
-  /** Waveform peaks JSON URL, for audio inputs/takes. */
-  waveform?: string
 }
 
 // Bounds for the media body when fitting to a media's aspect ratio — keeps very
@@ -53,6 +39,8 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const uploadInputs = useFrameStore((s) => s.uploadInputs)
   const reorderInputs = useFrameStore((s) => s.reorderInputs)
   const addInputs = useFrameStore((s) => s.addInputs)
+  const addSourceInput = useFrameStore((s) => s.addSourceInput)
+  const removeInputById = useFrameStore((s) => s.removeInputById)
   const allFrames = useFrameStore((s) => s.frames)
   const takesByFrame = useFrameStore((s) => s.takesByFrame)
   const inputsByFrame = useFrameStore((s) => s.inputsByFrame)
@@ -75,69 +63,9 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // the height update on every render, which would loop and freeze the canvas.
   const lastFit = useRef<string>('')
 
-  // Resolve each input to a thumbnail: asset inputs → their media; flow inputs
-  // (sourceFrameId from a connected Preview) → that frame's hero take.
-  const thumbs = inputs
-    .map((i): Thumb | null => {
-      if (i.assetId) {
-        const a = assets.find((x) => x.id === i.assetId)
-        if (!a) return null
-        return {
-          id: i.id,
-          assetId: a.id,
-          // Images use their downscaled thumbnail; video prefers the playable transcode
-          // (the poster covers undecodable codecs).
-          url: mediaUrl(
-            a.kind === 'image' ? (a.thumbPath ?? a.filePath) : (a.previewPath ?? a.filePath),
-          ),
-          // Save the original file, not the transcoded preview.
-          saveSrc: mediaUrl(a.filePath),
-          kind: a.kind,
-          poster: a.kind === 'video' && a.thumbPath ? mediaUrl(a.thumbPath) : undefined,
-          waveform: a.kind === 'audio' && a.thumbPath ? mediaUrl(a.thumbPath) : undefined,
-        }
-      }
-      if (i.sourceFrameId) {
-        const sf = allFrames.find((f) => f.id === i.sourceFrameId)
-        const takes = sf ? (takesByFrame[sf.id] ?? []) : []
-        // Mirror the Preview: the hero take, or the newest when no hero is set.
-        const take = takes.find((t) => t.id === sf?.heroTakeId) ?? takes[0]
-        if (take) {
-          return {
-            id: i.id,
-            assetId: null,
-            url: mediaUrl(take.filePath),
-            saveSrc: mediaUrl(take.filePath),
-            kind: take.kind,
-            waveform: take.kind === 'audio' ? mediaUrl(takeWaveformPath(take.id)) : undefined,
-          }
-        }
-        // No take yet — fall back to the source frame's imported input asset.
-        const srcInput = sf ? (inputsByFrame[sf.id] ?? []).find((x) => x.assetId) : undefined
-        const srcAsset = srcInput?.assetId
-          ? assets.find((a) => a.id === srcInput.assetId)
-          : undefined
-        return srcAsset
-          ? {
-              id: i.id,
-              assetId: null,
-              url: mediaUrl(srcAsset.previewPath ?? srcAsset.filePath),
-              saveSrc: mediaUrl(srcAsset.filePath),
-              kind: srcAsset.kind,
-              poster:
-                srcAsset.kind === 'video' && srcAsset.thumbPath
-                  ? mediaUrl(srcAsset.thumbPath)
-                  : undefined,
-              waveform:
-                srcAsset.kind === 'audio' && srcAsset.thumbPath
-                  ? mediaUrl(srcAsset.thumbPath)
-                  : undefined,
-            }
-          : null
-      }
-      return null
-    })
-    .filter((t): t is Thumb => !!t)
+  // Resolve each input to a thumbnail (asset media, or a flow link's hero take) — shared with
+  // the Generate node so both surface their inputs identically.
+  const thumbs = resolveInputThumbs(inputs, { assets, allFrames, takesByFrame, inputsByFrame })
   const count = thumbs.length
   const safeIdx = count ? Math.min(idx, count - 1) : 0
   const cur = count ? thumbs[safeIdx] : undefined
@@ -197,14 +125,14 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
     setIdx(0)
   }
 
-  // Accept Library assets dropped onto the frame as inputs. stopPropagation keeps
-  // the canvas from also handling the drop (which would spawn new frames). Multiple
-  // assets (⌘/Ctrl-multi-select) are added at once; already-present ones are skipped.
-  const hasAssetDrag = (e: React.DragEvent): boolean =>
-    e.dataTransfer.types.includes('application/x-inlinestudio-asset')
+  // Accept both Library assets AND another node's output (a frame/Output tile) dropped onto the
+  // frame as inputs — dropping one at a time accumulates. stopPropagation keeps the canvas from
+  // also handling the drop (which would spawn new frames). Already-present ones are skipped.
+  const canDrop = (e: React.DragEvent): boolean =>
+    e.dataTransfer.types.includes(ASSET_DND_TYPE) || e.dataTransfer.types.includes(FRAME_DND_TYPE)
 
   const onDragOver = (e: React.DragEvent): void => {
-    if (!hasAssetDrag(e)) return
+    if (!canDrop(e)) return
     e.preventDefault()
     e.stopPropagation()
     e.dataTransfer.dropEffect = 'copy'
@@ -212,10 +140,16 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   }
 
   const onDrop = (e: React.DragEvent): void => {
-    if (!hasAssetDrag(e)) return
+    if (!canDrop(e)) return
     e.preventDefault()
     e.stopPropagation()
     setDropActive(false)
+    // A frame/Output tile → wire it as a flow-link input (resolves to its hero take).
+    const droppedFrameId = getFrameDragId(e.dataTransfer)
+    if (droppedFrameId) {
+      if (droppedFrameId !== frameId) void addSourceInput(frameId, droppedFrameId)
+      return
+    }
     const existing = new Set(inputs.map((i) => i.assetId))
     const ids = getAssetDragIds(e.dataTransfer).filter((id) => !existing.has(id))
     if (ids.length) void addInputs(frameId, ids)
@@ -339,6 +273,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
                   }))}
                   selected={safeIdx}
                   onSelect={setIdx}
+                  onRemove={(i) => void removeInputById(frameId, thumbs[i].id)}
                 />
                 {safeIdx === 0 ? (
                   <span className="absolute left-1 top-1 flex items-center gap-1 rounded bg-emerald-500/80 px-1 py-0.5 text-[9px] font-medium text-white">

@@ -23,6 +23,7 @@ export function NodeBadge({
   tone = 'title',
   accent,
   title,
+  tooltip,
 }: {
   icon?: ReactNode
   children?: ReactNode
@@ -30,16 +31,27 @@ export function NodeBadge({
   /** Tailwind text-colour class for an info badge (defaults to muted zinc). */
   accent?: string
   title?: string
+  /** A styled hover tooltip shown below the badge (supersedes the native `title`). */
+  tooltip?: ReactNode
 }): React.JSX.Element {
   const pad = children == null ? 'px-1.5' : tone === 'info' ? 'px-2' : 'pl-2 pr-2.5'
   const color = tone === 'info' ? (accent ?? 'text-zinc-400') : 'text-zinc-200'
-  return (
+  const pill = (
     <div
-      title={title}
+      title={tooltip ? undefined : title}
       className={`flex h-6 items-center gap-1 rounded-full border border-border bg-panel/95 text-[10px] font-medium shadow-sm backdrop-blur ${pad} ${color}`}
     >
       {icon}
       {children != null && <span className="max-w-[160px] truncate">{children}</span>}
+    </div>
+  )
+  if (!tooltip) return pill
+  return (
+    <div className="group relative">
+      {pill}
+      <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-52 rounded-md border border-border bg-panel/95 px-2 py-1.5 text-[10px] font-normal leading-relaxed text-zinc-300 shadow-lg backdrop-blur group-hover:block">
+        {tooltip}
+      </span>
     </div>
   )
 }

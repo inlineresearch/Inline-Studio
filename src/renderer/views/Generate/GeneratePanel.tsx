@@ -296,7 +296,7 @@ export function GeneratePanel(): React.JSX.Element {
   // another. `hintFrameId` is used only for the saved-file fallback, which reads that
   // frame's own file and is therefore always safe.
   const captureLiveWorkflow = useCallback(
-    async (hintFrameId: string | null): Promise<void> => {
+    async (hintFrameId: string | null, forceSaveToHint = false): Promise<void> => {
       const wv = webviewRef.current
       if (!wv) return
       let parsed: { name?: unknown; graph?: unknown } | null = null
@@ -309,13 +309,16 @@ export function GeneratePanel(): React.JSX.Element {
       }
       const graph = parsed?.graph
       if (graph && typeof graph === 'object') {
-        // Map the active tab to its frame by workflow name; skip if we can't (rather
-        // than risk clobbering a frame with another tab's graph).
+        // Map the active tab to its frame by workflow name so the graph is attributed correctly.
         const name = typeof parsed?.name === 'string' ? activeWorkflowBaseName(parsed.name) : null
         const frame = name
           ? useFrameStore.getState().frames.find((f) => f.comfyWorkflowName === name)
           : undefined
         if (frame) await saveLiveWorkflow(frame.id, graph)
+        // When switching away from a KNOWN frame (link/open replacing its tab) and the active tab
+        // couldn't be name-matched, save the graph to that frame anyway — a guaranteed autosave so
+        // opening the newly-linked workflow can't silently drop the previous frame's unsaved edits.
+        else if (forceSaveToHint && hintFrameId) await saveLiveWorkflow(hintFrameId, graph)
         return
       }
       // No live graph (older ComfyUI): fall back to pulling the hinted frame's own
@@ -420,7 +423,9 @@ export function GeneratePanel(): React.JSX.Element {
     // One-frame: clear after attempting so a remount can't replay a stale workflow
     // and re-select the wrong frame's tab.
     void (async () => {
-      if (leaving && leaving !== opening) await captureLiveWorkflow(leaving)
+      // Guaranteed autosave of the frame we're leaving before its tab is replaced, so linking a
+      // new workflow (which opens a different tab) never loses the previous frame's unsaved edits.
+      if (leaving && leaving !== opening) await captureLiveWorkflow(leaving, true)
       await wv.executeJavaScript(openWorkflowScript(linkedWorkflow)).catch(() => {})
       prevFrameRef.current = opening
     })().finally(() => setLinkedWorkflow(null))

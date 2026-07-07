@@ -22,7 +22,6 @@ import {
 import '@xyflow/react/dist/style.css'
 import { mediaUrl } from '@shared/media'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
-import { listNodeDefs } from '@shared/nodes/registry'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useAssetStore } from '../../store/assetStore'
 import { useFrameStore } from '../../store/frameStore'
@@ -36,6 +35,7 @@ import { AudioNode } from './nodes/AudioNode'
 import { TextNode } from './nodes/TextNode'
 import { FrameNode } from './nodes/FrameNode'
 import { GenNode } from './nodes/GenNode'
+import { ChooserNode } from './nodes/ChooserNode'
 import { PromptNode } from './nodes/PromptNode'
 import { GenerateSettingsPanel } from './GenerateSettingsPanel'
 import { ModelInfoPanel } from './ModelInfoPanel'
@@ -51,14 +51,16 @@ import { FrameInspector } from './FrameInspector'
 import { CheckIcon, CloseIcon, CopyIcon } from '../../components/icons'
 
 /**
- * Both ComfyUI frames and fal generation nodes are `type:'frame'` canvas items (so they share the
- * frame/take/flow-link machinery). Which component renders is decided by the backing frame's
- * provider: fal → the self-contained GenNode; comfy (default) → the FrameNode.
+ * Every generation node is one `type:'frame'` canvas item (so they share the frame/take/flow-link
+ * machinery). Which component renders is decided by the backing frame's provider: `unset` → the
+ * ChooserNode (pick an engine); `fal` → the self-contained GenNode; `comfy` (default) → the FrameNode.
  */
 function FrameNodeSwitch(props: NodeProps): React.JSX.Element {
   const { frameId } = props.data as { frameId: string }
   const provider = useFrameStore((s) => s.frames.find((f) => f.id === frameId)?.provider)
-  return provider === 'fal' ? <GenNode {...props} /> : <FrameNode {...props} />
+  if (provider === 'fal') return <GenNode {...props} />
+  if (provider === 'unset') return <ChooserNode {...props} />
+  return <FrameNode {...props} />
 }
 
 const nodeTypes: NodeTypes = {
@@ -203,7 +205,6 @@ function Board(): React.JSX.Element {
   const addDirector = useMoodboardStore((s) => s.addDirector)
   const addTrim = useMoodboardStore((s) => s.addTrim)
   const addEmptyFrame = useMoodboardStore((s) => s.addEmptyFrame)
-  const addGenNode = useMoodboardStore((s) => s.addGenNode)
   const addPrompt = useMoodboardStore((s) => s.addPrompt)
   const duplicateItems = useMoodboardStore((s) => s.duplicateItems)
   const undo = useMoodboardStore((s) => s.undo)
@@ -554,16 +555,7 @@ function Board(): React.JSX.Element {
       case 'prompt':
         void addPrompt(m.flowX, m.flowY)
         break
-      // 'generate' is never dispatched here — the Generate row drills into the model list, which
-      // calls onPickModelNode below with a specific model id.
     }
-  }
-
-  const onPickModelNode = (modelId: string): void => {
-    const m = addMenu
-    setAddMenu(null)
-    if (!m) return
-    void addGenNode(modelId, m.flowX, m.flowY)
   }
 
   /** Create a preview node and wire the dropped output into it. */
@@ -618,28 +610,6 @@ function Board(): React.JSX.Element {
     if (!m) return
     const item = await addTrim(m.flowX, m.flowY)
     if (item) await connect(m.fromItemId, item.id, 'out', 'in')
-  }
-
-  /** Create a fal generation node fed by the dropped output (the DAG flow-link). */
-  const suggestGenNode = async (modelId: string): Promise<void> => {
-    const m = connectMenu
-    setConnectMenu(null)
-    if (!m) return
-    const item = await addGenNode(modelId, m.flowX, m.flowY)
-    if (!item) return
-    // Wire the output into the new node's 'in' handle — onConnect resolves the flow-link.
-    await connect(m.fromItemId, item.id, 'out', 'in')
-    const fromItem = items.find((it) => it.id === m.fromItemId)
-    let sourceFrameId: string | undefined
-    if (fromItem?.type === 'frame') {
-      sourceFrameId = fromItem.frameId ?? undefined
-    } else if (fromItem?.type === 'preview') {
-      const feed = connectors.find((k) => k.toItemId === fromItem.id)
-      sourceFrameId = feed
-        ? (items.find((it) => it.id === feed.fromItemId)?.frameId ?? undefined)
-        : undefined
-    }
-    if (sourceFrameId && item.frameId) await addSourceInput(item.frameId, sourceFrameId)
   }
 
   const onDrop = (e: React.DragEvent): void => {
@@ -791,6 +761,9 @@ function Board(): React.JSX.Element {
           // exceed the GPU's max texture size and render as grey/blank when scrolling.
           onlyRenderVisibleElements
           fitView
+          // Cap the initial fit's zoom so a board with a single small node (e.g. a new project's
+          // chooser) lands at a normal 1:1 view instead of blowing up to fill the viewport.
+          fitViewOptions={{ maxZoom: 1 }}
         >
           <Background gap={22} size={2.5} color="#525a66" />
         </ReactFlow>
@@ -833,12 +806,6 @@ function Board(): React.JSX.Element {
               >
                 Edit Video/Audio
               </button>
-              <button
-                onClick={() => void suggestGenNode(listNodeDefs()[0]?.id ?? '')}
-                className="px-2.5 py-1.5 text-left text-emerald-300 hover:bg-surface"
-              >
-                Generate
-              </button>
             </div>
           </>
         )}
@@ -849,7 +816,6 @@ function Board(): React.JSX.Element {
             y={addMenu.y}
             above={addMenu.above}
             onPick={onPickAddNode}
-            onPickModel={onPickModelNode}
             onClose={() => setAddMenu(null)}
           />
         )}

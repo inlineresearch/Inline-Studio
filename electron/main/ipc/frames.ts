@@ -16,13 +16,16 @@ import {
   heroTakes,
   listInputs,
   addInput,
+  addInputs,
   addSourceInput,
   removeInput,
+  removeInputById,
   reorderInputs,
   listAllTakes,
   deleteTake,
   setFalParams,
   setModel,
+  setProvider,
 } from '../frames/store'
 
 function str(v: unknown, label: string): string {
@@ -61,6 +64,12 @@ export function registerFrameHandlers(): void {
   handle<[string, string], FrameInput>(IpcChannels.frames.addInput, (frameId, assetId) =>
     addInput(str(frameId, 'frame id'), str(assetId, 'asset id')),
   )
+  handle<[string, string[]], FrameInput[]>(IpcChannels.frames.addInputs, (frameId, assetIds) => {
+    if (!Array.isArray(assetIds) || assetIds.some((x) => typeof x !== 'string')) {
+      throw new Error('Invalid asset ids.')
+    }
+    return addInputs(str(frameId, 'frame id'), assetIds)
+  })
   handle<[string, string], FrameInput>(
     IpcChannels.frames.addSourceInput,
     (frameId, sourceFrameId) =>
@@ -68,6 +77,9 @@ export function registerFrameHandlers(): void {
   )
   handle<[string, string], void>(IpcChannels.frames.removeInput, (frameId, assetId) =>
     removeInput(str(frameId, 'frame id'), str(assetId, 'asset id')),
+  )
+  handle<[string, string], void>(IpcChannels.frames.removeInputById, (frameId, inputId) =>
+    removeInputById(str(frameId, 'frame id'), str(inputId, 'input id')),
   )
   handle<[string, string[]], void>(IpcChannels.frames.reorderInputs, (frameId, orderedAssetIds) => {
     if (!Array.isArray(orderedAssetIds) || orderedAssetIds.some((x) => typeof x !== 'string')) {
@@ -88,5 +100,13 @@ export function registerFrameHandlers(): void {
   )
   handle<[string, string], Frame>(IpcChannels.frames.setModel, (frameId, modelId) =>
     setModel(str(frameId, 'frame id'), str(modelId, 'model id')),
+  )
+  handle<[string, string, string | undefined], Frame>(
+    IpcChannels.frames.setProvider,
+    (frameId, provider, modelId) => {
+      if (provider !== 'comfy' && provider !== 'fal') throw new Error('Invalid provider.')
+      if (modelId !== undefined && typeof modelId !== 'string') throw new Error('Invalid model id.')
+      return setProvider(str(frameId, 'frame id'), provider, modelId)
+    },
   )
 }

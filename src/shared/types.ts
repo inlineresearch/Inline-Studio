@@ -47,10 +47,11 @@ export interface Frame {
   /** Currently chosen take placed on the timeline, if any. */
   heroTakeId: string | null
   /**
-   * Which generation engine backs this frame. `comfy` = the embedded ComfyUI workflow (default,
-   * every legacy frame). `fal` = a declarative fal.ai node (see `modelId`/`params`).
+   * Which generation engine backs this frame. `unset` = a fresh chooser node that hasn't picked an
+   * engine yet (renders the Link-ComfyUI / Generate-with-Fal chooser). `comfy` = the embedded
+   * ComfyUI workflow (every legacy frame). `fal` = a declarative fal.ai node (see `modelId`/`params`).
    */
-  provider: 'comfy' | 'fal'
+  provider: 'comfy' | 'fal' | 'unset'
   /** For `provider:'fal'`: the registry model id (e.g. `openai/gpt-image-2`). Null for comfy. */
   modelId: string | null
   /** For `provider:'fal'`: the node's editable param values (keyed by the NodeDef param keys). */
