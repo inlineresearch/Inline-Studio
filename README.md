@@ -17,6 +17,8 @@
 
 Inline Studio is a free, open-source desktop app for **AI filmmaking on a node canvas, powered by your own [ComfyUI](https://github.com/comfyanonymous/ComfyUI)**. It gives AI filmmakers a free-form canvas to build generative pipelines - text to video, image, and audio - where every render is kept as a versioned, non-destructive take, and finished frames assemble into a finished cut inside the app. You bring your own ComfyUI (local GPU or a cloud GPU via RunPod); Inline Studio does everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
 
+Prefer hosted models? A single Generate node also runs closed models through [fal](https://fal.ai) with no ComfyUI and no GPU, so you can generate with GPT Image, Seedance, and more right on the canvas and mix them with your own ComfyUI renders in the same film.
+
 **Who it's for:** AI filmmakers, motion artists, and generative creators who want to make AI short films and longer cuts with ComfyUI without losing every good version along the way.
 
 ## Features
@@ -26,7 +28,7 @@ Inline Studio is a free, open-source desktop app for **AI filmmaking on a node c
 - **Chain frames into a generative pipeline** - wire one frame's output into the next frame's input. Refine a shot, feed it forward, regenerate the source, and everything downstream follows.
 - **Video Director node** - a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export.
 - **Trim Video/Audio node** - drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
-- **Built-in Claude assistant** - an AI assistant that works alongside you on the canvas, using your own Anthropic API key (stored encrypted on your machine, only ever sent to Anthropic).
+- **Generate with closed models, no setup** - run hosted models like GPT Image 2, Nano Banana, Seedance, Krea, and LTX right on the canvas. No ComfyUI, no custom nodes, no GPU. Add a Generate node, pick a model, and bring your own fal.ai key.
 - **Bring your own ComfyUI** - connect any ComfyUI instance, local or cloud. Your media, your models, your machine.
 - **Free & open source (MIT)** and **cross-platform** - macOS (Apple Silicon & Intel), Windows, and Linux.
 
@@ -70,9 +72,18 @@ Inline Studio doesn't bundle or manage ComfyUI - **you bring your own**, run it 
 
 Your media, your models, your machine. ComfyUI does the rendering. Inline Studio gives the work a shape you can iterate and share.
 
-## A built-in assistant (Claude)
+## Generate with closed models, no setup
 
-Inline Studio ships with an AI assistant powered by **Claude** that works alongside you on the canvas. Connect your own [Anthropic API key](https://console.anthropic.com/settings/keys) - it's stored encrypted on your machine and never sent anywhere but Anthropic - and open the assistant from the Claude icon in the header.
+Not every model lives in ComfyUI. The best closed models are hosted only, and standing up a workflow just to try one is friction you don't need. Inline Studio adds a second way to generate: a single Generate node that runs hosted models through [fal](https://fal.ai), with no ComfyUI, no custom nodes, and no GPU.
+
+Create a frame, choose **Start with Fal API**, pick a model, and run. Everything else works exactly as it does with ComfyUI: takes, flow links between frames, the Video Director, and export. That means you can mix hosted models and your own ComfyUI renders in the same film.
+
+Models available today:
+
+- **Image:** GPT Image 2, Nano Banana 2, Nano Banana Pro (edit), Krea v2 Large
+- **Video:** LTX 2.3 (image to video), Seedance 2.0 (text, image, and reference to video)
+
+It is bring your own key. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings and it stays on your machine, sent only to fal when you generate. You pay fal directly for what you render, and each node shows a rough price estimate before you run it.
 
 ## Install
 
