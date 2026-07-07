@@ -4,6 +4,7 @@ import { useProjectStore } from '../../store/projectStore'
 import { useUpdateStore } from '../../store/updateStore'
 import { DemoSampleCard } from './DemoSampleCard'
 import { GettingStartedCard } from './GettingStartedCard'
+import { FalKeyCard } from './FalKeyCard'
 
 export function ProjectLauncher(): React.JSX.Element {
   const {
@@ -108,7 +109,8 @@ export function ProjectLauncher(): React.JSX.Element {
                 {recents.length === 0 ? (
                   <p className="text-sm text-zinc-500">No recent projects yet.</p>
                 ) : (
-                  <ul className="divide-y divide-border">
+                  // Show ~10 projects (each row ≈ 36px) then scroll the rest.
+                  <ul className="max-h-[360px] divide-y divide-border overflow-y-auto pr-1">
                     {recents.map((r) => (
                       <li key={r.path} className="flex items-center gap-2 py-1">
                         <button
@@ -136,6 +138,7 @@ export function ProjectLauncher(): React.JSX.Element {
             {/* Right column — getting started + demo */}
             <div className="flex flex-col gap-6">
               <GettingStartedCard />
+              <FalKeyCard />
               <DemoSampleCard />
             </div>
           </div>
