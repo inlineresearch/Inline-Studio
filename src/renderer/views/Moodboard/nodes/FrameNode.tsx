@@ -38,27 +38,6 @@ type Thumb = {
 const MIN_BODY = 160
 const MAX_BODY = 480
 
-/** Small, both-source-and-target (loose mode) handle for purely-visual frame links. */
-function VisualHandle({
-  id,
-  position,
-  style,
-}: {
-  id: string
-  position: Position
-  style?: React.CSSProperties
-}): React.JSX.Element {
-  return (
-    <Handle
-      type="source"
-      id={id}
-      position={position}
-      style={style}
-      className="!h-2.5 !w-2.5 !border !border-zinc-800 !bg-zinc-500 opacity-60 hover:!bg-accent hover:opacity-100"
-    />
-  )
-}
-
 /**
  * A frame on the canvas, styled like a preview: the body shows the frame's hero
  * input (carousel + "set as hero" when it has several). The header carries the
@@ -244,11 +223,26 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   return (
     <>
-      {/* Title badge — floats above the node, matching the Generate node. */}
+      {/* Title + workflow-link badges — float above the node, matching the Generate node. */}
       <NodeBadgeRow>
         <NodeBadge icon={<FilmIcon />} title={frame ? `Frame ${frame.name}` : undefined}>
           Frame {frame?.name ?? '—'}
         </NodeBadge>
+        <button
+          onClick={() => void onLink()}
+          disabled={busy}
+          title={linked ? 'Open the linked ComfyUI workflow' : 'Link a ComfyUI workflow'}
+          className="nodrag flex h-6 items-center gap-1 rounded-full border border-blue-500/40 bg-blue-500/10 px-2 text-[10px] font-medium text-blue-300 shadow-sm backdrop-blur hover:bg-blue-500/20 disabled:opacity-40"
+        >
+          {busy ? (
+            '…'
+          ) : (
+            <>
+              <LinkIcon className="h-3 w-3" />
+              {linked ? 'Open Workflow' : 'Link Workflow'}
+            </>
+          )}
+        </button>
       </NodeBadgeRow>
 
       <NodeFrame
@@ -333,22 +327,6 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
               </span>
             )}
 
-            <button
-              onClick={() => void onLink()}
-              disabled={busy}
-              title={linked ? 'Open the linked ComfyUI workflow' : 'Link a ComfyUI workflow'}
-              className="nodrag absolute bottom-1 right-1 flex items-center gap-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-black/90 disabled:opacity-40"
-            >
-              {busy ? (
-                '…'
-              ) : (
-                <>
-                  <LinkIcon className="h-3 w-3" />
-                  {linked ? 'Open Workflow' : 'Link Workflow'}
-                </>
-              )}
-            </button>
-
             {count > 1 && (
               <>
                 {/* Thumbnail strip — click an input to show it as this frame's main media. */}
@@ -389,29 +367,29 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
         </div>
       </NodeFrame>
 
-      {/* Functional data handles — bare dots on the edges (Generate-node style): an Input on the
-          left (feed a Preview's output here) and the frame's Output on the right. */}
+      {/* Data handles with hover hints — Input (emerald, left), Output (indigo, right). */}
       <Handle
         type="target"
         id="in"
         position={Position.Left}
-        className="!h-3 !w-3 !border-2 !border-surface !bg-emerald-400"
-        title="Input — connect a Preview's output here to feed this frame"
-      />
+        title="Input"
+        className="group !h-3 !w-3 !border-2 !border-surface !bg-emerald-400"
+      >
+        <span className="pointer-events-none absolute right-full top-1/2 mr-1.5 hidden -translate-y-1/2 items-center whitespace-nowrap rounded-md border border-border bg-panel/95 px-1.5 py-0.5 text-[10px] font-medium text-zinc-200 shadow-sm backdrop-blur group-hover:flex">
+          Input
+        </span>
+      </Handle>
       <Handle
         type="source"
         id="out"
         position={Position.Right}
-        className="!h-3 !w-3 !border-2 !border-surface !bg-indigo-400"
-        title="Output — wire to a Preview to see the result"
-      />
-
-      {/* Visual-only links (no data flow). The centre of each side is reserved for the data
-          handles above, so the left/right visual dots sit in the upper corners. */}
-      <VisualHandle id="vt" position={Position.Top} />
-      <VisualHandle id="vl" position={Position.Left} style={{ top: '22%' }} />
-      <VisualHandle id="vr" position={Position.Right} style={{ top: '22%' }} />
-      <VisualHandle id="vb" position={Position.Bottom} />
+        title="Output"
+        className="group !h-3 !w-3 !border-2 !border-surface !bg-indigo-400"
+      >
+        <span className="pointer-events-none absolute left-full top-1/2 ml-1.5 hidden -translate-y-1/2 items-center whitespace-nowrap rounded-md border border-border bg-panel/95 px-1.5 py-0.5 text-[10px] font-medium text-zinc-200 shadow-sm backdrop-blur group-hover:flex">
+          Output
+        </span>
+      </Handle>
     </>
   )
 }
