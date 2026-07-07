@@ -8,7 +8,13 @@ import { useAssetStore } from '../../../store/assetStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useGenerationStore } from '../../../store/generationStore'
 import { useLightboxStore } from '../../../store/lightboxStore'
-import { getAssetDragIds, getFrameDragId, ASSET_DND_TYPE, FRAME_DND_TYPE } from '../../../lib/dnd'
+import {
+  getAssetDragIds,
+  getFrameDragId,
+  getOutputTakeId,
+  ASSET_DND_TYPE,
+  FRAME_DND_TYPE,
+} from '../../../lib/dnd'
 import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
 import { VideoPreview } from '../../../components/VideoPreview'
 import { Waveform } from '../../../components/Waveform'
@@ -124,6 +130,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
   const addInputs = useFrameStore((s) => s.addInputs)
   const addSourceInput = useFrameStore((s) => s.addSourceInput)
   const removeInputById = useFrameStore((s) => s.removeInputById)
+  const setHero = useFrameStore((s) => s.setHero)
   const allFrames = useFrameStore((s) => s.frames)
   const takesByFrame = useFrameStore((s) => s.takesByFrame)
   const inputsByFrame = useFrameStore((s) => s.inputsByFrame)
@@ -244,7 +251,12 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
     setDropActive(false)
     const droppedFrameId = getFrameDragId(e.dataTransfer)
     if (droppedFrameId) {
-      if (droppedFrameId !== frameId) void addSourceInput(frameId, droppedFrameId)
+      if (droppedFrameId !== frameId) {
+        // A specific output take dragged in → pin it as the source's hero so this input uses it.
+        const takeId = getOutputTakeId(e.dataTransfer)
+        if (takeId) void setHero(droppedFrameId, takeId)
+        void addSourceInput(frameId, droppedFrameId)
+      }
       return
     }
     const existing = new Set(inputs.map((i) => i.assetId))
@@ -362,7 +374,8 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
               </>
             )}
 
-            {/* Multiple takes → a thumbnail strip; click one to make it the main preview. */}
+            {/* Multiple takes → a thumbnail strip; click one to make it this node's chosen output
+                (its hero), so the shown image is what flows to anything wired downstream. */}
             {!busy && (
               <ThumbStrip
                 items={ordered.map((t) => ({
@@ -371,7 +384,10 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
                   kind: t.kind,
                 }))}
                 selected={safeTakeIdx}
-                onSelect={setTakeIdx}
+                onSelect={(i) => {
+                  void setHero(frameId, ordered[i].id)
+                  setTakeIdx(0)
+                }}
               />
             )}
           </div>

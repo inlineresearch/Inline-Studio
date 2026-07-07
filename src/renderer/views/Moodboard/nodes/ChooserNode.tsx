@@ -4,7 +4,13 @@ import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 import { useFrameStore } from '../../../store/frameStore'
 import { useAssetStore } from '../../../store/assetStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
-import { getAssetDragIds, getFrameDragId, ASSET_DND_TYPE, FRAME_DND_TYPE } from '../../../lib/dnd'
+import {
+  getAssetDragIds,
+  getFrameDragId,
+  getOutputTakeId,
+  ASSET_DND_TYPE,
+  FRAME_DND_TYPE,
+} from '../../../lib/dnd'
 import { NodeFrame } from './NodeFrame'
 import { ChevronDownIcon, FilmIcon, LinkIcon, NodeBadge, NodeBadgeRow } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
@@ -46,6 +52,7 @@ export function ChooserNode({ id, data, selected }: NodeProps): React.JSX.Elemen
   const addInputs = useFrameStore((s) => s.addInputs)
   const addSourceInput = useFrameStore((s) => s.addSourceInput)
   const removeInputById = useFrameStore((s) => s.removeInputById)
+  const setHero = useFrameStore((s) => s.setHero)
   const allFrames = useFrameStore((s) => s.frames)
   const takesByFrame = useFrameStore((s) => s.takesByFrame)
   const inputsByFrame = useFrameStore((s) => s.inputsByFrame)
@@ -99,7 +106,11 @@ export function ChooserNode({ id, data, selected }: NodeProps): React.JSX.Elemen
     setDropActive(false)
     const droppedFrameId = getFrameDragId(e.dataTransfer)
     if (droppedFrameId) {
-      if (droppedFrameId !== frameId) void addSourceInput(frameId, droppedFrameId)
+      if (droppedFrameId !== frameId) {
+        const takeId = getOutputTakeId(e.dataTransfer)
+        if (takeId) void setHero(droppedFrameId, takeId)
+        void addSourceInput(frameId, droppedFrameId)
+      }
       return
     }
     const existing = new Set(inputs.map((i) => i.assetId))

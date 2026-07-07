@@ -37,17 +37,36 @@ export function getFrameDragId(dt: DataTransfer): string | null {
 }
 
 /**
- * Carries the producing frame id when dragging a generated OUTPUT (take). Dropped on the canvas it
- * creates a NEW frame fed by that output; dropped on a node it still behaves as a frame input
- * (outputs also set the frame payload above), so both drop targets keep working.
+ * Carries the producing frame id AND the specific take id when dragging a generated OUTPUT. Dropped
+ * on the canvas it creates a NEW frame fed by that output; dropped on a node it feeds it as an input
+ * (outputs also set the frame payload above). The take id lets the drop target pin the exact image
+ * the user dragged (by making it the source frame's hero), rather than defaulting to the hero.
  */
 export const OUTPUT_DND_TYPE = 'application/x-inlinestudio-output'
 
-export function setOutputDragPayload(dt: DataTransfer, frameId: string): void {
-  dt.setData(OUTPUT_DND_TYPE, frameId)
+export function setOutputDragPayload(dt: DataTransfer, frameId: string, takeId?: string): void {
+  dt.setData(OUTPUT_DND_TYPE, JSON.stringify({ frameId, takeId: takeId ?? null }))
+}
+
+function parseOutputPayload(dt: DataTransfer): { frameId: string; takeId: string | null } | null {
+  const raw = dt.getData(OUTPUT_DND_TYPE)
+  if (!raw) return null
+  try {
+    const p = JSON.parse(raw) as { frameId?: unknown; takeId?: unknown }
+    if (typeof p.frameId !== 'string') return null
+    return { frameId: p.frameId, takeId: typeof p.takeId === 'string' ? p.takeId : null }
+  } catch {
+    // Legacy payload: a bare frame id string.
+    return { frameId: raw, takeId: null }
+  }
 }
 
 /** Decode a dragged output's producing frame id, or null when the drag isn't an output. */
 export function getOutputDragId(dt: DataTransfer): string | null {
-  return dt.getData(OUTPUT_DND_TYPE) || null
+  return parseOutputPayload(dt)?.frameId ?? null
+}
+
+/** Decode a dragged output's specific take id, or null (unknown / not an output drag). */
+export function getOutputTakeId(dt: DataTransfer): string | null {
+  return parseOutputPayload(dt)?.takeId ?? null
 }

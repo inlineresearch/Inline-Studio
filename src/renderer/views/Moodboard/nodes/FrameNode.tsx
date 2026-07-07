@@ -4,7 +4,13 @@ import { useFrameStore } from '../../../store/frameStore'
 import { useAssetStore } from '../../../store/assetStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useUiStore } from '../../../store/uiStore'
-import { getAssetDragIds, getFrameDragId, ASSET_DND_TYPE, FRAME_DND_TYPE } from '../../../lib/dnd'
+import {
+  getAssetDragIds,
+  getFrameDragId,
+  getOutputTakeId,
+  ASSET_DND_TYPE,
+  FRAME_DND_TYPE,
+} from '../../../lib/dnd'
 import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
 import { useLightboxStore } from '../../../store/lightboxStore'
 import { requireComfyConnected } from '../../../lib/requireComfyConnected'
@@ -41,6 +47,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const addInputs = useFrameStore((s) => s.addInputs)
   const addSourceInput = useFrameStore((s) => s.addSourceInput)
   const removeInputById = useFrameStore((s) => s.removeInputById)
+  const setHero = useFrameStore((s) => s.setHero)
   const allFrames = useFrameStore((s) => s.frames)
   const takesByFrame = useFrameStore((s) => s.takesByFrame)
   const inputsByFrame = useFrameStore((s) => s.inputsByFrame)
@@ -144,10 +151,15 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
     e.preventDefault()
     e.stopPropagation()
     setDropActive(false)
-    // A frame/Output tile → wire it as a flow-link input (resolves to its hero take).
+    // A frame/Output tile → wire it as a flow-link input (resolves to its hero take). If a specific
+    // output take was dragged, pin it as the source's hero so this input shows that exact image.
     const droppedFrameId = getFrameDragId(e.dataTransfer)
     if (droppedFrameId) {
-      if (droppedFrameId !== frameId) void addSourceInput(frameId, droppedFrameId)
+      if (droppedFrameId !== frameId) {
+        const takeId = getOutputTakeId(e.dataTransfer)
+        if (takeId) void setHero(droppedFrameId, takeId)
+        void addSourceInput(frameId, droppedFrameId)
+      }
       return
     }
     const existing = new Set(inputs.map((i) => i.assetId))

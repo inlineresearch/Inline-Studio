@@ -23,9 +23,9 @@ export function OutputThumb({
       draggable
       onDragStart={(e) => {
         // Frame payload → drop on a node feeds it as input; output payload → drop on canvas
-        // creates a new frame fed by this output.
+        // creates a new frame fed by this output. The take id pins the exact image dragged.
         setFrameDragPayload(e.dataTransfer, take.frameId)
-        setOutputDragPayload(e.dataTransfer, take.frameId)
+        setOutputDragPayload(e.dataTransfer, take.frameId, take.id)
       }}
       onContextMenu={(e) => onContextMenu(e, { src, name: frameName, kind: take.kind })}
       title={`${frameName} — drag onto a node to use as input, or onto the canvas to make a frame`}

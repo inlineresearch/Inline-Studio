@@ -28,7 +28,7 @@ import { useFrameStore } from '../../store/frameStore'
 import { useGenerationStore } from '../../store/generationStore'
 import { useTimelineStore } from '../../store/timelineStore'
 import { useUiStore } from '../../store/uiStore'
-import { getAssetDragIds, getFrameDragId, getOutputDragId } from '../../lib/dnd'
+import { getAssetDragIds, getFrameDragId, getOutputDragId, getOutputTakeId } from '../../lib/dnd'
 import { ImageNode } from './nodes/ImageNode'
 import { VideoNode } from './nodes/VideoNode'
 import { AudioNode } from './nodes/AudioNode'
@@ -210,6 +210,7 @@ function Board(): React.JSX.Element {
   const undo = useMoodboardStore((s) => s.undo)
   const redo = useMoodboardStore((s) => s.redo)
   const addSourceInput = useFrameStore((s) => s.addSourceInput)
+  const setHero = useFrameStore((s) => s.setHero)
   const genError = useGenerationStore((s) => s.error)
   const setGenError = useGenerationStore((s) => s.setError)
   const frames = useFrameStore((s) => s.frames)
@@ -617,10 +618,12 @@ function Board(): React.JSX.Element {
     const drop = screenToFlowPosition({ x: e.clientX, y: e.clientY })
 
     // A generated output dragged from the Outputs tab → create a NEW frame at the drop, fed by
-    // that output (its producing frame's hero take), just like dropping a library asset.
+    // that output. Pin the exact take dragged as the source's hero so the new frame shows it.
     const outputFrameId = getOutputDragId(e.dataTransfer)
     if (outputFrameId) {
+      const takeId = getOutputTakeId(e.dataTransfer)
       void (async () => {
+        if (takeId) await setHero(outputFrameId, takeId)
         const item = await addEmptyFrame(drop.x, drop.y)
         if (item?.frameId) await addSourceInput(item.frameId, outputFrameId)
       })()
