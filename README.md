@@ -13,7 +13,7 @@
 
 ![Inline Studio node canvas showing a generative AI film pipeline with frames, takes, and connectors](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/screenshot-dashboard-2.png)
 
-[**New here? Check out Getting Started guide →**](https://inlinestudio.art/getting-started)
+[**New here? Check out our getting started guide →**](https://inlinestudio.art/getting-started)
 
 ## What is Inline Studio?
 
@@ -38,24 +38,11 @@ Inline Studio is a free, open-source desktop app for **AI filmmaking on a node c
 | :---------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
 | ![Trim Video/Audio node with in/out handles over a clip's waveform](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/1.0.34.1.png) | ![Video Director node assembling rendered frames into one cut with layered audio](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/1.0.34.2.png) |
 
-[**Then follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
+[**Follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
 
 ## How it works
 
 ComfyUI is the most capable generative engine going - image, video, audio, LLM, every new model lands there first. But generating is the easy part. The work that makes an AI film is what comes after: exploring options, keeping what's good, and shaping a repeatable process out of it. Inline Studio is the layer where that happens, organised around one model:
-
-```
-Project  →  Sequence  →  Frame  →  Take[]
-```
-
-- **Project** - a single portable `.inlinestudio` folder you can move, back up, or hand to a collaborator.
-- **Sequence** - an ordered group of frames; a scene of your film.
-- **Frame** - the atomic unit. **A frame is not a file - it's a slot with a history of takes.** Its inputs are library assets or another frame's chosen output (the refine/flow link).
-- **Take** - one immutable ComfyUI render of a frame. The frame points at the take you starred as hero, and that hero flows downstream to everything wired after it.
-
-That take history is the core value ComfyUI lacks: keep every version that worked, page through them, and pick the keeper without ever overwriting your earlier renders.
-
-When it's time to generate, the **Generate** tab opens your own ComfyUI right inside the app. Inline Studio hands it the frame's inputs, wires them into the workflow, pulls the finished renders back in as takes, and the full node graph is always one click away when you want it.
 
 ### Export the whole pipeline, not just the final render
 
