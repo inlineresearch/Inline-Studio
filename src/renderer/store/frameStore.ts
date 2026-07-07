@@ -28,7 +28,15 @@ interface FrameState {
   /** Link another frame's output as an input (resolves to its hero take). */
   addSourceInput: (frameId: string, sourceFrameId: string) => Promise<void>
   removeInput: (frameId: string, assetId: string) => Promise<void>
+  /** Remove one input by its row id (works for asset AND flow-link inputs). */
+  removeInputById: (frameId: string, inputId: string) => Promise<void>
   reorderInputs: (frameId: string, orderedAssetIds: string[]) => Promise<void>
+  /** Resolve an `unset` chooser frame to an engine (comfy | fal); returns the updated frame. */
+  setProvider: (
+    frameId: string,
+    provider: 'comfy' | 'fal',
+    modelId?: string,
+  ) => Promise<Frame | null>
   setHero: (frameId: string, takeId: string | null) => Promise<void>
   deleteTake: (takeId: string) => Promise<void>
   rename: (id: string, name: string) => Promise<void>
@@ -114,12 +122,10 @@ export const useFrameStore = create<FrameState>((set, get) => ({
 
   addInputs: async (frameId, assetIds) => {
     try {
-      const added: FrameInput[] = []
-      for (const assetId of assetIds) {
-        const res = await window.inlineStudio.frames.addInput(frameId, assetId)
-        if (!res.ok) return set({ error: res.error })
-        added.push(res.value)
-      }
+      const res = await window.inlineStudio.frames.addInputs(frameId, assetIds)
+      if (!res.ok) return set({ error: res.error })
+      const added = res.value
+      if (added.length === 0) return
       set((s) => {
         const existing = s.inputsByFrame[frameId] ?? []
         const ids = new Set(existing.map((i) => i.id))
@@ -157,6 +163,37 @@ export const useFrameStore = create<FrameState>((set, get) => ({
       }))
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
+    }
+  },
+
+  removeInputById: async (frameId, inputId) => {
+    try {
+      const res = await window.inlineStudio.frames.removeInputById(frameId, inputId)
+      if (!res.ok) return set({ error: res.error })
+      set((s) => ({
+        inputsByFrame: {
+          ...s.inputsByFrame,
+          [frameId]: (s.inputsByFrame[frameId] ?? []).filter((i) => i.id !== inputId),
+        },
+      }))
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+    }
+  },
+
+  setProvider: async (frameId, provider, modelId) => {
+    try {
+      const res = await window.inlineStudio.frames.setProvider(frameId, provider, modelId)
+      if (!res.ok) {
+        set({ error: res.error })
+        return null
+      }
+      const frame = res.value
+      set((s) => ({ frames: s.frames.map((f) => (f.id === frameId ? frame : f)) }))
+      return frame
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+      return null
     }
   },
 

@@ -9,9 +9,9 @@ import {
   useEdgesState,
   useReactFlow,
   useUpdateNodeInternals,
-  useViewport,
   applyNodeChanges,
   type Node,
+  type NodeProps,
   type Edge,
   type Connection,
   type FinalConnectionState,
@@ -25,16 +25,20 @@ import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } fr
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useAssetStore } from '../../store/assetStore'
 import { useFrameStore } from '../../store/frameStore'
+import { useGenerationStore } from '../../store/generationStore'
 import { useTimelineStore } from '../../store/timelineStore'
 import { useUiStore } from '../../store/uiStore'
-import { useClaudeStore } from '../../store/claudeStore'
-import { ClaudeLogo } from '../../components/ClaudeLogo'
-import { getAssetDragIds, getFrameDragId } from '../../lib/dnd'
+import { getAssetDragIds, getFrameDragId, getOutputDragId } from '../../lib/dnd'
 import { ImageNode } from './nodes/ImageNode'
 import { VideoNode } from './nodes/VideoNode'
 import { AudioNode } from './nodes/AudioNode'
 import { TextNode } from './nodes/TextNode'
 import { FrameNode } from './nodes/FrameNode'
+import { GenNode } from './nodes/GenNode'
+import { ChooserNode } from './nodes/ChooserNode'
+import { PromptNode } from './nodes/PromptNode'
+import { GenerateSettingsPanel } from './GenerateSettingsPanel'
+import { ModelInfoPanel } from './ModelInfoPanel'
 import { PreviewNode } from './nodes/PreviewNode'
 import { LayerNode } from './nodes/LayerNode'
 import { DirectorNode } from './nodes/DirectorNode'
@@ -42,18 +46,34 @@ import { TrimNode } from './nodes/TrimNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
 import { CanvasToolbar } from './CanvasToolbar'
+import { AddNodeMenu, type AddNodeKind } from './AddNodeMenu'
 import { FrameInspector } from './FrameInspector'
+import { CheckIcon, CloseIcon, CopyIcon } from '../../components/icons'
+
+/**
+ * Every generation node is one `type:'frame'` canvas item (so they share the frame/take/flow-link
+ * machinery). Which component renders is decided by the backing frame's provider: `unset` → the
+ * ChooserNode (pick an engine); `fal` → the self-contained GenNode; `comfy` (default) → the FrameNode.
+ */
+function FrameNodeSwitch(props: NodeProps): React.JSX.Element {
+  const { frameId } = props.data as { frameId: string }
+  const provider = useFrameStore((s) => s.frames.find((f) => f.id === frameId)?.provider)
+  if (provider === 'fal') return <GenNode {...props} />
+  if (provider === 'unset') return <ChooserNode {...props} />
+  return <FrameNode {...props} />
+}
 
 const nodeTypes: NodeTypes = {
   image: ImageNode,
   video: VideoNode,
   audio: AudioNode,
   text: TextNode,
-  frame: FrameNode,
+  frame: FrameNodeSwitch,
   preview: PreviewNode,
   layer: LayerNode,
   director: DirectorNode,
   trim: TrimNode,
+  prompt: PromptNode,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -185,10 +205,13 @@ function Board(): React.JSX.Element {
   const addDirector = useMoodboardStore((s) => s.addDirector)
   const addTrim = useMoodboardStore((s) => s.addTrim)
   const addEmptyFrame = useMoodboardStore((s) => s.addEmptyFrame)
+  const addPrompt = useMoodboardStore((s) => s.addPrompt)
   const duplicateItems = useMoodboardStore((s) => s.duplicateItems)
   const undo = useMoodboardStore((s) => s.undo)
   const redo = useMoodboardStore((s) => s.redo)
   const addSourceInput = useFrameStore((s) => s.addSourceInput)
+  const genError = useGenerationStore((s) => s.error)
+  const setGenError = useGenerationStore((s) => s.setError)
   const frames = useFrameStore((s) => s.frames)
   const assets = useAssetStore((s) => s.assets)
   const loadAssets = useAssetStore((s) => s.load)
@@ -212,6 +235,17 @@ function Board(): React.JSX.Element {
     menuX: number
     menuY: number
   } | null>(null)
+  // Active canvas tool: Select (edit — marquee/move) vs Pan (view — drag pans, nodes locked).
+  const [tool, setTool] = useState<'select' | 'pan'>('select')
+  // "Add node" list (toolbar + button, or double-click empty canvas in Select mode).
+  const [addMenu, setAddMenu] = useState<{
+    x: number
+    y: number
+    /** Grow upward + center on x (toolbar button) vs top-left at (x,y) (cursor). */
+    above: boolean
+    flowX: number
+    flowY: number
+  } | null>(null)
 
   useEffect(() => {
     void load()
@@ -230,6 +264,35 @@ function Board(): React.JSX.Element {
     return window.inlineStudio.timeline.onProgress((e) => {
       useTimelineStore.getState().setProgress(e.ownerItemId, e.fraction >= 1 ? null : e.fraction)
     })
+  }, [])
+
+  // fal generation lifecycle (main → renderer): drive per-node progress, and refresh takes as
+  // nodes complete so their thumbnails, downstream inputs, and the Library all update live.
+  useEffect(() => {
+    const gen = useGenerationStore.getState()
+    // Finish any generations that were still running when the app last closed (they keep
+    // running server-side); their progress/completion arrives through the events below.
+    void gen.resumePending()
+    const unsubs = [
+      window.inlineStudio.events.onGenerationProgress((e) => {
+        gen.setBusy(e.frameId, true)
+        gen.setProgress(e.frameId, e.fraction, e.status)
+      }),
+      window.inlineStudio.events.onGenerationNodeDone((e) => {
+        gen.setBusy(e.frameId, false)
+        gen.setProgress(e.frameId, null)
+        void useFrameStore.getState().load()
+      }),
+      window.inlineStudio.events.onGenerationDone(() => {
+        gen.finishAll()
+        void useFrameStore.getState().load()
+      }),
+      window.inlineStudio.events.onGenerationError((e) => {
+        gen.finishAll()
+        gen.setError(e.error)
+      }),
+    ]
+    return () => unsubs.forEach((u) => u())
   }, [])
 
   // `onlyRenderVisibleElements` culls/sizes nodes from their measured dimensions, which
@@ -263,9 +326,10 @@ function Board(): React.JSX.Element {
       connectors.map((c) => {
         const sourceHandle = (c.data?.sourceHandle as string | undefined) ?? 'out'
         const targetHandle = (c.data?.targetHandle as string | undefined) ?? 'in'
-        // The functional output→preview edge animates; visual frame links are static
-        // and colored by their chain level.
-        const functional = sourceHandle === 'out' && targetHandle === 'in'
+        // Input/output links render as solid wires; visual frame links are static and
+        // colored by their chain level. A GenNode's audio input ('audio') is a data link too.
+        const functional =
+          sourceHandle === 'out' && (targetHandle === 'in' || targetHandle === 'audio')
         return {
           id: c.id,
           source: c.fromItemId,
@@ -273,7 +337,7 @@ function Board(): React.JSX.Element {
           sourceHandle,
           targetHandle,
           type: 'deletable',
-          animated: functional,
+          animated: false,
           data: { functional, color: levelColors.get(c.id) },
         }
       }),
@@ -353,8 +417,19 @@ function Board(): React.JSX.Element {
     return hit.length ? hit[hit.length - 1] : null
   }
 
+  // Type-check a wire before it's made: a Prompt node emits text and every other node emits
+  // media, so a Prompt may only feed a text ('prompt') input, and a media output may only feed a
+  // non-text input. This blocks a Prompt→image/video dot (and an image/video→prompt dot).
+  const isValidConnection = (c: Connection | Edge): boolean => {
+    if (!c.source || !c.target || c.source === c.target) return false
+    const sourceIsText = items.find((it) => it.id === c.source)?.type === 'prompt'
+    const targetIsText = (c.targetHandle ?? undefined) === 'prompt'
+    return sourceIsText === targetIsText
+  }
+
   const onConnect = (c: Connection): void => {
     if (!c.source || !c.target || c.source === c.target) return
+    if (!isValidConnection(c)) return
     const src = items.find((it) => it.id === c.source)
     const tgt = items.find((it) => it.id === c.target)
 
@@ -379,20 +454,26 @@ function Board(): React.JSX.Element {
 
     void connect(c.source, c.target, c.sourceHandle ?? null, c.targetHandle ?? null)
 
-    // Preview output → Frame input: also wire the data link. The frame takes the
-    // preview's source frame (whoever feeds the preview) as a live input — resolved
-    // to that frame's hero take at generate time.
+    // Output → Frame/GenNode input ('in', or a GenNode's 'audio' dot): also wire the data flow-link
+    // (the DAG edge). The target frame takes the source's frame — a frame/GenNode directly, or the
+    // frame feeding a Preview — as a live input, resolved to that frame's hero take at generate time.
     if (
-      src?.type === 'preview' &&
       tgt?.type === 'frame' &&
-      c.targetHandle === 'in' &&
+      (c.targetHandle === 'in' || c.targetHandle === 'audio') &&
       tgt.frameId
     ) {
-      const feed = connectors.find((k) => k.toItemId === src.id)
-      const sourceFrameId = feed
-        ? items.find((it) => it.id === feed.fromItemId)?.frameId
-        : undefined
-      if (sourceFrameId) void addSourceInput(tgt.frameId, sourceFrameId)
+      let sourceFrameId: string | undefined
+      if (src?.type === 'frame') {
+        sourceFrameId = src.frameId ?? undefined
+      } else if (src?.type === 'preview') {
+        const feed = connectors.find((k) => k.toItemId === src.id)
+        sourceFrameId = feed
+          ? (items.find((it) => it.id === feed.fromItemId)?.frameId ?? undefined)
+          : undefined
+      }
+      if (sourceFrameId && sourceFrameId !== tgt.frameId) {
+        void addSourceInput(tgt.frameId, sourceFrameId)
+      }
     }
     // Wiring into a Director node's input handle just persists the connector (above); the
     // node derives its video/audio layers from its connections reactively.
@@ -416,6 +497,65 @@ function Board(): React.JSX.Element {
       menuX: rect ? point.x - rect.left : point.x,
       menuY: rect ? point.y - rect.top : point.y,
     })
+  }
+
+  // Open the Add-node list from the toolbar's + button — anchored above the button, new nodes
+  // land at the canvas centre.
+  const openAddFromButton = (buttonRect: DOMRect): void => {
+    const rect = wrapperRef.current?.getBoundingClientRect()
+    const { x: flowX, y: flowY } = centre()
+    const cx = buttonRect.left + buttonRect.width / 2
+    setAddMenu({
+      x: rect ? cx - rect.left : cx,
+      y: rect ? buttonRect.top - rect.top - 8 : buttonRect.top - 8,
+      above: true,
+      flowX,
+      flowY,
+    })
+  }
+
+  // Double-click empty canvas in Select mode opens the Add list at the cursor; the node is created
+  // there. (zoomOnDoubleClick is off, so this doesn't also zoom.)
+  const onCanvasDoubleClick = (e: React.MouseEvent): void => {
+    if (tool !== 'select') return
+    if (!(e.target as HTMLElement).classList.contains('react-flow__pane')) return
+    // The double-click also word-selects nearby text (blue highlight) — clear it.
+    window.getSelection()?.removeAllRanges()
+    const rect = wrapperRef.current?.getBoundingClientRect()
+    const flow = screenToFlowPosition({ x: e.clientX, y: e.clientY })
+    setAddMenu({
+      x: rect ? e.clientX - rect.left : e.clientX,
+      y: rect ? e.clientY - rect.top : e.clientY,
+      above: false,
+      flowX: flow.x,
+      flowY: flow.y,
+    })
+  }
+
+  const onPickAddNode = (kind: AddNodeKind): void => {
+    const m = addMenu
+    setAddMenu(null)
+    if (!m) return
+    switch (kind) {
+      case 'frame':
+        void addEmptyFrame(m.flowX, m.flowY)
+        break
+      case 'layer':
+        void addLayer(m.flowX, m.flowY)
+        break
+      case 'preview':
+        void addPreview(m.flowX, m.flowY)
+        break
+      case 'director':
+        void addDirector(m.flowX, m.flowY)
+        break
+      case 'trim':
+        void addTrim(m.flowX, m.flowY)
+        break
+      case 'prompt':
+        void addPrompt(m.flowX, m.flowY)
+        break
+    }
   }
 
   /** Create a preview node and wire the dropped output into it. */
@@ -475,6 +615,17 @@ function Board(): React.JSX.Element {
   const onDrop = (e: React.DragEvent): void => {
     e.preventDefault()
     const drop = screenToFlowPosition({ x: e.clientX, y: e.clientY })
+
+    // A generated output dragged from the Outputs tab → create a NEW frame at the drop, fed by
+    // that output (its producing frame's hero take), just like dropping a library asset.
+    const outputFrameId = getOutputDragId(e.dataTransfer)
+    if (outputFrameId) {
+      void (async () => {
+        const item = await addEmptyFrame(drop.x, drop.y)
+        if (item?.frameId) await addSourceInput(item.frameId, outputFrameId)
+      })()
+      return
+    }
 
     // A frame dragged from the Timeline tab → place its node on the canvas (skip if
     // it's already placed, to avoid two nodes pointing at the same frame).
@@ -556,7 +707,11 @@ function Board(): React.JSX.Element {
     <div className="relative flex h-full">
       <SideMenu />
 
-      <div ref={wrapperRef} className="relative flex-1 bg-panel">
+      <div
+        ref={wrapperRef}
+        className="relative flex-1 bg-panel"
+        onDoubleClick={onCanvasDoubleClick}
+      >
         {error && (
           <div className="absolute left-2 top-2 z-10 rounded bg-red-950/80 px-2 py-1 text-xs text-red-300">
             {error}
@@ -574,6 +729,13 @@ function Board(): React.JSX.Element {
           selectionKeyCode={['Meta', 'Control', 'Shift']}
           multiSelectionKeyCode={['Meta', 'Control', 'Shift']}
           selectionMode={SelectionMode.Partial}
+          // Tool-driven interaction. Select: left-drag marquee-selects, nodes movable, middle/right
+          // still pans. Pan: left-drag anywhere pans, nodes locked (click still selects). Either
+          // way double-click opens the Add menu instead of zooming.
+          panOnDrag={tool === 'pan' ? true : [1, 2]}
+          selectionOnDrag={tool === 'select'}
+          nodesDraggable={tool === 'select'}
+          zoomOnDoubleClick={false}
           defaultEdgeOptions={{ interactionWidth: 20 }}
           onDrop={onDrop}
           onDragOver={(e) => {
@@ -586,6 +748,7 @@ function Board(): React.JSX.Element {
           onNodesDelete={(deleted) => deleted.forEach((n) => void deleteItem(n.id))}
           onConnect={onConnect}
           onConnectEnd={onConnectEnd}
+          isValidConnection={isValidConnection}
           onEdgesDelete={(deleted) => deleted.forEach((e) => void disconnect(e.id))}
           // Mirror the viewport so the assistant can use it as a "place here" spot.
           onMove={() => setCanvasCenter(centre())}
@@ -598,11 +761,16 @@ function Board(): React.JSX.Element {
           // exceed the GPU's max texture size and render as grey/blank when scrolling.
           onlyRenderVisibleElements
           fitView
+          // Cap the initial fit's zoom so a board with a single small node (e.g. a new project's
+          // chooser) lands at a normal 1:1 view instead of blowing up to fill the viewport.
+          fitViewOptions={{ maxZoom: 1 }}
         >
           <Background gap={22} size={2.5} color="#525a66" />
         </ReactFlow>
 
         {items.length === 0 && <EmptyCanvasHint />}
+
+        {genError && <GenErrorToast message={genError} onDismiss={() => setGenError(null)} />}
 
         {connectMenu && (
           <>
@@ -642,34 +810,29 @@ function Board(): React.JSX.Element {
           </>
         )}
 
-        <SelectionActions />
+        {addMenu && (
+          <AddNodeMenu
+            x={addMenu.x}
+            y={addMenu.y}
+            above={addMenu.above}
+            onPick={onPickAddNode}
+            onClose={() => setAddMenu(null)}
+          />
+        )}
 
         <CanvasToolbar
-          onAddFrame={() => {
-            const { x, y } = centre()
-            void addEmptyFrame(x, y)
-          }}
-          onAddLayer={() => {
-            const { x, y } = centre()
-            void addLayer(x, y)
-          }}
-          onAddPreview={() => {
-            const { x, y } = centre()
-            void addPreview(x, y)
-          }}
-          onAddDirector={() => {
-            const { x, y } = centre()
-            void addDirector(x, y)
-          }}
-          onAddTrim={() => {
-            const { x, y } = centre()
-            void addTrim(x, y)
-          }}
+          tool={tool}
+          onSelectTool={() => setTool('select')}
+          onPanTool={() => setTool('pan')}
           onAddText={() => {
             const { x, y } = centre()
             void addTextAt(x, y)
           }}
+          onOpenAdd={openAddFromButton}
         />
+
+        <GenerateSettingsPanel />
+        <ModelInfoPanel />
       </div>
 
       <FrameInspector />
@@ -678,54 +841,47 @@ function Board(): React.JSX.Element {
 }
 
 /**
- * Floating "Add to Claude" action pinned to the top-right of the current selection.
- * Attaches the selected nodes as chat context and opens the assistant.
+ * Floating toast for a fal generation error. The message can be long (fal often echoes the raw
+ * response), so it wraps + scrolls and offers a one-click copy for pasting into a bug report.
  */
-function SelectionActions(): React.JSX.Element | null {
-  const selection = useUiStore((s) => s.canvasSelection)
-  const items = useMoodboardStore((s) => s.items)
-  const attachSelection = useClaudeStore((s) => s.attachSelection)
-  const setAssistantOpen = useUiStore((s) => s.setAssistantOpen)
-  const { x, y, zoom } = useViewport()
-
-  if (selection.length === 0) return null
-
-  // Top-right corner of the selection's bounding box, in absolute flow coords. Computed
-  // from our own item geometry (handles multi-select + nodes nested in a layer) rather
-  // than React Flow's measured bounds, which skew for nested/unmeasured nodes.
-  const byId = new Map(items.map((i) => [i.id, i]))
-  let minY = Infinity
-  let maxX = -Infinity
-  let found = false
-  for (const id of selection) {
-    const it = byId.get(id)
-    if (!it) continue
-    const parent = it.parentId ? byId.get(it.parentId) : undefined
-    const absX = parent ? parent.x + it.x : it.x
-    const absY = parent ? parent.y + it.y : it.y
-    minY = Math.min(minY, absY)
-    maxX = Math.max(maxX, absX + it.width)
-    found = true
+function GenErrorToast({
+  message,
+  onDismiss,
+}: {
+  message: string
+  onDismiss: () => void
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const copy = (): void => {
+    void navigator.clipboard
+      .writeText(message)
+      .then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      })
+      .catch(() => undefined)
   }
-  if (!found) return null
-
-  const left = maxX * zoom + x
-  const top = minY * zoom + y
-
   return (
-    <div
-      className="pointer-events-none absolute left-0 top-0 z-20"
-      style={{ transform: `translate(${left}px, ${top - 8}px)` }}
-    >
+    <div className="absolute left-1/2 top-3 z-30 flex max-w-lg -translate-x-1/2 items-start gap-2 rounded-md border border-red-500/40 bg-red-950/90 px-3 py-2 text-xs text-red-200 shadow-lg">
+      <span className="max-h-40 min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words">
+        {message}
+      </span>
       <button
-        onClick={() => {
-          attachSelection()
-          setAssistantOpen(true)
-        }}
-        className="pointer-events-auto flex -translate-x-full -translate-y-full items-center gap-1 whitespace-nowrap rounded-md border border-[#D97757]/50 bg-panel px-2 py-1 text-[11px] font-medium text-zinc-100 shadow-lg hover:bg-surface"
+        onClick={copy}
+        title={copied ? 'Copied' : 'Copy error'}
+        aria-label="Copy error"
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${
+          copied ? 'text-emerald-300' : 'text-red-300 hover:text-red-100'
+        }`}
       >
-        <ClaudeLogo size={12} className="text-[#D97757]" />
-        Add to Claude
+        {copied ? <CheckIcon className="h-3.5 w-3.5" /> : <CopyIcon className="h-3.5 w-3.5" />}
+      </button>
+      <button
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-red-300 hover:text-red-100"
+      >
+        <CloseIcon className="h-3.5 w-3.5" />
       </button>
     </div>
   )
@@ -809,6 +965,9 @@ function itemToNode(
   }
   if (item.type === 'trim') {
     return { ...common, type: 'trim', data: {} }
+  }
+  if (item.type === 'prompt') {
+    return { ...common, type: 'prompt', data: {} }
   }
   if (item.type === 'text') {
     return { ...common, type: 'text', data: { text: item.data.text ?? FALLBACK_TEXT } }

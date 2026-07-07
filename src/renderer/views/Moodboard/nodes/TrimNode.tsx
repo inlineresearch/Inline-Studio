@@ -3,6 +3,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { mediaUrl } from '@shared/media'
 import type { TrimResolved } from '@shared/types'
 import { NodeFrame } from './NodeFrame'
+import { NodeBadge, NodeBadgeRow, ScissorsIcon } from './NodeBadge'
 import { Waveform } from '../../../components/Waveform'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 
@@ -131,6 +132,18 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
 
   return (
     <>
+      {/* Title + trim-window badges — float above the node, matching the Generate node. */}
+      <NodeBadgeRow>
+        <NodeBadge icon={<ScissorsIcon />} title={resolved ? resolved.label : 'Edit Video/Audio'}>
+          {resolved ? resolved.label : 'Edit Video/Audio'}
+        </NodeBadge>
+        {duration > 0 && (
+          <NodeBadge tone="info">
+            {fmt(view.inPoint)}–{fmt(view.outPoint)} ({fmt(view.outPoint - view.inPoint)})
+          </NodeBadge>
+        )}
+      </NodeBadgeRow>
+
       <Handle
         type="target"
         position={Position.Left}
@@ -145,20 +158,15 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
         title="Outputs the trimmed segment"
         className="!h-3.5 !w-3.5 !border-2 !border-surface !bg-amber-400"
       />
-      <NodeFrame id={id} selected={!!selected} minWidth={300} minHeight={150} padded={false}>
+      <NodeFrame
+        id={id}
+        selected={!!selected}
+        minWidth={300}
+        minHeight={150}
+        padded={false}
+        subtleSelect
+      >
         <div className="flex h-full w-full flex-col text-zinc-300">
-          <div className="flex shrink-0 items-center gap-1 border-b border-border bg-panel px-2 py-1">
-            <span className="text-[10px] text-amber-400">✂</span>
-            <span className="min-w-0 flex-1 truncate text-[11px] font-medium">
-              {resolved ? resolved.label : 'Edit Video/Audio'}
-            </span>
-            {duration > 0 && (
-              <span className="shrink-0 text-[10px] text-zinc-500">
-                {fmt(view.inPoint)}–{fmt(view.outPoint)} ({fmt(view.outPoint - view.inPoint)})
-              </span>
-            )}
-          </div>
-
           {!resolved ? (
             <div className="flex flex-1 items-center justify-center px-3 text-center text-[11px] text-zinc-500">
               Wire a video or audio output into the input on the left

@@ -5,8 +5,11 @@ import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useFrameStore } from '../../../store/frameStore'
 import { useAssetStore } from '../../../store/assetStore'
 import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
+import { useLightboxStore } from '../../../store/lightboxStore'
 import { Waveform } from '../../../components/Waveform'
 import { NodeFrame } from './NodeFrame'
+import { EyeIcon, NodeBadge, NodeBadgeRow, StarIcon } from './NodeBadge'
+import { ThumbStrip } from './ThumbStrip'
 
 /**
  * A Comfy-style preview node: connect a frame's output handle to its input and it
@@ -24,6 +27,7 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
   const setHero = useFrameStore((s) => s.setHero)
   const assets = useAssetStore((s) => s.assets)
   const onMediaContextMenu = useMediaContextMenu()
+  const openLightbox = useLightboxStore((s) => s.open)
   const [idx, setIdx] = useState(0)
   // Fit the node height to the displayed media's aspect ratio (no black letterbox bars).
   const [aspect, setAspect] = useState<number | null>(null)
@@ -95,8 +99,22 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
     void updateItem(id, { height: target }, false)
   }, [fitsAspect, aspect, itemWidth, itemHeight, id, updateItem])
 
+  const badgeLabel = `Preview${frame ? ` · Frame ${frame.name}` : isDirector ? ' · Director' : ''}`
+
   return (
     <>
+      {/* Title + take-count badges — float above the node, matching the Generate node. */}
+      <NodeBadgeRow>
+        <NodeBadge icon={<EyeIcon />} title={badgeLabel}>
+          {badgeLabel}
+        </NodeBadge>
+        {count > 0 && (
+          <NodeBadge tone="info">
+            {safeIdx + 1}/{count}
+          </NodeBadge>
+        )}
+      </NodeBadgeRow>
+
       <Handle
         type="target"
         position={Position.Left}
@@ -111,19 +129,15 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
         title="Feed the selected output into a frame's input"
         className="!h-3.5 !w-3.5 !border-2 !border-surface !bg-emerald-400"
       />
-      <NodeFrame id={id} selected={!!selected} minWidth={220} minHeight={170} padded={false}>
+      <NodeFrame
+        id={id}
+        selected={!!selected}
+        minWidth={220}
+        minHeight={170}
+        padded={false}
+        subtleSelect
+      >
         <div className="flex h-full w-full flex-col">
-          <div className="flex items-center gap-1 border-b border-border bg-panel px-2 py-1">
-            <span className="text-[10px] text-indigo-400">▣</span>
-            <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-zinc-300">
-              Preview{frame ? ` · Frame ${frame.name}` : isDirector ? ' · Director' : ''}
-            </span>
-            {count > 0 && (
-              <span className="shrink-0 text-[10px] text-zinc-500">
-                {safeIdx + 1}/{count}
-              </span>
-            )}
-          </div>
           <div
             ref={bodyRef}
             className={`relative w-full overflow-hidden bg-black ${fitsAspect ? '' : 'flex flex-1 items-center justify-center'}`}
@@ -144,6 +158,9 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
                       name: 'director',
                       kind: 'video',
                     })
+                  }
+                  onDoubleClick={() =>
+                    openLightbox({ src: mediaUrl(directorExport), kind: 'video', name: 'director' })
                   }
                   className="absolute inset-0 h-full w-full object-contain"
                 />
@@ -166,6 +183,13 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
                       src: display.saveSrc,
                       name: frame ? `Frame ${frame.name}` : 'take',
                       kind: 'video',
+                    })
+                  }
+                  onDoubleClick={() =>
+                    openLightbox({
+                      src: display.saveSrc,
+                      kind: 'video',
+                      name: frame ? `Frame ${frame.name}` : 'take',
                     })
                   }
                   className="absolute inset-0 h-full w-full object-contain"
@@ -202,6 +226,13 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
                       kind: display.kind,
                     })
                   }
+                  onDoubleClick={() =>
+                    openLightbox({
+                      src: display.saveSrc,
+                      kind: 'image',
+                      name: frame ? `Frame ${frame.name}` : 'take',
+                    })
+                  }
                   className="absolute inset-0 h-full w-full object-contain"
                 />
               )
@@ -213,43 +244,31 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
               </span>
             )}
 
-            {count > 1 && (
-              <>
-                <button
-                  onClick={() => setIdx(() => (safeIdx - 1 + count) % count)}
-                  className="nodrag absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-1.5 text-sm text-white hover:bg-black/80"
-                >
-                  ‹
-                </button>
-                <button
-                  onClick={() => setIdx(() => (safeIdx + 1) % count)}
-                  className="nodrag absolute right-1 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-1.5 text-sm text-white hover:bg-black/80"
-                >
-                  ›
-                </button>
-                <div className="absolute bottom-1 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/60 px-2 py-0.5">
-                  {ordered.map((t, i) => (
-                    <span
-                      key={t.id}
-                      className={`h-1.5 w-1.5 rounded-full ${i === safeIdx ? 'bg-white' : 'bg-zinc-500'}`}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
+            {/* Multiple takes → a thumbnail strip; click one to make it the main preview. */}
+            <ThumbStrip
+              items={ordered.map((t) => ({
+                id: t.id,
+                url: mediaUrl(t.filePath),
+                kind: t.kind,
+              }))}
+              selected={safeIdx}
+              onSelect={setIdx}
+            />
 
             {cur &&
               (curIsHero ? (
-                <span className="absolute left-1 top-1 rounded bg-emerald-500/80 px-1 text-[9px] font-medium text-white">
+                <span className="absolute left-1 top-1 flex items-center gap-1 rounded bg-emerald-500/80 px-1 py-0.5 text-[9px] font-medium text-white">
+                  <StarIcon filled className="h-2.5 w-2.5" />
                   Hero
                 </span>
               ) : (
                 <button
                   onClick={makeHero}
                   title="Use this take as the frame's hero"
-                  className="nodrag absolute left-1 top-1 rounded bg-black/60 px-1 text-[9px] text-amber-300 hover:bg-black/80"
+                  className="nodrag absolute left-1 top-1 flex items-center gap-1 rounded bg-black/60 px-1 py-0.5 text-[9px] text-amber-300 hover:bg-black/80"
                 >
-                  ★ Set hero
+                  <StarIcon className="h-2.5 w-2.5" />
+                  Set hero
                 </button>
               ))}
           </div>

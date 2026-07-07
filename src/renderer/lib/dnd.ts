@@ -35,3 +35,19 @@ export function setFrameDragPayload(dt: DataTransfer, frameId: string): void {
 export function getFrameDragId(dt: DataTransfer): string | null {
   return dt.getData(FRAME_DND_TYPE) || null
 }
+
+/**
+ * Carries the producing frame id when dragging a generated OUTPUT (take). Dropped on the canvas it
+ * creates a NEW frame fed by that output; dropped on a node it still behaves as a frame input
+ * (outputs also set the frame payload above), so both drop targets keep working.
+ */
+export const OUTPUT_DND_TYPE = 'application/x-inlinestudio-output'
+
+export function setOutputDragPayload(dt: DataTransfer, frameId: string): void {
+  dt.setData(OUTPUT_DND_TYPE, frameId)
+}
+
+/** Decode a dragged output's producing frame id, or null when the drag isn't an output. */
+export function getOutputDragId(dt: DataTransfer): string | null {
+  return dt.getData(OUTPUT_DND_TYPE) || null
+}

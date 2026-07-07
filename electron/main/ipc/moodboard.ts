@@ -13,6 +13,8 @@ import {
   addLayer,
   addDirector,
   addTrim,
+  addGenNode,
+  addPrompt,
   updateItem,
   deleteItem,
   importAndPlace,
@@ -71,6 +73,15 @@ export function registerMoodboardHandlers(): void {
 
   handle<[number, number], MoodboardItem>(IpcChannels.moodboard.addTrim, (x, y) =>
     addTrim(num(x, 'x'), num(y, 'y')),
+  )
+
+  handle<[string, number, number], MoodboardItem>(
+    IpcChannels.moodboard.addGenNode,
+    (modelId, x, y) => addGenNode(str(modelId, 'model id'), num(x, 'x'), num(y, 'y')),
+  )
+
+  handle<[number, number], MoodboardItem>(IpcChannels.moodboard.addPrompt, (x, y) =>
+    addPrompt(num(x, 'x'), num(y, 'y')),
   )
 
   handle<[string, MoodboardItemPatch], MoodboardItem>(

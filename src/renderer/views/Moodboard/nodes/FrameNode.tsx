@@ -1,51 +1,28 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { mediaUrl, takeWaveformPath } from '@shared/media'
 import { useFrameStore } from '../../../store/frameStore'
 import { useAssetStore } from '../../../store/assetStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useUiStore } from '../../../store/uiStore'
-import { getAssetDragIds } from '../../../lib/dnd'
+import { getAssetDragIds, getFrameDragId, ASSET_DND_TYPE, FRAME_DND_TYPE } from '../../../lib/dnd'
 import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
+import { useLightboxStore } from '../../../store/lightboxStore'
 import { requireComfyConnected } from '../../../lib/requireComfyConnected'
 import { VideoPreview } from '../../../components/VideoPreview'
 import { Waveform } from '../../../components/Waveform'
 import { NodeFrame } from './NodeFrame'
+import { FilmIcon, LinkIcon, NodeBadge, NodeBadgeRow, StarIcon } from './NodeBadge'
+import { ThumbStrip } from './ThumbStrip'
+import { resolveInputThumbs } from './inputThumbs'
 
 interface FrameNodeData extends Record<string, unknown> {
   frameId: string
-}
-
-/** A resolved carousel thumbnail (from an asset input or a flow/source-frame input). */
-type Thumb = {
-  id: string
-  assetId: string | null
-  url: string
-  /** The original media to save on right-click (not the transcoded video preview). */
-  saveSrc: string
-  kind: 'image' | 'video' | 'audio'
-  /** Poster image for a video, so it renders even when the codec can't be decoded. */
-  poster?: string
-  /** Waveform peaks JSON URL, for audio inputs/takes. */
-  waveform?: string
 }
 
 // Bounds for the media body when fitting to a media's aspect ratio — keeps very
 // wide/tall inputs from collapsing or ballooning the node.
 const MIN_BODY = 160
 const MAX_BODY = 480
-
-/** Small, both-source-and-target (loose mode) handle for purely-visual frame links. */
-function VisualHandle({ id, position }: { id: string; position: Position }): React.JSX.Element {
-  return (
-    <Handle
-      type="source"
-      id={id}
-      position={position}
-      className="!h-2.5 !w-2.5 !border !border-zinc-800 !bg-zinc-500 opacity-60 hover:!bg-accent hover:opacity-100"
-    />
-  )
-}
 
 /**
  * A frame on the canvas, styled like a preview: the body shows the frame's hero
@@ -62,6 +39,8 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const uploadInputs = useFrameStore((s) => s.uploadInputs)
   const reorderInputs = useFrameStore((s) => s.reorderInputs)
   const addInputs = useFrameStore((s) => s.addInputs)
+  const addSourceInput = useFrameStore((s) => s.addSourceInput)
+  const removeInputById = useFrameStore((s) => s.removeInputById)
   const allFrames = useFrameStore((s) => s.frames)
   const takesByFrame = useFrameStore((s) => s.takesByFrame)
   const inputsByFrame = useFrameStore((s) => s.inputsByFrame)
@@ -72,6 +51,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const setLinkedWorkflow = useUiStore((s) => s.setLinkedWorkflow)
   const setActiveFrame = useUiStore((s) => s.setActiveFrame)
   const onMediaContextMenu = useMediaContextMenu()
+  const openLightbox = useLightboxStore((s) => s.open)
   const [idx, setIdx] = useState(0)
   // True while assets are dragged over the frame — highlights it as a drop target.
   const [dropActive, setDropActive] = useState(false)
@@ -83,69 +63,9 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // the height update on every render, which would loop and freeze the canvas.
   const lastFit = useRef<string>('')
 
-  // Resolve each input to a thumbnail: asset inputs → their media; flow inputs
-  // (sourceFrameId from a connected Preview) → that frame's hero take.
-  const thumbs = inputs
-    .map((i): Thumb | null => {
-      if (i.assetId) {
-        const a = assets.find((x) => x.id === i.assetId)
-        if (!a) return null
-        return {
-          id: i.id,
-          assetId: a.id,
-          // Images use their downscaled thumbnail; video prefers the playable transcode
-          // (the poster covers undecodable codecs).
-          url: mediaUrl(
-            a.kind === 'image' ? (a.thumbPath ?? a.filePath) : (a.previewPath ?? a.filePath),
-          ),
-          // Save the original file, not the transcoded preview.
-          saveSrc: mediaUrl(a.filePath),
-          kind: a.kind,
-          poster: a.kind === 'video' && a.thumbPath ? mediaUrl(a.thumbPath) : undefined,
-          waveform: a.kind === 'audio' && a.thumbPath ? mediaUrl(a.thumbPath) : undefined,
-        }
-      }
-      if (i.sourceFrameId) {
-        const sf = allFrames.find((f) => f.id === i.sourceFrameId)
-        const takes = sf ? (takesByFrame[sf.id] ?? []) : []
-        // Mirror the Preview: the hero take, or the newest when no hero is set.
-        const take = takes.find((t) => t.id === sf?.heroTakeId) ?? takes[0]
-        if (take) {
-          return {
-            id: i.id,
-            assetId: null,
-            url: mediaUrl(take.filePath),
-            saveSrc: mediaUrl(take.filePath),
-            kind: take.kind,
-            waveform: take.kind === 'audio' ? mediaUrl(takeWaveformPath(take.id)) : undefined,
-          }
-        }
-        // No take yet — fall back to the source frame's imported input asset.
-        const srcInput = sf ? (inputsByFrame[sf.id] ?? []).find((x) => x.assetId) : undefined
-        const srcAsset = srcInput?.assetId
-          ? assets.find((a) => a.id === srcInput.assetId)
-          : undefined
-        return srcAsset
-          ? {
-              id: i.id,
-              assetId: null,
-              url: mediaUrl(srcAsset.previewPath ?? srcAsset.filePath),
-              saveSrc: mediaUrl(srcAsset.filePath),
-              kind: srcAsset.kind,
-              poster:
-                srcAsset.kind === 'video' && srcAsset.thumbPath
-                  ? mediaUrl(srcAsset.thumbPath)
-                  : undefined,
-              waveform:
-                srcAsset.kind === 'audio' && srcAsset.thumbPath
-                  ? mediaUrl(srcAsset.thumbPath)
-                  : undefined,
-            }
-          : null
-      }
-      return null
-    })
-    .filter((t): t is Thumb => !!t)
+  // Resolve each input to a thumbnail (asset media, or a flow link's hero take) — shared with
+  // the Generate node so both surface their inputs identically.
+  const thumbs = resolveInputThumbs(inputs, { assets, allFrames, takesByFrame, inputsByFrame })
   const count = thumbs.length
   const safeIdx = count ? Math.min(idx, count - 1) : 0
   const cur = count ? thumbs[safeIdx] : undefined
@@ -205,14 +125,14 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
     setIdx(0)
   }
 
-  // Accept Library assets dropped onto the frame as inputs. stopPropagation keeps
-  // the canvas from also handling the drop (which would spawn new frames). Multiple
-  // assets (⌘/Ctrl-multi-select) are added at once; already-present ones are skipped.
-  const hasAssetDrag = (e: React.DragEvent): boolean =>
-    e.dataTransfer.types.includes('application/x-inlinestudio-asset')
+  // Accept both Library assets AND another node's output (a frame/Output tile) dropped onto the
+  // frame as inputs — dropping one at a time accumulates. stopPropagation keeps the canvas from
+  // also handling the drop (which would spawn new frames). Already-present ones are skipped.
+  const canDrop = (e: React.DragEvent): boolean =>
+    e.dataTransfer.types.includes(ASSET_DND_TYPE) || e.dataTransfer.types.includes(FRAME_DND_TYPE)
 
   const onDragOver = (e: React.DragEvent): void => {
-    if (!hasAssetDrag(e)) return
+    if (!canDrop(e)) return
     e.preventDefault()
     e.stopPropagation()
     e.dataTransfer.dropEffect = 'copy'
@@ -220,10 +140,16 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   }
 
   const onDrop = (e: React.DragEvent): void => {
-    if (!hasAssetDrag(e)) return
+    if (!canDrop(e)) return
     e.preventDefault()
     e.stopPropagation()
     setDropActive(false)
+    // A frame/Output tile → wire it as a flow-link input (resolves to its hero take).
+    const droppedFrameId = getFrameDragId(e.dataTransfer)
+    if (droppedFrameId) {
+      if (droppedFrameId !== frameId) void addSourceInput(frameId, droppedFrameId)
+      return
+    }
     const existing = new Set(inputs.map((i) => i.assetId))
     const ids = getAssetDragIds(e.dataTransfer).filter((id) => !existing.has(id))
     if (ids.length) void addInputs(frameId, ids)
@@ -231,54 +157,42 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   return (
     <>
-      <NodeFrame id={id} selected={!!selected} minWidth={200} minHeight={170} padded={false}>
+      {/* Title + workflow-link badges — float above the node, matching the Generate node. */}
+      <NodeBadgeRow>
+        <NodeBadge icon={<FilmIcon />} title={frame ? `Frame ${frame.name}` : undefined}>
+          Frame {frame?.name ?? '—'}
+        </NodeBadge>
+        <button
+          onClick={() => void onLink()}
+          disabled={busy}
+          title={linked ? 'Open the linked ComfyUI workflow' : 'Link a ComfyUI workflow'}
+          className="nodrag flex h-6 items-center gap-1 rounded-full border border-blue-500/40 bg-blue-500/10 px-2 text-[10px] font-medium text-blue-300 shadow-sm backdrop-blur hover:bg-blue-500/20 disabled:opacity-40"
+        >
+          {busy ? (
+            '…'
+          ) : (
+            <>
+              <LinkIcon className="h-3 w-3" />
+              {linked ? 'Open Workflow' : 'Link Workflow'}
+            </>
+          )}
+        </button>
+      </NodeBadgeRow>
+
+      <NodeFrame
+        id={id}
+        selected={!!selected}
+        minWidth={200}
+        minHeight={170}
+        padded={false}
+        subtleSelect
+      >
         <div
           className="relative flex h-full w-full flex-col"
           onDragOver={onDragOver}
           onDragLeave={() => setDropActive(false)}
           onDrop={onDrop}
         >
-          <div className="flex items-center gap-1.5 border-b border-border bg-panel px-2 py-1">
-            <span
-              className="flex shrink-0 items-center gap-1 text-[10px] font-medium text-emerald-300"
-              title="Connect a Preview's output here to feed this frame"
-            >
-              <Handle
-                type="target"
-                id="in"
-                position={Position.Left}
-                style={{
-                  position: 'relative',
-                  top: 'auto',
-                  right: 'auto',
-                  left: 'auto',
-                  transform: 'none',
-                }}
-                className="!h-3 !w-3 !border-2 !border-surface !bg-emerald-400"
-              />
-              Input
-            </span>
-            <span className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-100">
-              Frame {frame?.name ?? '—'}
-            </span>
-            <span className="flex shrink-0 items-center gap-1 text-[10px] font-medium text-indigo-300">
-              Output
-              <Handle
-                type="source"
-                id="out"
-                position={Position.Right}
-                style={{
-                  position: 'relative',
-                  top: 'auto',
-                  right: 'auto',
-                  left: 'auto',
-                  transform: 'none',
-                }}
-                className="!h-3 !w-3 !border-2 !border-surface !bg-indigo-400"
-              />
-            </span>
-          </div>
-
           <div
             ref={bodyRef}
             className="relative flex flex-1 items-center justify-center overflow-hidden bg-black"
@@ -299,6 +213,13 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       src: cur.saveSrc,
                       name: frame ? `Frame ${frame.name}` : 'input',
                       kind: 'video',
+                    })
+                  }
+                  onDoubleClick={() =>
+                    openLightbox({
+                      src: cur.saveSrc,
+                      kind: 'video',
+                      name: frame ? `Frame ${frame.name}` : 'input',
                     })
                   }
                   className="h-full w-full object-cover"
@@ -323,6 +244,13 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       kind: 'image',
                     })
                   }
+                  onDoubleClick={() =>
+                    openLightbox({
+                      src: cur.saveSrc,
+                      kind: 'image',
+                      name: frame ? `Frame ${frame.name}` : 'input',
+                    })
+                  }
                   className="h-full w-full object-cover"
                 />
               )
@@ -333,50 +261,33 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
               </span>
             )}
 
-            <button
-              onClick={() => void onLink()}
-              disabled={busy}
-              title={linked ? 'Open the linked ComfyUI workflow' : 'Link a ComfyUI workflow'}
-              className="nodrag absolute bottom-1 right-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-black/90 disabled:opacity-40"
-            >
-              {busy ? '…' : linked ? '🔗 Open Workflow' : '⛓ Link Workflow'}
-            </button>
-
             {count > 1 && (
               <>
-                <button
-                  onClick={() => setIdx(() => (safeIdx - 1 + count) % count)}
-                  className="nodrag absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-1.5 text-sm text-white hover:bg-black/80"
-                >
-                  ‹
-                </button>
-                <button
-                  onClick={() => setIdx(() => (safeIdx + 1) % count)}
-                  className="nodrag absolute right-1 top-1/2 -translate-y-1/2 rounded-full bg-black/60 px-1.5 text-sm text-white hover:bg-black/80"
-                >
-                  ›
-                </button>
-                <div className="absolute bottom-1 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/60 px-2 py-0.5">
-                  {thumbs.map((a, i) => (
-                    <span
-                      key={a.id}
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        i === safeIdx ? 'bg-white' : 'bg-zinc-500'
-                      }`}
-                    />
-                  ))}
-                </div>
+                {/* Thumbnail strip — click an input to show it as this frame's main media. */}
+                <ThumbStrip
+                  items={thumbs.map((t) => ({
+                    id: t.id,
+                    url: t.url,
+                    kind: t.kind,
+                    poster: t.poster,
+                  }))}
+                  selected={safeIdx}
+                  onSelect={setIdx}
+                  onRemove={(i) => void removeInputById(frameId, thumbs[i].id)}
+                />
                 {safeIdx === 0 ? (
-                  <span className="absolute left-1 top-1 rounded bg-emerald-500/80 px-1 text-[9px] font-medium text-white">
+                  <span className="absolute left-1 top-1 flex items-center gap-1 rounded bg-emerald-500/80 px-1 py-0.5 text-[9px] font-medium text-white">
+                    <StarIcon filled className="h-2.5 w-2.5" />
                     Hero
                   </span>
                 ) : canReorder ? (
                   <button
                     onClick={makeHero}
                     title="Use this input as the hero"
-                    className="nodrag absolute left-1 top-1 rounded bg-black/60 px-1 text-[9px] text-amber-300 hover:bg-black/80"
+                    className="nodrag absolute left-1 top-1 flex items-center gap-1 rounded bg-black/60 px-1 py-0.5 text-[9px] text-amber-300 hover:bg-black/80"
                   >
-                    ★ Set hero
+                    <StarIcon className="h-2.5 w-2.5" />
+                    Set hero
                   </button>
                 ) : null}
               </>
@@ -391,11 +302,29 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
         </div>
       </NodeFrame>
 
-      {/* Visual-only links (no data flow), connectable on all four sides. */}
-      <VisualHandle id="vt" position={Position.Top} />
-      <VisualHandle id="vl" position={Position.Left} />
-      <VisualHandle id="vr" position={Position.Right} />
-      <VisualHandle id="vb" position={Position.Bottom} />
+      {/* Data handles with hover hints — Input (emerald, left), Output (indigo, right). */}
+      <Handle
+        type="target"
+        id="in"
+        position={Position.Left}
+        title="Input"
+        className="group !h-3 !w-3 !border-2 !border-surface !bg-emerald-400"
+      >
+        <span className="pointer-events-none absolute right-full top-1/2 mr-1.5 hidden -translate-y-1/2 items-center whitespace-nowrap rounded-md border border-border bg-panel/95 px-1.5 py-0.5 text-[10px] font-medium text-zinc-200 shadow-sm backdrop-blur group-hover:flex">
+          Input
+        </span>
+      </Handle>
+      <Handle
+        type="source"
+        id="out"
+        position={Position.Right}
+        title="Output"
+        className="group !h-3 !w-3 !border-2 !border-surface !bg-indigo-400"
+      >
+        <span className="pointer-events-none absolute left-full top-1/2 ml-1.5 hidden -translate-y-1/2 items-center whitespace-nowrap rounded-md border border-border bg-panel/95 px-1.5 py-0.5 text-[10px] font-medium text-zinc-200 shadow-sm backdrop-blur group-hover:flex">
+          Output
+        </span>
+      </Handle>
     </>
   )
 }

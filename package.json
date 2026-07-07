@@ -1,6 +1,6 @@
 {
   "name": "inline-studio",
-  "version": "1.0.37",
+  "version": "1.0.38",
   "description": "An experimentation layer for visual artists: build, iterate, and share generative pipelines on your own ComfyUI.",
   "author": "Inline Studio",
   "license": "MIT",

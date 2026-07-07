@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { NodeResizer, type NodeProps } from '@xyflow/react'
 import { useMoodboardStore } from '../../../store/moodboardStore'
+import { ChevronDownIcon, XIcon } from './NodeBadge'
 
 interface LayerNodeData extends Record<string, unknown> {
   name: string
@@ -101,9 +102,9 @@ export function LayerNode({ id, data, selected }: NodeProps): React.JSX.Element 
             <button
               onClick={() => void deleteItem(id)}
               title="Delete layer"
-              className="nodrag nopan shrink-0 px-0.5 text-zinc-400 hover:text-red-400"
+              className="nodrag nopan flex shrink-0 items-center px-0.5 text-zinc-400 hover:text-red-400"
             >
-              ✕
+              <XIcon className="h-3 w-3" />
             </button>
           )}
 
@@ -118,7 +119,7 @@ export function LayerNode({ id, data, selected }: NodeProps): React.JSX.Element 
                 className="h-3.5 w-3.5 rounded-full border border-white/40"
                 style={{ backgroundColor: color }}
               />
-              <span className="text-[8px] text-zinc-400">▾</span>
+              <ChevronDownIcon className="h-3 w-3 text-zinc-400" />
             </button>
             {pickerOpen && (
               <div

@@ -46,6 +46,16 @@ export interface Frame {
   inputAssetId: string | null
   /** Currently chosen take placed on the timeline, if any. */
   heroTakeId: string | null
+  /**
+   * Which generation engine backs this frame. `unset` = a fresh chooser node that hasn't picked an
+   * engine yet (renders the Link-ComfyUI / Generate-with-Fal chooser). `comfy` = the embedded
+   * ComfyUI workflow (every legacy frame). `fal` = a declarative fal.ai node (see `modelId`/`params`).
+   */
+  provider: 'comfy' | 'fal' | 'unset'
+  /** For `provider:'fal'`: the registry model id (e.g. `openai/gpt-image-2`). Null for comfy. */
+  modelId: string | null
+  /** For `provider:'fal'`: the node's editable param values (keyed by the NodeDef param keys). */
+  params: Record<string, unknown>
   /** Workflow template this frame generates with, if chosen. */
   workflowTemplateId: string | null
   /** The ComfyUI workflow (userdata name) this frame is linked to, if any. */
@@ -127,6 +137,8 @@ export type MoodboardItemType =
   | 'preview'
   | 'director'
   | 'trim'
+  /** A text-prompt node whose output feeds a Generate node's prompt input. */
+  | 'prompt'
 
 /** Output settings for a video-director node (stored in its moodboard item data). */
 export interface DirectorItemData {
@@ -228,6 +240,8 @@ export interface MoodboardItemData {
   l2Volume?: number
   /** Trim ("Edit Video/Audio") node: in/out window in seconds (outPoint <= inPoint = "to end"). */
   trim?: { inPoint: number; outPoint: number }
+  /** Prompt node: the text it feeds into a connected Generate node's prompt input. */
+  promptText?: string
 }
 
 export interface MoodboardItem {
@@ -274,6 +288,32 @@ export interface TimelineProgressEvent {
   fraction: number
 }
 
+/** Main → renderer: per-node generation progress (0..1), correlated by the running frame's id. */
+export interface GenerationProgressEvent {
+  frameId: string
+  fraction: number
+  /** Optional short status label from the fal queue (e.g. "in queue", "generating"). */
+  status?: string
+}
+
+/** Main → renderer: a node in the run finished and produced a take. */
+export interface GenerationNodeDoneEvent {
+  frameId: string
+  takeId: string
+}
+
+/** Main → renderer: the whole run (target frame + its upstream chain) completed. */
+export interface GenerationDoneEvent {
+  targetFrameId: string
+}
+
+/** Main → renderer: the run failed; `frameId` is the node that failed, if any. */
+export interface GenerationErrorEvent {
+  targetFrameId: string
+  frameId?: string
+  error: string
+}
+
 export interface WorkflowTemplate {
   id: string
   projectId: string
@@ -299,92 +339,12 @@ export interface AppSettings {
   comfyUrl: string
 }
 
-/** Whether the Claude assistant is connected, and how the key is stored. */
-export interface ClaudeStatus {
-  /** An API key is saved (validated at save time). */
+/** Whether an API key (e.g. fal.ai) is saved, and how it's stored. */
+export interface ApiKeyStatus {
+  /** A key is saved. */
   configured: boolean
   /** False when the OS lacks a secure keystore and the key is stored plaintext. */
   encrypted: boolean
-}
-
-/** One chat turn between the user and Claude. */
-export interface ClaudeMessage {
-  role: 'user' | 'assistant'
-  content: string
-}
-
-/** One canvas node in the snapshot, with geometry and layer membership. */
-export interface ClaudeBoardItem {
-  id: string
-  /** 'frame' | 'layer' | 'preview' | 'text' | 'image' | 'video' | 'audio' */
-  type: string
-  /** Frame name / layer label / text snippet / asset name. */
-  name: string
-  x: number
-  y: number
-  width: number
-  height: number
-  /** Containing layer id (positions are relative to it), or null for top-level. */
-  parentId: string | null
-}
-
-/**
- * User-attached context for a turn: specific selected nodes the user is referring to,
- * or an empty-canvas spot where new items should go.
- */
-export interface ClaudeContextAttachment {
-  kind: 'items' | 'spot'
-  /** Canvas item ids, for kind 'items'. */
-  ids?: string[]
-  /** Canvas coordinate, for kind 'spot'. */
-  x?: number
-  y?: number
-}
-
-/** A compact snapshot of the open project, sent each turn so Claude is grounded. */
-export interface ClaudeContext {
-  mode: string
-  comfyReachable: boolean
-  activeFrame: {
-    id: string
-    name: string
-    inputCount: number
-    takeCount: number
-    workflowReady: boolean
-  } | null
-  /** What the user explicitly attached to this message (selected items / a spot). */
-  attachments: ClaudeContextAttachment[]
-  /** The current canvas: nodes with positions/sizes and which layer they're in. */
-  board: ClaudeBoardItem[]
-  /** Timeline frames (may or may not be placed on the canvas). */
-  frames: Array<{ id: string; name: string; kind: string }>
-  assets: Array<{ id: string; name: string; kind: string }>
-}
-
-/** Payload the renderer sends to start an assistant turn. */
-export interface ClaudeSendInput {
-  /** Correlates the streamed events back to this turn. */
-  turnId: string
-  /** The model id to use (validated in main; falls back to the default). */
-  model?: string
-  /** Full chat history (including the latest user message). */
-  messages: ClaudeMessage[]
-  context: ClaudeContext
-}
-
-/** Streamed assistant events (main → renderer), correlated by `turnId`. */
-export interface ClaudeDeltaEvent {
-  turnId: string
-  text: string
-}
-export interface ClaudeDoneEvent {
-  turnId: string
-  /** The complete assistant text for the turn. */
-  text: string
-}
-export interface ClaudeErrorEvent {
-  turnId: string
-  error: string
 }
 
 /** Auto-update events (main → renderer). */

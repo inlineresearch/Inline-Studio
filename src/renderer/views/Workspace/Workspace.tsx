@@ -1,7 +1,6 @@
-import { useCallback, useRef, useState } from 'react'
 import type { Project } from '@shared/types'
 import { Logo } from '../../components/Logo'
-import { ClaudeLogo } from '../../components/ClaudeLogo'
+import { SettingsIcon } from '../../components/icons'
 import { useProjectStore } from '../../store/projectStore'
 import { useAssetStore } from '../../store/assetStore'
 import { useMoodboardStore } from '../../store/moodboardStore'
@@ -9,15 +8,16 @@ import { useFrameStore } from '../../store/frameStore'
 import { useUiStore, type WorkspaceMode } from '../../store/uiStore'
 import { MoodboardPanel } from '../Moodboard/MoodboardPanel'
 import { GeneratePanel } from '../Generate/GeneratePanel'
-import { AssistantPanel } from '../Assistant/AssistantPanel'
+import { SettingsPanel } from '../Settings/SettingsPanel'
 import { ContextMenu } from '../../components/ContextMenu'
+import { MediaLightbox } from '../../components/MediaLightbox'
 
 /** The main shell: a node canvas ("Inline Studio") plus the embedded ComfyUI Generate tab. */
 export function Workspace({ project }: { project: Project }): React.JSX.Element {
   const mode = useUiStore((s) => s.mode)
   const setMode = useUiStore((s) => s.setMode)
-  const assistantOpen = useUiStore((s) => s.assistantOpen)
-  const setAssistantOpen = useUiStore((s) => s.setAssistantOpen)
+  const settingsOpen = useUiStore((s) => s.settingsOpen)
+  const setSettingsOpen = useUiStore((s) => s.setSettingsOpen)
   const closeProject = useProjectStore((s) => s.closeProject)
   const resetAssets = useAssetStore((s) => s.reset)
   const resetBoard = useMoodboardStore((s) => s.reset)
@@ -30,29 +30,6 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
     resetFrames()
     closeProject()
   }
-
-  // Resizable assistant sidebar.
-  const [assistantWidth, setAssistantWidth] = useState(384)
-  const dragState = useRef<{ startX: number; startWidth: number } | null>(null)
-  const onDragStart = useCallback(
-    (e: React.MouseEvent): void => {
-      dragState.current = { startX: e.clientX, startWidth: assistantWidth }
-      const onMove = (ev: MouseEvent): void => {
-        if (!dragState.current) return
-        // Sidebar is on the right, so dragging left (negative dx) widens it.
-        const next = dragState.current.startWidth - (ev.clientX - dragState.current.startX)
-        setAssistantWidth(Math.min(720, Math.max(300, next)))
-      }
-      const onUp = (): void => {
-        dragState.current = null
-        window.removeEventListener('mousemove', onMove)
-        window.removeEventListener('mouseup', onUp)
-      }
-      window.addEventListener('mousemove', onMove)
-      window.addEventListener('mouseup', onUp)
-    },
-    [assistantWidth],
-  )
 
   return (
     <div className="flex h-full flex-col">
@@ -76,16 +53,17 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
 
         <div className="flex items-center">
           <button
-            onClick={() => setAssistantOpen(!assistantOpen)}
-            title={assistantOpen ? 'Hide Claude assistant' : 'Open Claude assistant'}
-            className={`-m-1 flex items-center gap-1.5 p-1 transition-colors ${
-              assistantOpen ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+            onClick={() => setSettingsOpen(!settingsOpen)}
+            title="Settings"
+            aria-label="Settings"
+            aria-pressed={settingsOpen}
+            className={`flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+              settingsOpen
+                ? 'bg-panel text-white'
+                : 'text-zinc-400 hover:bg-panel hover:text-zinc-200'
             }`}
           >
-            <ClaudeLogo size={20} />
-            <span className="rounded-full border border-accent/50 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-accent">
-              Beta
-            </span>
+            <SettingsIcon className="h-5 w-5" />
           </button>
         </div>
       </header>
@@ -104,21 +82,15 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
           </div>
         </div>
 
-        {assistantOpen && (
-          <>
-            <div
-              onMouseDown={onDragStart}
-              title="Drag to resize"
-              className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-accent"
-            />
-            <div className="min-h-0 shrink-0" style={{ width: assistantWidth }}>
-              <AssistantPanel />
-            </div>
-          </>
+        {settingsOpen && (
+          <div className="min-h-0 w-80 shrink-0">
+            <SettingsPanel onClose={() => setSettingsOpen(false)} />
+          </div>
         )}
       </main>
 
       <ContextMenu />
+      <MediaLightbox />
     </div>
   )
 }

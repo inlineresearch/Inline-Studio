@@ -4,7 +4,7 @@ import type { Asset, AssetFolder } from '@shared/types'
 import { useAssetStore, folderPath } from '../../store/assetStore'
 import { setAssetDragPayload } from '../../lib/dnd'
 import { useMediaContextMenu } from '../../lib/mediaContextMenu'
-import { CreateNewFolderIcon, FolderIcon, PlusIcon } from '../../components/icons'
+import { CloseIcon, CreateNewFolderIcon, FolderIcon, PlusIcon } from '../../components/icons'
 import { VideoPreview } from '../../components/VideoPreview'
 import { AudioPreview } from '../../components/AudioPreview'
 
@@ -227,9 +227,9 @@ function FolderTile({
           onDelete()
         }}
         title="Delete folder (keeps its media)"
-        className="absolute right-1 top-1 hidden rounded bg-black/60 px-1 text-[10px] text-zinc-300 group-hover:block hover:text-red-400"
+        className="absolute right-1 top-1 hidden rounded bg-black/60 p-0.5 text-zinc-300 group-hover:block hover:text-red-400"
       >
-        ✕
+        <CloseIcon className="h-3 w-3" />
       </button>
     </div>
   )
@@ -304,9 +304,9 @@ function AssetThumb({
           onDelete()
         }}
         title="Remove asset"
-        className="absolute right-1 top-1 hidden rounded bg-black/70 px-1 text-[10px] text-zinc-300 group-hover:block hover:text-red-400"
+        className="absolute right-1 top-1 hidden rounded bg-black/70 p-0.5 text-zinc-300 group-hover:block hover:text-red-400"
       >
-        ✕
+        <CloseIcon className="h-3 w-3" />
       </button>
     </div>
   )

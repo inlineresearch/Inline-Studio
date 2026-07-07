@@ -1,21 +1,23 @@
 <h1 align="center">Inline Studio</h1>
 
-<h3 align="center">AI filmmaking on a node canvas, powered by your own ComfyUI</h3>
+<h3 align="center">AI filmmaking on a node canvas</h3>
 
-<p align="center">Inline Studio is a free, open-source desktop app for AI filmmakers: build, iterate, and assemble AI films on a free-form node canvas while your own ComfyUI does the rendering.</p>
+<p align="center">Inline Studio is a free, open-source desktop app for AI filmmakers. Build a whole visual pipeline on a free-form node canvas, from moodboard to final cut, with hosted models via fal (bring your own key) for instant creative range and your own ComfyUI for infinite control.</p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge"></a>
   <a href="../../releases/latest"><img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.0.37-blue?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.0.38-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
 ![Inline Studio node canvas showing a generative AI film pipeline with frames, takes, and connectors](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/screenshot-dashboard-2.png)
 
+[**New here? Check out our getting started guide →**](https://inlinestudio.art/getting-started)
+
 ## What is Inline Studio?
 
-Inline Studio is a free, open-source desktop app for **AI filmmaking on a node canvas, powered by your own [ComfyUI](https://github.com/comfyanonymous/ComfyUI)**. It gives AI filmmakers a free-form canvas to build generative pipelines - text to video, image, and audio - where every render is kept as a versioned, non-destructive take, and finished frames assemble into a finished cut inside the app. You bring your own ComfyUI (local GPU or a cloud GPU via RunPod); Inline Studio does everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
+Inline Studio is a free, open-source desktop app for **AI filmmaking on a node canvas, powered by hosted [fal](https://fal.ai) models and your own [ComfyUI](https://github.com/comfyanonymous/ComfyUI)**. It gives AI filmmakers a free-form canvas to build a whole visual pipeline, from moodboard to final cut, where every render is kept as a versioned, non-destructive take. Reach for **fal** when you want instant creative range: hosted closed models like **GPT2 Image**, **Nano Banana**, **Seedance** & many more, no setup and no GPU. Reach for your **own ComfyUI** when you want infinite control over nodes, models, and the render. Mix both in the same film, and Inline Studio handles everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
 
 **Who it's for:** AI filmmakers, motion artists, and generative creators who want to make AI short films and longer cuts with ComfyUI without losing every good version along the way.
 
@@ -26,7 +28,7 @@ Inline Studio is a free, open-source desktop app for **AI filmmaking on a node c
 - **Chain frames into a generative pipeline** - wire one frame's output into the next frame's input. Refine a shot, feed it forward, regenerate the source, and everything downstream follows.
 - **Video Director node** - a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export.
 - **Trim Video/Audio node** - drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
-- **Built-in Claude assistant** - an AI assistant that works alongside you on the canvas, using your own Anthropic API key (stored encrypted on your machine, only ever sent to Anthropic).
+- **Generate with closed models, no setup** - run hosted models like GPT Image 2, Nano Banana, Seedance, Krea, and LTX right on the canvas. No ComfyUI, no custom nodes, no GPU. Add a Generate node, pick a model, and bring your own fal.ai key.
 - **Bring your own ComfyUI** - connect any ComfyUI instance, local or cloud. Your media, your models, your machine.
 - **Free & open source (MIT)** and **cross-platform** - macOS (Apple Silicon & Intel), Windows, and Linux.
 
@@ -36,26 +38,11 @@ Inline Studio is a free, open-source desktop app for **AI filmmaking on a node c
 | :---------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
 | ![Trim Video/Audio node with in/out handles over a clip's waveform](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/1.0.34.1.png) | ![Video Director node assembling rendered frames into one cut with layered audio](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/1.0.34.2.png) |
 
-[**New here? Start with the Getting Started guide →**](https://inlinestudio.art/getting-started)
-
-[**Then follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
+[**Follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
 
 ## How it works
 
 ComfyUI is the most capable generative engine going - image, video, audio, LLM, every new model lands there first. But generating is the easy part. The work that makes an AI film is what comes after: exploring options, keeping what's good, and shaping a repeatable process out of it. Inline Studio is the layer where that happens, organised around one model:
-
-```
-Project  →  Sequence  →  Frame  →  Take[]
-```
-
-- **Project** - a single portable `.inlinestudio` folder you can move, back up, or hand to a collaborator.
-- **Sequence** - an ordered group of frames; a scene of your film.
-- **Frame** - the atomic unit. **A frame is not a file - it's a slot with a history of takes.** Its inputs are library assets or another frame's chosen output (the refine/flow link).
-- **Take** - one immutable ComfyUI render of a frame. The frame points at the take you starred as hero, and that hero flows downstream to everything wired after it.
-
-That take history is the core value ComfyUI lacks: keep every version that worked, page through them, and pick the keeper without ever overwriting your earlier renders.
-
-When it's time to generate, the **Generate** tab opens your own ComfyUI right inside the app. Inline Studio hands it the frame's inputs, wires them into the workflow, pulls the finished renders back in as takes, and the full node graph is always one click away when you want it.
 
 ### Export the whole pipeline, not just the final render
 
@@ -70,9 +57,18 @@ Inline Studio doesn't bundle or manage ComfyUI - **you bring your own**, run it 
 
 Your media, your models, your machine. ComfyUI does the rendering. Inline Studio gives the work a shape you can iterate and share.
 
-## A built-in assistant (Claude)
+## Generate with closed models, no setup
 
-Inline Studio ships with an AI assistant powered by **Claude** that works alongside you on the canvas. Connect your own [Anthropic API key](https://console.anthropic.com/settings/keys) - it's stored encrypted on your machine and never sent anywhere but Anthropic - and open the assistant from the Claude icon in the header.
+Not every model lives in ComfyUI. The best closed models are hosted only, and standing up a workflow just to try one is friction you don't need. Inline Studio adds a second way to generate: a single Generate node that runs hosted models through [fal](https://fal.ai), with no ComfyUI, no custom nodes, and no GPU.
+
+Create a frame, choose **Start with Fal API**, pick a model, and run. Everything else works exactly as it does with ComfyUI: takes, flow links between frames, the Video Director, and export. That means you can mix hosted models and your own ComfyUI renders in the same film.
+
+Models available today:
+
+- **Image:** GPT Image 2, Nano Banana 2, Nano Banana Pro (edit), Krea v2 Large
+- **Video:** LTX 2.3 (image to video), Seedance 2.0 (text, image, and reference to video)
+
+It is bring your own key. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings and it stays on your machine, sent only to fal when you generate. You pay fal directly for what you render, and each node shows a rough price estimate before you run it.
 
 ## Install
 
@@ -150,7 +146,7 @@ Through your own ComfyUI. Connect an existing setup or launch one on a cloud GPU
 
 ## Contributing
 
-Inline Studio is early and moving fast, and issues, ideas, and pull requests are all welcome. If you're poking at the code, [CLAUDE.md](CLAUDE.md) is the engineering guide: it explains the architecture, the data model, and the conventions to follow.
+Inline Studio is early and moving fast, any issues, ideas, and pull requests are all welcome. If you're poking at the code, [CLAUDE.md](CLAUDE.md) is the engineering guide: it explains the architecture, the data model, and the conventions to follow.
 
 Want to help by using it for real? Try the [creator task](task.md): build a short 20-second AI film in Inline Studio and send us your feedback.
 

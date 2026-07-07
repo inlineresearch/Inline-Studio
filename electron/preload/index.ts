@@ -15,16 +15,15 @@ import type {
   ComfyOutput,
   MoodboardItem,
   MoodboardConnector,
-  ClaudeSendInput,
-  ClaudeDeltaEvent,
-  ClaudeDoneEvent,
-  ClaudeErrorEvent,
   UpdateAvailableEvent,
   UpdateProgressEvent,
   UpdateDownloadedEvent,
   TimelineProgressEvent,
+  GenerationProgressEvent,
+  GenerationNodeDoneEvent,
+  GenerationDoneEvent,
+  GenerationErrorEvent,
 } from '@shared/types'
-import type { ClaudeProposal } from '@shared/claudeActions'
 import type { IpcRendererEvent } from 'electron'
 
 const api: InlineStudioApi = {
@@ -71,22 +70,42 @@ const api: InlineStudioApi = {
     listInputs: () => ipcRenderer.invoke(IpcChannels.frames.listInputs),
     addInput: (frameId: string, assetId: string) =>
       ipcRenderer.invoke(IpcChannels.frames.addInput, frameId, assetId),
+    addInputs: (frameId: string, assetIds: string[]) =>
+      ipcRenderer.invoke(IpcChannels.frames.addInputs, frameId, assetIds),
     addSourceInput: (frameId: string, sourceFrameId: string) =>
       ipcRenderer.invoke(IpcChannels.frames.addSourceInput, frameId, sourceFrameId),
     removeInput: (frameId: string, assetId: string) =>
       ipcRenderer.invoke(IpcChannels.frames.removeInput, frameId, assetId),
+    removeInputById: (frameId: string, inputId: string) =>
+      ipcRenderer.invoke(IpcChannels.frames.removeInputById, frameId, inputId),
     reorderInputs: (frameId: string, orderedAssetIds: string[]) =>
       ipcRenderer.invoke(IpcChannels.frames.reorderInputs, frameId, orderedAssetIds),
     listAllTakes: () => ipcRenderer.invoke(IpcChannels.frames.listAllTakes),
     deleteTake: (takeId: string) => ipcRenderer.invoke(IpcChannels.frames.deleteTake, takeId),
+    setFalParams: (frameId: string, params: Record<string, unknown>) =>
+      ipcRenderer.invoke(IpcChannels.frames.setFalParams, frameId, params),
+    setModel: (frameId: string, modelId: string) =>
+      ipcRenderer.invoke(IpcChannels.frames.setModel, frameId, modelId),
+    setProvider: (frameId: string, provider: 'comfy' | 'fal', modelId?: string) =>
+      ipcRenderer.invoke(IpcChannels.frames.setProvider, frameId, provider, modelId),
+  },
+  generation: {
+    run: (frameId: string) => ipcRenderer.invoke(IpcChannels.generation.run, frameId),
+    cancel: (frameId?: string) => ipcRenderer.invoke(IpcChannels.generation.cancel, frameId),
+    resumePending: () => ipcRenderer.invoke(IpcChannels.generation.resumePending),
+  },
+  falSettings: {
+    status: () => ipcRenderer.invoke(IpcChannels.falSettings.status),
+    setApiKey: (key: string) => ipcRenderer.invoke(IpcChannels.falSettings.setApiKey, key),
+    clearApiKey: () => ipcRenderer.invoke(IpcChannels.falSettings.clearApiKey),
   },
   comfy: {
     status: () => ipcRenderer.invoke(IpcChannels.comfy.status),
     linkFrame: (frameId: string) => ipcRenderer.invoke(IpcChannels.comfy.linkFrame, frameId),
     uploadInputs: (frameId: string) => ipcRenderer.invoke(IpcChannels.comfy.uploadInputs, frameId),
     pullWorkflow: (frameId: string) => ipcRenderer.invoke(IpcChannels.comfy.pullWorkflow, frameId),
-    saveLiveWorkflow: (frameId: string, workflow: unknown, intent?: string) =>
-      ipcRenderer.invoke(IpcChannels.comfy.saveLiveWorkflow, frameId, workflow, intent),
+    saveLiveWorkflow: (frameId: string, workflow: unknown) =>
+      ipcRenderer.invoke(IpcChannels.comfy.saveLiveWorkflow, frameId, workflow),
     pushWorkflow: (frameId: string) => ipcRenderer.invoke(IpcChannels.comfy.pushWorkflow, frameId),
     pullLatest: (frameId: string) => ipcRenderer.invoke(IpcChannels.comfy.pullLatest, frameId),
     latestRun: () => ipcRenderer.invoke(IpcChannels.comfy.latestRun),
@@ -96,13 +115,6 @@ const api: InlineStudioApi = {
   settings: {
     get: () => ipcRenderer.invoke(IpcChannels.settings.get),
     setComfyUrl: (url: string) => ipcRenderer.invoke(IpcChannels.settings.setComfyUrl, url),
-  },
-  claude: {
-    status: () => ipcRenderer.invoke(IpcChannels.claude.status),
-    setApiKey: (key: string) => ipcRenderer.invoke(IpcChannels.claude.setApiKey, key),
-    clearApiKey: () => ipcRenderer.invoke(IpcChannels.claude.clearApiKey),
-    send: (input: ClaudeSendInput) => ipcRenderer.invoke(IpcChannels.claude.send, input),
-    cancel: () => ipcRenderer.invoke(IpcChannels.claude.cancel),
   },
   export: {
     exportFrames: () => ipcRenderer.invoke(IpcChannels.export.exportFrames),
@@ -124,6 +136,9 @@ const api: InlineStudioApi = {
     addDirector: (x: number, y: number) =>
       ipcRenderer.invoke(IpcChannels.moodboard.addDirector, x, y),
     addTrim: (x: number, y: number) => ipcRenderer.invoke(IpcChannels.moodboard.addTrim, x, y),
+    addGenNode: (modelId: string, x: number, y: number) =>
+      ipcRenderer.invoke(IpcChannels.moodboard.addGenNode, modelId, x, y),
+    addPrompt: (x: number, y: number) => ipcRenderer.invoke(IpcChannels.moodboard.addPrompt, x, y),
     updateItem: (id: string, patch: MoodboardItemPatch) =>
       ipcRenderer.invoke(IpcChannels.moodboard.updateItem, id, patch),
     deleteItem: (id: string) => ipcRenderer.invoke(IpcChannels.moodboard.deleteItem, id),
@@ -183,14 +198,14 @@ const api: InlineStudioApi = {
       ipcRenderer.on(IpcChannels.events.libraryChanged, listener)
       return () => ipcRenderer.removeListener(IpcChannels.events.libraryChanged, listener)
     },
-    onClaudeDelta: (callback: (e: ClaudeDeltaEvent) => void) =>
-      subscribe(IpcChannels.events.claudeDelta, callback),
-    onClaudeProposal: (callback: (p: ClaudeProposal) => void) =>
-      subscribe(IpcChannels.events.claudeProposal, callback),
-    onClaudeDone: (callback: (e: ClaudeDoneEvent) => void) =>
-      subscribe(IpcChannels.events.claudeDone, callback),
-    onClaudeError: (callback: (e: ClaudeErrorEvent) => void) =>
-      subscribe(IpcChannels.events.claudeError, callback),
+    onGenerationProgress: (callback: (e: GenerationProgressEvent) => void) =>
+      subscribe(IpcChannels.events.generationProgress, callback),
+    onGenerationNodeDone: (callback: (e: GenerationNodeDoneEvent) => void) =>
+      subscribe(IpcChannels.events.generationNodeDone, callback),
+    onGenerationDone: (callback: (e: GenerationDoneEvent) => void) =>
+      subscribe(IpcChannels.events.generationDone, callback),
+    onGenerationError: (callback: (e: GenerationErrorEvent) => void) =>
+      subscribe(IpcChannels.events.generationError, callback),
     onUpdateAvailable: (callback: (e: UpdateAvailableEvent) => void) =>
       subscribe(IpcChannels.events.updateAvailable, callback),
     onUpdateProgress: (callback: (e: UpdateProgressEvent) => void) =>
