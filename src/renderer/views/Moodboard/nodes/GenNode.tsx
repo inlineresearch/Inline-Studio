@@ -296,7 +296,8 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
         >
           {/* Edge-to-edge output preview. */}
           <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
-            {/* Input thumbnails (top) — dropped/wired inputs; hover an item to remove it. */}
+            {/* Input thumbnails (top) — dropped/wired inputs. Click one to open it big in the
+                zoomable lightbox (the strip is too small to read); hover an item to remove it. */}
             <ThumbStrip
               items={inputThumbs.map((t) => ({
                 id: t.id,
@@ -304,6 +305,12 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
                 kind: t.kind,
                 poster: t.poster,
               }))}
+              onSelect={(i) => {
+                const t = inputThumbs[i]
+                // The lightbox shows image/video; audio inputs have nothing to zoom into.
+                if (t.kind === 'audio') return
+                openLightbox({ src: t.saveSrc, kind: t.kind, name: `${def.title} input` })
+              }}
               onRemove={(i) => void removeInputById(frameId, inputThumbs[i].id)}
               edge="top"
             />

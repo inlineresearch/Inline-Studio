@@ -14,7 +14,11 @@ function suggestedFileName(sourcePath: string, suggested: string): string {
   if (!base) base = basename(sourcePath)
   // Strip characters that are awkward in filenames; keep it readable.
   base = base.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'media'
-  if (ext && !extname(base)) base += ext
+  // Ensure the real extension is present. Don't rely on `extname(base)` to detect it — the
+  // suggested name often contains dots (e.g. a model version like "LTX 2.3"), which would fool
+  // it into thinking the file already has an extension and leave the save with no format. Compare
+  // the actual ending instead, so a video reliably keeps its .mp4 (etc.).
+  if (ext && !base.toLowerCase().endsWith(ext.toLowerCase())) base += ext
   return base
 }
 
