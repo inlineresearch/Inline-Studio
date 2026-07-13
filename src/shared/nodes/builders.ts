@@ -25,6 +25,11 @@ interface VideoResult {
   content_type?: string
   file_name?: string
 }
+interface AudioResult {
+  url?: string
+  content_type?: string
+  file_name?: string
+}
 
 /** Parse a `{ images: [{ url, content_type, file_name }] }` response into output refs. */
 export function parseImageArray(response: unknown, defaultExt = '.png'): FalOutputRef[] {
@@ -38,6 +43,21 @@ export function parseImageArray(response: unknown, defaultExt = '.png'): FalOutp
       url: img.url,
       ext: extFromContentTypeOrName(img.content_type, img.file_name, defaultExt),
       kind: 'image' as const,
+    }))
+}
+
+/** Parse an `{ audios: [{ url, content_type, file_name }] }` response into output refs. */
+export function parseAudioArray(response: unknown, defaultExt = '.m4a'): FalOutputRef[] {
+  const audios = (response as { audios?: AudioResult[] } | null)?.audios ?? []
+  return audios
+    .filter(
+      (aud): aud is AudioResult & { url: string } =>
+        typeof aud?.url === 'string' && aud.url.length > 0,
+    )
+    .map((aud) => ({
+      url: aud.url,
+      ext: extFromContentTypeOrName(aud.content_type, aud.file_name, defaultExt),
+      kind: 'audio' as const,
     }))
 }
 
