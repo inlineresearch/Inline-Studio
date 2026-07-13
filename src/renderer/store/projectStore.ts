@@ -5,6 +5,7 @@
 import { create } from 'zustand'
 import type { Project, RecentProject } from '@shared/types'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { studio } from '@/lib/studio'
 
 interface ProjectState {
   current: Project | null
@@ -35,17 +36,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   exportingPath: null,
 
   loadRecents: async () => {
-    const res = await window.inlineStudio.project.listRecent()
+    const res = await studio().project.listRecent()
     if (res.ok) set({ recents: res.value })
   },
 
   createProject: async (name: string) => {
     set({ loading: true, error: null })
-    const dir = await window.inlineStudio.dialog.pickDirectory()
+    const dir = await studio().dialog.pickDirectory()
     if (!dir.ok) return set({ loading: false, error: dir.error })
     if (dir.value === null) return set({ loading: false })
 
-    const res = await window.inlineStudio.project.create({ name, parentDir: dir.value })
+    const res = await studio().project.create({ name, parentDir: dir.value })
     if (!res.ok) return set({ loading: false, error: res.error })
     set({ current: res.value, loading: false })
     void get().loadRecents()
@@ -53,7 +54,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   openFromDialog: async () => {
     set({ loading: true, error: null })
-    const res = await window.inlineStudio.project.openDialog()
+    const res = await studio().project.openDialog()
     if (!res.ok) return set({ loading: false, error: res.error })
     if (res.value === null) return set({ loading: false })
     set({ current: res.value, loading: false })
@@ -63,7 +64,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   openFromZip: async () => {
     set({ loading: true, error: null })
     try {
-      const res = await window.inlineStudio.project.openZip()
+      const res = await studio().project.openZip()
       if (!res.ok) return set({ loading: false, error: res.error })
       if (res.value === null) return set({ loading: false })
       set({ current: res.value, loading: false })
@@ -75,7 +76,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   openByPath: async (path: string) => {
     set({ loading: true, error: null })
-    const res = await window.inlineStudio.project.open(path)
+    const res = await studio().project.open(path)
     if (!res.ok) return set({ loading: false, error: res.error })
     set({ current: res.value, loading: false })
     void get().loadRecents()
@@ -84,7 +85,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   exportProject: async (path: string) => {
     set({ exportingPath: path, error: null, notice: null })
     try {
-      const res = await window.inlineStudio.project.export(path)
+      const res = await studio().project.export(path)
       if (!res.ok) return set({ exportingPath: null, error: res.error })
       // null = the user cancelled the save dialog.
       set({ exportingPath: null, notice: res.value ? `Exported to ${res.value.path}` : null })

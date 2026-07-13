@@ -5,6 +5,10 @@ generative render-farm. Creators build, iterate, and share generative pipelines 
 canvas, working frame-by-frame, while ComfyUI does the actual image/video/audio/LLM generation behind
 each frame.
 
+> **Naming:** this project is also called **Storyline** (the repo/folder name and codename); the npm
+> package is `inline-studio`. "Storyline" and "Inline Studio" are the same app. It is the UI client of
+> **Inline Core**, the separate Python generation engine (see `~/Documents/inline-core`).
+
 > Read this file before changing code. It defines the architecture and the non-negotiable rules.
 
 ## Mental model (everything is organised around this)

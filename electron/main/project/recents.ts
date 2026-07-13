@@ -2,15 +2,15 @@
  * The recent-projects list, persisted as a small JSON file in Electron's
  * userData dir (app-global, not per-project).
  */
-import { app } from 'electron'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import type { RecentProject } from '@shared/types'
+import { caps } from '../capabilities'
 
 const MAX_RECENTS = 12
 
 function recentsFile(): string {
-  return join(app.getPath('userData'), 'recent-projects.json')
+  return join(caps().appDataDir(), 'recent-projects.json')
 }
 
 export function listRecents(): RecentProject[] {

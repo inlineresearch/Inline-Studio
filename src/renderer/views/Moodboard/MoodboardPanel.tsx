@@ -20,7 +20,9 @@ import {
   type EdgeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { mediaUrl } from '@shared/media'
+import { studio } from '@/lib/studio'
+import { resolveMedia } from '@/lib/media'
+import { importFilesToLibrary } from '@/lib/importFiles'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
 import { portsSatisfy, type PortKind } from '@shared/coreNodes'
 import { useMoodboardStore } from '../../store/moodboardStore'
@@ -272,7 +274,7 @@ function Board(): React.JSX.Element {
 
   // Director render progress (main → renderer) drives the editor + node progress UI.
   useEffect(() => {
-    return window.inlineStudio.timeline.onProgress((e) => {
+    return studio().timeline.onProgress((e) => {
       useTimelineStore.getState().setProgress(e.ownerItemId, e.fraction >= 1 ? null : e.fraction)
     })
   }, [])
@@ -285,22 +287,22 @@ function Board(): React.JSX.Element {
     // running server-side); their progress/completion arrives through the events below.
     void gen.resumePending()
     const unsubs = [
-      window.inlineStudio.events.onGenerationProgress((e) => {
+      studio().events.onGenerationProgress((e) => {
         gen.setBusy(e.frameId, true)
         gen.setProgress(e.frameId, e.fraction, e.status)
       }),
-      window.inlineStudio.events.onGenerationNodeDone((e) => {
+      studio().events.onGenerationNodeDone((e) => {
         gen.setBusy(e.frameId, false)
         gen.setProgress(e.frameId, null)
         void useFrameStore.getState().load()
       }),
-      window.inlineStudio.events.onGenerationDone(() => {
+      studio().events.onGenerationDone(() => {
         gen.finishAll()
         void useFrameStore.getState().load()
         // Core workflow outputs are stored on their canvas items — refresh the board to show them.
         void useMoodboardStore.getState().load()
       }),
-      window.inlineStudio.events.onGenerationError((e) => {
+      studio().events.onGenerationError((e) => {
         gen.finishAll()
         gen.setError(e.error)
       }),
@@ -681,10 +683,8 @@ function Board(): React.JSX.Element {
     const ids = getAssetDragIds(e.dataTransfer)
     if (ids.length === 0) {
       // Files dropped from the OS → import into the library, then place as frames.
-      const paths = Array.from(e.dataTransfer.files ?? [])
-        .map((f) => window.inlineStudio.getPathForFile(f))
-        .filter((p) => p.length > 0)
-      if (paths.length > 0) void importDroppedFiles(paths, drop)
+      const files = Array.from(e.dataTransfer.files ?? [])
+      if (files.length > 0) void placeDroppedFiles(files, drop)
       return
     }
     placeAssetsAt(ids, drop)
@@ -702,16 +702,16 @@ function Board(): React.JSX.Element {
     })
   }
 
-  /** Import OS files (by absolute path), then place the new assets as frames. */
-  const importDroppedFiles = async (
-    paths: string[],
+  /** Import dropped OS files (paths under Electron, upload in the browser), then place as frames. */
+  const placeDroppedFiles = async (
+    files: File[],
     drop: { x: number; y: number },
   ): Promise<void> => {
-    const res = await window.inlineStudio.assets.importPaths(paths, null)
-    if (!res.ok || res.value.length === 0) return
+    const assets = await importFilesToLibrary(files, null)
+    if (assets.length === 0) return
     await loadAssets() // surface the new media in the Assets panel too
     placeAssetsAt(
-      res.value.map((a) => a.id),
+      assets.map((a) => a.id),
       drop,
     )
   }
@@ -1020,10 +1020,10 @@ function itemToNode(
   // Images render from their downscaled thumbnail when available (full-res only in the
   // Library/Preview); video/audio keep their own source.
   const src = asset
-    ? mediaUrl(asset.kind === 'image' ? (asset.thumbPath ?? asset.filePath) : asset.filePath)
+    ? resolveMedia(asset.kind === 'image' ? (asset.thumbPath ?? asset.filePath) : asset.filePath)
     : ''
   const type = asset?.kind === 'video' ? 'video' : asset?.kind === 'audio' ? 'audio' : 'image'
   const waveform =
-    asset?.kind === 'audio' && asset.thumbPath ? mediaUrl(asset.thumbPath) : undefined
+    asset?.kind === 'audio' && asset.thumbPath ? resolveMedia(asset.thumbPath) : undefined
   return { ...common, type, data: { src, name: asset?.name ?? '', waveform } }
 }

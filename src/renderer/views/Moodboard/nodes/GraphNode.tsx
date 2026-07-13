@@ -1,11 +1,11 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { mediaUrl } from '@shared/media'
 import type { CoreParamField } from '@shared/coreNodes'
 import { portKindColor } from '@shared/coreNodes'
 import { useCoreNodesStore } from '../../../store/coreNodesStore'
 import { useGenerationStore } from '../../../store/generationStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { NodeFrame } from './NodeFrame'
+import { resolveMedia } from '@/lib/media'
 
 interface GraphNodeData extends Record<string, unknown> {
   itemId: string
@@ -108,9 +108,20 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   if (!item || item.type !== 'core' || !item.data.core || !descriptor) {
     return (
-      <NodeFrame id={id} selected={!!selected} minWidth={160} minHeight={70}>
-        <div className="flex h-full items-center justify-center p-2 text-center text-[11px] text-zinc-500">
-          {coreType ? `Unknown Core node: ${coreType}` : 'Core node'}
+      <NodeFrame id={id} selected={!!selected} minWidth={200} minHeight={92}>
+        <div className="flex h-full flex-col items-center justify-center gap-1 p-3 text-center">
+          {coreType ? (
+            <>
+              <span className="text-[11px] font-semibold text-amber-300">Node unavailable</span>
+              <span className="text-[10px] leading-tight text-zinc-400">
+                <span className="text-zinc-300">{coreType}</span> is not registered. Start Inline
+                Core and install its runtime (the <span className="text-zinc-300">zimage</span>{' '}
+                extra).
+              </span>
+            </>
+          ) : (
+            <span className="text-[11px] text-zinc-500">Core node</span>
+          )}
         </div>
       </NodeFrame>
     )
@@ -118,6 +129,9 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   const core = item.data.core
   const fields = descriptor.params.filter((p) => !p.advanced)
+  const missingCategories = descriptor.params
+    .filter((p) => p.optionsFrom && (p.options?.length ?? 0) === 0)
+    .map((p) => p.optionsFrom as string)
   const setParam = (key: string, value: string | number | boolean): void => {
     void updateItem(itemId, {
       data: { ...item.data, core: { type: core.type, params: { ...core.params, [key]: value } } },
@@ -143,9 +157,17 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
               </svg>
             </button>
           </div>
+          {missingCategories.length > 0 && (
+            <div className="nodrag rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-1">
+              <span className="text-[10px] leading-tight text-amber-200">
+                Model files not found ({missingCategories.join(', ')}). Add them to Inline
+                Core&apos;s models folder, then reopen.
+              </span>
+            </div>
+          )}
           {core.output?.kind === 'image' && (
             <img
-              src={mediaUrl(core.output.filePath)}
+              src={resolveMedia(core.output.filePath)}
               alt=""
               className="h-20 w-full rounded object-cover"
             />
@@ -173,13 +195,16 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           type="target"
           id={port.id}
           position={Position.Left}
-          title={`${port.label} (${port.kind})`}
           style={{
             top: edgePercent(i, descriptor.inputs.length),
             background: portKindColor(port.kind),
           }}
-          className="!h-3 !w-3 !border-2 !border-surface"
-        />
+          className="group !h-3 !w-3 !border-2 !border-surface"
+        >
+          <span className="pointer-events-none absolute right-full top-1/2 z-50 mr-2 hidden -translate-y-1/2 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-zinc-100 shadow group-hover:block">
+            {port.label} <span className="text-zinc-400">· {port.kind}</span>
+          </span>
+        </Handle>
       ))}
       {descriptor.outputs.map((port, i) => (
         <Handle
@@ -187,13 +212,16 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           type="source"
           id={port.id}
           position={Position.Right}
-          title={`${port.label} (${port.kind})`}
           style={{
             top: edgePercent(i, descriptor.outputs.length),
             background: portKindColor(port.kind),
           }}
-          className="!h-3 !w-3 !border-2 !border-surface"
-        />
+          className="group !h-3 !w-3 !border-2 !border-surface"
+        >
+          <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-zinc-100 shadow group-hover:block">
+            {port.label} <span className="text-zinc-400">· {port.kind}</span>
+          </span>
+        </Handle>
       ))}
     </>
   )

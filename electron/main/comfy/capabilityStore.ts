@@ -3,16 +3,16 @@
  * switching installs (incl. ephemeral cloud boxes) stays clean. Capabilities describe the
  * machine/install — not the project — so they live in userData, like settings/credentials.
  */
-import { app } from 'electron'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { caps } from '../capabilities'
 import { getSettings } from '../settings/store'
 import { fetchCapabilities, type ComfyCapabilities } from './client'
 
 const DEFAULT_MAX_AGE_MS = 10 * 60 * 1000
 
 function cacheFile(): string {
-  return join(app.getPath('userData'), 'comfy-capabilities.json')
+  return join(caps().appDataDir(), 'comfy-capabilities.json')
 }
 
 function urlKey(): string {

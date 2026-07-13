@@ -1,4 +1,9 @@
-/** Registers all IPC handlers. New feature areas add their register* call here. */
+/**
+ * Registers the shell-agnostic IPC handlers shared by Electron and the headless web server.
+ * Set the transport, broadcaster, and capabilities before calling this. New feature areas add
+ * their register* call here. Electron-only handlers (auto-update) are registered by the Electron
+ * entry directly, so this list stays runnable on the server.
+ */
 import { registerProjectHandlers } from './project'
 import { registerAssetHandlers } from './assets'
 import { registerFolderHandlers } from './folders'
@@ -14,7 +19,6 @@ import { registerExportHandlers } from './export'
 import { registerClipboardHandlers } from './clipboard'
 import { registerMediaHandlers } from './media'
 import { registerShellHandlers } from './shell'
-import { registerUpdateHandlers } from './updates'
 import { registerAppHandlers } from './app'
 
 export function registerIpcHandlers(): void {
@@ -33,6 +37,5 @@ export function registerIpcHandlers(): void {
   registerClipboardHandlers()
   registerMediaHandlers()
   registerShellHandlers()
-  registerUpdateHandlers()
   registerAppHandlers()
 }

@@ -10,9 +10,10 @@
  *   app. So we only detect (`autoDownload = false`) and emit `updateAvailable` with
  *   `notifyOnly: true`; the renderer opens the releases page instead.
  */
-import { app, BrowserWindow } from 'electron'
+import { app } from 'electron'
 import electronUpdater, { type ProgressInfo, type UpdateInfo } from 'electron-updater'
 import { IpcChannels } from '@shared/ipc'
+import { broadcast } from '../events/broadcaster'
 
 // electron-updater is CJS; the autoUpdater singleton is on the default export.
 // IMPORTANT: accessing `electronUpdater.autoUpdater` lazily constructs the platform
@@ -27,10 +28,6 @@ function updater(): typeof electronUpdater.autoUpdater {
 const isMac = process.platform === 'darwin'
 /** Re-check this often while the app stays open. */
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
-
-function broadcast(channel: string, payload: unknown): void {
-  for (const w of BrowserWindow.getAllWindows()) w.webContents.send(channel, payload)
-}
 
 /** Wire the updater once and kick off the first check. No-op (logged) outside a packaged app. */
 export function initAutoUpdater(): void {

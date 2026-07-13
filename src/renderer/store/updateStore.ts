@@ -1,6 +1,7 @@
 /** Auto-update state, fed by the main process's `events:update*` broadcasts. */
 import { create } from 'zustand'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { studio } from '@/lib/studio'
 
 const RELEASES_URL = 'https://github.com/inlineresearch/Inline-Studio/releases/latest'
 
@@ -36,7 +37,7 @@ export const useUpdateStore = create<UpdateState>((set) => ({
 
   loadCurrentVersion: async () => {
     try {
-      const res = await window.inlineStudio.app.version()
+      const res = await studio().app.version()
       if (res.ok) set({ currentVersion: res.value })
     } catch {
       // best-effort — the footer just omits the version if this fails
@@ -44,7 +45,7 @@ export const useUpdateStore = create<UpdateState>((set) => ({
   },
 
   subscribeToEvents: () => {
-    const { events } = window.inlineStudio
+    const { events } = studio()
     const unsubs = [
       events.onUpdateAvailable((e) =>
         set({
@@ -62,7 +63,7 @@ export const useUpdateStore = create<UpdateState>((set) => ({
 
   install: async () => {
     try {
-      const res = await window.inlineStudio.updates.quitAndInstall()
+      const res = await studio().updates.quitAndInstall()
       if (!res.ok) set({ error: res.error })
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
@@ -71,7 +72,7 @@ export const useUpdateStore = create<UpdateState>((set) => ({
 
   openReleases: async () => {
     try {
-      await window.inlineStudio.shell.openExternal(RELEASES_URL)
+      await studio().shell.openExternal(RELEASES_URL)
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
     }

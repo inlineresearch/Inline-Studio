@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { mediaUrl, takeWaveformPath } from '@shared/media'
+import { takeWaveformPath } from '@shared/media'
 import { getNodeDef } from '@shared/nodes/registry'
 import { formatPrice } from '@shared/nodes/types'
 import { useFrameStore } from '../../../store/frameStore'
@@ -23,6 +23,7 @@ import { AudioGlyph, ImageGlyph, NodeBadge, NodeBadgeRow, VideoGlyph } from './N
 import { ThumbStrip } from './ThumbStrip'
 import { resolveInputThumbs } from './inputThumbs'
 import { ModelPicker } from '../ModelPicker'
+import { resolveMedia } from '@/lib/media'
 
 interface GenNodeData extends Record<string, unknown> {
   frameId: string
@@ -317,39 +318,47 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
             {take ? (
               take.kind === 'video' ? (
                 <VideoPreview
-                  src={mediaUrl(take.filePath)}
+                  src={resolveMedia(take.filePath)}
                   onContextMenu={(e) =>
                     onMediaContextMenu(e, {
-                      src: mediaUrl(take.filePath),
+                      src: resolveMedia(take.filePath),
                       name: def.title,
                       kind: 'video',
                     })
                   }
                   onDoubleClick={() =>
-                    openLightbox({ src: mediaUrl(take.filePath), kind: 'video', name: def.title })
+                    openLightbox({
+                      src: resolveMedia(take.filePath),
+                      kind: 'video',
+                      name: def.title,
+                    })
                   }
                   className="h-full w-full object-cover"
                 />
               ) : take.kind === 'audio' ? (
                 <div className="flex h-full w-full items-center px-3">
                   <Waveform
-                    url={mediaUrl(takeWaveformPath(take.id))}
+                    url={resolveMedia(takeWaveformPath(take.id))}
                     className="h-1/2 w-full text-emerald-400"
                   />
                 </div>
               ) : (
                 <img
-                  src={mediaUrl(take.filePath)}
+                  src={resolveMedia(take.filePath)}
                   alt=""
                   onContextMenu={(e) =>
                     onMediaContextMenu(e, {
-                      src: mediaUrl(take.filePath),
+                      src: resolveMedia(take.filePath),
                       name: def.title,
                       kind: 'image',
                     })
                   }
                   onDoubleClick={() =>
-                    openLightbox({ src: mediaUrl(take.filePath), kind: 'image', name: def.title })
+                    openLightbox({
+                      src: resolveMedia(take.filePath),
+                      kind: 'image',
+                      name: def.title,
+                    })
                   }
                   className="h-full w-full object-cover"
                 />
@@ -387,7 +396,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
               <ThumbStrip
                 items={ordered.map((t) => ({
                   id: t.id,
-                  url: mediaUrl(t.filePath),
+                  url: resolveMedia(t.filePath),
                   kind: t.kind,
                 }))}
                 selected={safeTakeIdx}

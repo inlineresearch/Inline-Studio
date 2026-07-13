@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import type { DirectorTimeline } from '@shared/types'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { studio } from '@/lib/studio'
 
 interface TimelineState {
   /** Resolved (display) timeline per director item id. */
@@ -32,7 +33,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 
   resolve: async (ownerItemId) => {
     try {
-      const res = await window.inlineStudio.timeline.resolve(ownerItemId)
+      const res = await studio().timeline.resolve(ownerItemId)
       if (!res.ok) return set({ error: res.error })
       set((s) => ({ timelineByOwner: { ...s.timelineByOwner, [ownerItemId]: res.value } }))
     } catch (e) {
@@ -50,7 +51,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
       }
     })
     try {
-      const res = await window.inlineStudio.timeline.setVolumes(ownerItemId, l1Volume, l2Volume)
+      const res = await studio().timeline.setVolumes(ownerItemId, l1Volume, l2Volume)
       if (!res.ok) set({ error: res.error })
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
@@ -63,7 +64,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   buildPreview: async (ownerItemId) => {
     get().setProgress(ownerItemId, 0)
     try {
-      const res = await window.inlineStudio.timeline.buildPreview(ownerItemId)
+      const res = await studio().timeline.buildPreview(ownerItemId)
       if (!res.ok) {
         set({ error: res.error })
         return false
@@ -80,7 +81,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   exportTimeline: async (ownerItemId) => {
     get().setProgress(ownerItemId, 0)
     try {
-      const res = await window.inlineStudio.timeline.export(ownerItemId)
+      const res = await studio().timeline.export(ownerItemId)
       if (!res.ok) {
         set({ error: res.error })
         return null

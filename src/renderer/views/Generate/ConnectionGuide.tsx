@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { studio } from '@/lib/studio'
 
 /**
  * Shown on the Generate tab when no ComfyUI is reachable. Two side-by-side cards
@@ -102,7 +103,7 @@ function CloudCard(): React.JSX.Element {
 function VideoThumb({ videoId, href }: { videoId: string; href: string }): React.JSX.Element {
   return (
     <button
-      onClick={() => void window.inlineStudio.shell.openExternal(href)}
+      onClick={() => void studio().shell.openExternal(href)}
       title="Watch the setup video on YouTube"
       className="group mt-0.5 overflow-hidden rounded-md border border-border hover:border-accent"
     >
@@ -196,7 +197,7 @@ function TemplateLink({
 }): React.JSX.Element {
   return (
     <button
-      onClick={() => void window.inlineStudio.shell.openExternal(href)}
+      onClick={() => void studio().shell.openExternal(href)}
       className="group flex items-center justify-between gap-2 rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-left hover:border-accent hover:bg-surface"
     >
       <span className="min-w-0">

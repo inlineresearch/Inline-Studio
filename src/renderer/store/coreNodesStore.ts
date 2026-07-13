@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand'
 import type { NodeDescriptor } from '@shared/coreNodes'
+import { studio } from '@/lib/studio'
 
 interface CoreNodesState {
   descriptors: NodeDescriptor[]
@@ -21,9 +22,9 @@ export const useCoreNodesStore = create<CoreNodesState>((set, get) => ({
   running: false,
   error: null,
   load: async () => {
-    const status = await window.inlineStudio.core.status()
+    const status = await studio().core.status()
     const running = status.ok ? status.value.running : false
-    const models = await window.inlineStudio.core.models()
+    const models = await studio().core.models()
     if (models.ok) {
       set({
         descriptors: models.value.models,

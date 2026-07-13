@@ -7,20 +7,20 @@
  * `getApiKey()` also falls back to the `FAL_KEY` env var (see `.env.example`) so headless/dev
  * runs can supply a key without the UI, matching the settings-store env-fallback pattern.
  */
-import { app, safeStorage } from 'electron'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { caps } from '../capabilities'
 
 /** Prefix marking an unencrypted fallback file, so reads know how to decode it. */
 const PLAINTEXT_MAGIC = Buffer.from('INLINESTUDIO_FAL_PLAINTEXT_V1\n', 'utf-8')
 
 function keyFile(): string {
-  return join(app.getPath('userData'), 'fal-credentials.bin')
+  return join(caps().appDataDir(), 'fal-credentials.bin')
 }
 
 /** Whether the OS provides real encryption (false on some headless Linux). */
 export function isEncryptionAvailable(): boolean {
-  return safeStorage.isEncryptionAvailable()
+  return caps().isEncryptionAvailable()
 }
 
 /** True if a key is saved locally (ignores the env fallback). */
@@ -32,8 +32,8 @@ export function isConfigured(): boolean {
 export function setApiKey(key: string): void {
   const trimmed = key.trim()
   if (!trimmed) throw new Error('API key is empty.')
-  if (safeStorage.isEncryptionAvailable()) {
-    writeFileSync(keyFile(), safeStorage.encryptString(trimmed))
+  if (caps().isEncryptionAvailable()) {
+    writeFileSync(keyFile(), caps().encryptSecret(trimmed))
   } else {
     writeFileSync(keyFile(), Buffer.concat([PLAINTEXT_MAGIC, Buffer.from(trimmed, 'utf-8')]), {
       mode: 0o600,
@@ -49,7 +49,7 @@ export function getApiKey(): string | null {
       if (buf.subarray(0, PLAINTEXT_MAGIC.length).equals(PLAINTEXT_MAGIC)) {
         return buf.subarray(PLAINTEXT_MAGIC.length).toString('utf-8')
       }
-      return safeStorage.decryptString(buf)
+      return caps().decryptSecret(buf)
     }
   } catch {
     // fall through to env

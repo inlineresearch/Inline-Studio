@@ -1,5 +1,6 @@
-import { mediaUrl, takeWaveformPath } from '@shared/media'
+import { takeWaveformPath } from '@shared/media'
 import type { Take } from '@shared/types'
+import { resolveMedia } from '@/lib/media'
 import { setFrameDragPayload, setOutputDragPayload } from '../../lib/dnd'
 import { useMediaContextMenu } from '../../lib/mediaContextMenu'
 import { VideoPreview } from '../../components/VideoPreview'
@@ -16,7 +17,7 @@ export function OutputThumb({
   take: Take
   frameName: string
 }): React.JSX.Element {
-  const src = mediaUrl(take.filePath)
+  const src = resolveMedia(take.filePath)
   const onContextMenu = useMediaContextMenu()
   return (
     <div
@@ -39,7 +40,7 @@ export function OutputThumb({
         {take.kind === 'audio' && (
           <AudioPreview
             src={src}
-            waveformUrl={mediaUrl(takeWaveformPath(take.id))}
+            waveformUrl={resolveMedia(takeWaveformPath(take.id))}
             className="h-full w-full"
           />
         )}

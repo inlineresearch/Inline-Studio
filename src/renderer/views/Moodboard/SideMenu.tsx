@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { mediaUrl, takeWaveformPath } from '@shared/media'
+import { takeWaveformPath } from '@shared/media'
 import type { Frame } from '@shared/types'
+import { resolveMedia } from '@/lib/media'
 import { useFrameStore } from '../../store/frameStore'
 import { useAssetStore } from '../../store/assetStore'
 import { useMoodboardStore } from '../../store/moodboardStore'
@@ -339,10 +340,12 @@ function FrameFolder({
                 <FileRow
                   key={a.id}
                   name={a.name}
-                  thumb={mediaUrl(a.previewPath ?? a.filePath)}
+                  thumb={resolveMedia(a.previewPath ?? a.filePath)}
                   kind={a.kind}
-                  poster={a.kind === 'video' && a.thumbPath ? mediaUrl(a.thumbPath) : undefined}
-                  waveform={a.kind === 'audio' && a.thumbPath ? mediaUrl(a.thumbPath) : undefined}
+                  poster={a.kind === 'video' && a.thumbPath ? resolveMedia(a.thumbPath) : undefined}
+                  waveform={
+                    a.kind === 'audio' && a.thumbPath ? resolveMedia(a.thumbPath) : undefined
+                  }
                 />
               ))
             )}
@@ -356,10 +359,10 @@ function FrameFolder({
                 <FileRow
                   key={t.id}
                   name={t.filePath.split('/').pop() ?? 'take'}
-                  thumb={mediaUrl(t.filePath)}
+                  thumb={resolveMedia(t.filePath)}
                   kind={t.kind}
                   hero={t.id === frame.heroTakeId}
-                  waveform={t.kind === 'audio' ? mediaUrl(takeWaveformPath(t.id)) : undefined}
+                  waveform={t.kind === 'audio' ? resolveMedia(takeWaveformPath(t.id)) : undefined}
                 />
               ))
             )}

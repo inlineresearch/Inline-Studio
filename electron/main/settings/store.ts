@@ -2,16 +2,16 @@
  * App-global settings persisted as JSON in Electron userData: the ComfyUI backend URL and the
  * Inline Core (/v1) engine URL. Defaults come from env (COMFYUI_URL / INLINE_CORE_URL) then localhost.
  */
-import { app } from 'electron'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import type { AppSettings } from '@shared/types'
+import { caps } from '../capabilities'
 
 const DEFAULT_COMFY_URL = process.env.COMFYUI_URL || 'http://127.0.0.1:8188'
 const DEFAULT_CORE_URL = process.env.INLINE_CORE_URL || 'http://127.0.0.1:8848'
 
 function settingsFile(): string {
-  return join(app.getPath('userData'), 'settings.json')
+  return join(caps().appDataDir(), 'settings.json')
 }
 
 function read(): Partial<AppSettings> {

@@ -7,6 +7,13 @@ import { app, BrowserWindow, shell, nativeImage } from 'electron'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { registerIpcHandlers } from './ipc'
+import { registerUpdateHandlers } from './ipc/updates'
+import { setTransport } from './ipc/handler'
+import { electronTransport } from './ipc/electronTransport'
+import { setBroadcaster } from './events/broadcaster'
+import { electronBroadcaster } from './events/electronBroadcaster'
+import { setCapabilities } from './capabilities'
+import { electronCapabilities } from './capabilities/electron'
 import { registerMediaScheme, registerMediaProtocol } from './media/protocol'
 import { closeProjectDb } from './db'
 import { initAutoUpdater } from './updater'
@@ -74,7 +81,13 @@ function createMainWindow(): BrowserWindow {
 
 app.whenReady().then(() => {
   registerMediaProtocol()
+  // Bind the Electron shell seams before registering handlers, then add the desktop-only
+  // auto-update handlers (the shared list stays runnable on the headless web server).
+  setTransport(electronTransport)
+  setBroadcaster(electronBroadcaster)
+  setCapabilities(electronCapabilities)
   registerIpcHandlers()
+  registerUpdateHandlers()
   setDevDockIcon()
   createMainWindow()
   // Window exists now, so it can receive update broadcasts.

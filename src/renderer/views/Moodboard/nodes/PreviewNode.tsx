@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { mediaUrl, takeWaveformPath } from '@shared/media'
+import { takeWaveformPath } from '@shared/media'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useFrameStore } from '../../../store/frameStore'
 import { useAssetStore } from '../../../store/assetStore'
@@ -10,6 +10,7 @@ import { Waveform } from '../../../components/Waveform'
 import { NodeFrame } from './NodeFrame'
 import { EyeIcon, NodeBadge, NodeBadgeRow, StarIcon } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
+import { resolveMedia } from '@/lib/media'
 
 /**
  * A Comfy-style preview node: connect a frame's output handle to its input and it
@@ -69,17 +70,17 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
   // Unified media to render: the current take, or the fallback input asset.
   const display = cur
     ? {
-        src: mediaUrl(cur.filePath),
-        saveSrc: mediaUrl(cur.filePath),
+        src: resolveMedia(cur.filePath),
+        saveSrc: resolveMedia(cur.filePath),
         kind: cur.kind,
-        waveform: mediaUrl(takeWaveformPath(cur.id)),
+        waveform: resolveMedia(takeWaveformPath(cur.id)),
       }
     : fallbackAsset
       ? {
-          src: mediaUrl(fallbackAsset.previewPath ?? fallbackAsset.filePath),
-          saveSrc: mediaUrl(fallbackAsset.filePath),
+          src: resolveMedia(fallbackAsset.previewPath ?? fallbackAsset.filePath),
+          saveSrc: resolveMedia(fallbackAsset.filePath),
           kind: fallbackAsset.kind,
-          waveform: fallbackAsset.thumbPath ? mediaUrl(fallbackAsset.thumbPath) : null,
+          waveform: fallbackAsset.thumbPath ? resolveMedia(fallbackAsset.thumbPath) : null,
         }
       : null
 
@@ -146,7 +147,7 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
             {isDirector ? (
               directorExport ? (
                 <video
-                  src={mediaUrl(directorExport)}
+                  src={resolveMedia(directorExport)}
                   controls
                   onLoadedMetadata={(e) => {
                     const v = e.currentTarget
@@ -154,13 +155,17 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
                   }}
                   onContextMenu={(e) =>
                     onMediaContextMenu(e, {
-                      src: mediaUrl(directorExport),
+                      src: resolveMedia(directorExport),
                       name: 'director',
                       kind: 'video',
                     })
                   }
                   onDoubleClick={() =>
-                    openLightbox({ src: mediaUrl(directorExport), kind: 'video', name: 'director' })
+                    openLightbox({
+                      src: resolveMedia(directorExport),
+                      kind: 'video',
+                      name: 'director',
+                    })
                   }
                   className="absolute inset-0 h-full w-full object-contain"
                 />
@@ -248,7 +253,7 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
             <ThumbStrip
               items={ordered.map((t) => ({
                 id: t.id,
-                url: mediaUrl(t.filePath),
+                url: resolveMedia(t.filePath),
                 kind: t.kind,
               }))}
               selected={safeIdx}

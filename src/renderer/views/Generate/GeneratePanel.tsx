@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { studio } from '@/lib/studio'
 import type { ComfyStatus, ComfyOutput, ComfyRun } from '@shared/types'
 import { useSettingsStore } from '../../store/settingsStore'
 import { useUiStore } from '../../store/uiStore'
@@ -332,7 +333,7 @@ export function GeneratePanel(): React.JSX.Element {
     let down = false
     let nextUrl = comfyUrl
     try {
-      const res = await window.inlineStudio.comfy.status()
+      const res = await studio().comfy.status()
       if (res.ok) {
         nextUrl = res.value.url
         down = !res.value.running
@@ -376,7 +377,7 @@ export function GeneratePanel(): React.JSX.Element {
     let cancelled = false
     const poll = async (): Promise<void> => {
       try {
-        const res = await window.inlineStudio.comfy.latestRun()
+        const res = await studio().comfy.latestRun()
         if (cancelled || !res.ok || !res.value) return
         const latest = res.value
         if (seenPromptId.current === null) {

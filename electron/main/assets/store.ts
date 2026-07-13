@@ -3,12 +3,13 @@
  * are copied into the project's `assets/` folder (by id) so the project stays a
  * self-contained, portable folder.
  */
-import { dialog, BrowserWindow } from 'electron'
 import { join, extname, basename } from 'node:path'
 import { copyFileSync, existsSync, unlinkSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import type { Asset, AssetKind } from '@shared/types'
 import { IpcChannels } from '@shared/ipc'
+import { broadcast } from '../events/broadcaster'
+import { caps } from '../capabilities'
 import { getDb, getOpenProjectFolder } from '../db'
 import {
   ffmpegAvailable,
@@ -72,11 +73,9 @@ function rowToAsset(row: AssetRow): Asset {
   }
 }
 
-/** Tell the renderer the library changed (a poster/transcode finished). */
+/** Tell the client the library changed (a poster/transcode finished). */
 function notifyLibraryChanged(): void {
-  for (const w of BrowserWindow.getAllWindows()) {
-    w.webContents.send(IpcChannels.events.libraryChanged)
-  }
+  broadcast(IpcChannels.events.libraryChanged)
 }
 
 function setPreviewPath(id: string, rel: string): void {
@@ -151,7 +150,7 @@ function projectId(): string {
 }
 
 /** Copy a single file into the project (under `folderId`) and insert its row. */
-async function importFile(absPath: string, folderId: string | null): Promise<Asset | null> {
+export async function importFile(absPath: string, folderId: string | null): Promise<Asset | null> {
   const kind = kindForFile(absPath)
   if (!kind) return null
 
@@ -292,19 +291,19 @@ export function backfillImageAssets(): void {
 export async function importViaDialog(folderId: string | null): Promise<Asset[]> {
   if (!getOpenProjectFolder()) throw new Error('Open a project first.')
 
-  const result = await dialog.showOpenDialog({
+  const filePaths = await caps().pickFiles({
     title: 'Import media',
     buttonLabel: 'Import',
-    properties: ['openFile', 'multiSelections'],
+    multiple: true,
     filters: [
       { name: 'Media', extensions: Object.keys(KIND_BY_EXT).map((e) => e.slice(1)) },
       { name: 'All Files', extensions: ['*'] },
     ],
   })
-  if (result.canceled || result.filePaths.length === 0) return []
+  if (filePaths.length === 0) return []
 
   const imported: Asset[] = []
-  for (const filePath of result.filePaths) {
+  for (const filePath of filePaths) {
     const asset = await importFile(filePath, folderId)
     if (asset) imported.push(asset)
   }

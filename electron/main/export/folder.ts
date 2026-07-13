@@ -3,10 +3,10 @@
  * user picks — numbered for finishing in an external NLE (Resolve/Premiere/CapCut).
  * Plain file copy; no ffmpeg. Frames without an Output yet are reported and skipped.
  */
-import { dialog } from 'electron'
 import { join, extname } from 'node:path'
 import { copyFileSync } from 'node:fs'
 import type { ExportResult } from '@shared/types'
+import { caps } from '../capabilities'
 import { getDb, getOpenProjectFolder } from '../db'
 
 interface ExportRow {
@@ -18,13 +18,12 @@ export async function exportFrames(): Promise<ExportResult | null> {
   const projectFolder = getOpenProjectFolder()
   if (!projectFolder) throw new Error('No project is open.')
 
-  const picked = await dialog.showOpenDialog({
+  const dir = await caps().pickDirectory({
     title: 'Export frames to folder',
     buttonLabel: 'Export',
-    properties: ['openDirectory', 'createDirectory'],
+    createDirectory: true,
   })
-  if (picked.canceled || picked.filePaths.length === 0) return null
-  const dir = picked.filePaths[0]
+  if (!dir) return null
 
   const rows = getDb()
     .prepare(

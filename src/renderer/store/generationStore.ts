@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { studio } from '@/lib/studio'
 import { useFrameStore } from './frameStore'
 
 interface GenerationState {
@@ -60,7 +61,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
       progressByFrame: { ...s.progressByFrame, [frameId]: 0 },
     }))
     try {
-      const res = await window.inlineStudio.generation.run(frameId)
+      const res = await studio().generation.run(frameId)
       if (!res.ok) {
         set((s) => ({
           error: res.error,
@@ -84,7 +85,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
       progressByFrame: { ...s.progressByFrame, [itemId]: 0 },
     }))
     try {
-      const res = await window.inlineStudio.generation.runWorkflow(itemId)
+      const res = await studio().generation.runWorkflow(itemId)
       if (!res.ok) {
         set((s) => ({
           error: res.error,
@@ -114,7 +115,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
         : { busyByFrame: {}, progressByFrame: {}, statusByFrame: {} },
     )
     try {
-      await window.inlineStudio.generation.cancel(frameId)
+      await studio().generation.cancel(frameId)
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
     }
@@ -122,7 +123,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
 
   resumePending: async () => {
     try {
-      await window.inlineStudio.generation.resumePending()
+      await studio().generation.resumePending()
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
     }
@@ -134,7 +135,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
       frames: s.frames.map((f) => (f.id === frameId ? { ...f, params } : f)),
     }))
     try {
-      const res = await window.inlineStudio.frames.setFalParams(frameId, params)
+      const res = await studio().frames.setFalParams(frameId, params)
       if (!res.ok) set({ error: res.error })
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
@@ -143,7 +144,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
 
   setModel: async (frameId, modelId) => {
     try {
-      const res = await window.inlineStudio.frames.setModel(frameId, modelId)
+      const res = await studio().frames.setModel(frameId, modelId)
       if (!res.ok) return set({ error: res.error })
       // Output kind + params changed — refresh the frame store so the node re-resolves.
       await useFrameStore.getState().load()

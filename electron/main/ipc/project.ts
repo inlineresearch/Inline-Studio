@@ -2,11 +2,11 @@
  * IPC handlers for project lifecycle. Each validates its payload (untrusted —
  * it comes from the renderer) before touching the filesystem.
  */
-import { dialog } from 'electron'
 import { join } from 'node:path'
 import { IpcChannels, type CreateProjectInput } from '@shared/ipc'
 import type { Project, RecentProject, ProjectMediaDirs, ProjectExportResult } from '@shared/types'
 import { handle } from './handler'
+import { caps } from '../capabilities'
 import { createProject, openProject, getCurrentProject, isProjectFolder } from '../project/store'
 import { extractProjectZip } from '../project/import'
 import { exportProject } from '../export/project'
@@ -39,13 +39,11 @@ export function registerProjectHandlers(): void {
   })
 
   handle<[], Project | null>(IpcChannels.project.openDialog, async () => {
-    const result = await dialog.showOpenDialog({
+    const folder = await caps().pickDirectory({
       title: 'Open Inline Studio Project',
-      properties: ['openDirectory'],
       buttonLabel: 'Open Project',
     })
-    if (result.canceled || result.filePaths.length === 0) return null
-    const folder = result.filePaths[0]
+    if (!folder) return null
     if (!isProjectFolder(folder)) {
       throw new Error('That folder is not a Inline Studio project.')
     }
@@ -53,14 +51,13 @@ export function registerProjectHandlers(): void {
   })
 
   handle<[], Project | null>(IpcChannels.project.openZip, async () => {
-    const result = await dialog.showOpenDialog({
+    const [zip] = await caps().pickFiles({
       title: 'Open Inline Studio Project (.zip)',
-      properties: ['openFile'],
       filters: [{ name: 'Inline Studio project', extensions: ['zip'] }],
       buttonLabel: 'Open Project',
     })
-    if (result.canceled || result.filePaths.length === 0) return null
-    const dest = await extractProjectZip(result.filePaths[0])
+    if (!zip) return null
+    const dest = await extractProjectZip(zip)
     if (!isProjectFolder(dest)) {
       throw new Error('That .zip does not contain an Inline Studio project.')
     }
@@ -82,12 +79,7 @@ export function registerProjectHandlers(): void {
     return exportProject(path)
   })
 
-  handle<[], string | null>(IpcChannels.dialog.pickDirectory, async () => {
-    const result = await dialog.showOpenDialog({
-      title: 'Choose a location',
-      properties: ['openDirectory', 'createDirectory'],
-    })
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
-  })
+  handle<[], string | null>(IpcChannels.dialog.pickDirectory, () =>
+    caps().pickDirectory({ title: 'Choose a location', createDirectory: true }),
+  )
 }

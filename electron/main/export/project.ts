@@ -4,11 +4,11 @@
  * workflow-memory), so the export is just that folder zipped — everything needed to open
  * and run the project exactly on another machine (their own ComfyUI models/nodes aside).
  */
-import { dialog } from 'electron'
 import { join, basename } from 'node:path'
 import { createWriteStream, existsSync } from 'node:fs'
 import archiver from 'archiver'
 import type { ProjectExportResult } from '@shared/types'
+import { caps } from '../capabilities'
 import { checkpointProjectDb } from '../db'
 
 /** SQLite sidecars that must NOT be shipped: -wal is folded into project.db by the
@@ -21,19 +21,19 @@ export async function exportProject(projectPath: string): Promise<ProjectExportR
   }
   const folderName = basename(projectPath) // e.g. MyFilm.inlinestudio
 
-  const result = await dialog.showSaveDialog({
+  const dest = await caps().pickSavePath({
     title: 'Export Project',
     defaultPath: `${folderName}.zip`,
     filters: [{ name: 'Zip archive', extensions: ['zip'] }],
   })
-  if (result.canceled || !result.filePath) return null
+  if (!dest) return null
 
   // Fold the WAL into project.db so the exported file is complete on its own — otherwise
   // recent data lives in the sidecars, which we then leave out of the zip.
   checkpointProjectDb(projectPath)
 
-  await zipFolder(projectPath, folderName, result.filePath)
-  return { path: result.filePath }
+  await zipFolder(projectPath, folderName, dest)
+  return { path: dest }
 }
 
 /** Zip `srcDir` into `destZip`, nesting everything under `topName` so unzipping yields the folder. */

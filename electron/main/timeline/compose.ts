@@ -6,13 +6,13 @@
  */
 import { join } from 'node:path'
 import { rmSync } from 'node:fs'
-import { BrowserWindow } from 'electron'
 import { IpcChannels } from '@shared/ipc'
 import type { DirectorItemData } from '@shared/types'
 import { getOpenProjectFolder } from '../db'
 import { getMoodboardItem, updateItem } from '../moodboard/store'
 import { composeRender, ffmpegAvailable, type ComposeHandle } from '../media/ffmpeg'
 import { buildComposeArgs, timelineDuration, type ComposeSettings } from '../export/compose'
+import { broadcast } from '../events/broadcaster'
 import { resolveTimeline } from './resolve'
 
 const DEFAULT_SETTINGS: DirectorItemData = { width: 1920, height: 1080, fps: 30 }
@@ -24,9 +24,7 @@ function directorSettings(ownerItemId: string): DirectorItemData {
 }
 
 function notifyProgress(ownerItemId: string, fraction: number): void {
-  for (const w of BrowserWindow.getAllWindows()) {
-    w.webContents.send(IpcChannels.events.timelineProgress, { ownerItemId, fraction })
-  }
+  broadcast(IpcChannels.events.timelineProgress, { ownerItemId, fraction })
 }
 
 /** Even integer ≥ 2 (libx264 + yuv420p needs even dimensions). */

@@ -1,5 +1,4 @@
 /** IPC handlers for the fal DAG generation engine: run + cancel + resume, streaming events. */
-import { BrowserWindow } from 'electron'
 import { IpcChannels } from '@shared/ipc'
 import type {
   GenerationProgressEvent,
@@ -8,6 +7,7 @@ import type {
   GenerationErrorEvent,
 } from '@shared/types'
 import { handle } from './handler'
+import { broadcast } from '../events/broadcaster'
 import {
   runGraph,
   cancelGeneration,
@@ -16,12 +16,7 @@ import {
 } from '../generation/executor'
 import { runCoreWorkflow } from '../generation/coreExecutor'
 
-/** Push an event to every renderer window (single-window app; mirrors the assets store). */
-function broadcast(channel: string, payload: unknown): void {
-  for (const w of BrowserWindow.getAllWindows()) w.webContents.send(channel, payload)
-}
-
-/** The main → renderer emitter, shared by fresh runs and restart-resume. */
+/** The main → client emitter, shared by fresh runs and restart-resume. */
 function makeEmitter(): GenEmitter {
   return {
     progress: (frameId, fraction, status) =>

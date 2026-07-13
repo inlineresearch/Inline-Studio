@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { mediaUrl } from '@shared/media'
+import { studio } from '@/lib/studio'
+import { resolveMedia } from '@/lib/media'
 import type { TrimResolved } from '@shared/types'
 import { NodeFrame } from './NodeFrame'
 import { NodeBadge, NodeBadgeRow, ScissorsIcon } from './NodeBadge'
@@ -34,9 +35,11 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
       setResolved(null)
       return
     }
-    void window.inlineStudio.timeline.resolveTrim(id).then((res) => {
-      if (!cancelled) setResolved(res.ok ? res.value : null)
-    })
+    void studio()
+      .timeline.resolveTrim(id)
+      .then((res) => {
+        if (!cancelled) setResolved(res.ok ? res.value : null)
+      })
     return () => {
       cancelled = true
     }
@@ -108,7 +111,7 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
 
   const leftPct = duration > 0 ? (view.inPoint / duration) * 100 : 0
   const rightPct = duration > 0 ? (view.outPoint / duration) * 100 : 100
-  const src = resolved ? mediaUrl(resolved.mediaPath) : null
+  const src = resolved ? resolveMedia(resolved.mediaPath) : null
 
   // Keep the preview player within the trim window: start at in-point, stop at out-point.
   const clampPlayback = (el: HTMLMediaElement): void => {
@@ -200,7 +203,7 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
                 style={
                   resolved.kind === 'video' && resolved.thumbnail
                     ? {
-                        backgroundImage: `url(${mediaUrl(resolved.thumbnail)})`,
+                        backgroundImage: `url(${resolveMedia(resolved.thumbnail)})`,
                         backgroundSize: 'auto 100%',
                         backgroundRepeat: 'repeat-x',
                       }
@@ -209,7 +212,7 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
               >
                 {resolved.kind === 'audio' && (
                   <Waveform
-                    url={resolved.audioPeaks ? mediaUrl(resolved.audioPeaks) : null}
+                    url={resolved.audioPeaks ? resolveMedia(resolved.audioPeaks) : null}
                     className="absolute inset-0 h-full w-full text-emerald-400"
                   />
                 )}

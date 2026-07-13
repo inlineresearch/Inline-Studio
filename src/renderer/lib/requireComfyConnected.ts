@@ -5,10 +5,12 @@
  * to send them to the Generate tab where they can connect — and returns false so the
  * caller can bail before attempting a link/upload that would fail.
  */
+import { studio } from '@/lib/studio'
+
 export async function requireComfyConnected(onDisconnected?: () => void): Promise<boolean> {
   let connected = false
   try {
-    const res = await window.inlineStudio.comfy.status()
+    const res = await studio().comfy.status()
     connected = res.ok && res.value.running
   } catch {
     connected = false

@@ -1,3 +1,5 @@
+import { studio } from '@/lib/studio'
+
 /** Where users create a fal.ai API key (also referenced by the Settings key field). */
 const FAL_KEYS_URL = 'https://fal.ai/dashboard/keys'
 
@@ -9,7 +11,7 @@ const FAL_KEYS_URL = 'https://fal.ai/dashboard/keys'
 export function FalKeyCard(): React.JSX.Element {
   return (
     <button
-      onClick={() => void window.inlineStudio.shell.openExternal(FAL_KEYS_URL)}
+      onClick={() => void studio().shell.openExternal(FAL_KEYS_URL)}
       className="group flex w-full items-center gap-3 rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-4 text-left transition-colors hover:border-emerald-500"
     >
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-500/15 text-emerald-400">

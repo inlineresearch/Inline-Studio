@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
+import { studio } from '@/lib/studio'
 import type { NodeProps } from '@xyflow/react'
 import { NodeFrame } from './NodeFrame'
 import { TextToolbar } from './TextToolbar'
@@ -59,7 +60,7 @@ export function TextNode({ id, data, selected }: NodeProps): React.JSX.Element {
     void updateItem(id, { data: { text: { ...text, ...patch } } })
 
   const openLink = (): void => {
-    if (text.link && !editing) void window.inlineStudio.shell.openExternal(text.link)
+    if (text.link && !editing) void studio().shell.openExternal(text.link)
   }
 
   // Refit when the text, font size/weight/style, or node width (wrapping) changes.

@@ -1,10 +1,10 @@
 /** IPC for saving project media (takes/assets) out to a user-chosen location. */
-import { dialog, clipboard, nativeImage } from 'electron'
 import { copyFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
 import { basename, extname } from 'node:path'
 import { IpcChannels } from '@shared/ipc'
 import { handle } from './handler'
+import { caps } from '../capabilities'
 import { resolveMediaPath } from '../media/resolve'
 
 /** Build the save dialog's default filename: the suggestion, with the source extension. */
@@ -34,13 +34,13 @@ export function registerMediaHandlers(): void {
       throw new Error('Media file no longer exists.')
     }
 
-    const { canceled, filePath } = await dialog.showSaveDialog({
+    const dest = await caps().pickSavePath({
       title: 'Save media',
       defaultPath: suggestedFileName(sourcePath, suggestedName),
     })
-    if (canceled || !filePath) return false
+    if (!dest) return false
 
-    await copyFile(sourcePath, filePath)
+    await copyFile(sourcePath, dest)
     return true
   })
 
@@ -50,8 +50,6 @@ export function registerMediaHandlers(): void {
     const sourcePath = resolveMediaPath(src)
     if (!sourcePath) throw new Error('Image not found in the open project.')
 
-    const image = nativeImage.createFromPath(sourcePath)
-    if (image.isEmpty()) throw new Error('That file could not be read as an image.')
-    clipboard.writeImage(image)
+    caps().copyImageFile(sourcePath)
   })
 }

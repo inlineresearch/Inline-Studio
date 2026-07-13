@@ -1,3 +1,5 @@
+import { studio } from '@/lib/studio'
+
 /** First-run guide URL. */
 const GETTING_STARTED_URL = 'https://inlinestudio.art/getting-started'
 
@@ -8,7 +10,7 @@ const GETTING_STARTED_URL = 'https://inlinestudio.art/getting-started'
 export function GettingStartedCard(): React.JSX.Element {
   return (
     <button
-      onClick={() => void window.inlineStudio.shell.openExternal(GETTING_STARTED_URL)}
+      onClick={() => void studio().shell.openExternal(GETTING_STARTED_URL)}
       className="group flex w-full items-center gap-3 rounded-xl border border-accent/40 bg-accent/5 p-4 text-left transition-colors hover:border-accent"
     >
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">

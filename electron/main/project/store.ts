@@ -13,7 +13,10 @@ import { openProjectDb, getDb } from '../db'
 import { recordRecent } from './recents'
 import { backfillVideoAssets, backfillAudioAssets, backfillImageAssets } from '../assets/store'
 import { createEmptyFrame } from '../frames/store'
-import { addFrameItem } from '../moodboard/store'
+import { addFrameItem, addPrompt, addCoreNode, createConnector } from '../moodboard/store'
+
+/** The Inline Core node a new project's starter graph is wired to (the first supported model). */
+const STARTER_CORE_NODE = 'alibaba/z-image-turbo'
 
 /** Extension for newly-created projects. */
 const PROJECT_EXT = '.inlinestudio'
@@ -81,6 +84,12 @@ export function createProject(input: { name: string; parentDir: string }): Proje
   // "Link a ComfyUI Workflow / Generate with Fal" prompt instead of a blank board.
   const frame = createEmptyFrame()
   addFrameItem(frame.id, 80, 80)
+
+  // ...plus a ready-to-run Inline Core starter graph: a Prompt feeding the Z-Image node. Pick your
+  // model files on the node and hit Run (needs inline-core with the `zimage` extra + model files).
+  const prompt = addPrompt(80, 320)
+  const zImage = addCoreNode(STARTER_CORE_NODE, 440, 260)
+  createConnector(prompt.id, zImage.id, 'out', 'prompt')
 
   const project: Project = { id, name: input.name, path: folder, createdAt: now, updatedAt: now }
   currentProject = project
