@@ -14,6 +14,7 @@ import {
   resumePendingGenerations,
   type GenEmitter,
 } from '../generation/executor'
+import { runCoreWorkflow } from '../generation/coreExecutor'
 
 /** Push an event to every renderer window (single-window app; mirrors the assets store). */
 function broadcast(channel: string, payload: unknown): void {
@@ -55,6 +56,11 @@ export function registerGenerationHandlers(): void {
     if (typeof frameId !== 'string' || frameId.length === 0) throw new Error('Invalid frame id.')
     // Fire and forget: progress streams back via events; the invoke resolves immediately.
     void runGraph(frameId, makeEmitter())
+  })
+
+  handle<[string], void>(IpcChannels.generation.runWorkflow, (itemId) => {
+    if (typeof itemId !== 'string' || itemId.length === 0) throw new Error('Invalid node id.')
+    void runCoreWorkflow(itemId, makeEmitter())
   })
 
   handle<[string | undefined], void>(IpcChannels.generation.cancel, (frameId) => {

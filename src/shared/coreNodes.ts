@@ -1,0 +1,104 @@
+/**
+ * The Inline Core node descriptor contract, mirrored on the client. Inline Core serves these at
+ * `GET /v1/models`; the canvas renders any node generically from its descriptor, so adding a node
+ * type is a Core change with no Storyline release. Kept shell-agnostic (imported by renderer + main).
+ *
+ * Media kinds cross the wire as takes/assets; engine kinds (`model`, `latent`, ...) are opaque
+ * handles passed between low-level nodes and are never a take. Only nodes with an `outputKind`
+ * (media output) become Frames with take history; the rest are ephemeral plumbing nodes.
+ */
+
+export type PortKind =
+  | 'image'
+  | 'image[]'
+  | 'video'
+  | 'audio'
+  | 'text'
+  | 'mask'
+  | 'model'
+  | 'vae'
+  | 'text-encoder'
+  | 'conditioning'
+  | 'latent'
+
+export interface CorePort {
+  id: string
+  label: string
+  kind: PortKind
+  required: boolean
+}
+
+export interface CoreParamOption {
+  value: string
+  label: string
+}
+
+export interface CoreParamField {
+  key: string
+  label: string
+  widget: 'text' | 'textarea' | 'number' | 'boolean' | 'select' | 'seed'
+  default: string | number | boolean
+  min?: number
+  max?: number
+  step?: number
+  options?: CoreParamOption[]
+  /** A dynamic catalog Core fills from what is installed (checkpoints, loras, vae, ...). */
+  optionsFrom?: string
+  advanced?: boolean
+}
+
+export interface NodeDescriptor {
+  type: string
+  title: string
+  category: string
+  icon: string
+  source: string
+  /** Media output kind for a Frame node; null for plumbing nodes (engine outputs only). */
+  outputKind: 'image' | 'video' | 'audio' | null
+  inputs: CorePort[]
+  outputs: CorePort[]
+  params: CoreParamField[]
+}
+
+/** The `GET /v1/models` payload. */
+export interface CoreModels {
+  registryVersion: string
+  models: NodeDescriptor[]
+}
+
+const ENGINE_KINDS: readonly PortKind[] = ['model', 'vae', 'text-encoder', 'conditioning', 'latent']
+
+/** Engine handles are opaque objects passed between low-level nodes; never a take. */
+export function isEngineKind(kind: PortKind): boolean {
+  return ENGINE_KINDS.includes(kind)
+}
+
+/** A node that emits media (has an `outputKind`) is a Frame with take history. */
+export function producesFrame(descriptor: NodeDescriptor): boolean {
+  return descriptor.outputKind !== null
+}
+
+/** Whether an output of `source` kind may feed an input of `target` kind. Mirrors Core. */
+export function portsSatisfy(source: PortKind, target: PortKind): boolean {
+  if (source === target) return true
+  return source === 'image' && target === 'image[]'
+}
+
+const PORT_COLORS: Record<PortKind, string> = {
+  image: '#34d399',
+  'image[]': '#34d399',
+  video: '#22d3ee',
+  audio: '#a78bfa',
+  text: '#fbbf24',
+  mask: '#f472b6',
+  model: '#f87171',
+  vae: '#fb923c',
+  'text-encoder': '#facc15',
+  conditioning: '#c084fc',
+  latent: '#60a5fa',
+}
+
+/** A stable color per port kind, for Comfy-style colored sockets and edges. */
+export function portKindColor(kind: PortKind): string {
+  return PORT_COLORS[kind] ?? '#a1a1aa'
+}

@@ -22,6 +22,8 @@ interface GenerationState {
 
   /** Run just this fal node (its inputs use whatever upstream nodes already produced). */
   run: (frameId: string) => Promise<void>
+  /** Run a Core workflow up to this canvas node (serializes its upstream closure). */
+  runWorkflow: (itemId: string) => Promise<void>
   /** Abort a frame's run (or all when no id) — resets its node immediately. */
   cancel: (frameId?: string) => Promise<void>
   /** Ask main to re-poll + finish any generations left in flight from a previous session. */
@@ -71,6 +73,30 @@ export const useGenerationStore = create<GenerationState>((set) => ({
         error: ipcErrorMessage(e),
         busyByFrame: { ...s.busyByFrame, [frameId]: false },
         progressByFrame: { ...s.progressByFrame, [frameId]: null },
+      }))
+    }
+  },
+
+  runWorkflow: async (itemId) => {
+    set((s) => ({
+      error: null,
+      busyByFrame: { ...s.busyByFrame, [itemId]: true },
+      progressByFrame: { ...s.progressByFrame, [itemId]: 0 },
+    }))
+    try {
+      const res = await window.inlineStudio.generation.runWorkflow(itemId)
+      if (!res.ok) {
+        set((s) => ({
+          error: res.error,
+          busyByFrame: { ...s.busyByFrame, [itemId]: false },
+          progressByFrame: { ...s.progressByFrame, [itemId]: null },
+        }))
+      }
+    } catch (e) {
+      set((s) => ({
+        error: ipcErrorMessage(e),
+        busyByFrame: { ...s.busyByFrame, [itemId]: false },
+        progressByFrame: { ...s.progressByFrame, [itemId]: null },
       }))
     }
   },

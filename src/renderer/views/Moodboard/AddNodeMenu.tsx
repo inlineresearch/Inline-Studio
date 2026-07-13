@@ -5,6 +5,8 @@
  * Positioning mirrors MoodboardPanel's "Connect to…" menu (container-relative left/top).
  */
 
+import type { NodeDescriptor } from '@shared/coreNodes'
+
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
 export type AddNodeKind = 'frame' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
 
@@ -29,7 +31,9 @@ export function AddNodeMenu({
   x,
   y,
   above = false,
+  coreNodes = [],
   onPick,
+  onPickCore,
   onClose,
 }: {
   /** Container-relative anchor point (px). */
@@ -37,7 +41,10 @@ export function AddNodeMenu({
   y: number
   /** When true the menu is centered on x and grows upward from y (used by the toolbar button). */
   above?: boolean
+  /** Inline Core node descriptors (from /v1/models), listed under their categories. */
+  coreNodes?: NodeDescriptor[]
   onPick: (kind: AddNodeKind) => void
+  onPickCore?: (coreType: string) => void
   onClose: () => void
 }): React.JSX.Element {
   return (
@@ -64,12 +71,57 @@ export function AddNodeMenu({
             {e.label}
           </button>
         ))}
+        {coreNodes.length > 0 && (
+          <div className="max-h-56 overflow-y-auto border-t border-border">
+            <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+              Inline Core
+            </div>
+            {groupByCategory(coreNodes).map(([category, nodes]) => (
+              <div key={category}>
+                <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
+                  {category}
+                </div>
+                {nodes.map((n) => (
+                  <button
+                    key={n.type}
+                    onClick={() => onPickCore?.(n.type)}
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+                  >
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                      <NodeGlyph />
+                    </span>
+                    {n.title}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </>
   )
 }
 
+function groupByCategory(nodes: NodeDescriptor[]): Array<[string, NodeDescriptor[]]> {
+  const groups = new Map<string, NodeDescriptor[]>()
+  for (const node of nodes) {
+    const list = groups.get(node.category) ?? []
+    list.push(node)
+    groups.set(node.category, list)
+  }
+  return [...groups.entries()]
+}
+
 // ── Node icons (moved here from CanvasToolbar, which no longer shows per-node buttons) ──
+
+function NodeGlyph(): React.JSX.Element {
+  return (
+    <Svg>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M4 10h16" />
+    </Svg>
+  )
+}
 
 function LayerIcon(): React.JSX.Element {
   return (

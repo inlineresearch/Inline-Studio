@@ -22,7 +22,9 @@ import {
 import '@xyflow/react/dist/style.css'
 import { mediaUrl } from '@shared/media'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
+import { portsSatisfy, type PortKind } from '@shared/coreNodes'
 import { useMoodboardStore } from '../../store/moodboardStore'
+import { useCoreNodesStore } from '../../store/coreNodesStore'
 import { useAssetStore } from '../../store/assetStore'
 import { useFrameStore } from '../../store/frameStore'
 import { useGenerationStore } from '../../store/generationStore'
@@ -43,6 +45,7 @@ import { PreviewNode } from './nodes/PreviewNode'
 import { LayerNode } from './nodes/LayerNode'
 import { DirectorNode } from './nodes/DirectorNode'
 import { TrimNode } from './nodes/TrimNode'
+import { GraphNode } from './nodes/GraphNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
 import { CanvasToolbar } from './CanvasToolbar'
@@ -74,6 +77,7 @@ const nodeTypes: NodeTypes = {
   director: DirectorNode,
   trim: TrimNode,
   prompt: PromptNode,
+  core: GraphNode,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -206,6 +210,7 @@ function Board(): React.JSX.Element {
   const addTrim = useMoodboardStore((s) => s.addTrim)
   const addEmptyFrame = useMoodboardStore((s) => s.addEmptyFrame)
   const addPrompt = useMoodboardStore((s) => s.addPrompt)
+  const addCoreNode = useMoodboardStore((s) => s.addCoreNode)
   const duplicateItems = useMoodboardStore((s) => s.duplicateItems)
   const undo = useMoodboardStore((s) => s.undo)
   const redo = useMoodboardStore((s) => s.redo)
@@ -215,6 +220,11 @@ function Board(): React.JSX.Element {
   const setGenError = useGenerationStore((s) => s.setError)
   const frames = useFrameStore((s) => s.frames)
   const assets = useAssetStore((s) => s.assets)
+  const coreDescriptors = useCoreNodesStore((s) => s.descriptors)
+  // Load the Inline Core node palette once; descriptors drive the low-level graph nodes.
+  useEffect(() => {
+    void useCoreNodesStore.getState().load()
+  }, [])
   const loadAssets = useAssetStore((s) => s.load)
   const loadFrames = useFrameStore((s) => s.load)
   const setCanvasSelection = useUiStore((s) => s.setCanvasSelection)
@@ -287,6 +297,8 @@ function Board(): React.JSX.Element {
       window.inlineStudio.events.onGenerationDone(() => {
         gen.finishAll()
         void useFrameStore.getState().load()
+        // Core workflow outputs are stored on their canvas items — refresh the board to show them.
+        void useMoodboardStore.getState().load()
       }),
       window.inlineStudio.events.onGenerationError((e) => {
         gen.finishAll()
@@ -418,11 +430,29 @@ function Board(): React.JSX.Element {
     return hit.length ? hit[hit.length - 1] : null
   }
 
+  // The port kind of a low-level Core node's handle (null for non-core nodes / unknown handles).
+  const corePortKind = (
+    itemId: string | null | undefined,
+    handle: string | null | undefined,
+    side: 'input' | 'output',
+  ): PortKind | null => {
+    const item = items.find((it) => it.id === itemId)
+    const core = item?.type === 'core' ? item.data.core : undefined
+    if (!core) return null
+    const descriptor = coreDescriptors.find((d) => d.type === core.type)
+    const ports = side === 'output' ? descriptor?.outputs : descriptor?.inputs
+    return ports?.find((p) => p.id === handle)?.kind ?? null
+  }
+
   // Type-check a wire before it's made: a Prompt node emits text and every other node emits
   // media, so a Prompt may only feed a text ('prompt') input, and a media output may only feed a
-  // non-text input. This blocks a Prompt→image/video dot (and an image/video→prompt dot).
+  // non-text input. This blocks a Prompt→image/video dot (and an image/video→prompt dot). Between
+  // two low-level Core nodes we apply Core's own engine-type rule (model/latent/conditioning/...).
   const isValidConnection = (c: Connection | Edge): boolean => {
     if (!c.source || !c.target || c.source === c.target) return false
+    const srcKind = corePortKind(c.source, c.sourceHandle, 'output')
+    const tgtKind = corePortKind(c.target, c.targetHandle, 'input')
+    if (srcKind && tgtKind && !portsSatisfy(srcKind, tgtKind)) return false
     const sourceIsText = items.find((it) => it.id === c.source)?.type === 'prompt'
     const targetIsText = (c.targetHandle ?? undefined) === 'prompt'
     return sourceIsText === targetIsText
@@ -557,6 +587,12 @@ function Board(): React.JSX.Element {
         void addPrompt(m.flowX, m.flowY)
         break
     }
+  }
+
+  const onPickCore = (coreType: string): void => {
+    const m = addMenu
+    setAddMenu(null)
+    if (m) void addCoreNode(coreType, m.flowX, m.flowY)
   }
 
   /** Create a preview node and wire the dropped output into it. */
@@ -818,7 +854,9 @@ function Board(): React.JSX.Element {
             x={addMenu.x}
             y={addMenu.y}
             above={addMenu.above}
+            coreNodes={coreDescriptors}
             onPick={onPickAddNode}
+            onPickCore={onPickCore}
             onClose={() => setAddMenu(null)}
           />
         )}
@@ -971,6 +1009,9 @@ function itemToNode(
   }
   if (item.type === 'prompt') {
     return { ...common, type: 'prompt', data: {} }
+  }
+  if (item.type === 'core') {
+    return { ...common, type: 'core', data: { itemId: item.id } }
   }
   if (item.type === 'text') {
     return { ...common, type: 'text', data: { text: item.data.text ?? FALLBACK_TEXT } }

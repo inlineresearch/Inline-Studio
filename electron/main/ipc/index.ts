@@ -7,6 +7,7 @@ import { registerTimelineHandlers } from './timeline'
 import { registerFrameHandlers } from './frames'
 import { registerComfyHandlers } from './comfy'
 import { registerSettingsHandlers } from './settings'
+import { registerCoreHandlers } from './core'
 import { registerFalSettingsHandlers } from './falSettings'
 import { registerGenerationHandlers } from './generation'
 import { registerExportHandlers } from './export'
@@ -25,6 +26,7 @@ export function registerIpcHandlers(): void {
   registerFrameHandlers()
   registerComfyHandlers()
   registerSettingsHandlers()
+  registerCoreHandlers()
   registerFalSettingsHandlers()
   registerGenerationHandlers()
   registerExportHandlers()

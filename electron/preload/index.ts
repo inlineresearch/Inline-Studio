@@ -91,6 +91,7 @@ const api: InlineStudioApi = {
   },
   generation: {
     run: (frameId: string) => ipcRenderer.invoke(IpcChannels.generation.run, frameId),
+    runWorkflow: (itemId: string) => ipcRenderer.invoke(IpcChannels.generation.runWorkflow, itemId),
     cancel: (frameId?: string) => ipcRenderer.invoke(IpcChannels.generation.cancel, frameId),
     resumePending: () => ipcRenderer.invoke(IpcChannels.generation.resumePending),
   },
@@ -115,6 +116,11 @@ const api: InlineStudioApi = {
   settings: {
     get: () => ipcRenderer.invoke(IpcChannels.settings.get),
     setComfyUrl: (url: string) => ipcRenderer.invoke(IpcChannels.settings.setComfyUrl, url),
+    setCoreUrl: (url: string) => ipcRenderer.invoke(IpcChannels.settings.setCoreUrl, url),
+  },
+  core: {
+    status: () => ipcRenderer.invoke(IpcChannels.core.status),
+    models: () => ipcRenderer.invoke(IpcChannels.core.models),
   },
   export: {
     exportFrames: () => ipcRenderer.invoke(IpcChannels.export.exportFrames),
@@ -139,6 +145,8 @@ const api: InlineStudioApi = {
     addGenNode: (modelId: string, x: number, y: number) =>
       ipcRenderer.invoke(IpcChannels.moodboard.addGenNode, modelId, x, y),
     addPrompt: (x: number, y: number) => ipcRenderer.invoke(IpcChannels.moodboard.addPrompt, x, y),
+    addCoreNode: (coreType: string, x: number, y: number) =>
+      ipcRenderer.invoke(IpcChannels.moodboard.addCoreNode, coreType, x, y),
     updateItem: (id: string, patch: MoodboardItemPatch) =>
       ipcRenderer.invoke(IpcChannels.moodboard.updateItem, id, patch),
     deleteItem: (id: string) => ipcRenderer.invoke(IpcChannels.moodboard.deleteItem, id),

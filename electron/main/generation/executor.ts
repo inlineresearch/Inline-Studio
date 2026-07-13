@@ -23,6 +23,7 @@ import { getFalFrame, frameInputAssetPaths, addTake, setHero } from '../frames/s
 import { promptTextForFrame } from '../moodboard/store'
 import { fileToInputUrl, submit, pollResult, cancelRequest, type FalHandle } from '../fal/client'
 import { recordPending, deletePendingByFrame, listPending, type PendingRun } from './pending'
+import { runCoreGraph, cancelCoreGeneration } from './coreExecutor'
 
 /** Main → renderer callbacks the IPC layer wires to broadcast() events. */
 export interface GenEmitter {
@@ -127,6 +128,7 @@ const cancelledFrames = new Set<string>()
 
 /** Cancel a specific frame's run, or all in-flight runs when no frame id is given. */
 export async function cancelGeneration(frameId?: string): Promise<void> {
+  await cancelCoreGeneration(frameId)
   const entries: [string, ActiveRun][] = frameId
     ? active.has(frameId)
       ? [[frameId, active.get(frameId) as ActiveRun]]
@@ -182,6 +184,10 @@ async function downloadToTake(
  * a connected Prompt node. Nothing upstream is (re)run — one click generates exactly one node.
  */
 export async function runGraph(targetFrameId: string, emit: GenEmitter): Promise<void> {
+  if (getFalFrame(targetFrameId).provider === 'core') {
+    await runCoreGraph(targetFrameId, emit)
+    return
+  }
   cancelledFrames.delete(targetFrameId)
   const abort = new AbortController()
   try {

@@ -50,8 +50,9 @@ export interface Frame {
    * Which generation engine backs this frame. `unset` = a fresh chooser node that hasn't picked an
    * engine yet (renders the Link-ComfyUI / Generate-with-Fal chooser). `comfy` = the embedded
    * ComfyUI workflow (every legacy frame). `fal` = a declarative fal.ai node (see `modelId`/`params`).
+   * `core` = an Inline Core node: same `modelId`/`params`, run by the Inline Core engine.
    */
-  provider: 'comfy' | 'fal' | 'unset'
+  provider: 'comfy' | 'fal' | 'core' | 'unset'
   /** For `provider:'fal'`: the registry model id (e.g. `openai/gpt-image-2`). Null for comfy. */
   modelId: string | null
   /** For `provider:'fal'`: the node's editable param values (keyed by the NodeDef param keys). */
@@ -139,6 +140,8 @@ export type MoodboardItemType =
   | 'trim'
   /** A text-prompt node whose output feeds a Generate node's prompt input. */
   | 'prompt'
+  /** A low-level Inline Core graph node (load/sample/encode/vae); ephemeral, not a Frame. */
+  | 'core'
 
 /** Output settings for a video-director node (stored in its moodboard item data). */
 export interface DirectorItemData {
@@ -242,6 +245,13 @@ export interface MoodboardItemData {
   trim?: { inPoint: number; outPoint: number }
   /** Prompt node: the text it feeds into a connected Generate node's prompt input. */
   promptText?: string
+  /** Core graph node: the Inline Core node type + its param values (see coreNodes.ts). */
+  core?: {
+    type: string
+    params: Record<string, unknown>
+    /** The latest media this node produced (media-output nodes only). Project-relative path. */
+    output?: { takeId: string; filePath: string; kind: 'image' | 'video' | 'audio' }
+  }
 }
 
 export interface MoodboardItem {
@@ -337,6 +347,8 @@ export interface WorkflowParam {
 export interface AppSettings {
   /** The ComfyUI backend Inline Studio talks to and embeds. */
   comfyUrl: string
+  /** The Inline Core (/v1) engine URL. */
+  coreUrl: string
 }
 
 /** Whether an API key (e.g. fal.ai) is saved, and how it's stored. */
@@ -365,6 +377,12 @@ export interface UpdateDownloadedEvent {
 
 /** Result of pinging the configured ComfyUI backend. */
 export interface ComfyStatus {
+  running: boolean
+  url: string
+}
+
+/** Result of pinging the configured Inline Core engine. */
+export interface CoreStatus {
   running: boolean
   url: string
 }

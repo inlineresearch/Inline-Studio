@@ -314,7 +314,7 @@ export function setFalParams(frameId: string, params: Record<string, unknown>): 
 
 /** The fal generation fields of a frame — used by the executor. */
 export function getFalFrame(frameId: string): {
-  provider: 'comfy' | 'fal' | 'unset'
+  provider: 'comfy' | 'fal' | 'core' | 'unset'
   modelId: string | null
   params: Record<string, unknown>
 } {

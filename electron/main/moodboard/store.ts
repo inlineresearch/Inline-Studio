@@ -232,6 +232,38 @@ export function addTextItem(x: number, y: number): MoodboardItem {
   })
 }
 
+/** Add a low-level Inline Core graph node (load/sample/encode/vae). Not a Frame. */
+export function addCoreNode(coreType: string, x: number, y: number): MoodboardItem {
+  const now = Date.now()
+  return insertItem({
+    id: randomUUID(),
+    projectId: projectId(),
+    type: 'core',
+    assetId: null,
+    frameId: null,
+    parentId: null,
+    data: { core: { type: coreType, params: {} } },
+    x,
+    y,
+    width: 200,
+    height: 120,
+    rotation: 0,
+    zIndex: nextZIndex(),
+    createdAt: now,
+    updatedAt: now,
+  })
+}
+
+/** Store the latest render a Core media node produced, for display on the node. */
+export function setCoreNodeOutput(
+  itemId: string,
+  output: { takeId: string; filePath: string; kind: 'image' | 'video' | 'audio' },
+): void {
+  const item = getMoodboardItem(itemId)
+  if (item.type !== 'core' || !item.data.core) return
+  updateItem(itemId, { data: { ...item.data, core: { ...item.data.core, output } } })
+}
+
 /** Place an existing frame as a node on the canvas. */
 export function addFrameItem(frameId: string, x: number, y: number): MoodboardItem {
   const now = Date.now()

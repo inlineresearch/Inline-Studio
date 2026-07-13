@@ -31,6 +31,7 @@ import type {
   UpdateProgressEvent,
   UpdateDownloadedEvent,
   ComfyStatus,
+  CoreStatus,
   ComfyOutput,
   ComfyRun,
   ExportResult,
@@ -38,6 +39,7 @@ import type {
   ProjectMediaDirs,
 } from './types'
 import type { Result } from './result'
+import type { CoreModels } from './coreNodes'
 
 export const IpcChannels = {
   project: {
@@ -93,6 +95,7 @@ export const IpcChannels = {
   generation: {
     /** Run a fal frame and its upstream chain (topologically). Streams progress via events. */
     run: 'generation:run',
+    runWorkflow: 'generation:runWorkflow',
     /** Abort the in-flight generation run (optionally just one frame's). */
     cancel: 'generation:cancel',
     /** Re-poll + finish any runs that were in flight when the app last closed. */
@@ -117,6 +120,11 @@ export const IpcChannels = {
   settings: {
     get: 'settings:get',
     setComfyUrl: 'settings:setComfyUrl',
+    setCoreUrl: 'settings:setCoreUrl',
+  },
+  core: {
+    status: 'core:status',
+    models: 'core:models',
   },
   export: {
     exportFrames: 'export:exportFrames',
@@ -134,6 +142,7 @@ export const IpcChannels = {
     addTrim: 'moodboard:addTrim',
     addGenNode: 'moodboard:addGenNode',
     addPrompt: 'moodboard:addPrompt',
+    addCoreNode: 'moodboard:addCoreNode',
     updateItem: 'moodboard:updateItem',
     deleteItem: 'moodboard:deleteItem',
     importAndPlace: 'moodboard:importAndPlace',
@@ -309,6 +318,7 @@ export interface InlineStudioApi {
   generation: {
     /** Run a fal frame + its upstream chain. Resolves immediately; progress arrives via events. */
     run(frameId: string): Promise<Result<void>>
+    runWorkflow(itemId: string): Promise<Result<void>>
     /** Abort the in-flight run — a specific frame's, or all when no id is given. */
     cancel(frameId?: string): Promise<Result<void>>
     /** Re-poll + finish any generations that were in flight when the app last closed. */
@@ -348,6 +358,11 @@ export interface InlineStudioApi {
   settings: {
     get(): Promise<Result<AppSettings>>
     setComfyUrl(url: string): Promise<Result<AppSettings>>
+    setCoreUrl(url: string): Promise<Result<AppSettings>>
+  }
+  core: {
+    status(): Promise<Result<CoreStatus>>
+    models(): Promise<Result<CoreModels>>
   }
   export: {
     /** Pick a folder and write each frame's Output in order; null if cancelled. */
@@ -378,6 +393,7 @@ export interface InlineStudioApi {
     addGenNode(modelId: string, x: number, y: number): Promise<Result<MoodboardItem>>
     /** Add a text-prompt node (feeds a Generate node's prompt input) at (x, y). */
     addPrompt(x: number, y: number): Promise<Result<MoodboardItem>>
+    addCoreNode(coreType: string, x: number, y: number): Promise<Result<MoodboardItem>>
     updateItem(id: string, patch: MoodboardItemPatch): Promise<Result<MoodboardItem>>
     deleteItem(id: string): Promise<Result<void>>
     /** Import media into the shared library AND place it on the board near (x, y). */
