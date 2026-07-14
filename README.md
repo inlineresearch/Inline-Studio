@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge"></a>
   <a href="../../releases/latest"><img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.0.38-blue?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.0.39-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -67,6 +67,7 @@ Models available today:
 
 - **Image:** GPT Image 2, Nano Banana 2, Nano Banana Pro (edit), Krea v2 Large
 - **Video:** LTX 2.3 (image to video), Seedance 2.0 (text, image, and reference to video)
+- **Music:** Sonilo v1.1 (video to music) - scores an original, commercially licensed soundtrack matched to a video's pacing and mood; the prompt is optional, and the result wires straight into the Video Director's music track
 
 It is bring your own key. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings and it stays on your machine, sent only to fal when you generate. You pay fal directly for what you render, and each node shows a rough price estimate before you run it.
 

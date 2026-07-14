@@ -1,11 +1,15 @@
 {
   "name": "inline-studio",
-  "version": "1.0.38",
+  "version": "1.0.39",
   "description": "An experimentation layer for visual artists: build, iterate, and share generative pipelines on your own ComfyUI.",
   "author": "Inline Studio",
   "license": "MIT",
   "main": "./out/main/index.cjs",
   "type": "module",
+  "engines": {
+    "node": ">=20.19.0",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
