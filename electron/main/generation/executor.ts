@@ -203,10 +203,14 @@ export async function runGraph(targetFrameId: string, emit: GenEmitter): Promise
       }
     }
 
-    // The prompt is fed by a connected Prompt node (not a stored param).
+    // The prompt is fed by a connected Prompt node (not a stored param). Prompt-optional models
+    // (e.g. Sonilo, which derives one from its video input) run without a connection; their
+    // buildRequest omits the empty prompt.
     const promptText = promptTextForFrame(targetFrameId)
-    if (!promptText) throw new Error('Connect a Prompt node with some text to generate.')
-    const runParams = { ...params, prompt: promptText }
+    if (!promptText && !def.promptOptional) {
+      throw new Error('Connect a Prompt node with some text to generate.')
+    }
+    const runParams = { ...params, prompt: promptText ?? '' }
 
     const endpoint = def.resolveEndpoint(resolved)
     const body = def.buildRequest(runParams, resolved)

@@ -179,6 +179,31 @@ describe('runGraph', () => {
     expect(events.some((e) => e.startsWith('error:A:A:'))).toBe(true)
   })
 
+  it('runs a prompt-optional model (Sonilo) without a connected prompt', async () => {
+    getFalFrame.mockReturnValue({
+      provider: 'fal',
+      modelId: 'sonilo/v1.1/video-to-music',
+      params: {},
+    })
+    promptTextForFrame.mockReturnValue(null)
+    frameInputAssetPaths.mockReturnValue([{ filePath: 'takes/cut.mp4', name: 'cut.mp4' }])
+    submit.mockResolvedValue({
+      requestId: 'r3',
+      response: { audios: [{ url: 'https://fal/a.m4a', content_type: 'audio/mp4' }] },
+    })
+    const { emit, events } = recordingEmitter()
+
+    await runGraph('M', emit)
+
+    // The video uploads as video_url; the empty prompt is omitted from the request entirely.
+    expect(submit).toHaveBeenCalledTimes(1)
+    expect(submit.mock.calls[0][0]).toBe('sonilo/v1.1/video-to-music')
+    expect(submit.mock.calls[0][1]).toMatchObject({ video_url: 'data:/proj/takes/cut.mp4' })
+    expect(submit.mock.calls[0][1]).not.toHaveProperty('prompt')
+    expect(events).toContain('done:M')
+    expect(events.some((e) => e.startsWith('error:'))).toBe(false)
+  })
+
   it('emits an error and aborts when a required input is missing', async () => {
     // LTX requires an image; none wired.
     getFalFrame.mockReturnValue({
