@@ -111,6 +111,12 @@ export interface NodeDef {
   provider: 'fal'
   /** The kind of media this node produces → the backing `Frame.kind`. */
   outputKind: 'image' | 'video' | 'audio'
+  /**
+   * When true, the node runs without a connected Prompt node — the model derives its own prompt
+   * from its media inputs (e.g. Sonilo reads the video), and a wired prompt only steers the result.
+   * Default (absent) keeps the prompt required, which is the norm.
+   */
+  promptOptional?: boolean
   inputs: InputPort[]
   params: ParamField[]
   outputs: OutputPort[]
@@ -160,6 +166,8 @@ export function extFromContentTypeOrName(
     'video/webm': '.webm',
     'audio/mpeg': '.mp3',
     'audio/wav': '.wav',
+    'audio/mp4': '.m4a',
+    'audio/aac': '.aac',
   }
   if (contentType && fromType[contentType.toLowerCase()]) return fromType[contentType.toLowerCase()]
   if (fileName && fileName.includes('.')) {

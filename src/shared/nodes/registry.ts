@@ -11,6 +11,7 @@ import { SEEDANCE_T2V } from './seedanceT2V'
 import { SEEDANCE_I2V } from './seedanceI2V'
 import { SEEDANCE_REF2V } from './seedanceRef2V'
 import { KREA_V2 } from './kreaV2'
+import { SONILO_V2M } from './soniloVideoToMusic'
 
 export const NODE_DEFS: readonly NodeDef[] = [
   GPT_IMAGE_2,
@@ -21,6 +22,7 @@ export const NODE_DEFS: readonly NodeDef[] = [
   SEEDANCE_I2V,
   SEEDANCE_REF2V,
   KREA_V2,
+  SONILO_V2M,
 ]
 
 /** Look up a node def by its model id (`Frame.modelId`); undefined if unknown. */
@@ -42,6 +44,7 @@ const OWNER_LABELS: Record<string, string> = {
   openai: 'OpenAI',
   bytedance: 'ByteDance',
   krea: 'Krea',
+  sonilo: 'Sonilo',
 }
 
 export function modelOwner(id: string): string {

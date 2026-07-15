@@ -130,6 +130,9 @@ clear "not available" for them.
   hero-take resolution, DB migrations. UI is verified by running the app — don't chase view coverage.
 - **Commits.** Conventional Commits (`feat:`, `fix:`, `chore:`), small and scoped. `lint` +
   `typecheck` run on pre-commit (husky + lint-staged).
+- **Never commit automatically.** Claude (or any AI agent) must **not** run `git commit`/`git push`
+  on its own — only when the user explicitly asks. Make the changes, leave them in the working tree,
+  and let the user review and commit.
 
 ## Node UI style (the canvas node family — non-negotiable)
 

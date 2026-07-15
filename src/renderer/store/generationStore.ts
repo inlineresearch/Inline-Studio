@@ -84,7 +84,8 @@ export const useGenerationStore = create<GenerationState>((set) => ({
       if (frame?.provider === 'fal' && def) {
         const resolved = await studio().frames.resolveFalInputs(frameId)
         if (!resolved.ok) return fail(resolved.error)
-        if (!resolved.value.prompt) {
+        // Most models need a Prompt node; a few (e.g. Sonilo video→music) mark it optional.
+        if (!def.promptOptional && !resolved.value.prompt) {
           return fail('Connect a Prompt node with some text to generate.')
         }
         const inputs = {
@@ -93,7 +94,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
           videos: resolved.value.videos,
           audios: resolved.value.audios,
         }
-        const runParams = { ...frame.params, prompt: resolved.value.prompt }
+        const runParams = { ...frame.params, prompt: resolved.value.prompt ?? '' }
         request = {
           endpoint: def.resolveEndpoint(inputs),
           body: def.buildRequest(runParams, inputs),

@@ -71,6 +71,7 @@ Models available today:
 - **Local (Inline Core):** Z-Image Turbo (single-file, GPU) — [see above](#local-generation-with-inline-core)
 - **fal · Image:** GPT Image 2, Nano Banana 2, Nano Banana Pro (edit), Krea v2 Large
 - **fal · Video:** LTX 2.3 (image to video), Seedance 2.0 (text, image, and reference to video)
+- **fal · Audio:** Sonilo v1.1 (video to music)
 
 It is bring your own key. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings and it stays on your machine, sent only to fal when you generate. You pay fal directly for what you render, and each node shows a rough price estimate before you run it.
 

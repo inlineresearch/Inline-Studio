@@ -180,11 +180,12 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
     ...(requiresMedia ? [mediaIsVideo ? 'video' : 'image'] : []),
     ...(requiresAudio ? ['audio'] : []),
   ]
-  const missing = !hasPrompt
-    ? 'Connect a Prompt node'
-    : requiredKinds.length > 0 && inputs.length === 0
-      ? `Wire ${requiredKinds.join(' & ')} input${requiredKinds.length > 1 ? 's' : ''}`
-      : null
+  const missing =
+    !hasPrompt && !def.promptOptional
+      ? 'Connect a Prompt node'
+      : requiredKinds.length > 0 && inputs.length === 0
+        ? `Wire ${requiredKinds.join(' & ')} input${requiredKinds.length > 1 ? 's' : ''}`
+        : null
   const pct = typeof progress === 'number' ? Math.round(progress * 100) : null
   const price = def.estimatePrice?.(frame.params) ?? null
 
@@ -195,7 +196,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
       id: 'prompt',
       colorClass: '!bg-amber-400',
       icon: <span className="text-xs font-bold leading-none">T</span>,
-      label: 'Prompt',
+      label: def.promptOptional ? 'Prompt (optional)' : 'Prompt',
     },
     ...(wantsMedia
       ? [
