@@ -6,11 +6,24 @@
  * (getSettings), the same source the generation handlers use, so they always agree.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import { homedir } from 'node:os'
+import { resolve } from 'node:path'
 import { getSettings } from '@main/settings/store'
 import type { ServerConfig } from '../config'
 
 function coreUrl(): string {
   return getSettings().coreUrl.replace(/\/+$/, '')
+}
+
+/**
+ * Ensure `~/.local/bin` is on PATH for the spawned core. `uv` installs there, but a non-login/
+ * non-interactive shell (e.g. the one that launches this server from an IDE) may not have sourced
+ * the profile that adds it — leaving `spawn uv` to fail with ENOENT. Prepend it defensively.
+ */
+function pathWithLocalBin(): string {
+  const localBin = resolve(homedir(), '.local', 'bin')
+  const current = process.env.PATH ?? ''
+  return current.split(':').includes(localBin) ? current : `${localBin}:${current}`
 }
 
 async function isCoreUp(): Promise<boolean> {
@@ -57,7 +70,12 @@ export async function startCore(config: ServerConfig): Promise<ChildProcess | nu
     child = spawn(cmd, args, {
       cwd: config.coreDir,
       stdio: 'inherit',
-      env: { ...process.env, INLINE_HOST: hostname, INLINE_PORT: port || '8848' },
+      env: {
+        ...process.env,
+        PATH: pathWithLocalBin(),
+        INLINE_HOST: hostname,
+        INLINE_PORT: port || '8848',
+      },
     })
   } catch (e) {
     console.warn(

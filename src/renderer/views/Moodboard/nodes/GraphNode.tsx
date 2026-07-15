@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { CoreParamField } from '@shared/coreNodes'
 import { portKindColor } from '@shared/coreNodes'
@@ -106,6 +107,23 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const runWorkflow = useGenerationStore((s) => s.runWorkflow)
   const busy = useGenerationStore((s) => s.busyByFrame[itemId] ?? false)
 
+  // Auto-fit the node box to its content so every param (a Z-Image node has several) is visible on
+  // launch, not clipped by the frame's overflow-hidden. Grow only — never shrink below what the user
+  // resized to. Measuring scroll-vs-client overflow makes this converge in one pass (0 when it fits).
+  const contentRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = contentRef.current
+    if (!el || !item) return
+    const extraH = el.scrollHeight - el.clientHeight
+    const extraW = el.scrollWidth - el.clientWidth
+    if (extraH > 1 || extraW > 1) {
+      void updateItem(itemId, {
+        width: item.width + Math.max(0, extraW),
+        height: item.height + Math.max(0, extraH),
+      })
+    }
+  })
+
   if (!item || item.type !== 'core' || !item.data.core || !descriptor) {
     return (
       <NodeFrame id={id} selected={!!selected} minWidth={200} minHeight={92}>
@@ -141,7 +159,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   return (
     <>
       <NodeFrame id={id} selected={!!selected} minWidth={180} minHeight={80}>
-        <div className="flex h-full w-full flex-col gap-1.5 p-2">
+        <div ref={contentRef} className="flex h-full w-full flex-col gap-1.5 p-2">
           <div className="flex items-center justify-between gap-1">
             <span className="truncate text-[11px] font-semibold text-zinc-100">
               {descriptor.title}
