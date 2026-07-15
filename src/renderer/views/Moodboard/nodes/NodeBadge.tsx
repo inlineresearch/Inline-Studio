@@ -220,3 +220,79 @@ export function XIcon({ className }: { className?: string }): React.JSX.Element 
     </Icon>
   )
 }
+
+/** Play triangle — a node's Run control. */
+export function PlayIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className ?? 'h-4 w-4'}
+      aria-hidden="true"
+    >
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  )
+}
+
+/**
+ * Sliders/adjust mark — opens a node's settings sidebar. Shared by the Generate (fal) node and the
+ * Inline Core node so both read identically. Has filled dots, so it's its own svg (not the stroked
+ * Icon wrapper).
+ */
+export function AdjustIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className ?? 'h-4 w-4'}
+      aria-hidden="true"
+    >
+      <line x1="4" y1="8" x2="20" y2="8" />
+      <line x1="4" y1="16" x2="20" y2="16" />
+      <circle cx="9" cy="8" r="2" fill="currentColor" />
+      <circle cx="15" cy="16" r="2" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** Magic wand — a generation model node (Z-Image and other `icon:"wand"` descriptors). */
+export function WandIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5" />
+    </Icon>
+  )
+}
+
+/** Box — a loader-style node (`icon:"box"`). */
+export function BoxIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5M12 22V12" />
+    </Icon>
+  )
+}
+
+/** Type "T" — a text/prompt-style node (`icon:"type"`). */
+export function TypeIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M4 7V4h16v3M9 20h6M12 4v16" />
+    </Icon>
+  )
+}
+
+/** Square — a latent/plumbing node (`icon:"square"`), and the generic fallback glyph. */
+export function SquareIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+    </Icon>
+  )
+}

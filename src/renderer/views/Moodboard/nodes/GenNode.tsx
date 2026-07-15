@@ -19,7 +19,14 @@ import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
 import { VideoPreview } from '../../../components/VideoPreview'
 import { Waveform } from '../../../components/Waveform'
 import { NodeFrame } from './NodeFrame'
-import { AudioGlyph, ImageGlyph, NodeBadge, NodeBadgeRow, VideoGlyph } from './NodeBadge'
+import {
+  AdjustIcon,
+  AudioGlyph,
+  ImageGlyph,
+  NodeBadge,
+  NodeBadgeRow,
+  VideoGlyph,
+} from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
 import { resolveInputThumbs } from './inputThumbs'
 import { ModelPicker } from '../ModelPicker'
@@ -59,26 +66,6 @@ function SparkleIcon(): React.JSX.Element {
     >
       <path d="M12 3l1.9 4.8L18.6 9.7 13.9 11.6 12 16.4 10.1 11.6 5.4 9.7 10.1 7.8Z" />
       <path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9Z" />
-    </svg>
-  )
-}
-
-/** Sliders/adjust icon — opens the settings sidebar. */
-function AdjustIcon(): React.JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-4 w-4"
-    >
-      <line x1="4" y1="8" x2="20" y2="8" />
-      <line x1="4" y1="16" x2="20" y2="16" />
-      <circle cx="9" cy="8" r="2" fill="currentColor" />
-      <circle cx="15" cy="16" r="2" fill="currentColor" />
     </svg>
   )
 }

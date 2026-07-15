@@ -1,0 +1,17 @@
+[project]
+name = "inline-studio-frontend"
+version = "0.0.0"
+description = "Prebuilt Inline Studio web UI (SPA), served by Inline Core. Mirrors comfyui-frontend-package."
+requires-python = ">=3.9"
+readme = "README.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# The package is just the built SPA under inline_studio_frontend/static/ (index.html + hashed assets).
+packages = ["inline_studio_frontend"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"inline_studio_frontend/static" = "inline_studio_frontend/static"

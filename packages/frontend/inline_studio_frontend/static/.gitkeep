@@ -1,0 +1,2 @@
+# The built SPA (index.html + assets/) is written here at publish time by `npm run build:spa`.
+# Kept empty in git; populated by the release/publish flow. See ../pyproject.toml.

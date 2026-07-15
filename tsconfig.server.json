@@ -1,9 +1,0 @@
-{
-  "$schema": "https://json.schemastore.org/tsconfig",
-  "extends": "./tsconfig.node.json",
-  "compilerOptions": {
-    "composite": false,
-    "types": ["node"]
-  },
-  "include": ["server/**/*.ts", "electron/main/**/*.ts", "src/shared/**/*.ts"]
-}

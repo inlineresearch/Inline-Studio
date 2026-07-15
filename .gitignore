@@ -1,6 +1,10 @@
 node_modules
 out
 dist
+dist-web
+# The built SPA copied into the PyPI frontend package at publish time (keep the .gitkeep).
+packages/frontend/inline_studio_frontend/static/*
+!packages/frontend/inline_studio_frontend/static/.gitkeep
 *.log
 .DS_Store
 .env

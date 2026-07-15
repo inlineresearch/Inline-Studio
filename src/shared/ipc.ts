@@ -3,7 +3,7 @@
  *
  * - `IpcChannels` are the only channel strings allowed (no stringly-typed
  *   `invoke('something')` scattered around — see CLAUDE.md).
- * - `InlineStudioApi` is the exact surface exposed on `window.inlineStudio` by the
+ * - `InlineStudioApi` is the exact backend surface the web client implements against Core; the
  *   preload. The renderer imports this type; the main process implements it.
  */
 import type {
@@ -91,6 +91,7 @@ export const IpcChannels = {
     setFalParams: 'frames:setFalParams',
     setModel: 'frames:setModel',
     setProvider: 'frames:setProvider',
+    resolveFalInputs: 'frames:resolveFalInputs',
   },
   generation: {
     /** Run a fal frame and its upstream chain (topologically). Streams progress via events. */
@@ -214,6 +215,21 @@ export interface CreateFolderInput {
   parentId: string | null
 }
 
+/** A fal frame's inputs resolved for building its request: media as data URIs + the prompt text. */
+export interface ResolvedFalInputs {
+  images: string[]
+  videos: string[]
+  audios: string[]
+  prompt: string | null
+}
+
+/** A prebuilt fal request the browser hands to the backend to run (fal defs are studio-side). */
+export interface FalRunRequest {
+  endpoint: string
+  body: Record<string, unknown>
+  outputKind: 'image' | 'video' | 'audio'
+}
+
 export interface CreateProjectInput {
   /** Display name; also used to derive the `.inlinestudio` folder name. */
   name: string
@@ -221,7 +237,7 @@ export interface CreateProjectInput {
   parentDir: string
 }
 
-/** The API surface the preload exposes on `window.inlineStudio`. */
+/** The backend API surface — implemented by the web client (createWebClient) against Inline Core. */
 export interface InlineStudioApi {
   project: {
     create(input: CreateProjectInput): Promise<Result<Project>>
@@ -314,10 +330,16 @@ export interface InlineStudioApi {
       provider: 'comfy' | 'fal',
       modelId?: string,
     ): Promise<Result<Frame>>
+    /** Resolve a fal frame's inputs (media as data URIs) + prompt, for building its request. */
+    resolveFalInputs(frameId: string): Promise<Result<ResolvedFalInputs>>
   }
   generation: {
-    /** Run a fal frame + its upstream chain. Resolves immediately; progress arrives via events. */
-    run(frameId: string): Promise<Result<void>>
+    /**
+     * Run a fal frame. On the single-process (web) backend the browser passes a prebuilt `request`
+     * (fal defs are studio-side); the Electron backend builds it server-side and ignores `request`.
+     * Resolves immediately; progress arrives via events.
+     */
+    run(frameId: string, request?: FalRunRequest): Promise<Result<void>>
     runWorkflow(itemId: string): Promise<Result<void>>
     /** Abort the in-flight run — a specific frame's, or all when no id is given. */
     cancel(frameId?: string): Promise<Result<void>>
@@ -467,11 +489,5 @@ export interface InlineStudioApi {
     onUpdateAvailable(callback: (e: UpdateAvailableEvent) => void): () => void
     onUpdateProgress(callback: (e: UpdateProgressEvent) => void): () => void
     onUpdateDownloaded(callback: (e: UpdateDownloadedEvent) => void): () => void
-  }
-}
-
-declare global {
-  interface Window {
-    inlineStudio: InlineStudioApi
   }
 }

@@ -5,7 +5,8 @@
  * Positioning mirrors MoodboardPanel's "Connect to…" menu (container-relative left/top).
  */
 
-import type { NodeDescriptor } from '@shared/coreNodes'
+import { addableCoreNodes, type NodeDescriptor } from '@shared/coreNodes'
+import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
 export type AddNodeKind = 'frame' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
@@ -34,6 +35,7 @@ export function AddNodeMenu({
   coreNodes = [],
   onPick,
   onPickCore,
+  onPickGen,
   onClose,
 }: {
   /** Container-relative anchor point (px). */
@@ -45,8 +47,14 @@ export function AddNodeMenu({
   coreNodes?: NodeDescriptor[]
   onPick: (kind: AddNodeKind) => void
   onPickCore?: (coreType: string) => void
+  /** Create a fal generation node for a specific model id. */
+  onPickGen?: (modelId: string) => void
   onClose: () => void
 }): React.JSX.Element {
+  // Only high-level model nodes are offered; loaders/samplers/inputs are hidden plumbing.
+  const addable = addableCoreNodes(coreNodes)
+  // Fal models, grouped by owner (OpenAI, ByteDance, …) — listed like the Inline Core section.
+  const falGroups = groupByOwner(listNodeDefs())
   return (
     <>
       <div className="absolute inset-0 z-20" onClick={onClose} />
@@ -71,12 +79,38 @@ export function AddNodeMenu({
             {e.label}
           </button>
         ))}
-        {coreNodes.length > 0 && (
+        {onPickGen && falGroups.length > 0 && (
+          <div className="max-h-56 overflow-y-auto border-t border-border">
+            <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+              Fal Models
+            </div>
+            {falGroups.map((group) => (
+              <div key={group.owner}>
+                <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
+                  {group.label}
+                </div>
+                {group.defs.map((def) => (
+                  <button
+                    key={def.id}
+                    onClick={() => onPickGen(def.id)}
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+                  >
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center text-emerald-300">
+                      <SparklesIcon />
+                    </span>
+                    {def.title}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+        {addable.length > 0 && (
           <div className="max-h-56 overflow-y-auto border-t border-border">
             <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
               Inline Core
             </div>
-            {groupByCategory(coreNodes).map(([category, nodes]) => (
+            {groupByCategory(addable).map(([category, nodes]) => (
               <div key={category}>
                 <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
                   {category}

@@ -1,11 +1,20 @@
-import { useLayoutEffect, useRef } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import type { CoreParamField } from '@shared/coreNodes'
 import { portKindColor } from '@shared/coreNodes'
 import { useCoreNodesStore } from '../../../store/coreNodesStore'
 import { useGenerationStore } from '../../../store/generationStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { NodeFrame } from './NodeFrame'
+import {
+  AdjustIcon,
+  BoxIcon,
+  ImageGlyph,
+  NodeBadge,
+  NodeBadgeRow,
+  PlayIcon,
+  SquareIcon,
+  TypeIcon,
+  WandIcon,
+} from './NodeBadge'
 import { resolveMedia } from '@/lib/media'
 
 interface GraphNodeData extends Record<string, unknown> {
@@ -17,116 +26,46 @@ function edgePercent(index: number, count: number): string {
   return `${(((index + 1) / (count + 1)) * 100).toFixed(2)}%`
 }
 
-const WIDGET_CLASS =
-  'nodrag w-full rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-zinc-200'
-
-function ParamWidget({
-  field,
-  value,
-  onChange,
-}: {
-  field: CoreParamField
-  value: unknown
-  onChange: (v: string | number | boolean) => void
-}): React.JSX.Element {
-  if (field.widget === 'boolean') {
-    return (
-      <label className="flex items-center gap-1 text-[11px] text-zinc-300">
-        <input
-          type="checkbox"
-          className="nodrag"
-          checked={Boolean(value ?? field.default)}
-          onChange={(e) => onChange(e.target.checked)}
-        />
-        {field.label}
-      </label>
-    )
+/** Map a Core descriptor's `icon` string to a node-family glyph (falls back to the square). */
+function coreGlyph(icon: string): React.JSX.Element {
+  switch (icon) {
+    case 'wand':
+      return <WandIcon />
+    case 'box':
+      return <BoxIcon />
+    case 'type':
+      return <TypeIcon />
+    case 'image':
+      return <ImageGlyph />
+    default:
+      return <SquareIcon />
   }
-  if (field.widget === 'select') {
-    return (
-      <select
-        className={WIDGET_CLASS}
-        value={String(value ?? field.default)}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {(field.options ?? []).map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    )
-  }
-  if (field.widget === 'number' || field.widget === 'seed') {
-    return (
-      <input
-        type="number"
-        className={WIDGET_CLASS}
-        value={Number(value ?? field.default)}
-        min={field.min}
-        max={field.max}
-        step={field.step}
-        onChange={(e) => onChange(Number(e.target.value))}
-      />
-    )
-  }
-  if (field.widget === 'textarea') {
-    return (
-      <textarea
-        className={`${WIDGET_CLASS} resize-none`}
-        rows={2}
-        value={String(value ?? field.default)}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    )
-  }
-  return (
-    <input
-      type="text"
-      className={WIDGET_CLASS}
-      value={String(value ?? field.default)}
-      onChange={(e) => onChange(e.target.value)}
-    />
-  )
 }
 
 /**
  * A generic Inline Core graph node backed by a `core` moodboard item. Resolves its descriptor from
- * the served `/v1/models` palette and renders one colored handle per declared port (inputs left,
- * outputs right, colored by kind) plus a param widget per non-advanced field. Param edits persist
- * to the item's `data.core.params`. This is the low-level workflow node (load/sample/encode/vae).
+ * the served `/v1/models` palette and renders in the same card style as the fal Generate node: a
+ * floating title badge, an edge-to-edge output preview, and a footer with Run + an adjust (settings)
+ * button. Params live behind the adjust button in the Core settings sidebar — the node face stays
+ * clean, so a model node like Z-Image Turbo reads as one simple node. One colored handle per
+ * declared port (inputs left, outputs right, colored by kind).
  */
 export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element {
   const { itemId } = data as GraphNodeData
   const item = useMoodboardStore((s) => s.items.find((i) => i.id === itemId))
-  const updateItem = useMoodboardStore((s) => s.updateItem)
   const coreType = item?.type === 'core' ? item.data.core?.type : undefined
   const descriptor = useCoreNodesStore((s) =>
     coreType ? s.descriptors.find((d) => d.type === coreType) : undefined,
   )
   const runWorkflow = useGenerationStore((s) => s.runWorkflow)
+  const toggleSettings = useGenerationStore((s) => s.toggleCoreSettings)
   const busy = useGenerationStore((s) => s.busyByFrame[itemId] ?? false)
-
-  // Auto-fit the node box to its content so every param (a Z-Image node has several) is visible on
-  // launch, not clipped by the frame's overflow-hidden. Grow only — never shrink below what the user
-  // resized to. Measuring scroll-vs-client overflow makes this converge in one pass (0 when it fits).
-  const contentRef = useRef<HTMLDivElement>(null)
-  useLayoutEffect(() => {
-    const el = contentRef.current
-    if (!el || !item) return
-    const extraH = el.scrollHeight - el.clientHeight
-    const extraW = el.scrollWidth - el.clientWidth
-    if (extraH > 1 || extraW > 1) {
-      void updateItem(itemId, {
-        width: item.width + Math.max(0, extraW),
-        height: item.height + Math.max(0, extraH),
-      })
-    }
-  })
+  const progress = useGenerationStore((s) => s.progressByFrame[itemId])
+  const status = useGenerationStore((s) => s.statusByFrame[itemId])
 
   if (!item || item.type !== 'core' || !item.data.core || !descriptor) {
     return (
-      <NodeFrame id={id} selected={!!selected} minWidth={200} minHeight={92}>
+      <NodeFrame id={id} selected={!!selected} minWidth={200} minHeight={92} subtleSelect>
         <div className="flex h-full flex-col items-center justify-center gap-1 p-3 text-center">
           {coreType ? (
             <>
@@ -146,64 +85,89 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   }
 
   const core = item.data.core
-  const fields = descriptor.params.filter((p) => !p.advanced)
   const missingCategories = descriptor.params
     .filter((p) => p.optionsFrom && (p.options?.length ?? 0) === 0)
     .map((p) => p.optionsFrom as string)
-  const setParam = (key: string, value: string | number | boolean): void => {
-    void updateItem(itemId, {
-      data: { ...item.data, core: { type: core.type, params: { ...core.params, [key]: value } } },
-    })
-  }
+  const pct = typeof progress === 'number' ? Math.round(progress * 100) : null
 
   return (
     <>
-      <NodeFrame id={id} selected={!!selected} minWidth={180} minHeight={80}>
-        <div ref={contentRef} className="flex h-full w-full flex-col gap-1.5 p-2">
-          <div className="flex items-center justify-between gap-1">
-            <span className="truncate text-[11px] font-semibold text-zinc-100">
-              {descriptor.title}
-            </span>
-            <button
-              onClick={() => void runWorkflow(itemId)}
-              disabled={busy}
-              title="Run up to this node"
-              className="nodrag flex h-5 w-5 shrink-0 items-center justify-center rounded text-emerald-400 hover:bg-black/40 disabled:opacity-40"
-            >
-              <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            </button>
-          </div>
-          {missingCategories.length > 0 && (
-            <div className="nodrag rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-1">
-              <span className="text-[10px] leading-tight text-amber-200">
-                Model files not found ({missingCategories.join(', ')}). Add them to Inline
-                Core&apos;s models folder, then reopen.
-              </span>
-            </div>
-          )}
-          {core.output?.kind === 'image' && (
-            <img
-              src={resolveMedia(core.output.filePath)}
-              alt=""
-              className="h-20 w-full rounded object-cover"
-            />
-          )}
-          {fields.map((field) => (
-            <div key={field.key} className="flex flex-col gap-0.5">
-              {field.widget !== 'boolean' && (
-                <span className="text-[9px] uppercase tracking-wide text-zinc-500">
-                  {field.label}
-                </span>
-              )}
-              <ParamWidget
-                field={field}
-                value={core.params[field.key]}
-                onChange={(v) => setParam(field.key, v)}
+      {/* Floating title badge — matches the fal Generate node. */}
+      <NodeBadgeRow>
+        <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>
+      </NodeBadgeRow>
+
+      <NodeFrame
+        id={id}
+        selected={!!selected}
+        minWidth={200}
+        minHeight={200}
+        padded={false}
+        subtleSelect
+      >
+        <div className="relative flex h-full w-full flex-col">
+          {/* Edge-to-edge output preview. */}
+          <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
+            {core.output?.kind === 'image' ? (
+              <img
+                src={resolveMedia(core.output.filePath)}
+                alt=""
+                className="h-full w-full object-cover"
               />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center px-4">
+                <span className="text-center text-[10px] text-zinc-600">
+                  {busy
+                    ? (status ?? 'Working…')
+                    : missingCategories.length > 0
+                      ? `Model files not found (${missingCategories.join(', ')})`
+                      : 'Run to generate'}
+                </span>
+              </div>
+            )}
+
+            {busy && (
+              <>
+                <span className="absolute left-2 top-2 flex max-w-[calc(100%-1rem)] items-center gap-1 rounded-full bg-black/75 px-2 py-0.5 text-[10px] font-medium text-emerald-300 backdrop-blur">
+                  <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />
+                  <span className="truncate">
+                    {status ?? (pct != null ? `${pct}%` : 'Working…')}
+                  </span>
+                </span>
+                <div className="absolute inset-x-0 bottom-0 h-1 bg-black/40">
+                  <div
+                    className="h-full bg-emerald-400 transition-all"
+                    style={{ width: `${pct ?? 0}%` }}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Footer: category label + run + settings (adjust) — same layout as the fal node. */}
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface/90 px-1.5 py-1">
+            <span className="truncate px-1 text-[10px] uppercase tracking-wide text-zinc-500">
+              {descriptor.category}
+            </span>
+            <div className="flex shrink-0 items-center gap-0.5">
+              <button
+                onClick={() => void runWorkflow(itemId)}
+                disabled={busy}
+                title="Run up to this node"
+                className="nodrag flex h-6 w-6 items-center justify-center rounded text-emerald-400 hover:bg-black/40 hover:text-emerald-300 disabled:opacity-40"
+              >
+                <PlayIcon />
+              </button>
+              <button
+                onClick={() => toggleSettings(itemId)}
+                title="Settings"
+                data-gen-settings-toggle
+                className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:bg-black/40 hover:text-zinc-100"
+              >
+                <AdjustIcon />
+              </button>
             </div>
-          ))}
+          </div>
         </div>
       </NodeFrame>
 

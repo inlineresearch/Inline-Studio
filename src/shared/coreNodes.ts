@@ -1,7 +1,7 @@
 /**
  * The Inline Core node descriptor contract, mirrored on the client. Inline Core serves these at
  * `GET /v1/models`; the canvas renders any node generically from its descriptor, so adding a node
- * type is a Core change with no Storyline release. Kept shell-agnostic (imported by renderer + main).
+ * type is a Core change with no Inline Studio release. Kept shell-agnostic (imported by renderer + main).
  *
  * Media kinds cross the wire as takes/assets; engine kinds (`model`, `latent`, ...) are opaque
  * handles passed between low-level nodes and are never a take. Only nodes with an `outputKind`
@@ -58,6 +58,17 @@ export interface NodeDescriptor {
   inputs: CorePort[]
   outputs: CorePort[]
   params: CoreParamField[]
+  /**
+   * Internal building blocks (loaders, samplers, VAE, source inputs) — served for
+   * validation/execution but never offered in the add-node menu. Keeps generation one-click: the
+   * user sees only high-level model nodes (e.g. Z-Image Turbo). See `addableCoreNodes`.
+   */
+  hidden?: boolean
+}
+
+/** Descriptors the add-node menu may offer — everything not marked `hidden` by Core. */
+export function addableCoreNodes(descriptors: NodeDescriptor[]): NodeDescriptor[] {
+  return descriptors.filter((d) => !d.hidden)
 }
 
 /** The `GET /v1/models` payload. */

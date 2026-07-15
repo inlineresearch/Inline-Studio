@@ -1,9 +1,7 @@
 /**
- * The backend seam. The renderer reaches the backend only through `studio()`, never
- * `window.inlineStudio` directly, so the same UI runs under Electron (the preload bridge,
- * the default) or in the browser (an injected HTTP/WebSocket client). `mountStudioApp`
- * calls `setStudioClient` before rendering; under Electron nothing injects and it falls
- * back to the preload bridge.
+ * The backend seam. The renderer reaches the backend only through `studio()` — an injected
+ * HTTP/WebSocket client that talks to Inline Core on the same origin. `mountStudioApp` calls
+ * `setStudioClient` before rendering.
  */
 import type { InlineStudioApi } from '@shared/ipc'
 
@@ -14,7 +12,10 @@ export function setStudioClient(next: InlineStudioApi): void {
   client = next
 }
 
-/** The active backend client. Stores and views call this instead of window.inlineStudio. */
+/** The active backend client. Stores and views call this to reach Inline Core. */
 export function studio(): InlineStudioApi {
-  return client ?? window.inlineStudio
+  if (!client) {
+    throw new Error('No backend client injected. Call setStudioClient() before rendering.')
+  }
+  return client
 }

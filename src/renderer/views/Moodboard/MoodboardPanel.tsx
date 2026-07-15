@@ -42,6 +42,7 @@ import { GenNode } from './nodes/GenNode'
 import { ChooserNode } from './nodes/ChooserNode'
 import { PromptNode } from './nodes/PromptNode'
 import { GenerateSettingsPanel } from './GenerateSettingsPanel'
+import { CoreSettingsPanel } from './CoreSettingsPanel'
 import { ModelInfoPanel } from './ModelInfoPanel'
 import { PreviewNode } from './nodes/PreviewNode'
 import { LayerNode } from './nodes/LayerNode'
@@ -213,6 +214,7 @@ function Board(): React.JSX.Element {
   const addEmptyFrame = useMoodboardStore((s) => s.addEmptyFrame)
   const addPrompt = useMoodboardStore((s) => s.addPrompt)
   const addCoreNode = useMoodboardStore((s) => s.addCoreNode)
+  const addGenNode = useMoodboardStore((s) => s.addGenNode)
   const duplicateItems = useMoodboardStore((s) => s.duplicateItems)
   const undo = useMoodboardStore((s) => s.undo)
   const redo = useMoodboardStore((s) => s.redo)
@@ -597,6 +599,12 @@ function Board(): React.JSX.Element {
     if (m) void addCoreNode(coreType, m.flowX, m.flowY)
   }
 
+  const onPickGen = (modelId: string): void => {
+    const m = addMenu
+    setAddMenu(null)
+    if (m) void addGenNode(modelId, m.flowX, m.flowY)
+  }
+
   /** Create a preview node and wire the dropped output into it. */
   const suggestPreview = async (): Promise<void> => {
     const m = connectMenu
@@ -857,6 +865,7 @@ function Board(): React.JSX.Element {
             coreNodes={coreDescriptors}
             onPick={onPickAddNode}
             onPickCore={onPickCore}
+            onPickGen={onPickGen}
             onClose={() => setAddMenu(null)}
           />
         )}
@@ -873,6 +882,7 @@ function Board(): React.JSX.Element {
         />
 
         <GenerateSettingsPanel />
+        <CoreSettingsPanel />
         <ModelInfoPanel />
       </div>
 

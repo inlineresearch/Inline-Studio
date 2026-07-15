@@ -1,7 +1,7 @@
 /**
  * The Inline Core node palette: descriptors fetched from GET /v1/models (via the core IPC). The
  * canvas builds its add-node menu and renders nodes generically from these, so a new node type is a
- * Core change with no Storyline release. `registryVersion` lets us refetch when it changes.
+ * Core change with no Inline Studio release. `registryVersion` lets us refetch when it changes.
  */
 import { create } from 'zustand'
 import type { NodeDescriptor } from '@shared/coreNodes'
