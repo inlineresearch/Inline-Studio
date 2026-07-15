@@ -2,7 +2,7 @@
 
 <h3 align="center">AI filmmaking on a node canvas</h3>
 
-<p align="center">Inline Studio is a free, open-source desktop app for AI filmmakers. Build a whole visual pipeline on a free-form node canvas, from moodboard to final cut, with hosted models via fal (bring your own key) for instant creative range and your own ComfyUI for infinite control.</p>
+<p align="center">Inline Studio is a free, open-source app for AI filmmakers. Build a whole visual pipeline on a free-form node canvas, from moodboard to final cut, with local diffusion models (the built-in Inline Core engine) and hosted fal models — every render kept as a versioned, non-destructive take.</p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge"></a>
@@ -17,9 +17,11 @@
 
 ## What is Inline Studio?
 
-Inline Studio is a free, open-source desktop app for **AI filmmaking on a node canvas, powered by hosted [fal](https://fal.ai) models and your own [ComfyUI](https://github.com/comfyanonymous/ComfyUI)**. It gives AI filmmakers a free-form canvas to build a whole visual pipeline, from moodboard to final cut, where every render is kept as a versioned, non-destructive take. Reach for **fal** when you want instant creative range: hosted closed models like **GPT2 Image**, **Nano Banana**, **Seedance** & many more, no setup and no GPU. Reach for your **own ComfyUI** when you want infinite control over nodes, models, and the render. Mix both in the same film, and Inline Studio handles everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
+Inline Studio is a free, open-source app for **AI filmmaking on a node canvas**, powered by the built-in **Inline Core** engine (local diffusion models) and hosted [fal](https://fal.ai) models. It gives AI filmmakers a free-form canvas to build a whole visual pipeline, from moodboard to final cut, where every render is kept as a versioned, non-destructive take. Run **local** models like **Z-Image Turbo** on your own GPU with a single model file, or reach for **fal** for instant creative range: hosted closed models like **GPT Image 2**, **Nano Banana**, **Seedance** & many more, no setup. Mix both in the same film, and Inline Studio handles everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
 
-**Who it's for:** AI filmmakers, motion artists, and generative creators who want to make AI short films and longer cuts with ComfyUI without losing every good version along the way.
+It runs as a **single process on one port**: the Inline Core engine (Python) serves the web UI _and_ does the generation — `python core/main.py` and open the browser. No desktop install, no separate backend.
+
+**Who it's for:** AI filmmakers, motion artists, and generative creators who want to make AI short films and longer cuts without losing every good version along the way.
 
 ## Features
 
@@ -28,9 +30,9 @@ Inline Studio is a free, open-source desktop app for **AI filmmaking on a node c
 - **Chain frames into a generative pipeline** - wire one frame's output into the next frame's input. Refine a shot, feed it forward, regenerate the source, and everything downstream follows.
 - **Video Director node** - a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export.
 - **Trim Video/Audio node** - drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
-- **Generate with closed models, no setup** - run hosted models like GPT Image 2, Nano Banana, Seedance, Krea, and LTX right on the canvas. No ComfyUI, no custom nodes, no GPU. Add a Generate node, pick a model, and bring your own fal.ai key.
-- **Bring your own ComfyUI** - connect any ComfyUI instance, local or cloud. Your media, your models, your machine.
-- **Free & open source (MIT)** and **cross-platform** - macOS (Apple Silicon & Intel), Windows, and Linux.
+- **Local generation, built in** - the Inline Core engine runs diffusion models on your own GPU. Z-Image Turbo from a single model file, no external server to set up.
+- **Generate with closed models, no setup** - run hosted models like GPT Image 2, Nano Banana, Seedance, Krea, and LTX right on the canvas. No GPU. Add a Generate node, pick a model, and bring your own fal.ai key.
+- **Free & open source (MIT)** - one process (Python + a browser); runs on macOS, Windows, and Linux.
 
 ![Inline Studio dashboard with recent AI film projects](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/screenshot-dashboard.png)
 
@@ -42,89 +44,59 @@ Inline Studio is a free, open-source desktop app for **AI filmmaking on a node c
 
 ## How it works
 
-ComfyUI is the most capable generative engine going - image, video, audio, LLM, every new model lands there first. But generating is the easy part. The work that makes an AI film is what comes after: exploring options, keeping what's good, and shaping a repeatable process out of it. Inline Studio is the layer where that happens, organised around one model:
+Generating a single frame is the easy part. The work that makes an AI film is what comes after: exploring options, keeping what's good, and shaping a repeatable process out of it. Inline Studio is the layer where that happens, organised around one model:
 
 ### Export the whole pipeline, not just the final render
 
-From the home screen, **Export** zips a project into one archive. Import it on the other side and you get everything back: the inputs (every imported asset), the outputs (all the generated takes), and the ComfyUI workflows that turned one into the other. Whoever opens it can re-run the pipeline exactly and keep iterating.
+From the home screen, **Export** zips a project into one archive. Import it on the other side and you get everything back: the inputs (every imported asset), the outputs (all the generated takes), and the graph that turned one into the other. Whoever opens it can re-run the pipeline exactly and keep iterating.
 
-## Bring your own ComfyUI
+## Local generation with Inline Core
 
-Inline Studio doesn't bundle or manage ComfyUI - **you bring your own**, run it wherever you like, and point Inline Studio at it. This keeps you in full control of your nodes, models, and the render.
+Inline Studio ships its own generation engine, **Inline Core** (in `core/`), so you can render on your own GPU with no external server to stand up. The first local model is **Z-Image Turbo** (Alibaba Tongyi) — a fast, distilled diffusion transformer.
 
-- **Running locally with a GPU?** Start ComfyUI with `--enable-cors-header` and paste its address into the Generate tab.
-- **No GPU?** Spin up ComfyUI on a cloud GPU - the app walks you through deploying it on [RunPod](https://runpod.io) - and paste the public URL. Any reachable ComfyUI works.
+- **One model file.** Drop a single Z-Image diffusion `.safetensors` into `core/models/diffusion_models/` and you're ready — the engine loads the transformer from that file and wires up the VAE + text-encoder behind the scenes. Bring your own VAE/text-encoder for a fully offline setup, or let it fetch them once from the reference repo.
+- **GPU-first, low-VRAM friendly.** The engine always prefers the GPU and never silently offloads to CPU; on a tight-VRAM card it saves memory with VAE tiling/slicing, attention slicing, and int8 instead.
+- **One node.** You see a single **Z-Image Turbo** node — no loader/sampler wiring. Add it, connect a Prompt, hit Run.
 
-Your media, your models, your machine. ComfyUI does the rendering. Inline Studio gives the work a shape you can iterate and share.
+Your media, your models, your machine.
 
 ## Generate with closed models, no setup
 
-Not every model lives in ComfyUI. The best closed models are hosted only, and standing up a workflow just to try one is friction you don't need. Inline Studio adds a second way to generate: a single Generate node that runs hosted models through [fal](https://fal.ai), with no ComfyUI, no custom nodes, and no GPU.
+The best closed models are hosted only, and they need no GPU. Alongside local generation, Inline Studio runs hosted models through [fal](https://fal.ai): add a single Generate node, pick a model, and go — no setup, no GPU.
 
-Create a frame, choose **Start with Fal API**, pick a model, and run. Everything else works exactly as it does with ComfyUI: takes, flow links between frames, the Video Director, and export. That means you can mix hosted models and your own ComfyUI renders in the same film.
+Create a frame, pick a model, and run. Everything else works exactly as it does with a local model: takes, flow links between frames, the Video Director, and export. That means you can mix hosted models and local renders in the same film.
 
 Models available today:
 
-- **Image:** GPT Image 2, Nano Banana 2, Nano Banana Pro (edit), Krea v2 Large
-- **Video:** LTX 2.3 (image to video), Seedance 2.0 (text, image, and reference to video)
+- **Local (Inline Core):** Z-Image Turbo (single-file, GPU) — [see above](#local-generation-with-inline-core)
+- **fal · Image:** GPT Image 2, Nano Banana 2, Nano Banana Pro (edit), Krea v2 Large
+- **fal · Video:** LTX 2.3 (image to video), Seedance 2.0 (text, image, and reference to video)
 
 It is bring your own key. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings and it stays on your machine, sent only to fal when you generate. You pay fal directly for what you render, and each node shows a rough price estimate before you run it.
 
-## Install
+## Install & run
 
-Grab a prebuilt installer from the [latest release](../../releases/latest) and open it:
+Inline Studio runs from source as **one process** — the Inline Core engine serves the web UI _and_ does the generation. You'll need [Node.js](https://nodejs.org) 20.11+ and [Python 3.11+](https://python.org) with [uv](https://docs.astral.sh/uv/).
 
-- **macOS:** download the `.dmg` for your chip - `arm64` for Apple Silicon (M1/M2/M3…), `x64` for Intel Macs - open it, and drag Inline Studio into Applications.
-- **Windows:** download the `-setup.exe` and run it.
-- **Linux:** download the `.AppImage`, make it executable (`chmod +x Inline Studio*.AppImage`), and run it.
+```bash
+git clone <this-repo> && cd inline-studio
 
-The builds are currently unsigned, so on first launch your system may warn about an unidentified developer:
+# 1. Build the web UI
+npm install
+npm run build:spa                        # -> dist-web/
 
-- **macOS:** right-click the app and choose Open, then Open again. If it says the app is "damaged", run `xattr -dr com.apple.quarantine /Applications/Inline Studio.app`.
-- **Windows:** on the SmartScreen prompt, click "More info" then "Run anyway".
+# 2. Set up + run the engine (serves the UI + API on one port)
+cd core
+uv sync --extra server --extra zimage    # server + the Z-Image runtime (torch/diffusers)
+uv run python main.py --front-end-root ../dist-web
+# add --listen to bind the network, --port to change from 8848
+```
 
-To actually generate, you'll also need a ComfyUI instance to connect to (see [Bring your own ComfyUI](#bring-your-own-comfyui)). The canvas and planning work without it.
+Then open **http://127.0.0.1:8848**. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings for hosted models, and drop a Z-Image `.safetensors` in `core/models/diffusion_models/` for local generation (see [Local generation with Inline Core](#local-generation-with-inline-core)). The canvas and planning work without any models.
+
+**UI development (hot-reload):** run the engine as above, then in another terminal `npm run dev:web` (Vite serves the UI with HMR and proxies API calls to Core).
 
 New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
-
-## Getting started from source
-
-Prefer to run from source? You'll need [Node.js](https://nodejs.org) 20.11+ (22 recommended).
-
-```bash
-git clone <this-repo>
-cd inline-studio
-npm install      # also rebuilds the native SQLite module for Electron
-npm run dev      # launches the app with hot-reload
-```
-
-To generate, start ComfyUI with CORS enabled and connect it on the Generate tab:
-
-```bash
-python main.py --enable-cors-header     # then paste http://127.0.0.1:8188 in-app
-```
-
-> On macOS sandboxes that set `ELECTRON_RUN_AS_NODE=1`, launch with
-> `env -u ELECTRON_RUN_AS_NODE npm run dev`.
-
-## Build from source (desktop app)
-
-To produce an installer you can hand to someone, package it for your platform:
-
-```bash
-npm run package:mac      # arm64 + x64 .dmg in dist/
-npm run package:win      # NSIS .exe installer in dist/
-npm run package:linux    # AppImage in dist/
-```
-
-A few things to know:
-
-- **Build each OS - and each Mac arch - on matching hardware.** Inline Studio ships a native module (SQLite), which has to be compiled for the target machine, so build the Mac app on a Mac and the Windows app on Windows. The same applies to Mac CPU arch: an Intel (`x64`) dmg has to be built on an Intel Mac and an Apple Silicon (`arm64`) dmg on an Apple Silicon Mac - cross-building bundles the wrong native binary. CI handles this for you (see below).
-- **After packaging, `npm run dev` may complain about the native module.** Packaging rebuilds SQLite for the target architecture; run `npm run rebuild` to restore it for local development.
-- **The builds are unsigned.** On first launch macOS and Windows will warn about an unidentified developer. On a Mac, right-click the app and choose Open (or remove the quarantine flag with `xattr -dr com.apple.quarantine /Applications/Inline Studio.app`). For real distribution you'll want code signing and notarization.
-- **App icon.** The icon lives in `build/` (`icon.png` is the source). Replace it there and re-package to rebrand.
-
-Releases are automated: bump the version in `package.json` and run the **Build & Release** workflow from the Actions tab. It builds installers for macOS (Apple Silicon **and** Intel - each on its own runner), Windows, and Linux on GitHub Actions and uploads them to a draft GitHub Release.
 
 ## FAQ
 
@@ -134,15 +106,16 @@ Yes. Inline Studio is free and open source under the [MIT license](LICENSE). The
 
 ### Do I need a GPU?
 
-Not on the machine running Inline Studio. ComfyUI does the rendering, so you only need a GPU wherever ComfyUI runs - that can be a local GPU on the same machine, or a cloud GPU you connect to. Inline Studio's canvas and planning work without any GPU at all.
+Only for **local** generation. The built-in Inline Core engine renders on the GPU of whatever machine runs it (you can also run it on a remote GPU box and open the UI from your laptop). Hosted **fal** models need no GPU at all, and the canvas + planning work with no GPU either.
 
-### Does Inline Studio include ComfyUI, and how do I connect it?
+### What models can I run, and how?
 
-No - you bring your own ComfyUI. Inline Studio doesn't bundle or manage it. Start ComfyUI with CORS enabled (`python main.py --enable-cors-header`) and paste its address into the Generate tab, or point Inline Studio at a cloud ComfyUI instance by pasting its public URL. Any reachable ComfyUI works.
+- **Local:** Z-Image Turbo today, on your own GPU. Drop a single diffusion `.safetensors` into `core/models/diffusion_models/` — the engine handles the VAE + text-encoder behind it. Adding another local model is a Core change (a model runner), no UI release.
+- **Hosted (fal):** GPT Image 2, Nano Banana, Seedance, Krea, LTX, and more — add a Generate node, pick the model, and bring your own [fal.ai key](https://fal.ai/dashboard/keys) (Settings; it stays server-side).
 
-### How do I access the nodes and models available in ComfyUI?
+### Does it still use ComfyUI?
 
-Through your own ComfyUI. Connect an existing setup or launch one on a cloud GPU via [RunPod](https://runpod.io) - the app walks you through it - and you keep full control of ComfyUI: its nodes, custom nodes, and models are all yours. The Generate tab embeds the full ComfyUI node graph, so everything you'd do in ComfyUI directly is available inside Inline Studio.
+No. Earlier versions embedded ComfyUI; Inline Studio now has its own local engine (Inline Core) instead. There's nothing external to stand up — generation is built in.
 
 ## Contributing
 

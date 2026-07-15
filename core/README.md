@@ -21,16 +21,16 @@ already supports, so the multi-GPU split works on it from the start).
 ComfyUI is a great canvas but a fragile engine. Inline Core keeps the open node-graph model and
 rebuilds the engine underneath it.
 
-| | ComfyUI | Inline Core |
-| --- | --- | --- |
-| Graph vs GPU | runs the denoise loop inline, one request at a time | graph orchestration (cheap, per request) is separate from a batched sampler that groups compatible jobs across requests |
-| Schema | positional `widgets_values`, validated at runtime (dies mid-graph) | typed graph, named params, edges type-checked before the run (rejected at submit) |
-| Devices | some nodes pin to CPU on a GPU box; Z-Image will not run on CPU | one device/memory policy owns dtype, placement, offload, and attention; no node hardcodes a device, so one graph runs GPU, low-VRAM, or pure CPU |
-| Multi-GPU | one image runs on one GPU; splitting a single image needs third-party nodes | one image's denoise can split across GPUs via xDiT (PipeFusion on PCIe, Ulysses on NVLink), in an isolated worker group behind the sampler seam |
-| Custom nodes | all load into one interpreter and env, so any node can break the core | run out of process, each pack in its own venv, behind a semver SDK |
-| Interface | a web UI driven by graph JSON over a socket; run state is ephemeral | a headless `/v1` HTTP + websocket API; runs are durable and survive a restart |
-| Outputs | files you overwrite | immutable takes; regenerating adds a take, never overwrites |
-| Models | `models/` dir, dropdowns from a scan | same layout (bring your own, no downloads); a typed catalog feeds versioned node descriptors the UI renders generically |
+|              | ComfyUI                                                                     | Inline Core                                                                                                                                      |
+| ------------ | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Graph vs GPU | runs the denoise loop inline, one request at a time                         | graph orchestration (cheap, per request) is separate from a batched sampler that groups compatible jobs across requests                          |
+| Schema       | positional `widgets_values`, validated at runtime (dies mid-graph)          | typed graph, named params, edges type-checked before the run (rejected at submit)                                                                |
+| Devices      | some nodes pin to CPU on a GPU box; Z-Image will not run on CPU             | one device/memory policy owns dtype, placement, offload, and attention; no node hardcodes a device, so one graph runs GPU, low-VRAM, or pure CPU |
+| Multi-GPU    | one image runs on one GPU; splitting a single image needs third-party nodes | one image's denoise can split across GPUs via xDiT (PipeFusion on PCIe, Ulysses on NVLink), in an isolated worker group behind the sampler seam  |
+| Custom nodes | all load into one interpreter and env, so any node can break the core       | run out of process, each pack in its own venv, behind a semver SDK                                                                               |
+| Interface    | a web UI driven by graph JSON over a socket; run state is ephemeral         | a headless `/v1` HTTP + websocket API; runs are durable and survive a restart                                                                    |
+| Outputs      | files you overwrite                                                         | immutable takes; regenerating adds a take, never overwrites                                                                                      |
+| Models       | `models/` dir, dropdowns from a scan                                        | same layout (bring your own, no downloads); a typed catalog feeds versioned node descriptors the UI renders generically                          |
 
 The two boundaries that matter most: graph orchestration is decoupled from GPU batching (graphs are
 the unit of caching, the sampler is the unit of batching, and the multi-GPU split routes through that
@@ -50,33 +50,44 @@ uv pip install -e ".[parallel]"   # + xfuser, for splitting one image across GPU
 
 ## Models
 
-Bring your own weights; nothing is downloaded. Drop files into the models dir (default `./models`,
-override with `INLINE_MODELS_DIR`), ComfyUI-style, by category:
+Drop files into the models dir (default `./models`, override with `INLINE_MODELS_DIR`), ComfyUI-style,
+by category:
 
 ```
 models/
-  diffusion_models/   z_image_turbo_bf16.safetensors
-  vae/                ae.safetensors
-  text_encoders/      qwen3-4b/     (a folder: config + tokenizer + weights)
+  diffusion_models/   z_image_turbo_bf16.safetensors   <- the one file you need for Z-Image
+  vae/                ae.safetensors                   <- optional (see below)
+  text_encoders/      qwen/   (an HF-format folder: config + tokenizer + weights)  <- optional
   loras/  controlnet/  checkpoints/  ...
 ```
 
-The engine scans this on start; a node's model pickers list what is present.
+**Z-Image loads from a single diffusion `.safetensors`.** Drop that one ComfyUI-style file in
+`diffusion_models/`; the runner loads the transformer via diffusers `from_single_file`. The VAE +
+text-encoder + tokenizer are resolved as:
 
-## Nodes and workflows
+- **local files** if you provide them (`vae/*.safetensors` or a dir, and an HF-format `text_encoders/`
+  dir) — **fully offline / bring-your-own**; or
+- the **reference repo** (`Tongyi-MAI/Z-Image-Turbo`) fetched once and cached, if you don't.
 
-The canvas (Storyline) wires **low-level primitive nodes** by typed edges. `/v1/models` serves each
-node's descriptor (ports, params, file pickers), so the UI renders any node generically and adding a
-node type needs no UI release.
+Override the diffusion source with `INLINE_ZIMAGE_MODEL` (a file, a diffusers dir, or a repo id), and
+the supporting components with `INLINE_ZIMAGE_VAE` / `INLINE_ZIMAGE_TEXT_ENCODER`. The engine scans the
+models dir on start; a node's model pickers list what is present.
 
-- Loaders: `load/diffusion-model`, `load/vae`, `load/text-encoder`
-- Conditioning: `encode/text`
-- Latent and sampling: `latent/empty`, `sample`
-- VAE: `vae/decode`, `vae/encode`
+## Nodes
 
-Engine handles (`model`, `vae`, `text-encoder`, `conditioning`, `latent`) are typed sockets passed
-between nodes; only media outputs (`vae/decode`) become Frames with take history, the rest are
-ephemeral plumbing. A best-effort ComfyUI importer maps existing workflows onto these nodes.
+`/v1/models` serves each node's descriptor (ports, params, file pickers), so the Inline Studio canvas
+renders any node generically — adding a node type needs no UI release.
+
+**High-level model nodes are what the user sees.** Generation is one-click: you drop a single
+**Z-Image Turbo** node, wire a Prompt into it, and hit Run. The node hooks up the diffusion model, VAE,
+and text-encoder behind the scenes — no loader/sampler wiring.
+
+Underneath, a **low-level primitive vocabulary** exists (`load/diffusion-model`, `load/vae`,
+`load/text-encoder`, `encode/text`, `latent/empty`, `sample`, `vae/decode`, `vae/encode`) — the
+ComfyUI-equivalent decomposed graph, kept for validation/execution — but these are marked **`hidden`**
+and never appear in the add-node menu. Engine handles (`model`, `vae`, `text-encoder`, `conditioning`,
+`latent`) are typed sockets between nodes; only media outputs become Frames with take history. A
+best-effort ComfyUI importer maps existing workflows onto the primitives.
 
 ## Multi-GPU: split one image across GPUs
 

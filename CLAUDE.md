@@ -1,18 +1,19 @@
 # Inline Studio — Engineering Guide
 
-Inline Studio is an **experimentation layer for visual artists** that uses **ComfyUI** as an open
-generative render-farm. Creators build, iterate, and share generative pipelines on a free-form node
-canvas, working frame-by-frame, while ComfyUI does the actual image/video/audio/LLM generation behind
-each frame.
+Inline Studio is an **experimentation layer for visual artists**: a free-form node canvas for
+building generative pipelines frame-by-frame. The **Inline Core** engine (`core/`) does the actual
+image/video generation behind each frame — diffusion models run locally (Z-Image Turbo and others),
+plus closed models via fal.ai.
 
 > **Naming:** the project is **Inline Studio** — that is the only name. The npm package is
 > `inline-studio`. **Do not use the old "Storyline" codename** anywhere new (docs, identifiers, UI
 > strings). Some legacy `STORYLINE_*` env vars and `.storyline` paths still exist in code and are
 > being renamed to `inline-studio` — treat them as deprecated, don't add more.
 >
-> Inline Studio is the **single/main repo**: it holds the UI client **and** the **Inline Core** Python
-> generation engine (Core lives at `~/Inline-Core` today; it is being brought into this repo under
-> `core/`). One process serves both — `python main.py` runs Core and serves the built UI on one port.
+> Inline Studio is the **single repo**: it holds the UI client (`src/`) **and** the **Inline Core**
+> Python generation engine (`core/`, brought in via `git subtree`). One process serves both —
+> `cd core && python main.py --front-end-root ../dist-web` runs Core and serves the built UI on one
+> port.
 
 > Read this file before changing code. It defines the architecture and the non-negotiable rules.
 
@@ -26,7 +27,7 @@ Project → Sequence → Frame → Take[]
 - **Sequence / Scene** — an ordered group of frames.
 - **Frame** — the atomic unit. **A Frame is a _slot with a history of takes_, never a single file.**
   Its inputs are library assets _or_ another frame's output (the refine/flow link).
-- **Take** — one immutable ComfyUI render of a frame. Generating again adds a new take; nothing is
+- **Take** — one immutable render of a frame. Generating again adds a new take; nothing is
   overwritten. The frame points at its `heroTakeId` (the chosen take), which flows downstream.
 - **Moodboard ↔ Timeline** — a frame is either pinned on the free-form canvas or surfaced in the
   Timeline panel. Same frame, different surface.
@@ -36,11 +37,11 @@ If you're tempted to treat a frame as a file, stop — the take history is the c
 
 ## Architecture
 
-Inline Studio is a **web SPA** (React) served by **Inline Core** (the Python engine) on a single
-port. One process: `python main.py` runs Core, which serves the built UI _and_ is the app's backend.
-(The former Electron desktop app + Node web server were **retired** — the whole backend was ported to
-Python. If you find a reference to `electron/`, `server/`, `window.inlineStudio`, or a preload bridge,
-it's stale.)
+Inline Studio is a **web SPA** (React, `src/`) served by **Inline Core** (the Python engine, `core/`)
+on a single port. One process: `core/main.py` runs Core, which serves the built UI _and_ is the app's
+backend. (The former Electron desktop app + Node web server were **retired** — the whole backend was
+ported to Python. If you find a reference to `electron/`, `server/`, `window.inlineStudio`, or a
+preload bridge, it's stale.)
 
 - **Renderer** (`src/renderer/`) — all React UI. Reaches the backend only through `studio()`
   (`lib/studio.ts`), an injected HTTP/WebSocket client (`lib/webClient.ts`) pointed at Core on the
@@ -49,11 +50,11 @@ it's stale.)
 - **Shared** (`src/shared/`) — domain types + the `InlineStudioApi` contract (`ipc.ts`) that the
   renderer and Core both honor. **This is the frozen wire protocol** — change it in lockstep on both
   sides.
-- **Inline Core** — the Python backend (at `~/Inline-Core`, being brought into this repo under
-  `core/`). Owns the project SQLite DB, filesystem, generation, and the ffmpeg timeline. Studio's
-  former backend lives here under `inline_core/studio/` (`store`, `frames`, `moodboard`, `assets`,
-  `generation`, `fal`, `timeline`) + the `/rpc`+`/events`+`/media`+`/upload` routes in
-  `inline_core/server/`.
+- **Inline Core** — the Python backend, in this repo under **`core/`** (`core/src/inline_core/`).
+  Owns the project SQLite DB, filesystem, generation, and the ffmpeg timeline. Studio's former backend
+  lives under `inline_core/studio/` (`store`, `frames`, `moodboard`, `assets`, `generation`, `fal`,
+  `timeline`) + the `/rpc`+`/events`+`/media`+`/upload` routes in `inline_core/server/`. Set it up
+  with `cd core && uv sync --extra zimage --extra server`.
 
 Fal node definitions stay studio-side (`src/shared/nodes/`): the browser builds each fal request and
 Core relays it to `queue.fal.run` with the API key server-side. Core nodes (e.g. Z-Image) run through
@@ -163,8 +164,14 @@ npm run lint        # eslint, zero warnings allowed
 npm run test        # vitest
 ```
 
-Run the whole app from Inline Core: `python main.py --front-end-root <path-to>/dist-web` (serves the
-UI + API on one port). See the Inline Core repo for the engine and its own commands.
+Run the whole app on one port (UI + API):
+
+```
+npm run build:spa                                       # -> dist-web/
+cd core && uv run python main.py --front-end-root ../dist-web   # add --listen for LAN
+```
+
+See `core/CLAUDE.md` for the engine internals (nodes, models, device policy).
 
 ## Where to add things
 
