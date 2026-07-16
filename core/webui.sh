@@ -86,12 +86,11 @@ while [[ $# -gt 0 ]]; do
     --lowvram) export INLINE_PROFILE="lowvram"; shift ;;
     --smart-memory)
       # Spread a too-big model across VRAM + RAM + CPU. Force the lowvram profile so the offload +
-      # int8 machinery engages, and cut CUDA fragmentation OOMs (the 80MB-alloc-fails-with-VRAM-full
-      # case) with an expandable allocator unless the user already set one.
+      # int8 machinery engages. (The expandable allocator that cuts CUDA fragmentation OOMs is now
+      # set unconditionally below, so every run — not just smart memory — benefits.)
       SMART_MEMORY=1
       export INLINE_SMART_MEMORY="1"
       export INLINE_PROFILE="${INLINE_PROFILE:-lowvram}"
-      export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
       shift ;;
     --cpu) export INLINE_PROFILE="cpu"; shift ;;
     --profile) export INLINE_PROFILE="${2:?--profile needs a name}"; shift 2 ;;
@@ -109,6 +108,12 @@ done
 
 export INLINE_HOST="$HOST"
 export INLINE_PORT="$PORT"
+
+# Always use PyTorch's expandable CUDA segments (unless the user set their own config): it lets the
+# allocator grow/shrink a single reservation instead of fragmenting into many, which is the
+# difference between a small allocation failing "with VRAM still free" and succeeding — a common
+# low-VRAM (e.g. T4) OOM. Harmless on CPU-only runs (torch just ignores it).
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 if [[ "$RUN_INSTALL" -eq 1 ]]; then
   command -v uv >/dev/null 2>&1 || { echo "uv not found: https://docs.astral.sh/uv/" >&2; exit 1; }

@@ -24,6 +24,8 @@ from .detect import available_devices, cuda_supports_bf16, has_nvlink
 from .policy import (
     AttentionBackend,
     DevicePolicy,
+    FitEstimate,
+    ModelFootprint,
     OffloadMode,
     Parallel,
     Placement,
@@ -39,6 +41,12 @@ _QUANT_RAM_GB = 48.0  # cpu below this -> int8
 # even int8 won't fit, so fall to SEQUENTIAL submodule streaming (unquantized — torchao int8 and CPU
 # offload deadlock together) so a very small GPU can still run.
 _SMART_RESIDENT_MIN_VRAM_GB = 6.0
+
+# Fit estimate (size-aware placement): reserve this much VRAM beyond the weights for denoise
+# activations + the CUDA context + allocator fragmentation, and treat int8 weight-only quant as
+# ~half the fp16 weight bytes. Deliberately generous so the estimate errs toward a lighter plan.
+_ACTIVATION_HEADROOM_GB = 2.5
+_INT8_FACTOR = 0.5
 
 
 def _system_ram_gb() -> float | None:
@@ -61,6 +69,30 @@ def _vram_gb(device: Device) -> float | None:
         import torch
 
         return torch.cuda.mem_get_info(device.index)[1] / 1e9
+    except Exception:
+        return None
+
+
+def _free_vram_gb(device: Device) -> float | None:
+    """Live *free* VRAM (mem_get_info[0]) — for diagnostics/UI only. NOT used to choose the plan:
+    residency-dependent free readings would make the quant/offload decision (and thus the pipeline
+    cache key) oscillate. Capacity decisions use total VRAM (``_vram_gb``)."""
+    if device.kind is not DeviceKind.CUDA:
+        return None
+    try:
+        import torch
+
+        return torch.cuda.mem_get_info(device.index)[0] / 1e9
+    except Exception:
+        return None
+
+
+def _free_ram_gb() -> float | None:
+    """Live *available* system RAM (psutil), for the UI + a load guard."""
+    try:
+        import psutil
+
+        return psutil.virtual_memory().available / 1e9
     except Exception:
         return None
 
@@ -137,6 +169,83 @@ class MemoryPolicy(DevicePolicy):
         self._bf16 = (
             supports_bf16 if supports_bf16 is not None else cuda_supports_bf16(self._device)
         )
+        self._footprint: ModelFootprint | None = None
+        self._fit: FitEstimate | None = None
+
+    # --- size-aware fit (auto-fit the model to the device without a --smart-memory flag) ---------
+
+    def set_footprint(self, footprint: ModelFootprint | None) -> None:
+        """Record the model's on-disk sizes so ``profile``/``quantization``/offload fit the device.
+        Called by the runner per run (files can change). Falls back to the coarse buckets when the
+        footprint is None or unmeasurable."""
+        self._footprint = footprint
+        self._fit = self._compute_fit(footprint) if footprint is not None else None
+
+    def estimate_fit(self, footprint: ModelFootprint) -> FitEstimate | None:
+        """A pure fit verdict — does NOT mutate the policy, so the UI thread can call it while a run
+        holds the policy on the worker thread."""
+        return self._compute_fit(footprint)
+
+    def fit_estimate(self) -> FitEstimate | None:
+        return self._fit
+
+    def _compute_fit(self, fp: ModelFootprint) -> FitEstimate | None:
+        """Pick the lightest plan whose weights fit the GPU: full-precision resident, else int8
+        resident, else CPU-offload streaming (unquantized — int8 + offload deadlock). Capacity is
+        TOTAL VRAM (a fixed device property) minus activation headroom, so the decision is stable
+        across runs and doesn't bust the pipeline cache. Returns None (→ coarse buckets) off-CUDA or
+        when sizes are unavailable (e.g. a whole-pipeline folder)."""
+        if self._device.kind is not DeviceKind.CUDA or fp.total_bytes <= 0:
+            return None
+        budget = _env_budget() or self._vram_gb
+        if budget is None:
+            return None
+        cap = max(0.0, budget - _ACTIVATION_HEADROOM_GB)
+        big = (fp.diffusion_bytes + fp.text_encoder_bytes) / 1e9
+        vae = fp.vae_bytes / 1e9
+        full = big + vae
+        int8 = big * _INT8_FACTOR + vae
+        forced = _env_profile() is not None  # explicit --profile pins the profile; fit picks quant
+
+        def prof(auto: Profile) -> Profile:
+            return self._profile if forced else auto
+
+        if full <= cap:
+            return FitEstimate(
+                "resident", Quantization.NONE, OffloadMode.NONE, prof(Profile.GPU_MAX),
+                full, budget, True, "Full-precision weights fit in VRAM.",
+            )
+        if int8 <= cap:
+            return FitEstimate(
+                "int8", Quantization.INT8, OffloadMode.NONE, prof(Profile.LOWVRAM),
+                int8, budget, True,
+                "Weights are int8-quantized to fit this GPU's VRAM.",
+            )
+        # int8 still won't fit resident -> CPU-offload streaming. Only viable if the (unquantized)
+        # model fits in system RAM, since sequential offload holds the off-GPU weights there.
+        ram = self._ram_gb
+        if ram is not None and full > ram:
+            return FitEstimate(
+                "wont-fit", Quantization.NONE, OffloadMode.SEQUENTIAL, prof(Profile.LOWVRAM),
+                full, budget, False,
+                "Model is too large for this GPU's VRAM and this machine's RAM.",
+            )
+        return FitEstimate(
+            "offload", Quantization.NONE, OffloadMode.SEQUENTIAL, prof(Profile.LOWVRAM),
+            int8, budget, True, "Weights stream between GPU and RAM (slower).",
+        )
+
+    def vram_budget_mb(self) -> int | None:
+        budget = _env_budget() or self._vram_gb
+        return int(budget * 1024) if budget is not None else None
+
+    def free_vram_mb(self) -> int | None:
+        gb = _free_vram_gb(self._device)
+        return int(gb * 1024) if gb is not None else None
+
+    def free_ram_mb(self) -> int | None:
+        gb = _free_ram_gb()
+        return int(gb * 1024) if gb is not None else None
 
     def _choose_profile(self) -> Profile:
         if self._device.kind is DeviceKind.CPU:
@@ -150,10 +259,12 @@ class MemoryPolicy(DevicePolicy):
 
     @property
     def profile(self) -> Profile:
-        return self._profile
+        """The effective profile: the size-aware fit's profile when a footprint is set, else the
+        profile chosen at init from the coarse VRAM buckets / env override."""
+        return self._fit.profile if self._fit is not None else self._profile
 
     def placement(self, role: str) -> Placement:
-        if self._profile is Profile.CPU:
+        if self.profile is Profile.CPU:
             return Placement(self._device, DType.FP32)
         offload_mode = self._offload_mode()
         dtype = self._compute_dtype(role)
@@ -189,6 +300,8 @@ class MemoryPolicy(DevicePolicy):
         hang-prone — accelerate CPU-offload path. Only a GPU too small for even int8-resident
         streams submodules (SEQUENTIAL, unquantized). The older INLINE_ALLOW_CPU_OFFLOAD flag still
         does bare (unquantized) MODEL offload for anyone who wants it."""
+        if self._fit is not None:
+            return self._fit.offload_mode
         if self._profile is not Profile.LOWVRAM:
             return OffloadMode.NONE
         if self._smart:
@@ -211,12 +324,16 @@ class MemoryPolicy(DevicePolicy):
         return AttentionBackend.SDPA
 
     def vae_tiling(self) -> bool:
-        return self._profile in (Profile.LOWVRAM, Profile.CPU)
+        return self.profile in (Profile.LOWVRAM, Profile.CPU)
 
     def attention_slicing(self) -> bool:
-        return self._profile in (Profile.LOWVRAM, Profile.CPU)
+        return self.profile in (Profile.LOWVRAM, Profile.CPU)
 
     def quantization(self) -> Quantization:
+        # A size-aware fit (when set) owns the quant choice — int8 auto-engages when full precision
+        # won't fit, no --smart-memory flag needed.
+        if self._fit is not None:
+            return self._fit.quant
         # Smart memory quantizes to int8 so the halved model fits RESIDENT on the GPU (see
         # _offload_mode). The one exception: a GPU so small it must SEQUENTIAL-offload instead runs
         # unquantized — torchao int8 + CPU offload deadlock together.

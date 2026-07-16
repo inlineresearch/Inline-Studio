@@ -120,14 +120,22 @@ between nodes and are never takes.
 - **Server bind** — `INLINE_HOST` (default `127.0.0.1`), `INLINE_PORT` (default `8848`).
 - **Model overrides** — e.g. `INLINE_ZIMAGE_MODEL` (a single `.safetensors` file path, a local
   diffusers dir, or a HF repo id for Z-Image). Auto-resolved from `diffusion_models/` when unset.
-- **Memory** — by default prefer the GPU: even under the `lowvram` profile, weights stay resident on
-  the GPU (VAE tiling/slicing + attention slicing + int8 do the saving); we do **not** auto-offload to
-  CPU. **Smart memory** (`INLINE_SMART_MEMORY=1`, `webui.sh --smart-memory`) is the opt-in for a model
-  that can't fit resident full-precision: it int8-quantizes the big weights (transformer + text
-  encoder, via torchao) so the **halved** model fits **resident** on the GPU — no CPU offload, because
-  torchao int8 + accelerate's `enable_model_cpu_offload` deadlock together. Only a GPU too small for
-  even int8-resident falls back to unquantized `SEQUENTIAL` submodule streaming. `INLINE_ALLOW_CPU_OFFLOAD=1`
-  is the older bare (unquantized) model-offload knob.
+- **Memory** — by default prefer the GPU, and **auto-fit the model to it**. When a runner hands the
+  policy the model's on-disk sizes (`DevicePolicy.set_footprint`, a `ModelFootprint`), the policy sizes
+  the weights against total VRAM (minus an activation headroom) and picks the lightest plan that fits:
+  full-precision **resident** → else int8 **resident** (torchao halves the transformer + text encoder,
+  no CPU offload — int8 + accelerate's `enable_model_cpu_offload` deadlock together) → else unquantized
+  `SEQUENTIAL` submodule streaming. So a card that can't hold Z-Image full-precision (a T4)
+  **auto-int8s with no flag**; `set_footprint(None)` / an unsizable whole-pipeline folder falls back to
+  the coarse total-VRAM buckets. Capacity is TOTAL VRAM (a fixed device property), not live-free, so the
+  plan — and the pipeline cache key it feeds — is stable across runs. The runner does a **pre-flight
+  check** (`DevicePolicy.fit_estimate`): a model too big for VRAM+RAM fails with a clean node error
+  before any load, instead of a host-RAM OOM-kill that would take the shared server down. Weights stream
+  straight to the GPU on load (`device=`/`device_map` in `models/loaders.py`) so peak host RAM ≈ one
+  tensor, and switching checkpoints **evicts** the previous model (`loaders.unload_components`,
+  `_evict_stale`) rather than stacking. `webui.sh` always sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+  to cut fragmentation OOMs. **Smart memory** (`INLINE_SMART_MEMORY=1`, `--smart-memory`) and
+  `INLINE_ALLOW_CPU_OFFLOAD=1` remain as explicit overrides when no footprint is set.
 - **Compute dtype** — bf16 on the GPU by default, but **fp16 on cards without bf16 acceleration**
   (Turing/Volta — compute capability < 8.0, e.g. a T4): same footprint, but it uses the fp16 tensor
   cores instead of bf16's slow path. The **VAE stays upcast** (bf16, or fp32 when the denoiser is

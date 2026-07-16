@@ -22,7 +22,15 @@ from typing import Any
 import torch
 from diffusers import ZImageImg2ImgPipeline, ZImagePipeline
 
-from ...device.policy import DevicePolicy, OffloadMode, Placement, Profile, Quantization
+from ...device.policy import (
+    DevicePolicy,
+    FitEstimate,
+    ModelFootprint,
+    OffloadMode,
+    Placement,
+    Profile,
+    Quantization,
+)
 from ...device.types import DeviceKind, DType
 from ...errors import CancelledError, ComponentError
 from ...graph.descriptor import NodeDescriptor, ParamField, Port, Widget
@@ -184,6 +192,15 @@ class ZImageRunner(NodeRunner):
         vae_file = vae_ref.file if vae_ref else _path_or_none(reqs.resolve_vae(params))
         te_file = te_ref.file if te_ref else _path_or_none(reqs.resolve_text_encoder(params))
 
+        # Size-aware placement: hand the policy the model's on-disk sizes so it fits dtype/quant/
+        # offload to THIS GPU — int8 auto-engages on a card too small for full precision (a T4),
+        # with no --smart-memory flag. Then refuse an impossible load up front, so a too-big model
+        # is a clean node error instead of a host-RAM OOM-kill that takes the whole server down.
+        self._policy.set_footprint(_footprint(mode, source, vae_file, te_file))
+        fit = self._policy.fit_estimate()
+        if fit is not None and not fit.fits:
+            raise ComponentError(_wont_fit_message(fit))
+
         logger.info(
             "Z-Image run: %dx%d, %d steps, guidance=%.1f, img2img=%s | %s",
             width,
@@ -208,6 +225,12 @@ class ZImageRunner(NodeRunner):
         except torch.cuda.OutOfMemoryError as error:
             _free_vram()
             raise ComponentError(_oom_message(width, height)) from error
+        except MemoryError as error:
+            # Host-RAM exhaustion (a Python MemoryError) — surfaced cleanly. The streaming loaders
+            # keep peak RAM ≈ one tensor, so this is the rare tail; an OS OOM-kill (SIGKILL) cannot
+            # be caught here — the pre-flight check above is what prevents ever reaching that spike.
+            _free_vram()
+            raise ComponentError(_oom_message(width, height, host=True)) from error
 
         placement = self._policy.placement("denoiser")
         gen_device = "cpu" if (placement.offload or self._policy.profile is Profile.CPU) else str(
@@ -255,6 +278,9 @@ class ZImageRunner(NodeRunner):
         except torch.cuda.OutOfMemoryError as error:
             _free_vram()
             raise ComponentError(_oom_message(width, height)) from error
+        except MemoryError as error:
+            _free_vram()
+            raise ComponentError(_oom_message(width, height, host=True)) from error
         elapsed = time.perf_counter() - sample_start
         peak_gb = _peak_vram_gb()
         peak_note = f", peak VRAM {peak_gb:.1f}GB" if peak_gb else ""
@@ -326,6 +352,10 @@ def _load_pipeline(
             img2img,
             _device_report(policy),
         )
+        # Free any *other* model still resident before loading this one, so switching checkpoints
+        # doesn't stack VRAM/RAM (the caches never evicted before). Keeps the current source's
+        # components — including a base pipeline reused below for img2img.
+        _evict_stale(source, vae, text)
         # An img2img pipe can reuse the base pipe's already-placed weights (no second load).
         base = _PIPELINES.get((source, vae, text, False, quant.value))
         if img2img and base is not None:
@@ -334,8 +364,12 @@ def _load_pipeline(
                 "Built img2img pipeline from cached base in %.1fs", time.perf_counter() - started
             )
         else:
-            dtype = _torch_dtype(policy.placement("denoiser"))
+            placement = policy.placement("denoiser")
+            dtype = _torch_dtype(placement)
             vae_dtype = _torch_dtype(policy.placement("vae"))
+            # Resident placement streams weights straight to the GPU during load (no CPU copy); the
+            # offload path loads to CPU so accelerate can install its hooks before placing.
+            load_device = None if placement.offload else str(placement.device)
             build_start = time.perf_counter()
             pipe = _build_pipeline(
                 source,
@@ -346,6 +380,7 @@ def _load_pipeline(
                 text=text,
                 quant=quant,
                 vae_dtype=vae_dtype,
+                device=load_device,
             )
             logger.info(
                 "Read weights from disk in %.1fs (mode=%s, dtype=%s)",
@@ -376,6 +411,7 @@ def _build_pipeline(
     text: str,
     quant: Quantization = Quantization.NONE,
     vae_dtype: Any = None,
+    device: str | None = None,
 ) -> Any:
     """Build a Z-Image pipeline **offline** — never touching the network.
 
@@ -413,7 +449,24 @@ def _build_pipeline(
         img2img=img2img,
         quant=quant,
         vae_dtype=vae_dtype,
+        device=device,
     )
+
+
+def _evict_stale(source: str, vae: str, text: str) -> None:
+    """Free every *other* model's pipelines + components before loading a new checkpoint, so a
+    second distinct model doesn't stack on the first. Entries for the current ``(source, vae,
+    text)`` — e.g. a cached base pipeline reused for img2img — are kept. Called under ``_LOCK``."""
+    import gc
+
+    keep_triple = (source, vae, text)
+    for k in list(_PIPELINES):
+        if k[:3] == keep_triple:
+            continue
+        del _PIPELINES[k]
+    gc.collect()
+    loaders.unload_components(keep_files={source, vae, text})
+    _free_vram()
 
 
 def _configure(pipe: Any, policy: DevicePolicy) -> None:
@@ -493,15 +546,34 @@ def _free_vram() -> None:
         pass
 
 
-def _oom_message(width: int, height: int) -> str:
-    """A clear, actionable message for a CUDA out-of-memory — never a raw allocator traceback.
-    Points at smart memory (unless already on) and the resolution, which drives peak memory."""
-    smart = os.environ.get("INLINE_SMART_MEMORY", "").strip().lower() in ("1", "true", "yes", "on")
-    if smart:
-        tip = f"lower the resolution (you're at {width}x{height} — try 768x768 or 512x512)"
-    else:
-        tip = "enable smart memory (run ./webui.sh --smart-memory) or lower the resolution"
-    return f"Ran out of GPU memory generating a {width}x{height} image. Try to {tip}."
+def _oom_message(width: int, height: int, *, host: bool = False) -> str:
+    """A clear, actionable message for an out-of-memory — never a raw allocator traceback. ``host``
+    distinguishes system-RAM exhaustion from GPU VRAM. Points at the resolution (which drives peak
+    memory) and a smaller model."""
+    if host:
+        return (
+            f"Ran out of system RAM loading the model for a {width}x{height} image. Close other "
+            "apps, use a machine with more RAM, or pick a smaller model."
+        )
+    return (
+        f"Ran out of GPU memory generating a {width}x{height} image. Lower the resolution "
+        f"(you're at {width}x{height} — try 768x768 or 512x512) or pick a smaller model."
+    )
+
+
+def _footprint(mode: str, source: str, vae: str, text: str) -> ModelFootprint:
+    """The model's on-disk component sizes for the fit estimate. Single-file mode only — a whole
+    diffusers pipeline folder isn't sized here, so the policy falls back to its VRAM buckets."""
+    diffusion = source if mode == "single_file" else ""
+    return ModelFootprint(**reqs.footprint_bytes(diffusion, vae, text))
+
+
+def _wont_fit_message(fit: FitEstimate) -> str:
+    have = f" (you have {fit.total_vram_gb:.0f}GB)" if fit.total_vram_gb else ""
+    return (
+        f"{fit.note} It needs about {fit.required_vram_gb:.0f}GB of GPU memory{have}. "
+        "Use a smaller model or lower the resolution."
+    )
 
 
 # --- small helpers ------------------------------------------------------------------------------

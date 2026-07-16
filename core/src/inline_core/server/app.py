@@ -152,7 +152,9 @@ def create_app(
             "device": {
                 "kind": placement.device.kind.value,
                 "profile": policy.profile.value,
-                "vramBudgetMb": None,
+                "vramBudgetMb": policy.vram_budget_mb(),
+                "vramFreeMb": policy.free_vram_mb(),
+                "ramFreeMb": policy.free_ram_mb(),
             },
         }
 
@@ -304,7 +306,8 @@ def create_app(
             fal_generation=FalGeneration(studio_store, events),
             timeline=Timeline(studio_store, events),
             # Explicit model downloads write into models/; rescan so new files bump the registry.
-            model_downloads=ModelDownloads(events, on_change=catalog.rescan),
+            # The policy lets the requirements popup show a memory fit estimate before a load.
+            model_downloads=ModelDownloads(events, on_change=catalog.rescan, policy=policy),
         )
 
         @app.get("/media/{media_path:path}")

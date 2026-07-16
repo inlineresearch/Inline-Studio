@@ -54,7 +54,11 @@ def test_dir_size_missing_dir_is_zero(tmp_path: Path):
 
 def test_requirements_empty_for_unknown_node_type():
     downloads = ModelDownloads(events=None)
-    assert downloads.requirements("no/such-node") == {"components": [], "allPresent": True}
+    assert downloads.requirements("no/such-node") == {
+        "components": [],
+        "allPresent": True,
+        "estimate": None,  # no requirements + no policy -> no fit estimate
+    }
 
 
 def test_component_json_shape():

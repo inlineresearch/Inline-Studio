@@ -27,14 +27,18 @@ _ZIMAGE_TYPE = "alibaba/z-image-turbo"
 class ModelDownloads:
     """Answers "what's missing" and downloads components into the models dir on request."""
 
-    def __init__(self, events: Any, on_change: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self, events: Any, on_change: Callable[[], None] | None = None, policy: Any = None
+    ) -> None:
         self._events = events
         self._on_change = on_change  # rescan the model catalog after a download lands
+        self._policy = policy  # device policy, for the memory fit estimate (optional)
 
     # --- requirements (the popup's data) --------------------------------------------------------
 
     def requirements(self, node_type: str) -> dict[str, Any]:
-        """The node's model components with live presence. ``{components: [...], allPresent}``.
+        """The node's model components with live presence + a memory fit estimate:
+        ``{components: [...], allPresent, estimate}``.
 
         Returns an empty, all-present view for node types with no requirements (or when the model
         runtime isn't installed — the node then shows its own "unavailable" state instead)."""
@@ -42,6 +46,42 @@ class ModelDownloads:
         return {
             "components": [_component_json(c) for c in components],
             "allPresent": all(c.present for c in components),
+            "estimate": self._estimate(node_type),
+        }
+
+    def _estimate(self, node_type: str) -> dict[str, Any] | None:
+        """Whether the model will fit this machine, and how (resident / int8 / offload / won't fit),
+        so the popup warns BEFORE a load. Pure ``stat`` + a live VRAM/RAM probe; ``None`` when the
+        runtime/policy is absent or the sizes/device can't be measured (a whole-pipeline folder)."""
+        if node_type != _ZIMAGE_TYPE or self._policy is None:
+            return None
+        try:
+            from ..device.policy import ModelFootprint
+            from ..models.zimage.requirements import (
+                footprint_bytes,
+                resolve_diffusion,
+                resolve_text_encoder,
+                resolve_vae,
+            )
+        except ImportError:
+            return None
+        diffusion = resolve_diffusion(None)
+        diffusion_file = diffusion[1] if diffusion and diffusion[0] == "single_file" else None
+        footprint = ModelFootprint(
+            **footprint_bytes(diffusion_file, resolve_vae(None), resolve_text_encoder(None))
+        )
+        fit = self._policy.estimate_fit(footprint)  # pure — never mutates the shared policy
+        if fit is None:
+            return None
+        soft = not fit.fits or fit.plan in ("int8", "offload")
+        return {
+            "plan": fit.plan,
+            "fits": fit.fits,
+            "requiredVramMb": int(fit.required_vram_gb * 1024),
+            "totalVramMb": int(fit.total_vram_gb * 1024) if fit.total_vram_gb else None,
+            "freeVramMb": self._policy.free_vram_mb(),
+            "freeRamMb": self._policy.free_ram_mb(),
+            "warning": fit.note if soft else None,
         }
 
     # --- download (explicit, user-triggered) ----------------------------------------------------

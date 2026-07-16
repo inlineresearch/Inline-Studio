@@ -229,3 +229,32 @@ def download_target(component: ModelComponent) -> Path:
     """Absolute local dir the component's single file lands in — its category folder, flat, so the
     node's dropdown lists it (under the models root, never the hidden HF cache)."""
     return models_dir() / component.category
+
+
+# --- memory footprint (on-disk sizes, for the device policy's fit estimate) ---------------------
+
+
+def _file_bytes(path: object) -> int:
+    """Size of a single weight file in bytes, or 0 when absent/unreadable (or a folder). The files
+    ship already 16-bit, so the size is a good proxy for the fp16-resident weight footprint."""
+    text = str(path or "").strip()
+    if not text:
+        return 0
+    try:
+        p = Path(text)
+        return p.stat().st_size if p.is_file() else 0
+    except OSError:
+        return 0
+
+
+def footprint_bytes(
+    diffusion: object = None, vae: object = None, text_encoder: object = None
+) -> dict[str, int]:
+    """On-disk byte sizes of the three single-file components, keyed to match ``ModelFootprint``'s
+    fields. Torch-free (a plain ``stat``) so the policy/UI can size the load without the runtime.
+    Pass the already-resolved paths (which honor wired handles); a missing/folder path is 0."""
+    return {
+        "diffusion_bytes": _file_bytes(diffusion),
+        "text_encoder_bytes": _file_bytes(text_encoder),
+        "vae_bytes": _file_bytes(vae),
+    }

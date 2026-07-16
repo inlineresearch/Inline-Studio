@@ -77,6 +77,37 @@ class Placement:
         return self.offload_mode is not OffloadMode.NONE
 
 
+@dataclass(frozen=True)
+class ModelFootprint:
+    """On-disk byte sizes of a model's big components — the input to a memory fit estimate. The
+    files ship already 16-bit, so a size is a good proxy for the fp16-resident weight footprint;
+    int8 halves the two big weights. The policy uses this to pick dtype/quant/offload to the GPU
+    instead of a coarse VRAM bucket."""
+
+    diffusion_bytes: int = 0
+    text_encoder_bytes: int = 0
+    vae_bytes: int = 0
+
+    @property
+    def total_bytes(self) -> int:
+        return self.diffusion_bytes + self.text_encoder_bytes + self.vae_bytes
+
+
+@dataclass(frozen=True)
+class FitEstimate:
+    """The policy's verdict for a given ModelFootprint on this device: what plan fits, how much VRAM
+    it needs, and whether it fits. Drives the runner's pre-flight check and the UI warning."""
+
+    plan: str  # "resident" | "int8" | "offload" | "wont-fit"
+    quant: Quantization
+    offload_mode: OffloadMode
+    profile: Profile
+    required_vram_gb: float
+    total_vram_gb: float | None
+    fits: bool
+    note: str
+
+
 class DevicePolicy(ABC):
     """Owns dtype, device, offload, attention backend, and tiling for a worker."""
 
@@ -102,3 +133,35 @@ class DevicePolicy(ABC):
     def quantization(self) -> Quantization:
         """Weight quantization to fit low memory. Default none."""
         return Quantization.NONE
+
+    # --- optional memory-fit surface (a size-aware policy overrides these) -----------------------
+    # Kept off the abstract contract with no-op/None defaults so simple policies (AutoDevicePolicy,
+    # test stubs) need not implement them; a memory-aware policy uses the model's on-disk sizes to
+    # fit dtype/quant/offload to the actual device.
+
+    def set_footprint(self, footprint: ModelFootprint | None) -> None:
+        """Receive the model's on-disk component sizes so later placement/quantization calls fit the
+        device. Default: ignore (placement decided without a size estimate)."""
+        return None
+
+    def estimate_fit(self, footprint: ModelFootprint) -> FitEstimate | None:
+        """A pure fit verdict for a footprint, WITHOUT mutating the policy (safe to call from the UI
+        thread while a run holds the policy). Default None (no estimate)."""
+        return None
+
+    def fit_estimate(self) -> FitEstimate | None:
+        """The verdict for the footprint last given to ``set_footprint`` (for the pre-flight check).
+        Default None."""
+        return None
+
+    def vram_budget_mb(self) -> int | None:
+        """Usable VRAM budget in MB (total or the env override), or None off-GPU. Default None."""
+        return None
+
+    def free_vram_mb(self) -> int | None:
+        """Live free VRAM in MB, or None off-GPU/unmeasurable. Default None."""
+        return None
+
+    def free_ram_mb(self) -> int | None:
+        """Live free system RAM in MB, or None when unmeasurable. Default None."""
+        return None

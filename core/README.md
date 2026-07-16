@@ -136,6 +136,32 @@ Enabling it:
 The device policy and the worker-group IPC are in place and tested with a stub worker; the real
 xfuser denoise lands with the GPU-side Z-Image runner.
 
+## Memory: fit a big model onto a small GPU
+
+When a model is too large to hold full-precision on your GPU — or larger than your system RAM — Inline
+Core fits it to the machine automatically, **with no flags**. This is the low-VRAM path, and it aims to
+"just run" instead of making you tune profiles.
+
+- **Weights stream straight to the GPU.** Each component loads directly onto the GPU from its
+  memory-mapped `.safetensors` — the engine never materializes a full copy in system RAM first. So you
+  do **not** need roughly 2× the model size in RAM to load it, and a load can no longer exhaust host RAM
+  and take the server down.
+- **Auto-fit picks the lightest plan that fits.** The policy sizes the model against your VRAM and
+  chooses, in order: full-precision **resident** → **int8 resident** (weight-only quantization halves the
+  big weights so they fit on the GPU) → **CPU-offload streaming** (submodules move on/off the GPU). A card
+  that can't hold the model full-precision quantizes to int8 on its own — no need to know a flag.
+- **Load-time fit check.** A model too large for VRAM + RAM fails fast with a clear message on the node,
+  instead of crashing mid-load. The model popup also shows the estimate up front (fits / will run int8 /
+  won't fit).
+- **Switching models frees the old one.** Loading a different checkpoint evicts the previous weights
+  rather than stacking them, so you can move between models without accumulating VRAM.
+- **Fragmentation-resistant allocator.** `webui.sh` runs with PyTorch expandable CUDA segments, which
+  avoids the "allocation failed with VRAM still free" fragmentation OOMs common on low-VRAM cards.
+
+You can still steer it by hand: `--lowvram` for the tight-VRAM profile, `--smart-memory` to force the
+offload machinery, `--vram-budget GB` / `INLINE_VRAM_BUDGET_GB` to cap the assumed VRAM, or
+`INLINE_PROFILE` to pin `gpu-max | lowvram | cpu`. `GET /v1/health` reports the live VRAM/RAM budget.
+
 ## Run
 
 The easy path is `webui.sh`, which maps friendly flags onto the engine's `INLINE_*` env knobs:

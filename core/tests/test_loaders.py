@@ -39,3 +39,46 @@ def test_ensure_assets_short_circuits_on_complete_marker(monkeypatch, tmp_path):
     (root / ".complete").write_text("ok")
     # No network/hub install needed: the marker short-circuits at the top of ensure_assets.
     assert loaders.ensure_assets("z-image") == root
+
+
+def test_device_key_maps_none_to_cpu():
+    assert loaders._device_key(None) == "cpu"
+    assert loaders._device_key("cuda:0") == "cuda:0"
+
+
+def _prime_assets(monkeypatch, tmp_path):
+    """A ready assets bundle (marker + a text_encoder config) so ensure_assets stays offline."""
+    monkeypatch.setenv("INLINE_DATA_DIR", str(tmp_path))
+    root = loaders.assets_root("z-image")
+    (root / "text_encoder").mkdir(parents=True)
+    (root / "text_encoder" / "config.json").write_text("{}")
+    (root / ".complete").write_text("ok")
+    return root
+
+
+def test_staged_encoder_dir_places_config_next_to_weights(monkeypatch, tmp_path):
+    """Encoder loads from a staging dir (config + weights linked as model.safetensors) so
+    transformers uses its mmap->device streaming loader instead of a full-RAM state_dict."""
+    _prime_assets(monkeypatch, tmp_path)
+    weights = tmp_path / "qwen_3_4b.safetensors"
+    weights.write_bytes(b"weights")
+    stage = loaders._staged_encoder_dir("z-image", str(weights))
+    assert (stage / "model.safetensors").read_bytes() == b"weights"
+    assert (stage / "config.json").is_file()
+    assert (stage / ".complete").is_file()
+    # Idempotent: a second call returns the same staged dir without re-linking.
+    assert loaders._staged_encoder_dir("z-image", str(weights)) == stage
+
+
+def test_unload_components_evicts_all_but_kept_files():
+    loaders._CACHE.clear()
+    keys = {
+        ("z-image", "diffusion", "/models/old.safetensors", "fp16", "none", "cuda:0"): object(),
+        ("z-image", "vae", "/models/ae.safetensors", "fp32", "none", "cuda:0"): object(),
+        ("z-image", "text_encoder", "/models/qwen.safetensors", "fp16", "int8", "cuda:0"): object(),
+    }
+    loaders._CACHE.update(keys)
+    loaders.unload_components(keep_files={"/models/ae.safetensors", "/models/qwen.safetensors"})
+    remaining = {k[2] for k in loaders._CACHE}
+    assert remaining == {"/models/ae.safetensors", "/models/qwen.safetensors"}
+    loaders._CACHE.clear()

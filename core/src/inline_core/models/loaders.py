@@ -24,6 +24,8 @@ over it. Callers are the model-runner subpackages, which the server registers be
 
 from __future__ import annotations
 
+import hashlib
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -118,6 +120,71 @@ def ensure_assets(arch: str) -> Path:
     return root
 
 
+def _link_or_copy(src: Path, dst: Path) -> None:
+    """Make ``dst`` resolve to ``src``'s bytes, preferring a symlink, then a hardlink, then a copy —
+    so the staging dir costs ~zero on Linux but still works where symlinks/hardlinks are unavailable
+    (Windows without privilege, cross-device)."""
+    if dst.exists() or dst.is_symlink():
+        return
+    try:
+        dst.symlink_to(src.resolve())
+        return
+    except OSError:
+        pass
+    try:
+        os.link(src, dst)
+        return
+    except OSError:
+        import shutil
+
+        shutil.copy2(src, dst)
+
+
+def _staged_encoder_dir(arch: str, file: str) -> Path:
+    """A tiny engine-owned dir transformers can load the text encoder from as a normal model: the
+    bundled config next to the user's weights file linked in as ``model.safetensors``.
+
+    Why: passing a pre-materialized ``state_dict`` to ``from_pretrained`` forces the whole ~8 GB
+    encoder into CPU RAM and BYPASSES transformers' native ``safe_open(..., backend="mmap")`` →
+    device streaming loader. Loading from a directory instead lets that loader run, so peak host RAM
+    stays ≈ one tensor. Idempotent via a ``.complete`` marker; keyed by the weights path so a
+    different file stages afresh."""
+    root = ensure_assets(arch)
+    te_config = root / "text_encoder"
+    digest = hashlib.sha1(str(file).encode()).hexdigest()[:16]
+    stage = assets_root(arch) / "te_stage" / digest
+    marker = stage / ".complete"
+    if marker.is_file():
+        return stage
+    with _ASSETS_LOCK:
+        if marker.is_file():
+            return stage
+        stage.mkdir(parents=True, exist_ok=True)
+        for name in ("config.json", "generation_config.json"):
+            src = te_config / name
+            if src.is_file():
+                _link_or_copy(src, stage / name)
+        _link_or_copy(Path(file), stage / "model.safetensors")
+        marker.write_text("ok")
+    return stage
+
+
+def _release_transient() -> None:
+    """Drop the just-loaded checkpoint's transient buffers (mmap views, freed CUDA blocks) so the
+    next big component starts from a clean allocator — keeps peak VRAM/RAM near one component, not
+    the sum of all three. Best-effort; never breaks a load."""
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001 — cache hygiene must never break a load
+        pass
+
+
 # --- quantization ------------------------------------------------------------------------------
 
 
@@ -168,14 +235,14 @@ def _quant_config(quant: Quantization, *, framework: str) -> Any | None:
 
 # --- component loaders (cached in-process) ------------------------------------------------------
 
-# Keyed by (arch, kind, file, dtype, quant) so switching one file (e.g. a different VAE) or the
-# quantization reuses the other already-loaded components. The run manager executes one run at a
-# time; the lock guards each build.
-_CACHE: dict[tuple[str, str, str, str, str], Any] = {}
+# Keyed by (arch, kind, file, dtype, quant, device) so switching one file (e.g. a different VAE),
+# the quantization, or the load device reuses the other already-loaded components. The run manager
+# executes one run at a time; the lock guards each build.
+_CACHE: dict[tuple[str, str, str, str, str, str], Any] = {}
 _CACHE_LOCK = Lock()
 
 
-def _cached(key: tuple[str, str, str, str, str], build: Callable[[], Any]) -> Any:
+def _cached(key: tuple[str, str, str, str, str, str], build: Callable[[], Any]) -> Any:
     with _CACHE_LOCK:
         hit = _CACHE.get(key)
         if hit is not None:
@@ -189,12 +256,41 @@ def _dtype_key(dtype: Any) -> str:
     return str(dtype)
 
 
+def _device_key(device: str | None) -> str:
+    return device or "cpu"
+
+
+def unload_components(keep_files: set[str] | None = None) -> None:
+    """Drop cached components whose source file is NOT in ``keep_files``, freeing their VRAM/RAM.
+
+    Called when switching checkpoints so a new model doesn't stack on top of the previous one (the
+    cache never evicted before, so a second distinct model roughly doubled resident memory). Only
+    drops references + empties the CUDA cache — it does not move weights to CPU RAM (that would just
+    relocate the pressure on a RAM-tight box). The caller must drop any pipeline holding these
+    components first, or the references keep them alive."""
+    keep = keep_files or set()
+    with _CACHE_LOCK:
+        stale = [k for k in _CACHE if k[2] not in keep]  # k = (arch, kind, file, dtype, quant, dev)
+        for k in stale:
+            comp = _CACHE.pop(k)
+            del comp
+    _release_transient()
+
+
 def load_diffusion(
-    arch: str, file: str, dtype: Any, quant: Quantization = Quantization.NONE
+    arch: str,
+    file: str,
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    device: str | None = None,
 ) -> Any:
     """The diffusion transformer from a single ``.safetensors``. diffusers converts the checkpoint
     keys; the config comes from the bundled assets, so nothing is fetched at load time. ``quant``
-    (smart memory) quantizes the weights on load so the model fits across VRAM + RAM."""
+    (smart memory) quantizes the weights on load. ``device`` (e.g. ``"cuda:0"``) streams each tensor
+    **straight to the GPU** from an mmap-backed checkpoint — the fp16 weights are never materialized
+    as an anonymous CPU copy (the host-RAM spike that OOM-killed the server), and for the int8 path
+    torchao quantizes on-device per tensor. ``None`` loads to CPU (the offload path, where
+    accelerate installs its hooks before placing)."""
 
     def build() -> Any:
         from diffusers import ZImageTransformer2DModel
@@ -205,16 +301,22 @@ def load_diffusion(
             config=str(root),
             subfolder="transformer",
             torch_dtype=dtype,
+            low_cpu_mem_usage=True,  # meta-init; needed for device= to stream (already the default)
+            device=device,
             local_files_only=True,
             quantization_config=_quant_config(quant, framework="diffusers"),
         )
 
-    return _cached((arch, "diffusion", file, _dtype_key(dtype), quant.value), build)
+    return _cached(
+        (arch, "diffusion", file, _dtype_key(dtype), quant.value, _device_key(device)), build
+    )
 
 
-def load_vae(arch: str, file: str, dtype: Any) -> Any:
+def load_vae(arch: str, file: str, dtype: Any, device: str | None = None) -> Any:
     """The VAE from a single ``.safetensors`` (the Flux/LDM-style ``ae.safetensors``). diffusers'
-    LDM-VAE converter remaps the keys; the config is the bundled ``AutoencoderKL`` config."""
+    LDM-VAE converter remaps the keys; the config is the bundled ``AutoencoderKL`` config.
+    ``device`` streams it straight to the GPU (small, but keeps every component off the CPU on the
+    resident path)."""
 
     def build() -> Any:
         from diffusers import AutoencoderKL
@@ -225,44 +327,56 @@ def load_vae(arch: str, file: str, dtype: Any) -> Any:
             config=str(root),
             subfolder="vae",
             torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+            device=device,
             local_files_only=True,
         )
 
     # The VAE stays full precision (it is small — a few hundred MB — and int8 on the conv VAE costs
     # quality for no meaningful memory win); the key still carries a quant slot for a uniform shape.
-    return _cached((arch, "vae", file, _dtype_key(dtype), Quantization.NONE.value), build)
+    return _cached(
+        (arch, "vae", file, _dtype_key(dtype), Quantization.NONE.value, _device_key(device)), build
+    )
 
 
 def load_text_encoder(
-    arch: str, file: str, dtype: Any, quant: Quantization = Quantization.NONE
+    arch: str,
+    file: str,
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    device: str | None = None,
 ) -> tuple[Any, Any]:
     """The Qwen3 text encoder + tokenizer. The weights come from the user's single file; the config
-    and tokenizer come from the bundled assets. We load the state dict directly (``from_pretrained``
-    with an explicit ``state_dict`` — no 16 GB fp32 init), and transformers strips the ``model.``
-    prefix automatically (Qwen3Model's ``base_model_prefix`` is ``"model"``). ``quant`` (smart
-    memory) quantizes the encoder — the largest weight — so the offloaded model fits in RAM."""
+    and tokenizer come from the bundled assets.
+
+    We load from a tiny staging directory (config next to the weights, see ``_staged_encoder_dir``)
+    rather than passing a pre-loaded ``state_dict``: passing a state_dict forces the entire ~8 GB
+    encoder into a CPU RAM dict and bypasses transformers' native mmap → device streaming loader.
+    From a directory + ``device_map={"": device}``, transformers materializes each tensor lazily
+    onto the GPU, so peak host RAM stays ≈ one tensor. ``quant`` (smart memory) int8-quantizes the
+    encoder — the largest single weight — on load. ``device=None`` loads to CPU for the accelerate
+    offload path."""
 
     def build() -> tuple[Any, Any]:
-        from safetensors.torch import load_file
-        from transformers import AutoTokenizer, Qwen3Config, Qwen3Model
+        from transformers import AutoTokenizer, Qwen3Model
 
         root = ensure_assets(arch)
-        te_dir = root / "text_encoder"
-        config = Qwen3Config.from_pretrained(str(te_dir), local_files_only=True)
-        state_dict = load_file(file)
+        weights_dir = _staged_encoder_dir(arch, file)
+        device_map = {"": device} if device else None
         text_encoder = Qwen3Model.from_pretrained(
-            None,
-            config=config,
-            state_dict=state_dict,
+            str(weights_dir),
             torch_dtype=dtype,
             low_cpu_mem_usage=True,
+            device_map=device_map,
             local_files_only=True,
             quantization_config=_quant_config(quant, framework="transformers"),
         )
         tokenizer = AutoTokenizer.from_pretrained(str(root / "tokenizer"), local_files_only=True)
         return text_encoder, tokenizer
 
-    return _cached((arch, "text_encoder", file, _dtype_key(dtype), quant.value), build)
+    return _cached(
+        (arch, "text_encoder", file, _dtype_key(dtype), quant.value, _device_key(device)), build
+    )
 
 
 def load_scheduler(arch: str) -> Any:
@@ -287,19 +401,27 @@ def assemble_zimage_pipeline(
     img2img: bool,
     quant: Quantization = Quantization.NONE,
     vae_dtype: Any = None,
+    device: str | None = None,
 ) -> Any:
     """Build a Z-Image pipeline from three local single files. Components are cached individually,
     so swapping one file reuses the others. The returned pipeline is unplaced — the runner owns
     device placement / low-VRAM tweaks. ``quant`` (smart memory) quantizes the big weights (the
     transformer + text encoder) on load. ``vae_dtype`` (defaults to ``dtype``) lets the VAE keep a
     safer dtype than the denoiser — e.g. fp32 when the transformer runs fp16 (whose decode can
-    overflow)."""
+    overflow). ``device`` (e.g. ``"cuda:0"``) streams each component straight to the GPU so peak
+    host RAM never holds a full component; ``None`` loads to CPU for the offload path. Buffers are
+    released between the three big loads so peak memory tracks one component, not their sum."""
     from diffusers import ZImageImg2ImgPipeline, ZImagePipeline
 
     arch = _ZIMAGE.key
-    transformer = load_diffusion(arch, diffusion_file, dtype, quant)
-    vae = load_vae(arch, vae_file, dtype if vae_dtype is None else vae_dtype)
-    text_encoder, tokenizer = load_text_encoder(arch, text_encoder_file, dtype, quant)
+    transformer = load_diffusion(arch, diffusion_file, dtype, quant, device=device)
+    _release_transient()
+    vae = load_vae(arch, vae_file, dtype if vae_dtype is None else vae_dtype, device=device)
+    _release_transient()
+    text_encoder, tokenizer = load_text_encoder(
+        arch, text_encoder_file, dtype, quant, device=device
+    )
+    _release_transient()
     scheduler = load_scheduler(arch)
     cls = ZImageImg2ImgPipeline if img2img else ZImagePipeline
     return cls(

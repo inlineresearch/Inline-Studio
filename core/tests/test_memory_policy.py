@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 from inline_core.device.memory import MemoryPolicy
-from inline_core.device.policy import OffloadMode, Parallel, Profile, Quantization
+from inline_core.device.policy import (
+    ModelFootprint,
+    OffloadMode,
+    Parallel,
+    Profile,
+    Quantization,
+)
 from inline_core.device.types import Device, DeviceKind, DType
 
 _CUDA = Device(DeviceKind.CUDA, 0)
 _CPU = Device(DeviceKind.CPU)
+
+# Z-Image-sized components (bytes): ~12 GB transformer + ~8 GB Qwen3-4B encoder + ~0.3 GB VAE.
+_ZIMAGE_FOOTPRINT = ModelFootprint(
+    diffusion_bytes=12_000_000_000,
+    text_encoder_bytes=8_000_000_000,
+    vae_bytes=300_000_000,
+)
 
 
 def _cuda(count: int) -> tuple[Device, ...]:
@@ -145,3 +158,81 @@ def test_env_parallel_override(monkeypatch) -> None:
     monkeypatch.setenv("INLINE_PARALLEL", "pipefusion=2,ulysses=2")
     placement = MemoryPolicy(devices=_cuda(4), vram_gb=24).placement("denoiser")
     assert placement.parallel == Parallel(pipefusion=2, ulysses=2)
+
+
+# --- size-aware fit (auto-fit the model to the device, no --smart-memory flag) -------------------
+
+
+def test_fit_t4_auto_int8_without_smart_memory() -> None:
+    # The crash fix: a 15.6 GB T4 can't hold Z-Image full-precision, but int8-resident fits.
+    # With the footprint set, int8 auto-engages — no --smart-memory needed — and stays RESIDENT (no
+    # offload, since torchao int8 + CPU offload deadlock).
+    policy = MemoryPolicy(_CUDA, vram_gb=15.6, ram_gb=16, supports_bf16=False)
+    policy.set_footprint(_ZIMAGE_FOOTPRINT)
+    assert policy.profile is Profile.LOWVRAM
+    assert policy.quantization() is Quantization.INT8
+    placement = policy.placement("denoiser")
+    assert placement.offload_mode is OffloadMode.NONE
+    assert placement.dtype is DType.FP16  # T4: fp16 denoiser, upcast VAE preserved
+    fit = policy.fit_estimate()
+    assert fit is not None and fit.plan == "int8" and fit.fits is True
+
+
+def test_fit_ample_card_stays_full_precision_resident() -> None:
+    policy = MemoryPolicy(_CUDA, vram_gb=24, ram_gb=64)
+    policy.set_footprint(_ZIMAGE_FOOTPRINT)
+    assert policy.profile is Profile.GPU_MAX
+    assert policy.quantization() is Quantization.NONE
+    assert policy.placement("denoiser").offload_mode is OffloadMode.NONE
+
+
+def test_fit_wont_fit_when_bigger_than_vram_and_ram() -> None:
+    huge = ModelFootprint(diffusion_bytes=30_000_000_000, text_encoder_bytes=20_000_000_000)
+    policy = MemoryPolicy(_CUDA, vram_gb=15.6, ram_gb=16)
+    policy.set_footprint(huge)
+    fit = policy.fit_estimate()
+    assert fit is not None and fit.plan == "wont-fit" and fit.fits is False
+
+
+def test_fit_offload_when_int8_exceeds_vram_but_model_fits_ram() -> None:
+    # Small GPU, ample RAM: int8 won't fit VRAM, but the model fits RAM -> stream (sequential),
+    # unquantized (int8 + offload deadlock).
+    policy = MemoryPolicy(_CUDA, vram_gb=8, ram_gb=64)
+    policy.set_footprint(_ZIMAGE_FOOTPRINT)
+    fit = policy.fit_estimate()
+    assert fit is not None and fit.plan == "offload" and fit.fits is True
+    assert policy.placement("denoiser").offload_mode is OffloadMode.SEQUENTIAL
+    assert policy.quantization() is Quantization.NONE
+
+
+def test_fit_absent_falls_back_to_buckets() -> None:
+    # No footprint set -> coarse-bucket behavior unchanged (a >10 GB T4 loads full precision).
+    policy = MemoryPolicy(_CUDA, vram_gb=15.6)
+    assert policy.fit_estimate() is None
+    assert policy.quantization() is Quantization.NONE
+    assert policy.placement("denoiser").offload_mode is OffloadMode.NONE
+
+
+def test_estimate_fit_is_pure_and_does_not_mutate() -> None:
+    # The UI calls estimate_fit() while a run may hold the policy — it must not change placement.
+    policy = MemoryPolicy(_CUDA, vram_gb=15.6, ram_gb=16)
+    fit = policy.estimate_fit(_ZIMAGE_FOOTPRINT)
+    assert fit is not None and fit.plan == "int8"
+    assert policy.fit_estimate() is None  # untouched
+    assert policy.quantization() is Quantization.NONE
+
+
+def test_fit_explicit_profile_override_is_respected() -> None:
+    # An explicit --profile pins the profile; the fit still picks the quant to make it fit.
+    policy = MemoryPolicy(_CUDA, vram_gb=15.6, ram_gb=16, profile=Profile.LOWVRAM)
+    policy.set_footprint(_ZIMAGE_FOOTPRINT)
+    assert policy.profile is Profile.LOWVRAM
+    assert policy.quantization() is Quantization.INT8
+
+
+def test_budget_and_free_probes_report_mb() -> None:
+    policy = MemoryPolicy(_CUDA, vram_gb=16, ram_gb=32)
+    assert policy.vram_budget_mb() == int(16 * 1024)
+    # free probes hit torch/psutil lazily; on a CPU host they return None or an int, never raise.
+    assert policy.free_vram_mb() is None or isinstance(policy.free_vram_mb(), int)
+    assert policy.free_ram_mb() is None or isinstance(policy.free_ram_mb(), int)
