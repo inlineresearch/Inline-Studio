@@ -286,7 +286,16 @@ class MemoryPolicy(DevicePolicy):
         acceleration (Turing/Volta) — same footprint, yet it uses their fp16 tensor cores instead of
         bf16's slow path. The VAE is the exception: fp16 decode can overflow to black/NaN images, so
         it stays upcast (bf16, or fp32 on a card that also lacks bf16) — it is tiny, so the cost is
-        nil."""
+        nil.
+
+        **int8 overrides the fp16 preference to bf16.** torchao weight-only int8 only supports a
+        bf16 compute dtype — with fp16 the quantization silently no-ops, so the "int8" weights load
+        at *full* fp16 size and blow the VRAM budget (a T4 then OOMs mid-load). The int8 matmul still
+        runs on the card's int8 tensor cores; only the residual bf16 activations pay the slow path.
+        bf16 also has fp32's exponent range, so the VAE no longer needs the fp32 anti-overflow
+        upcast — it rides along at bf16."""
+        if self.quantization() is Quantization.INT8:
+            return DType.BF16
         if self._bf16:
             return DType.BF16
         return DType.FP32 if role == "vae" else DType.FP16

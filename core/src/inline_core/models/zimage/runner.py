@@ -16,8 +16,10 @@ import logging
 import os
 import random
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 
 import torch
 from diffusers import ZImageImg2ImgPipeline, ZImagePipeline
@@ -256,7 +258,6 @@ class ZImageRunner(NodeRunner):
             return kwargs
 
         call: dict[str, Any] = dict(
-            prompt=prompt,
             height=height,
             width=width,
             num_inference_steps=steps,
@@ -265,8 +266,11 @@ class ZImageRunner(NodeRunner):
             output_type="pil",
             callback_on_step_end=on_step_end,
         )
-        if negative is not None:
-            call["negative_prompt"] = negative
+        # Encode the prompt and (on a resident GPU) drop the text encoder to CPU so its VRAM is free
+        # for the denoise — otherwise it sits idle on the card and OOMs a tight GPU (a 16 GB T4).
+        call.update(
+            _prompt_kwargs(pipe, self._policy, prompt=prompt, negative=negative, guidance=guidance)
+        )
         if img2img:
             call["image"] = _load_image(image_ref)
             call["strength"] = float(params.get("strength", 0.6))
@@ -274,7 +278,8 @@ class ZImageRunner(NodeRunner):
         logger.info("Z-Image sampling %d steps on %s…", steps, gen_device)
         sample_start = time.perf_counter()
         try:
-            image = pipe(**call).images[0]
+            with _text_encoder_detached(pipe, "prompt_embeds" in call):
+                image = pipe(**call).images[0]
         except torch.cuda.OutOfMemoryError as error:
             _free_vram()
             raise ComponentError(_oom_message(width, height)) from error
@@ -481,13 +486,42 @@ def _configure(pipe: Any, policy: DevicePolicy) -> None:
     else:
         pipe.to(str(placement.device))  # default: weights resident on the GPU
     # Low-VRAM savers that keep weights on the GPU (no offload): slice attention + tile/slice VAE.
+    # Wrap each in a lambda so a pipeline that lacks the method (e.g. ZImagePipeline has no
+    # ``enable_vae_tiling``) is skipped by ``_try`` — a bare ``_try(pipe.enable_vae_tiling)`` would
+    # raise AttributeError while evaluating the argument, before ``_try`` could swallow it.
     if policy.attention_slicing():
-        _try(pipe.enable_attention_slicing)
+        _try(lambda: pipe.enable_attention_slicing())
     if policy.vae_tiling():
-        _try(pipe.enable_vae_tiling)
-        _try(pipe.enable_vae_slicing)
+        # ZImagePipeline exposes NO ``enable_vae_tiling``/``enable_vae_slicing`` — those calls are
+        # silent no-ops, so a 1024² VAE decode would run un-tiled (full-frame conv activations, a
+        # multi-GB VRAM spike). The underlying AutoencoderKL DOES expose the real methods; call them
+        # on the VAE directly so tiling actually engages.
+        vae = getattr(pipe, "vae", None)
+        if vae is not None:
+            _try(lambda: vae.enable_tiling())
+            _try(lambda: vae.enable_slicing())
+            _shrink_vae_tiles(vae)
     _configure_gpu_speed(pipe, placement)
     _try(pipe.set_progress_bar_config, disable=True)
+
+
+def _shrink_vae_tiles(vae: Any, tile_px: int = 512) -> None:
+    """Force the VAE decode to actually tile at 1024².
+
+    ``AutoencoderKL._decode`` only tiles when the latent is **strictly larger** than
+    ``tile_latent_min_size`` — which defaults to ``sample_size / spatial_scale`` (128 for this VAE,
+    an 8× downscale of a 1024 sample). A 1024² image has a latent of exactly 128, so ``128 > 128``
+    is False: tiling silently does NOT engage even after ``enable_tiling()``, and full-frame decode
+    allocates a single ~4.5 GB conv activation that OOMs a T4. Shrinking the tile to ``tile_px``
+    (512, → a latent threshold of 64) makes 1024 (and up) decode in 512-px tiles, cutting the peak
+    ~4× for a light seam-blend cost. Best-effort: leaves the VAE untouched if it lacks the attrs."""
+    sample = getattr(vae, "tile_sample_min_size", None)
+    latent = getattr(vae, "tile_latent_min_size", None)
+    if not sample or not latent or tile_px >= int(sample):
+        return
+    scale = int(sample) / int(latent)  # the VAE's spatial downscale (8)
+    vae.tile_sample_min_size = tile_px
+    vae.tile_latent_min_size = max(1, int(tile_px / scale))
 
 
 def _configure_gpu_speed(pipe: Any, placement: Placement) -> None:
@@ -514,7 +548,169 @@ def _torch_dtype(placement: Placement) -> Any:
     }.get(placement.dtype, torch.bfloat16)
 
 
+# --- text-encoder offload (reclaim its VRAM for the denoise) -------------------------------------
+
+
+def _supports_prompt_embeds(pipe: Any) -> bool:
+    """True when this pipeline can take precomputed prompt embeddings, so we can encode the prompt,
+    free the text encoder from the GPU, then denoise. Guards the offload against a diffusers version
+    whose ``__call__`` lacks the parameter (then we keep the raw-prompt path)."""
+    if not hasattr(pipe, "encode_prompt"):
+        return False
+    try:
+        import inspect
+
+        return "prompt_embeds" in inspect.signature(pipe.__call__).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+@contextmanager
+def _text_encoder_detached(pipe: Any, active: bool) -> Iterator[None]:
+    """Temporarily remove the text encoder from the pipeline for the denoise, then restore it.
+
+    Why: when we pre-encode and park the encoder on the CPU, diffusers' ``_execution_device`` (→
+    ``DiffusionPipeline.device``) picks the device of *some* registered nn.Module — and it iterates
+    a **set** of module names, so the pick is non-deterministic. If it lands on the CPU-parked
+    encoder, ``prepare_latents`` builds the latents on the CPU while our generator + transformer are
+    on CUDA → "Cannot generate a cpu tensor from a generator of type cuda", or a device mismatch.
+
+    Since we hand the pipeline precomputed ``prompt_embeds``, ``__call__`` never touches the text
+    encoder — so detaching it for the call leaves only CUDA modules (vae + transformer) for device
+    inference, making the execution device deterministically the GPU. Restored in ``finally`` so the
+    cached pipeline can encode again next run. ``active`` is False on the raw-prompt path (encoder
+    still needed), where this is a no-op."""
+    if not active:
+        yield
+        return
+    saved = getattr(pipe, "text_encoder", None)
+    pipe.text_encoder = None
+    try:
+        yield
+    finally:
+        pipe.text_encoder = saved
+
+
+def _raw_prompt_kwargs(prompt: str, negative: str | None) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {"prompt": prompt}
+    if negative is not None:
+        kwargs["negative_prompt"] = negative
+    return kwargs
+
+
+def _prompt_kwargs(
+    pipe: Any, policy: DevicePolicy, *, prompt: str, negative: str | None, guidance: float
+) -> dict[str, Any]:
+    """The prompt argument(s) for the pipeline call.
+
+    On a **resident** GPU placement the text encoder (Qwen3-4B — ~4 GB even int8) otherwise sits
+    idle on the card through the entire denoise, starving the sampler + VAE decode of VRAM. So we
+    pre-encode the prompt, then park the encoder on the CPU, and hand the pipeline precomputed
+    embeddings — the transformer + VAE stay resident (fast), the denoise gets the encoder's ~4 GB.
+
+    Crucially we encode **on the GPU**, not the CPU. torchao weight-only int8 has a real CUDA matmul
+    kernel: it dequantizes each weight to bf16 transiently, per-op, and CUDA frees it immediately —
+    the forward barely moves peak VRAM (measured: <1 GB over the ~11 GB resident, well inside the
+    ~4 GB free on a T4). The CPU has **no** int8 matmul kernel, so a CPU encode instead dequantizes
+    the *entire* Qwen3-4B to bf16 in host RAM (~8 GB) and, on a 16 GB box with no swap, the OS
+    OOM-kills the whole server mid-encode — the exact crash in scripts/mem1024.log (host RAM
+    climbed 2.9 → 16.1 GB while VRAM sat flat). So: encode with the encoder resident, THEN move it
+    to the CPU to reclaim its VRAM. Parking is a plain tensor copy — no forward, no dequant — ~4 GB
+    of (plentiful) host RAM, no spike. On an offload/CPU placement accelerate already streams the
+    encoder, so we pass the raw prompt.
+
+    Best-effort: any failure falls back to the raw-prompt path (today's behavior) so a diffusers
+    change can never turn a working generation into a hard error."""
+    placement = policy.placement("denoiser")
+    resident = (
+        placement.device.kind is DeviceKind.CUDA
+        and not placement.offload
+        and policy.profile is not Profile.CPU
+    )
+    text_encoder = getattr(pipe, "text_encoder", None)
+    if not resident or text_encoder is None or not _supports_prompt_embeds(pipe):
+        return _raw_prompt_kwargs(prompt, negative)
+
+    device = str(placement.device)
+    do_cfg = guidance > 0
+    try:
+        logger.info(
+            "Encoding prompt on %s (no_grad) | host RAM %.1fGB | %s",
+            device,
+            _host_ram_gb(),
+            _device_report(policy),
+        )
+        text_encoder.to(device)  # ensure the encoder is on the card for a GPU (int8-kernel) encode
+        # ``encode_prompt`` called directly is NOT wrapped in the pipeline's ``@torch.no_grad``
+        # (only ``__call__`` is), so without this the Qwen forward runs with autograd ON and keeps
+        # the full activation graph across all 36 layers — ~8 GB on the T4. That graph (not the int8
+        # dequant) is what spiked host RAM to 16 GB on a CPU encode (OOM-kill) and needed the extra
+        # ~1.9 GB that OOMed a GPU encode. no_grad (what ``__call__`` uses) drops it: the forward
+        # frees each layer's activations as it goes, so the encode fits in the ~4 GB free.
+        with torch.no_grad():
+            prompt_embeds, negative_embeds = pipe.encode_prompt(
+                prompt=prompt,
+                negative_prompt=negative,
+                do_classifier_free_guidance=do_cfg,
+                device=torch.device(device),
+            )
+        # Reclaim the encoder's ~4 GB of VRAM for the denoise. A plain copy to CPU — no forward
+        # there, so no int8->bf16 host-RAM dequant spike (the crash we first hit). We do NOT touch
+        # the int8 transformer: torchao's ``.to()`` round-trip on quantized weights is unreliable
+        # (it strands the weight on the wrong device); keep it resident, get headroom from no_grad.
+        text_encoder.to("cpu")
+        _free_vram()
+        # Embeds already sit on ``device`` (we passed it to encode_prompt); this normalizes list vs
+        # tensor and is a no-op move when already placed.
+        prompt_embeds = _embeds_to(prompt_embeds, device)
+        if do_cfg:
+            negative_embeds = _embeds_to(negative_embeds, device)
+    except Exception as error:  # noqa: BLE001 — an optimization must never break generation
+        logger.warning(
+            "Text-encoder GPU encode failed (%s); denoising with the encoder resident.", error
+        )
+        _try(text_encoder.to, device)
+        return _raw_prompt_kwargs(prompt, negative)
+
+    logger.info(
+        "Encoded prompt on the GPU; text encoder parked on the CPU for the denoise | "
+        "host RAM %.1fGB | %s",
+        _host_ram_gb(),
+        _device_report(policy),
+    )
+    kwargs: dict[str, Any] = {"prompt_embeds": prompt_embeds}
+    if do_cfg:
+        # __call__ requires the negatives alongside the positives when CFG is on.
+        kwargs["negative_prompt_embeds"] = negative_embeds
+    return kwargs
+
+
+def _embeds_to(embeds: Any, device: str) -> Any:
+    """Move encoder output onto ``device``. ``ZImagePipeline.encode_prompt`` returns a *list* of
+    per-prompt embedding tensors (variable length, one per prompt); a future/other pipeline might
+    return a single tensor — handle both."""
+    if isinstance(embeds, (list, tuple)):
+        return [e.to(device) for e in cast("list[Any]", embeds)]
+    return embeds.to(device)
+
+
 # --- VRAM helpers (diagnostics + between-run hygiene; never break a generation) ------------------
+
+
+def _host_ram_gb() -> float:
+    """Host RAM currently in use (total − available), in GB. A cheap /proc read so a run's log shows
+    RAM staying flat through encode/denoise — the signal that the CPU-encode OOM-kill is gone. 0.0
+    when /proc/meminfo is unavailable (non-Linux). Never breaks a generation."""
+    try:
+        with open("/proc/meminfo") as f:
+            info: dict[str, float] = {}
+            for line in f:
+                key, _, rest = line.partition(":")
+                info[key] = float(rest.strip().split()[0]) / 1e6  # kB -> GB
+        avail = info.get("MemAvailable", info.get("MemFree", 0.0))
+        return max(0.0, info.get("MemTotal", 0.0) - avail)
+    except Exception:  # noqa: BLE001 — telemetry must never break a generation
+        return 0.0
 
 
 def _reset_peak_vram() -> None:
@@ -546,6 +742,19 @@ def _free_vram() -> None:
         pass
 
 
+def _smaller_resolutions(width: int, height: int) -> list[str]:
+    """Standard square sizes strictly smaller than the current image, largest first — so the OOM
+    hint only ever suggests a resolution that actually cuts peak memory. Falls back to halving the
+    current size when nothing on the ladder is smaller (e.g. already at or below 512)."""
+    ladder = [1024, 768, 512, 384, 256]
+    current = max(width, height)
+    smaller = [f"{s}x{s}" for s in ladder if s < current]
+    if smaller:
+        return smaller[:2]
+    half = max(64, (current // 2 // 8) * 8)
+    return [f"{half}x{half}"]
+
+
 def _oom_message(width: int, height: int, *, host: bool = False) -> str:
     """A clear, actionable message for an out-of-memory — never a raw allocator traceback. ``host``
     distinguishes system-RAM exhaustion from GPU VRAM. Points at the resolution (which drives peak
@@ -555,9 +764,10 @@ def _oom_message(width: int, height: int, *, host: bool = False) -> str:
             f"Ran out of system RAM loading the model for a {width}x{height} image. Close other "
             "apps, use a machine with more RAM, or pick a smaller model."
         )
+    suggestions = " or ".join(_smaller_resolutions(width, height))
     return (
         f"Ran out of GPU memory generating a {width}x{height} image. Lower the resolution "
-        f"(you're at {width}x{height} — try 768x768 or 512x512) or pick a smaller model."
+        f"(you're at {width}x{height} — try {suggestions}) or pick a smaller model."
     )
 
 

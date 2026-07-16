@@ -233,6 +233,30 @@ def _quant_config(quant: Quantization, *, framework: str) -> Any | None:
         return None
 
 
+def _quantize_in_place(model: Any, quant: Quantization) -> None:
+    """Apply torchao weight-only quantization to an already-built model, in place. Used for the
+    diffusion transformer, whose ``from_single_file`` loader silently ignores a ``quantization_config``
+    (so the config-based path leaves it full-size). torchao's ``quantize_`` swaps each ``nn.Linear``
+    weight for an int8 tensor subclass on whatever device the module already sits on.
+
+    Best-effort: a missing/incompatible torchao is logged and left full precision rather than crashing
+    the load — the fit estimate that chose int8 will then be optimistic, but that surfaces as a normal
+    OOM node error, not a hard import failure. Only INT8 is handled here; NF4 stays config-driven."""
+    if quant is not Quantization.INT8:
+        return
+    try:
+        from torchao.quantization import Int8WeightOnlyConfig, quantize_
+
+        quantize_(model, Int8WeightOnlyConfig())
+    except Exception:  # noqa: BLE001 — a missing/incompatible quant backend must not break loading
+        import logging
+
+        logging.getLogger("inline_core.zimage").warning(
+            "torchao int8 quantization of the transformer failed — loading full precision. Install "
+            "a compatible torchao to shrink the weights for a tight GPU.",
+        )
+
+
 # --- component loaders (cached in-process) ------------------------------------------------------
 
 # Keyed by (arch, kind, file, dtype, quant, device) so switching one file (e.g. a different VAE),
@@ -296,7 +320,7 @@ def load_diffusion(
         from diffusers import ZImageTransformer2DModel
 
         root = ensure_assets(arch)
-        return ZImageTransformer2DModel.from_single_file(
+        model = ZImageTransformer2DModel.from_single_file(
             file,
             config=str(root),
             subfolder="transformer",
@@ -304,8 +328,13 @@ def load_diffusion(
             low_cpu_mem_usage=True,  # meta-init; needed for device= to stream (already the default)
             device=device,
             local_files_only=True,
-            quantization_config=_quant_config(quant, framework="diffusers"),
         )
+        # diffusers' ``from_single_file`` **ignores** ``quantization_config`` (unlike
+        # ``from_pretrained``), so the transformer would load at full size and the "int8" plan would
+        # blow the VRAM budget (a T4 OOMs mid-load). Quantize it explicitly with torchao after the
+        # load instead — the weights briefly sit full-size on the device, then halve in place.
+        _quantize_in_place(model, quant)
+        return model
 
     return _cached(
         (arch, "diffusion", file, _dtype_key(dtype), quant.value, _device_key(device)), build
