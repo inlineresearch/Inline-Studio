@@ -1,4 +1,6 @@
 [project]
+# PyPI distribution name. The import package is `inline_core` (src/inline_core); PyPI treats the
+# hyphen and underscore as equivalent, so `pip install inline-core` installs the `inline_core` package.
 name = "inline-core"
 version = "0.0.0"
 description = "The generation engine behind Inline."
