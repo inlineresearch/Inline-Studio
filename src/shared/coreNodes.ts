@@ -77,6 +77,29 @@ export interface CoreModels {
   models: NodeDescriptor[]
 }
 
+/**
+ * One model a node needs, whether it's on disk, and where it lives — the data behind a node's
+ * "missing models" popup. Nothing is auto-downloaded: a component is `present` only when the user
+ * placed files under `models/` or downloaded it from the popup (which writes into `models/`).
+ */
+export interface ModelComponent {
+  id: string
+  label: string
+  /** The `models/` subfolder it belongs to (e.g. `diffusion_models`, `vae`, `text_encoders`). */
+  category: string
+  present: boolean
+  /** Where it's expected / would land, relative to the models root. */
+  localPath: string
+  /** The Hugging Face repo the popup downloads it from. */
+  repo: string
+}
+
+/** A node's model requirements with live presence (from `models:requirements`). */
+export interface ModelRequirements {
+  components: ModelComponent[]
+  allPresent: boolean
+}
+
 const ENGINE_KINDS: readonly PortKind[] = ['model', 'vae', 'text-encoder', 'conditioning', 'latent']
 
 /** Engine handles are opaque objects passed between low-level nodes; never a take. */

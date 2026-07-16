@@ -296,3 +296,22 @@ export function SquareIcon({ className }: { className?: string }): React.JSX.Ele
     </Icon>
   )
 }
+
+/** Alert triangle — the "models missing" hint on a model node (opens the model popup). */
+export function AlertIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+      <path d="M12 9v4M12 17h.01" />
+    </Icon>
+  )
+}
+
+/** Download tray with a down arrow — a component's download action in the model popup. */
+export function DownloadIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+    </Icon>
+  )
+}

@@ -1,0 +1,11 @@
+# End-user install for Inline Studio — the whole app (engine + web UI + Z-Image runtime) from PyPI,
+# no Node build. Mirrors ComfyUI's requirements.txt. Once the packages are published (by the
+# publish-frontend.yml GitHub Action), run:
+#
+#     pip install -r requirements.txt
+#     inline-studio            # serves the UI + API on http://127.0.0.1:8848
+#
+# inline-studio-frontend is the prebuilt SPA wheel; Core serves it automatically (no Node needed).
+# Drop the [zimage] extra if you only want hosted (fal) models and no local GPU generation.
+inline-core[server,zimage]
+inline-studio-frontend

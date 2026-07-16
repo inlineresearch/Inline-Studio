@@ -30,6 +30,7 @@ import { useCoreNodesStore } from '../../store/coreNodesStore'
 import { useAssetStore } from '../../store/assetStore'
 import { useFrameStore } from '../../store/frameStore'
 import { useGenerationStore } from '../../store/generationStore'
+import { useModelRequirementsStore } from '../../store/modelRequirementsStore'
 import { useTimelineStore } from '../../store/timelineStore'
 import { useUiStore } from '../../store/uiStore'
 import { getAssetDragIds, getFrameDragId, getOutputDragId, getOutputTakeId } from '../../lib/dnd'
@@ -44,6 +45,7 @@ import { PromptNode } from './nodes/PromptNode'
 import { GenerateSettingsPanel } from './GenerateSettingsPanel'
 import { CoreSettingsPanel } from './CoreSettingsPanel'
 import { ModelInfoPanel } from './ModelInfoPanel'
+import { ModelRequirementsModal } from './nodes/ModelRequirementsModal'
 import { PreviewNode } from './nodes/PreviewNode'
 import { LayerNode } from './nodes/LayerNode'
 import { DirectorNode } from './nodes/DirectorNode'
@@ -307,6 +309,16 @@ function Board(): React.JSX.Element {
       studio().events.onGenerationError((e) => {
         gen.finishAll()
         gen.setError(e.error)
+      }),
+      // Explicit model downloads (the node's "missing models" popup) stream here.
+      studio().events.onModelDownloadProgress((e) => {
+        useModelRequirementsStore.getState().onProgress(e)
+      }),
+      studio().events.onModelDownloadDone((e) => {
+        useModelRequirementsStore.getState().onDone(e)
+      }),
+      studio().events.onModelDownloadError((e) => {
+        useModelRequirementsStore.getState().onError(e)
       }),
     ]
     return () => unsubs.forEach((u) => u())
@@ -884,6 +896,7 @@ function Board(): React.JSX.Element {
         <GenerateSettingsPanel />
         <CoreSettingsPanel />
         <ModelInfoPanel />
+        <ModelRequirementsModal />
       </div>
 
       <FrameInspector />

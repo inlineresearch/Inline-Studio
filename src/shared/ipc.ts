@@ -30,6 +30,9 @@ import type {
   UpdateAvailableEvent,
   UpdateProgressEvent,
   UpdateDownloadedEvent,
+  ModelDownloadProgressEvent,
+  ModelDownloadDoneEvent,
+  ModelDownloadErrorEvent,
   ComfyStatus,
   CoreStatus,
   ComfyOutput,
@@ -39,7 +42,7 @@ import type {
   ProjectMediaDirs,
 } from './types'
 import type { Result } from './result'
-import type { CoreModels } from './coreNodes'
+import type { CoreModels, ModelRequirements } from './coreNodes'
 
 export const IpcChannels = {
   project: {
@@ -127,6 +130,12 @@ export const IpcChannels = {
     status: 'core:status',
     models: 'core:models',
   },
+  models: {
+    /** The model components a node needs + whether each is on disk. */
+    requirements: 'models:requirements',
+    /** Explicitly download one component (by id) or `'all'` missing ones into models/. */
+    download: 'models:download',
+  },
   export: {
     exportFrames: 'export:exportFrames',
   },
@@ -189,6 +198,10 @@ export const IpcChannels = {
     generationNodeDone: 'events:generationNodeDone',
     generationDone: 'events:generationDone',
     generationError: 'events:generationError',
+    /** Main → renderer: explicit model-download lifecycle (the node's model popup). */
+    modelDownloadProgress: 'events:modelDownloadProgress',
+    modelDownloadDone: 'events:modelDownloadDone',
+    modelDownloadError: 'events:modelDownloadError',
     /** Main → renderer: auto-update lifecycle. */
     updateAvailable: 'events:updateAvailable',
     updateProgress: 'events:updateProgress',
@@ -386,6 +399,13 @@ export interface InlineStudioApi {
     status(): Promise<Result<CoreStatus>>
     models(): Promise<Result<CoreModels>>
   }
+  models: {
+    /** The model components a node needs + whether each is present under models/. */
+    requirements(nodeType: string): Promise<Result<ModelRequirements>>
+    /** Download one component (its `id`) or `'all'` missing ones into models/. Fire-and-forget;
+     * progress arrives on `events:modelDownload*`. */
+    download(nodeType: string, componentId: string): Promise<Result<void>>
+  }
   export: {
     /** Pick a folder and write each frame's Output in order; null if cancelled. */
     exportFrames(): Promise<Result<ExportResult | null>>
@@ -485,6 +505,10 @@ export interface InlineStudioApi {
     onGenerationNodeDone(callback: (e: GenerationNodeDoneEvent) => void): () => void
     onGenerationDone(callback: (e: GenerationDoneEvent) => void): () => void
     onGenerationError(callback: (e: GenerationErrorEvent) => void): () => void
+    /** Subscribe to explicit model-download lifecycle pushes. Each returns an unsubscribe fn. */
+    onModelDownloadProgress(callback: (e: ModelDownloadProgressEvent) => void): () => void
+    onModelDownloadDone(callback: (e: ModelDownloadDoneEvent) => void): () => void
+    onModelDownloadError(callback: (e: ModelDownloadErrorEvent) => void): () => void
     /** Subscribe to auto-update lifecycle pushes. Each returns an unsubscribe fn. */
     onUpdateAvailable(callback: (e: UpdateAvailableEvent) => void): () => void
     onUpdateProgress(callback: (e: UpdateProgressEvent) => void): () => void

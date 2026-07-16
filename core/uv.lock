@@ -527,6 +527,7 @@ dev = [
 parallel = [
     { name = "accelerate" },
     { name = "diffusers" },
+    { name = "huggingface-hub" },
     { name = "nvidia-ml-py" },
     { name = "safetensors" },
     { name = "torch" },
@@ -541,6 +542,7 @@ server = [
 zimage = [
     { name = "accelerate" },
     { name = "diffusers" },
+    { name = "huggingface-hub" },
     { name = "safetensors" },
     { name = "torch" },
     { name = "transformers" },
@@ -552,6 +554,7 @@ requires-dist = [
     { name = "diffusers", marker = "extra == 'zimage'", specifier = ">=0.36" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "huggingface-hub", marker = "extra == 'zimage'", specifier = ">=0.23" },
     { name = "imageio-ffmpeg", marker = "extra == 'server'", specifier = ">=0.4" },
     { name = "inline-core", extras = ["server"], marker = "extra == 'dev'" },
     { name = "inline-core", extras = ["zimage"], marker = "extra == 'parallel'" },

@@ -1,8 +1,2 @@
-- Update readme
-- memtion cmd args in readme
-- implement a webui.sh
-- z image pipeline verification
-- optimise gpu generation
-- generation progress
-- decide if we need to keep comfyui?
-- check dependency for generated frontend package, so user doesn't need to build each time
+
+

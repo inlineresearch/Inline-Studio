@@ -260,6 +260,7 @@ def create_app(
         from ..studio.fal import FalGeneration
         from ..studio.generation import CoreGeneration
         from ..studio.handlers import register_studio_handlers
+        from ..studio.models import ModelDownloads
         from ..studio.timeline.render import Timeline
 
         def core_models() -> dict[str, Any]:
@@ -279,6 +280,8 @@ def create_app(
             generation=CoreGeneration(studio_store, manager, events),
             fal_generation=FalGeneration(studio_store, events),
             timeline=Timeline(studio_store, events),
+            # Explicit model downloads write into models/; rescan so new files bump the registry.
+            model_downloads=ModelDownloads(events, on_change=catalog.rescan),
         )
 
         @app.get("/media/{media_path:path}")

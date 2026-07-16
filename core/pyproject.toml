@@ -19,6 +19,10 @@ zimage = [
   "transformers>=4.44",
   "accelerate>=0.30",
   "safetensors>=0.4",
+  # Explicit model downloads (the node's model popup) go through huggingface_hub. It ships
+  # transitively with diffusers/transformers, but pin it here since we call snapshot_download
+  # directly and rely on local_dir= to land files in models/ (never the hidden HF cache).
+  "huggingface_hub>=0.23",
 ]
 server = [
   "fastapi>=0.110",
@@ -27,6 +31,11 @@ server = [
   # bundled — install a system ffmpeg for duration probing, else clips fall back to a still length.
   "imageio-ffmpeg>=0.4",
 ]
+# The prebuilt web UI (inline-studio-frontend) is NOT a hard dependency here on purpose: it's
+# published separately by CI and a source/dev checkout serves the UI via `--front-end-root ../dist-web`
+# with no wheel at all. End users get it through the pip path — `requirements.txt` (repo root) pins
+# `inline-studio-frontend` alongside the engine (mirrors ComfyUI's requirements.txt), and `webui.sh`
+# installs it on demand. Core's resolve_frontend_root() then finds the installed package's static/.
 # Multi-GPU denoise: split one image across GPUs via xDiT (xfuser). Isolated in the worker group so
 # the core env is unaffected. torchrun ships with torch (from zimage); nvidia-ml-py detects NVLink so
 # the policy picks Ulysses vs PipeFusion. flash-attn (Ulysses/Ring on NVLink) is an opt-in extra.

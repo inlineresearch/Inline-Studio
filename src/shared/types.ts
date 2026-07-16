@@ -324,6 +324,27 @@ export interface GenerationErrorEvent {
   error: string
 }
 
+/** Main → renderer: progress (0..1) of an explicit model download (the node's model popup). */
+export interface ModelDownloadProgressEvent {
+  nodeType: string
+  componentId: string
+  fraction: number
+  status?: string
+}
+
+/** Main → renderer: a model component finished downloading (files are now under models/). */
+export interface ModelDownloadDoneEvent {
+  nodeType: string
+  componentId: string
+}
+
+/** Main → renderer: a model download failed. */
+export interface ModelDownloadErrorEvent {
+  nodeType: string
+  componentId: string
+  error: string
+}
+
 export interface WorkflowTemplate {
   id: string
   projectId: string

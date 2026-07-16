@@ -55,9 +55,10 @@ class _FakeStore:
 @pytest.fixture
 def use_fake_pipe(monkeypatch: pytest.MonkeyPatch) -> _FakePipe:
     pipe = _FakePipe()
-    monkeypatch.setattr(
-        rz, "_load_pipeline", lambda policy, *, img2img, source, single_file: pipe
-    )
+    monkeypatch.setattr(rz, "_load_pipeline", lambda policy, *, img2img, source, mode: pipe)
+    # These tests mock the pipeline, so bypass the "models present on disk" gate.
+    monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
+    monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))
     return pipe
 
 
@@ -131,8 +132,10 @@ def test_cancel_during_sampling_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         rz, "_load_pipeline",
-        lambda policy, *, img2img, source, single_file: _CancellingPipe(),
+        lambda policy, *, img2img, source, mode: _CancellingPipe(),
     )
+    monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
+    monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))
     runner = rz.ZImageRunner(_FakeStore(), MemoryPolicy())
     ctx, _ = _ctx(cancel)
     node = Node(id="f", type="alibaba/z-image-turbo")
@@ -147,9 +150,12 @@ def test_resolve_seed() -> None:
     assert 0 <= rz._resolve_seed("not-a-number") <= rz._SEED_MAX
 
 
-def test_resolve_model_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-    monkeypatch.setenv("INLINE_MODELS_DIR", str(tmp_path))  # empty models root -> no local files
-    monkeypatch.setenv("INLINE_ZIMAGE_MODEL", "some-org/Custom-Model")
-    assert rz._resolve_model() == ("some-org/Custom-Model", False)  # repo id, not a single file
-    monkeypatch.delenv("INLINE_ZIMAGE_MODEL")
-    assert rz._resolve_model() == (rz._DEFAULT_MODEL, False)  # default when nothing local
+def test_missing_models_fail_fast(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """An empty models dir must error clearly (pointing at the popup), never trigger a download."""
+    monkeypatch.setenv("INLINE_MODELS_DIR", str(tmp_path))  # empty root -> everything missing
+    monkeypatch.delenv("INLINE_ZIMAGE_MODEL", raising=False)
+    runner = rz.ZImageRunner(_FakeStore(), MemoryPolicy())
+    ctx, _ = _ctx()
+    node = Node(id="f", type="alibaba/z-image-turbo")
+    with pytest.raises(ComponentError, match="missing"):
+        runner.run(node, {"prompt": ["cat"]}, ctx)

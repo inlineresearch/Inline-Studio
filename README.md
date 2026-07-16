@@ -6,8 +6,8 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge"></a>
-  <a href="../../releases/latest"><img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.0.38-blue?style=for-the-badge"></a>
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.1.01-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -50,54 +50,104 @@ Generating a single frame is the easy part. The work that makes an AI film is wh
 
 From the home screen, **Export** zips a project into one archive. Import it on the other side and you get everything back: the inputs (every imported asset), the outputs (all the generated takes), and the graph that turned one into the other. Whoever opens it can re-run the pipeline exactly and keep iterating.
 
-## Local generation with Inline Core
+## Three ways to generate
 
-Inline Studio ships its own generation engine, **Inline Core** (in `core/`), so you can render on your own GPU with no external server to stand up. The first local model is **Z-Image Turbo** (Alibaba Tongyi) — a fast, distilled diffusion transformer.
+Pick whatever fits the shot — and mix all three in one film. However you render, the frame keeps its full take history, so you never lose a good version.
 
-- **One model file.** Drop a single Z-Image diffusion `.safetensors` into `core/models/diffusion_models/` and you're ready — the engine loads the transformer from that file and wires up the VAE + text-encoder behind the scenes. Bring your own VAE/text-encoder for a fully offline setup, or let it fetch them once from the reference repo.
-- **GPU-first, low-VRAM friendly.** The engine always prefers the GPU and never silently offloads to CPU; on a tight-VRAM card it saves memory with VAE tiling/slicing, attention slicing, and int8 instead.
-- **One node.** You see a single **Z-Image Turbo** node — no loader/sampler wiring. Add it, connect a Prompt, hit Run.
+| How you render                           | What it's like                                                                                                                                                                                                                                                                                     | What you need                                                                                                                               |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Local GPU — Inline Core** _(built in)_ | Drop a **Z-Image Turbo** node, wire a prompt, hit Run — one node, no loader/sampler wiring. A single `.safetensors` is all you bring; the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Your own GPU. No account, no external server. Low-VRAM friendly.                                                                            |
+| **Hosted — fal nodes (API Nodes)**       | Add a Generate node and pick a model — **GPT Image 2, Nano Banana, Seedance, LTX, Sonilo** and more, across image, video, and audio. No GPU, instant range.                                                                                                                                        | A [fal.ai key](https://fal.ai/dashboard/keys) — it stays on your machine, and you pay fal per render (each node estimates the price first). |
+| **Your own ComfyUI** _(legacy)_          | Point Inline Studio at a running ComfyUI server and drive it from the Generate tab.                                                                                                                                                                                                                | A ComfyUI instance. **Being phased out** in favour of Inline Core — fine for now, but don't build on it.                                    |
 
-Your media, your models, your machine.
+For local generation, either drop a Z-Image `.safetensors` into `core/models/diffusion_models/`, or add a Z-Image node and use its **model popup** (a blinking hint shows up when something's missing) to download the diffusion model, VAE, and text-encoder into `core/models/`, with visible progress. The canvas and planning work with no models at all.
 
-## Generate with closed models, no setup
+## Under the hood: the Inline Core engine
 
-The best closed models are hosted only, and they need no GPU. Alongside local generation, Inline Studio runs hosted models through [fal](https://fal.ai): add a single Generate node, pick a model, and go — no setup, no GPU.
+Inline Studio is a **web SPA** (React) served by **Inline Core** (a headless Python engine, in `core/`) on a **single port**. One process does both: `core/main.py` runs Core, which serves the built UI _and_ is the app's backend — the browser reaches it over a small typed RPC/WebSocket contract, and Core owns the project database, the filesystem, generation, and the ffmpeg timeline. There's no Electron, no separate Node server, and nothing external to stand up.
 
-Create a frame, pick a model, and run. Everything else works exactly as it does with a local model: takes, flow links between frames, the Video Director, and export. That means you can mix hosted models and local renders in the same film.
+Inline Core is a from-scratch generation engine — **it replaces ComfyUI** for local rendering. It keeps the open node-graph model (a typed DAG of nodes and edges → immutable "takes") but rebuilds the engine underneath it around two boundaries: **graph orchestration is decoupled from GPU work** (the graph is the unit of caching; a batched sampler is the unit of batching), and **a single device policy owns all placement** (device, dtype, offload, attention), so the same graph runs on a 4090, a 6 GB laptop, pure CPU, or split across several GPUs without touching the graph.
 
-Models available today:
+### How it differs from ComfyUI's architecture
 
-- **Local (Inline Core):** Z-Image Turbo (single-file, GPU) — [see above](#local-generation-with-inline-core)
-- **fal · Image:** GPT Image 2, Nano Banana 2, Nano Banana Pro (edit), Krea v2 Large
-- **fal · Video:** LTX 2.3 (image to video), Seedance 2.0 (text, image, and reference to video)
-- **fal · Audio:** Sonilo v1.1 (video to music)
+|              | ComfyUI                                                            | Inline Core                                                                                                             |
+| ------------ | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Graph vs GPU | runs the denoise loop inline, one request at a time                | graph orchestration (cheap, per request) is separate from a batched sampler that groups compatible jobs across requests |
+| Schema       | positional `widgets_values`, validated at runtime (dies mid-graph) | typed graph, named params, edges type-checked **before** the run (a bad graph is rejected at submit, never mid-denoise) |
+| Devices      | some nodes pin to CPU on a GPU box                                 | one device/memory policy owns dtype, placement, offload, and attention, so one graph runs GPU, low-VRAM, or pure CPU    |
+| Multi-GPU    | one image runs on one GPU                                          | one image's **denoise can split across GPUs** via xDiT (PipeFusion on PCIe, Ulysses on NVLink), behind the sampler seam |
+| Custom nodes | all load into one interpreter, so any node can break the core      | designed to run out of process, each pack behind a semver SDK                                                           |
+| Interface    | a web UI over a socket; run state is ephemeral                     | a headless HTTP + WebSocket API; runs are durable and survive a restart                                                 |
+| Outputs      | files you overwrite                                                | immutable takes; regenerating adds a take, never overwrites (the take history is the core value)                        |
+| Models       | `models/` dir, dropdowns from a scan                               | same drop-in layout, **bring-your-own with no hidden downloads**; a typed catalog feeds versioned node descriptors      |
 
-It is bring your own key. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings and it stays on your machine, sent only to fal when you generate. You pay fal directly for what you render, and each node shows a rough price estimate before you run it.
+### Multi-GPU: split one image across GPUs
+
+Got two or more GPUs? Inline Core can cut a single image's latency by running its **denoise loop** — the expensive, iterative sampling step — collectively across them. This is not "one image per GPU" (independent renders); it's **one image whose sampling is shared by all the GPUs**, so a single render finishes faster.
+
+It's done with [xDiT](https://github.com/xdit-project/xDiT) (`xfuser`), which parallelizes diffusion-transformer inference in an isolated worker group (one process per GPU via `torchrun`, over local IPC). The HTTP server, database, and graph stay single-process; only the denoise distributes, and it sits behind a sampler seam so single-GPU/CPU runs pay no overhead. The split method is chosen from the interconnect Core detects — **PipeFusion** (default, works over plain PCIe) or **Ulysses** (sequence-parallel attention, used when NVLink is present). Turn it on with `./webui.sh --multi-gpu` after `uv pip install -e ".[parallel]"`.
+
+For the full engineering story — the graph/sampler/device-policy design, the node vocabularies, and the xDiT worker group — see **[core/README.md](core/README.md)** and **[core/CLAUDE.md](core/CLAUDE.md)**.
 
 ## Install & run
 
-Inline Studio runs from source as **one process** — the Inline Core engine serves the web UI _and_ does the generation. You'll need [Node.js](https://nodejs.org) 20.11+ and [Python 3.11+](https://python.org) with [uv](https://docs.astral.sh/uv/).
+Inline Studio runs as **one process** — the Inline Core engine serves the web UI _and_ does the generation, on a single port.
+
+### The easy way (no Node build)
+
+Like ComfyUI, the built web UI ships as a Python package, so you only need [Python 3.11+](https://python.org) — no Node. With [uv](https://docs.astral.sh/uv/) (or plain `pip`):
 
 ```bash
-git clone <this-repo> && cd inline-studio
+git clone https://github.com/inlineresearch/Inline-Studio.git && cd Inline-Studio
+cd core
+./webui.sh --install --extra zimage      # create the venv, install the engine + Z-Image runtime + UI
+./webui.sh                               # serve the UI + API on http://127.0.0.1:8848
+```
+
+`webui.sh` is the one command you need: it installs dependencies, makes sure the web UI is present (the prebuilt `inline-studio-frontend` package, or a local build), then serves everything. See **[Command-line options](#command-line-options)** for every flag (`--listen`, `--port`, `--lowvram`, `--multi-gpu`, …).
+
+Prefer pip? `pip install -r requirements.txt` (from the repo root) pulls the engine, the prebuilt UI, and the Z-Image runtime from PyPI; then run `inline-studio`.
+
+### From source (for UI development)
+
+To hack on the web UI you need [Node.js](https://nodejs.org) 20.11+ as well, and you serve a local SPA build:
+
+```bash
+git clone https://github.com/inlineresearch/Inline-Studio.git && cd Inline-Studio
 
 # 1. Build the web UI
 npm install
 npm run build:spa                        # -> dist-web/
 
-# 2. Set up + run the engine (serves the UI + API on one port)
+# 2. Set up + run the engine, serving your local build
 cd core
 uv sync --extra server --extra zimage    # server + the Z-Image runtime (torch/diffusers)
 uv run python main.py --front-end-root ../dist-web
-# add --listen to bind the network, --port to change from 8848
 ```
 
-Then open **http://127.0.0.1:8848**. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings for hosted models, and drop a Z-Image `.safetensors` in `core/models/diffusion_models/` for local generation (see [Local generation with Inline Core](#local-generation-with-inline-core)). The canvas and planning work without any models.
+Then open **http://127.0.0.1:8848**. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings for hosted models, and set up local generation as in [Three ways to generate](#three-ways-to-generate). The canvas and planning work without any models.
 
-**UI development (hot-reload):** run the engine as above, then in another terminal `npm run dev:web` (Vite serves the UI with HMR and proxies API calls to Core).
+**Hot-reload:** run the engine as above, then in another terminal `npm run dev:web` (Vite serves the UI with HMR and proxies API calls to Core).
 
-New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
+### Command-line options
+
+The friendly `webui.sh` launcher (in `core/`) maps flags onto the engine's `INLINE_*` environment knobs; `core/main.py` takes the same flags when you run the engine directly. `./webui.sh --help` lists them all.
+
+| `webui.sh` / `main.py` flag        | Env var                  | What it does                                                                   |
+| ---------------------------------- | ------------------------ | ------------------------------------------------------------------------------ |
+| `--listen`                         | `INLINE_HOST=0.0.0.0`    | Bind all interfaces so other machines can reach it                             |
+| `--host ADDR`                      | `INLINE_HOST`            | Bind a specific address (default `127.0.0.1`)                                  |
+| `--port N`                         | `INLINE_PORT`            | Port to serve on (default `8848`)                                              |
+| `--models-dir PATH`                | `INLINE_MODELS_DIR`      | Where model weights are scanned from (default `./models`)                      |
+| `--data-dir PATH`                  | `INLINE_DATA_DIR`        | Where runs + takes are written (default `./.inline`)                           |
+| `--lowvram`                        | `INLINE_PROFILE=lowvram` | Tight-VRAM profile (VAE tiling/slicing, attention slicing)                     |
+| `--cpu`                            | `INLINE_PROFILE=cpu`     | Force CPU generation                                                           |
+| `--profile NAME`                   | `INLINE_PROFILE`         | Set the profile explicitly: `gpu-max` \| `lowvram` \| `cpu`                    |
+| `--vram-budget GB`                 | `INLINE_VRAM_BUDGET_GB`  | Treat the GPU as having GB of usable VRAM                                      |
+| `--multi-gpu [SPEC]`               | `INLINE_PARALLEL`        | Split one image's denoise across GPUs (e.g. `pipefusion=2`); auto with 2+ GPUs |
+| `--front-end-root DIR` _(main.py)_ | `INLINE_FRONTEND_ROOT`   | Serve a local SPA build instead of the installed UI package (dev)              |
+
+`webui.sh` also has `--install` / `--extra NAME` to set up the venv. New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
 
 ## FAQ
 
@@ -109,20 +159,23 @@ Yes. Inline Studio is free and open source under the [MIT license](LICENSE). The
 
 Only for **local** generation. The built-in Inline Core engine renders on the GPU of whatever machine runs it (you can also run it on a remote GPU box and open the UI from your laptop). Hosted **fal** models need no GPU at all, and the canvas + planning work with no GPU either.
 
-### What models can I run, and how?
+### What models can I run?
 
-- **Local:** Z-Image Turbo today, on your own GPU. Drop a single diffusion `.safetensors` into `core/models/diffusion_models/` — the engine handles the VAE + text-encoder behind it. Adding another local model is a Core change (a model runner), no UI release.
-- **Hosted (fal):** GPT Image 2, Nano Banana, Seedance, Krea, LTX, and more — add a Generate node, pick the model, and bring your own [fal.ai key](https://fal.ai/dashboard/keys) (Settings; it stays server-side).
+See [Three ways to generate](#three-ways-to-generate) — local Z-Image on your own GPU, hosted fal models, or your own ComfyUI. Adding a new local model is a Core change (a model runner), no UI release.
 
 ### Does it still use ComfyUI?
 
-No. Earlier versions embedded ComfyUI; Inline Studio now has its own local engine (Inline Core) instead. There's nothing external to stand up — generation is built in.
+Not for the built-in generation — that's all Inline Core now, with nothing external to stand up. You _can_ still connect **your own ComfyUI** server and drive it from the Generate tab, but that path is legacy and **being discontinued** in favour of Inline Core, so don't build anything new on it.
 
 ## Contributing
 
 Inline Studio is early and moving fast, any issues, ideas, and pull requests are all welcome. If you're poking at the code, [CLAUDE.md](CLAUDE.md) is the engineering guide: it explains the architecture, the data model, and the conventions to follow.
 
 Want to help by using it for real? Try the [creator task](task.md): build a short 20-second AI film in Inline Studio and send us your feedback.
+
+## Credits
+
+Inline Core's multi-GPU rendering stands on the shoulders of [**xDiT**](https://github.com/xdit-project/xDiT) and its **PipeFusion** (and Ulysses) parallelism — huge thanks for the research and the reference implementation that make splitting a single image's denoise across GPUs possible.
 
 ## Help shape Inline Studio
 

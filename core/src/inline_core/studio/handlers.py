@@ -40,6 +40,7 @@ def register_studio_handlers(
     generation: Any = None,
     fal_generation: Any = None,
     timeline: Any = None,
+    model_downloads: Any = None,
     app_version: str = "1.0.0",
 ) -> None:
     def reg(channel: str, fn: Callable[..., Any]) -> None:
@@ -76,6 +77,14 @@ def register_studio_handlers(
     reg("settings:setCoreUrl", store.set_core_url)
     reg("core:status", core_status)
     reg("core:models", core_models)
+
+    # --- model requirements + explicit downloads (the node's "missing models" popup) ------------
+    if model_downloads is not None:
+        reg("models:requirements", lambda node_type: model_downloads.requirements(node_type))
+        reg("models:download", lambda node_type, cid: model_downloads.download(node_type, cid))
+    else:
+        reg("models:requirements", lambda _node_type: {"components": [], "allPresent": True})
+        reg("models:download", not_wired("Model downloads"))
 
     # --- folders --------------------------------------------------------------------------------
     reg("folders:list", lambda: ax.list_folders(conn()))

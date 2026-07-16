@@ -14,16 +14,19 @@ from __future__ import annotations
 
 import os
 import random
-from pathlib import Path
 from threading import Lock
 from typing import Any
 
 import torch
-from diffusers import ZImageImg2ImgPipeline, ZImagePipeline, ZImageTransformer2DModel
+from diffusers import (
+    FlowMatchEulerDiscreteScheduler,
+    ZImageImg2ImgPipeline,
+    ZImagePipeline,
+    ZImageTransformer2DModel,
+)
 
-from ...config import models_dir
 from ...device.policy import DevicePolicy, Placement, Profile
-from ...device.types import DType
+from ...device.types import DeviceKind, DType
 from ...errors import CancelledError, ComponentError
 from ...graph.descriptor import NodeDescriptor, ParamField, Port, Widget
 from ...graph.runners import NodeResult, NodeRunner
@@ -33,18 +36,14 @@ from ...runtime.context import ExecutionContext
 from ...runtime.progress import Phase, ProgressEvent
 from ...runtime.store import TakeStore
 from ...takes import AssetRef
+from . import requirements as reqs
 
-# One model file, everything else behind the scenes. Users drop a single Z-Image diffusion
-# `.safetensors` into models/diffusion_models/ (the ComfyUI-style file). We load the transformer
-# from that file and assemble the VAE / text-encoder / tokenizer / scheduler from the reference repo
-# (a one-time cached fetch of those small components — not the multi-GB diffusion weights). No repo
-# folder to set up, no low-level load nodes. Override the source with INLINE_ZIMAGE_MODEL (a file
-# path, a local diffusers dir, or an HF repo id) or the node's advanced `model` param.
-_BASE_REPO = "Tongyi-MAI/Z-Image-Turbo"  # supplies vae/text-encoder/tokenizer/scheduler + configs
-_DEFAULT_MODEL = _BASE_REPO
-_LOCAL_NAMES = ("Z-Image-Turbo", "z-image-turbo", "Z-Image", "z-image")
-_WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pt", ".sft")
-
+# The models this node needs — the diffusion transformer plus a VAE, text-encoder, tokenizer and
+# scheduler — are assembled entirely from files under models/ (see `requirements.py`). **Nothing is
+# ever downloaded here.** Every diffusers/transformers load below runs with local_files_only=True,
+# so a missing model is a clear error pointing at the node's model popup — never a silent fetch from
+# Hugging Face. Models arrive by exactly two paths: the user drops files under models/, or the popup
+# downloads them into models/.
 _SEED_MAX = 2**31 - 1
 
 
@@ -108,11 +107,22 @@ class ZImageRunner(NodeRunner):
         image_ref = _first(inputs.get("image"))
         img2img = image_ref is not None
 
-        source, single_file = _resolve_model(params)
-        ctx.emitter.emit(
-            _progress(ctx, node, Phase.LOADING, 0.0, status="Loading Z-Image")
-        )
-        pipe = _load_pipeline(self._policy, img2img=img2img, source=source, single_file=single_file)
+        # No hidden downloads: if a required model isn't on disk, fail fast with a message that
+        # points at the node's model popup instead of letting diffusers silently fetch it.
+        missing = [c.label for c in reqs.zimage_requirements(params) if not c.present]
+        if missing:
+            raise ComponentError(
+                "Z-Image models missing: "
+                + ", ".join(missing)
+                + ". Download them from the node's model popup (the hint on the node)."
+            )
+        resolved = reqs.resolve_diffusion(params)
+        if resolved is None:  # defensive: the missing-check above already covers this
+            raise ComponentError("Z-Image diffusion model not found in models/diffusion_models/.")
+        source, mode = resolved
+
+        ctx.emitter.emit(_progress(ctx, node, Phase.LOADING, 0.0, status="Loading model…"))
+        pipe = _load_pipeline(self._policy, img2img=img2img, source=source, mode=mode)
 
         placement = self._policy.placement("denoiser")
         gen_device = "cpu" if (placement.offload or self._policy.profile is Profile.CPU) else str(
@@ -125,7 +135,15 @@ class ZImageRunner(NodeRunner):
                 raise CancelledError("Run cancelled.")
             done = step + 1
             ctx.emitter.emit(
-                _progress(ctx, node, Phase.SAMPLE, done / steps, step=done, step_count=steps)
+                _progress(
+                    ctx,
+                    node,
+                    Phase.SAMPLE,
+                    done / steps,
+                    step=done,
+                    step_count=steps,
+                    status=f"Step {done}/{steps}",
+                )
             )
             return kwargs
 
@@ -147,7 +165,7 @@ class ZImageRunner(NodeRunner):
 
         image = pipe(**call).images[0]
 
-        ctx.emitter.emit(_progress(ctx, node, Phase.SAVE, 1.0))
+        ctx.emitter.emit(_progress(ctx, node, Phase.SAVE, 1.0, status="Saving…"))
         take = self._store.save(
             ctx.run_id,
             node.id,
@@ -175,7 +193,7 @@ _PIPELINES: dict[tuple[str, bool], Any] = {}
 _LOCK = Lock()
 
 
-def _load_pipeline(policy: DevicePolicy, *, img2img: bool, source: str, single_file: bool) -> Any:
+def _load_pipeline(policy: DevicePolicy, *, img2img: bool, source: str, mode: str) -> Any:
     key = (source, img2img)
     with _LOCK:
         cached = _PIPELINES.get(key)
@@ -187,76 +205,85 @@ def _load_pipeline(policy: DevicePolicy, *, img2img: bool, source: str, single_f
             pipe = ZImageImg2ImgPipeline.from_pipe(base)
         else:
             dtype = _torch_dtype(policy.placement("denoiser"))
-            pipe = _build_pipeline(source, single_file=single_file, img2img=img2img, dtype=dtype)
+            pipe = _build_pipeline(source, mode=mode, img2img=img2img, dtype=dtype)
             _configure(pipe, policy)
         _PIPELINES[key] = pipe
         return pipe
 
 
-def _build_pipeline(source: str, *, single_file: bool, img2img: bool, dtype: Any) -> Any:
-    """Build a Z-Image pipeline. A diffusers dir / repo id loads whole; a single `.safetensors` is
-    the diffusion transformer only: we load it from the file and take the remaining components
-    (vae, text-encoder, tokenizer, scheduler) from local files when present, else the ref repo.
+def _build_pipeline(source: str, *, mode: str, img2img: bool, dtype: Any) -> Any:
+    """Build a Z-Image pipeline **offline** — never touching the network.
 
-    Bring-your-own / offline: drop the diffusion `.safetensors` in ``diffusion_models/``, a VAE
-    in ``vae/`` (a single ``.safetensors`` or a diffusers dir), and an HF-format text-encoder dir in
-    ``text_encoders/`` (a bare weights file can't carry its config, so a dir is required there). Any
-    component you don't provide is fetched from the reference repo (network once). Override the
-    paths with ``INLINE_ZIMAGE_VAE`` / ``INLINE_ZIMAGE_TEXT_ENCODER``.
+    Two shapes, both resolved from files under ``models/`` (see ``requirements.py``):
+      - ``mode == "pipeline"``: ``source`` is a whole diffusers folder (``model_index.json`` + all
+        components). Loaded with ``local_files_only=True``.
+      - ``mode == "single_file"``: ``source`` is a lone diffusion transformer file. We load the
+        transformer from it and assemble the pipeline from a **local** VAE + text-encoder +
+        tokenizer (present is guaranteed by the missing-check) plus a default flow-match scheduler.
+
+    Drop-in / override: a VAE in ``vae/`` (a ``.safetensors`` or a diffusers dir), an HF-format
+    text-encoder dir in ``text_encoders/`` (a bare weights file can't carry its config), or point
+    ``INLINE_ZIMAGE_VAE`` / ``INLINE_ZIMAGE_TEXT_ENCODER`` at them. Nothing is fetched — get missing
+    pieces via the node's model popup, which writes them under ``models/``.
     """
     cls = ZImageImg2ImgPipeline if img2img else ZImagePipeline
-    if not single_file:
-        return cls.from_pretrained(source, torch_dtype=dtype)
-    components: dict[str, Any] = {
-        "transformer": ZImageTransformer2DModel.from_single_file(source, torch_dtype=dtype)
-    }
-    vae = _load_local_vae(dtype)
-    if vae is not None:
-        components["vae"] = vae
-    text = _load_local_text_encoder(dtype)
-    if text is not None:
-        components["text_encoder"], components["tokenizer"] = text
-    return cls.from_pretrained(_BASE_REPO, torch_dtype=dtype, **components)
+    if mode == "pipeline":
+        return cls.from_pretrained(source, torch_dtype=dtype, local_files_only=True)
 
-
-def _local_component(category: str, env_var: str) -> Path | None:
-    """A local supporting-model file/dir under ``models/<category>/`` (or env override), or None.
-    Prefers an explicit env path, then a single weight file, then a subdir (HF snapshot)."""
-    env = os.environ.get(env_var, "").strip()
-    if env:
-        path = Path(env)
-        return path if path.exists() else None
-    root = models_dir() / category
-    if not root.is_dir():
-        return None
-    files = sorted(
-        p for p in root.iterdir() if p.is_file() and p.suffix.lower() in _WEIGHT_SUFFIXES
+    transformer = ZImageTransformer2DModel.from_single_file(
+        source, torch_dtype=dtype, local_files_only=True
     )
-    if files:
-        return files[0]
-    dirs = sorted(p for p in root.iterdir() if p.is_dir())
-    return dirs[0] if dirs else None
+    vae = _load_local_vae(dtype)
+    text = _load_local_text_encoder(dtype)
+    if vae is None or text is None:
+        raise ComponentError(
+            "Z-Image needs a local VAE and text-encoder for a single-file diffusion model. "
+            "Download them from the node's model popup."
+        )
+    text_encoder, tokenizer = text
+    scheduler = _load_scheduler()
+    return cls(
+        scheduler=scheduler,
+        vae=vae,
+        text_encoder=text_encoder,
+        tokenizer=tokenizer,
+        transformer=transformer,
+    )
+
+
+def _load_scheduler() -> Any:
+    """The flow-match scheduler: from a local pipeline folder's ``scheduler/`` if one exists, else
+    the library default. Config-only, so this never downloads."""
+    pipe_dir = reqs.pipeline_dir(reqs.diffusion_root())
+    if pipe_dir is not None:
+        try:
+            return FlowMatchEulerDiscreteScheduler.from_pretrained(
+                str(pipe_dir), subfolder="scheduler", local_files_only=True
+            )
+        except (OSError, ValueError):
+            pass
+    return FlowMatchEulerDiscreteScheduler()
 
 
 def _load_local_vae(dtype: Any) -> Any:
-    path = _local_component("vae", "INLINE_ZIMAGE_VAE")
+    path = reqs.local_component("vae", "INLINE_ZIMAGE_VAE")
     if path is None:
         return None
     from diffusers import AutoencoderKL
 
     if path.is_file():
-        return AutoencoderKL.from_single_file(str(path), torch_dtype=dtype)
-    return AutoencoderKL.from_pretrained(str(path), torch_dtype=dtype)
+        return AutoencoderKL.from_single_file(str(path), torch_dtype=dtype, local_files_only=True)
+    return AutoencoderKL.from_pretrained(str(path), torch_dtype=dtype, local_files_only=True)
 
 
 def _load_local_text_encoder(dtype: Any) -> tuple[Any, Any] | None:
-    path = _local_component("text_encoders", "INLINE_ZIMAGE_TEXT_ENCODER")
+    path = reqs.local_component("text_encoders", "INLINE_ZIMAGE_TEXT_ENCODER")
     if path is None or not path.is_dir():  # transformers needs a config dir, not a bare file
         return None
     from transformers import AutoModel, AutoTokenizer
 
-    text_encoder = AutoModel.from_pretrained(str(path), torch_dtype=dtype)
-    tokenizer = AutoTokenizer.from_pretrained(str(path))
+    text_encoder = AutoModel.from_pretrained(str(path), torch_dtype=dtype, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(str(path), local_files_only=True)
     return text_encoder, tokenizer
 
 
@@ -272,51 +299,24 @@ def _configure(pipe: Any, policy: DevicePolicy) -> None:
     if policy.vae_tiling():
         _try(pipe.enable_vae_tiling)
         _try(pipe.enable_vae_slicing)
+    _configure_gpu_speed(pipe, placement)
     _try(pipe.set_progress_bar_config, disable=True)
 
 
-def _resolve_model(params: dict[str, Any] | None = None) -> tuple[str, bool]:
-    """Pick the Z-Image source. Returns ``(source, single_file)`` where ``single_file`` means a lone
-    diffusion `.safetensors` (transformer only). Priority, most specific first:
-      1. the node's advanced ``model`` param — a filename under models/diffusion_models/;
-      2. ``INLINE_ZIMAGE_MODEL`` — a file path, a local diffusers dir, or an HF repo id;
-      3. a single weight file dropped under models/diffusion_models/ (the common, zero-config case);
-      4. a local diffusers folder (model_index.json);
-      5. the default reference repo.
-    """
-    root = models_dir() / "diffusion_models"
+def _configure_gpu_speed(pipe: Any, placement: Placement) -> None:
+    """Throughput tweaks that only apply on a resident-GPU placement (never CPU/offload).
 
-    chosen = str((params or {}).get("model") or "").strip()
-    if chosen:
-        path = root / chosen
-        if path.is_file():
-            return str(path), True
-
-    env = os.environ.get("INLINE_ZIMAGE_MODEL", "").strip()
-    if env:
-        return (env, True) if Path(env).is_file() else (env, False)
-
-    single = _find_weight_file(root)
-    if single is not None:
-        return str(single), True
-
-    for name in _LOCAL_NAMES:
-        candidate = root / name
-        if (candidate / "model_index.json").is_file():
-            return str(candidate), False
-
-    return _DEFAULT_MODEL, False
-
-
-def _find_weight_file(root: Path) -> Path | None:
-    """The single diffusion weight file to load: prefer a z-image-named file, else the first one."""
-    if not root.is_dir():
-        return None
-    weights = sorted(
-        p for p in root.iterdir() if p.is_file() and p.suffix.lower() in _WEIGHT_SUFFIXES
-    )
-    named = [p for p in weights if "z" in p.name.lower() and "image" in p.name.lower()]
-    return (named or weights or [None])[0]
+    ``channels_last`` on the conv-based VAE is a safe, default-on win. ``torch.compile`` (the
+    transformer) and xformers attention are opt-in via ``INLINE_COMPILE`` / ``INLINE_XFORMERS`` —
+    both help but have trade-offs (compile warmup, an extra dep), so they stay off by default. The
+    pipeline is cached warm across runs, so a compile cost is paid once. Best-effort."""
+    if placement.offload or placement.device.kind is not DeviceKind.CUDA:
+        return
+    _try(lambda: pipe.vae.to(memory_format=torch.channels_last))
+    if os.environ.get("INLINE_XFORMERS") == "1":
+        _try(pipe.enable_xformers_memory_efficient_attention)
+    if os.environ.get("INLINE_COMPILE") == "1":
+        _try(lambda: setattr(pipe, "transformer", torch.compile(pipe.transformer)))
 
 
 def _torch_dtype(placement: Placement) -> Any:
@@ -378,8 +378,9 @@ def _progress(
 
 
 def _try(fn: Any, *args: Any, **kwargs: Any) -> None:
-    """Best-effort optional pipeline tweak; skip if this diffusers build lacks it."""
+    """Best-effort optional pipeline tweak; skip if this build lacks it or the op isn't supported
+    here (e.g. xformers not installed, torch.compile unavailable on this device)."""
     try:
         fn(*args, **kwargs)
-    except (AttributeError, ValueError, NotImplementedError):
+    except (AttributeError, ValueError, NotImplementedError, RuntimeError, TypeError, ImportError):
         pass

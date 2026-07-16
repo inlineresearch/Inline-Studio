@@ -62,16 +62,22 @@ models/
 ```
 
 **Z-Image loads from a single diffusion `.safetensors`.** Drop that one ComfyUI-style file in
-`diffusion_models/`; the runner loads the transformer via diffusers `from_single_file`. The VAE +
-text-encoder + tokenizer are resolved as:
+`diffusion_models/`; the runner loads the transformer via diffusers `from_single_file`. It also needs
+a VAE + text-encoder + tokenizer, resolved from **local files** — `vae/*.safetensors` or a dir, and an
+HF-format `text_encoders/` dir.
 
-- **local files** if you provide them (`vae/*.safetensors` or a dir, and an HF-format `text_encoders/`
-  dir) — **fully offline / bring-your-own**; or
-- the **reference repo** (`Tongyi-MAI/Z-Image-Turbo`) fetched once and cached, if you don't.
+**Nothing is ever downloaded as a side effect of a render.** Every load runs `local_files_only=True`,
+so a missing model is a clear, fast error, not a silent multi-GB fetch. Models arrive by exactly two
+paths:
 
-Override the diffusion source with `INLINE_ZIMAGE_MODEL` (a file, a diffusers dir, or a repo id), and
-the supporting components with `INLINE_ZIMAGE_VAE` / `INLINE_ZIMAGE_TEXT_ENCODER`. The engine scans the
-models dir on start; a node's model pickers list what is present.
+1. **You place files** under `models/` (bring-your-own / fully offline); or
+2. **You download them explicitly** from the Z-Image node's model popup in the UI — it lists the
+   diffusion model, VAE, and text-encoder, shows which are missing, and downloads them **into
+   `models/`** (never the hidden HF cache) with visible progress.
+
+Override the diffusion source with `INLINE_ZIMAGE_MODEL` (a file or a diffusers dir), and the supporting
+components with `INLINE_ZIMAGE_VAE` / `INLINE_ZIMAGE_TEXT_ENCODER`. The engine scans the models dir on
+start; a node's model pickers list what is present.
 
 ## Nodes
 
@@ -142,11 +148,13 @@ The easy path is `webui.sh`, which maps friendly flags onto the engine's `INLINE
 ./webui.sh --install --extra zimage   # set up ./.venv with the Z-Image runtime, then exit
 ```
 
-`./webui.sh --help` lists every flag (networking, multi-GPU, device/memory profile, paths). Or run
-the server directly:
+`./webui.sh --help` lists every flag (networking, multi-GPU, device/memory profile, paths). The same
+flags are available on the Python entrypoint — `python main.py --help` — which is the dev path (it also
+takes `--front-end-root DIR` to serve a local SPA build). Or run the server module directly:
 
 ```
-python -m inline_core.server          # serves http://127.0.0.1:8848 (INLINE_HOST / INLINE_PORT)
+python main.py --listen --port 9000   # same flags as webui.sh; --front-end-root for a local UI build
+python -m inline_core.server          # bare server (INLINE_HOST / INLINE_PORT from the env)
 ```
 
 Working data (the run database and takes) lives in `INLINE_DATA_DIR` (default `./.inline`).
