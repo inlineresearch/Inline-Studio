@@ -24,9 +24,11 @@ import { studio } from '@/lib/studio'
 import { resolveMedia } from '@/lib/media'
 import { importFilesToLibrary } from '@/lib/importFiles'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
-import { portsSatisfy, type PortKind } from '@shared/coreNodes'
+import { portKindColor, portsSatisfy, type NodeDescriptor, type PortKind } from '@shared/coreNodes'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
+import { useGraphSelectionStore } from '../../store/graphSelectionStore'
+import { expandToGraphs, runTargets, toEdges } from './graphSelection'
 import { useAssetStore } from '../../store/assetStore'
 import { useFrameStore } from '../../store/frameStore'
 import { useGenerationStore } from '../../store/generationStore'
@@ -145,6 +147,39 @@ function visualEdgeColors(connectors: MoodboardConnector[]): Map<string, string>
     colors.set(c.id, LEVEL_COLORS[d % LEVEL_COLORS.length])
   }
   return colors
+}
+
+/** The port kind of a core node's handle, resolved from its descriptor (null for non-core/unknown). */
+function corePortKindOf(
+  coreType: string | undefined,
+  handle: string,
+  side: 'input' | 'output',
+  descriptorsByType: Map<string, NodeDescriptor>,
+): PortKind | null {
+  if (!coreType) return null
+  const descriptor = descriptorsByType.get(coreType)
+  const ports = side === 'output' ? descriptor?.outputs : descriptor?.inputs
+  return ports?.find((p) => p.id === handle)?.kind ?? null
+}
+
+/**
+ * The wire color for a connector between two low-level Core ports — the source dot's kind color so
+ * the link matches the dots it joins (model = red, vae = orange, latent = blue, …). Falls back to
+ * the target's kind (same kind by the type rule) and finally undefined for non-core links, which keep
+ * the frame-flow visual coloring.
+ */
+function edgeKindColor(
+  from: string,
+  to: string,
+  sourceHandle: string,
+  targetHandle: string,
+  coreTypeById: Map<string, string>,
+  descriptorsByType: Map<string, NodeDescriptor>,
+): string | undefined {
+  const kind =
+    corePortKindOf(coreTypeById.get(from), sourceHandle, 'output', descriptorsByType) ??
+    corePortKindOf(coreTypeById.get(to), targetHandle, 'input', descriptorsByType)
+  return kind ? portKindColor(kind) : undefined
 }
 
 /** Parse the slot index from a director handle id (e.g. "vin-3" → 3), or null. */
@@ -272,9 +307,32 @@ function Board(): React.JSX.Element {
 
   const assetsById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets])
 
+  // Compact/plumbing core nodes (no media output — loaders, samplers, encoders) hug their content
+  // rather than stretch to a stored height, so a Load node is just its title + file dropdown.
+  const compactCoreTypes = useMemo(
+    () => new Set(coreDescriptors.filter((d) => d.outputKind === null).map((d) => d.type)),
+    [coreDescriptors],
+  )
+
+  // Lookups for coloring engine wires by their port kind (see edgeKindColor). Keyed by type/id so
+  // they only rebuild when the node set or the palette changes, not on every drag frame.
+  const descriptorsByType = useMemo(
+    () => new Map(coreDescriptors.map((d) => [d.type, d])),
+    [coreDescriptors],
+  )
+  const coreTypeById = useMemo(
+    () =>
+      new Map(
+        items
+          .filter((i) => i.type === 'core' && i.data.core)
+          .map((i) => [i.id, (i.data.core as { type: string }).type]),
+      ),
+    [items],
+  )
+
   useEffect(() => {
-    setNodes(toNodes(items, assetsById))
-  }, [items, assetsById, setNodes])
+    setNodes(toNodes(items, assetsById, compactCoreTypes))
+  }, [items, assetsById, compactCoreTypes, setNodes])
 
   // Director render progress (main → renderer) drives the editor + node progress UI.
   useEffect(() => {
@@ -359,6 +417,16 @@ function Board(): React.JSX.Element {
         // colored by their chain level. A GenNode's audio input ('audio') is a data link too.
         const functional =
           sourceHandle === 'out' && (targetHandle === 'in' || targetHandle === 'audio')
+        // Engine wires (between low-level Core ports) take the source dot's kind color so the link
+        // matches the dots it joins; other links keep the frame-flow coloring.
+        const kindColor = edgeKindColor(
+          c.fromItemId,
+          c.toItemId,
+          sourceHandle,
+          targetHandle,
+          coreTypeById,
+          descriptorsByType,
+        )
         return {
           id: c.id,
           source: c.fromItemId,
@@ -367,11 +435,11 @@ function Board(): React.JSX.Element {
           targetHandle,
           type: 'deletable',
           animated: false,
-          data: { functional, color: levelColors.get(c.id) },
+          data: { functional, color: levelColors.get(c.id), kindColor },
         }
       }),
     )
-  }, [connectors, setEdges])
+  }, [connectors, coreTypeById, descriptorsByType, setEdges])
 
   const onNodesChange = (changes: NodeChange<Node>[]): void => {
     setNodes((nds) => applyNodeChanges(changes, nds))
@@ -388,6 +456,43 @@ function Board(): React.JSX.Element {
   useEffect(() => {
     setCanvasSelection(selectedKey ? selectedKey.split(',') : [])
   }, [selectedKey, setCanvasSelection])
+
+  // Graph-level selection: selecting any node selects its whole connected graph, and the graph's
+  // single Run control lives on its output node (the runnable node with nothing runnable
+  // downstream). Expands the live selection to the full graph(s), then publishes the run target(s).
+  const setRunTargets = useGraphSelectionStore((s) => s.setRunTargets)
+  useEffect(() => {
+    const seeds = selectedKey ? selectedKey.split(',') : []
+    if (seeds.length === 0) {
+      setRunTargets([])
+      return
+    }
+    const byId = new Map(items.map((it) => [it.id, it]))
+    const edges = toEdges(connectors, (id) => byId.has(id))
+    const graph = expandToGraphs(seeds, edges)
+
+    // Pull the selection out to the whole graph (converges: a re-run with the graph already
+    // selected makes no change).
+    if (graph.size !== seeds.length || !seeds.every((id) => graph.has(id))) {
+      setNodes((nds) => nds.map((n) => ({ ...n, selected: graph.has(n.id) })))
+    }
+
+    const isRunnable = (id: string): boolean => {
+      const it = byId.get(id)
+      if (!it) return false
+      if (it.type === 'core') {
+        const type = it.data.core?.type
+        const d = type ? coreDescriptors.find((dd) => dd.type === type) : undefined
+        return !!d && d.outputKind != null // a generation core node (loaders have no media output)
+      }
+      if (it.type === 'frame') {
+        const f = it.frameId ? frames.find((fr) => fr.id === it.frameId) : undefined
+        return f?.provider === 'fal' // a fal Generate node
+      }
+      return false
+    }
+    setRunTargets(runTargets(graph, edges, isRunnable))
+  }, [selectedKey, connectors, items, coreDescriptors, frames, setNodes, setRunTargets])
 
   // Keyboard: copy (⌘/Ctrl-C), paste (⌘/Ctrl-V), undo (⌘/Ctrl-Z), redo (⌘/Ctrl-Shift-Z
   // or ⌘/Ctrl-Y). Delete is handled by React Flow's deleteKeyCode + onNodesDelete.
@@ -985,11 +1090,12 @@ function toNodes(
     string,
     { filePath: string; kind: string; name: string; thumbPath?: string | null }
   >,
+  compactCoreTypes: Set<string>,
 ): Node[] {
   const ordered = [...items].sort(
     (a, b) => (a.type === 'layer' ? -1 : 0) - (b.type === 'layer' ? -1 : 0),
   )
-  return ordered.map((item) => itemToNode(item, assetsById))
+  return ordered.map((item) => itemToNode(item, assetsById, compactCoreTypes))
 }
 
 function itemToNode(
@@ -998,11 +1104,20 @@ function itemToNode(
     string,
     { filePath: string; kind: string; name: string; thumbPath?: string | null }
   >,
+  compactCoreTypes: Set<string>,
 ): Node {
+  // A compact/plumbing core node auto-sizes its height (hugs content) instead of taking the stored
+  // height; everything else keeps its persisted box.
+  const compact =
+    item.type === 'core' && !!item.data.core && compactCoreTypes.has(item.data.core.type)
   const common: Node = {
     id: item.id,
     position: { x: item.x, y: item.y },
-    style: { width: item.width, height: item.height, zIndex: item.zIndex },
+    style: {
+      width: item.width,
+      height: compact ? undefined : item.height,
+      zIndex: item.zIndex,
+    },
     data: {},
     ...(item.parentId ? { parentId: item.parentId } : {}),
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isEngineKind, portKindColor, portsSatisfy, producesFrame } from './coreNodes'
+import { isEngineKind, isModelPort, portKindColor, portsSatisfy, producesFrame } from './coreNodes'
 import type { NodeDescriptor } from './coreNodes'
 
 describe('portsSatisfy', () => {
@@ -26,6 +26,15 @@ describe('kind helpers', () => {
   it('gives every kind a color', () => {
     expect(portKindColor('model')).toMatch(/^#/)
     expect(portKindColor('image')).toMatch(/^#/)
+  })
+  it('treats only model/vae/text-encoder as model-family ports (bottom-packed dots)', () => {
+    expect(isModelPort('model')).toBe(true)
+    expect(isModelPort('vae')).toBe(true)
+    expect(isModelPort('text-encoder')).toBe(true)
+    // Signal/content kinds — including the other engine kinds — pack to the top instead.
+    expect(isModelPort('conditioning')).toBe(false)
+    expect(isModelPort('latent')).toBe(false)
+    expect(isModelPort('image')).toBe(false)
   })
 })
 

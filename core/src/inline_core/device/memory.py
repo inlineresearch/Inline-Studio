@@ -1,10 +1,17 @@
 """The memory-aware device policy: measure RAM/VRAM, pick a profile, own dtype/offload/quant/tiling.
 
-Profiles: gpu-max (ample VRAM), lowvram (tight VRAM), cpu (fp32, tiling, int8 to fit RAM). We always
-prefer the GPU: even under lowvram, weights stay resident on the GPU (tiling + attention slicing +
-int8 do the memory saving) and we do NOT auto-offload to CPU — offloading is slow and defeats "use
-the GPU we have". Set INLINE_ALLOW_CPU_OFFLOAD=1 to opt back into streaming modules on/off the GPU
-for extreme cases. Override the profile/budget with INLINE_PROFILE and INLINE_VRAM_BUDGET_GB.
+Profiles: gpu-max (ample VRAM), lowvram (tight VRAM), cpu (fp32, tiling, int8 to fit RAM). By
+default we always prefer the GPU: even under lowvram, weights stay resident on the GPU (tiling +
+attention
+slicing + int8 do the memory saving) and we do NOT auto-offload to CPU — offloading is slow and
+defeats "use the GPU we have".
+
+Smart memory (INLINE_SMART_MEMORY=1, `webui.sh --smart-memory`) is the opt-in escape hatch for a
+model that simply does not fit resident: it spreads the model across VRAM + RAM + CPU by streaming
+components on/off the GPU (a graduated OffloadMode — MODEL, or SEQUENTIAL on a very small GPU) and
+quantizes the big weights to int8 so the offloaded half also fits in RAM. Slower per image, but it
+runs where full-resident OOMs. Set INLINE_ALLOW_CPU_OFFLOAD=1 for the older bare model-offload knob
+without quantization. Override the profile/budget with INLINE_PROFILE and INLINE_VRAM_BUDGET_GB.
 Detection is lazy so the core imports without torch or psutil; an unavailable measurement keeps the
 policy conservative.
 """
@@ -13,13 +20,25 @@ from __future__ import annotations
 
 import os
 
-from .detect import available_devices, has_nvlink
-from .policy import AttentionBackend, DevicePolicy, Parallel, Placement, Profile, Quantization
+from .detect import available_devices, cuda_supports_bf16, has_nvlink
+from .policy import (
+    AttentionBackend,
+    DevicePolicy,
+    OffloadMode,
+    Parallel,
+    Placement,
+    Profile,
+    Quantization,
+)
 from .types import Device, DeviceKind, DType
 
 _GPU_MAX_MIN_VRAM_GB = 16.0  # at or above -> gpu-max, else lowvram
 _QUANT_VRAM_GB = 10.0  # lowvram below this -> int8
 _QUANT_RAM_GB = 48.0  # cpu below this -> int8
+# Smart memory: at/above this VRAM the int8 model fits RESIDENT on the GPU (no offload); below it,
+# even int8 won't fit, so fall to SEQUENTIAL submodule streaming (unquantized — torchao int8 and CPU
+# offload deadlock together) so a very small GPU can still run.
+_SMART_RESIDENT_MIN_VRAM_GB = 6.0
 
 
 def _system_ram_gb() -> float | None:
@@ -59,10 +78,19 @@ def _env_budget() -> float | None:
         return None
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _env_allow_offload() -> bool:
-    """Opt back into CPU offload under lowvram. Off by default: we keep weights on the GPU."""
-    value = os.environ.get("INLINE_ALLOW_CPU_OFFLOAD", "").strip().lower()
-    return value in ("1", "true", "yes", "on")
+    """Opt back into bare CPU offload under lowvram. Off by default: we keep weights on the GPU."""
+    return _env_flag("INLINE_ALLOW_CPU_OFFLOAD")
+
+
+def _env_smart_memory() -> bool:
+    """Opt into smart memory: graduated CPU offload + int8 quant so a too-big model fits across
+    VRAM + RAM. Off by default. Set by `webui.sh --smart-memory`."""
+    return _env_flag("INLINE_SMART_MEMORY")
 
 
 def _env_parallel() -> Parallel | None:
@@ -94,6 +122,8 @@ class MemoryPolicy(DevicePolicy):
         nvlink: bool | None = None,
         parallel: Parallel | None = None,
         allow_offload: bool | None = None,
+        smart_memory: bool | None = None,
+        supports_bf16: bool | None = None,
     ) -> None:
         self._devices = devices if devices is not None else available_devices()
         self._device = device or self._devices[0]
@@ -102,7 +132,11 @@ class MemoryPolicy(DevicePolicy):
         self._profile = profile or _env_profile() or self._choose_profile()
         self._nvlink = nvlink if nvlink is not None else has_nvlink()
         self._parallel = parallel if parallel is not None else _env_parallel()
+        self._smart = smart_memory if smart_memory is not None else _env_smart_memory()
         self._allow_offload = allow_offload if allow_offload is not None else _env_allow_offload()
+        self._bf16 = (
+            supports_bf16 if supports_bf16 is not None else cuda_supports_bf16(self._device)
+        )
 
     def _choose_profile(self) -> Profile:
         if self._device.kind is DeviceKind.CPU:
@@ -121,21 +155,47 @@ class MemoryPolicy(DevicePolicy):
     def placement(self, role: str) -> Placement:
         if self._profile is Profile.CPU:
             return Placement(self._device, DType.FP32)
-        # Always prefer the GPU: even under lowvram, keep weights resident (tiling/slicing/int8 save
-        # memory instead). Only stream modules to CPU when explicitly opted in via env.
-        offload = self._profile is Profile.LOWVRAM and self._allow_offload
+        offload_mode = self._offload_mode()
+        dtype = self._compute_dtype(role)
         if role == "denoiser":
             parallel = self._denoiser_parallel()
             if parallel is not None:
                 cuda = tuple(d for d in self._devices if d.kind is DeviceKind.CUDA)
                 return Placement(
                     self._device,
-                    DType.BF16,
-                    offload=offload,
+                    dtype,
+                    offload_mode=offload_mode,
                     devices=cuda[: parallel.world_size],
                     parallel=parallel,
                 )
-        return Placement(self._device, DType.BF16, offload=offload)
+        return Placement(self._device, dtype, offload_mode=offload_mode)
+
+    def _compute_dtype(self, role: str) -> DType:
+        """The weight/compute dtype for a GPU role. bf16 by default, but fp16 on GPUs without bf16
+        acceleration (Turing/Volta) — same footprint, yet it uses their fp16 tensor cores instead of
+        bf16's slow path. The VAE is the exception: fp16 decode can overflow to black/NaN images, so
+        it stays upcast (bf16, or fp32 on a card that also lacks bf16) — it is tiny, so the cost is
+        nil."""
+        if self._bf16:
+            return DType.BF16
+        return DType.FP32 if role == "vae" else DType.FP16
+
+    def _offload_mode(self) -> OffloadMode:
+        """Whether (and how) to stream weights to CPU. Default: never — prefer the GPU we have, and
+        let tiling/slicing/int8 do the saving with weights resident.
+
+        Smart memory keeps weights RESIDENT and quantizes to int8 instead of offloading: int8 halves
+        the model so a lowvram GPU holds it, and that avoids the slow — and, with torchao int8,
+        hang-prone — accelerate CPU-offload path. Only a GPU too small for even int8-resident
+        streams submodules (SEQUENTIAL, unquantized). The older INLINE_ALLOW_CPU_OFFLOAD flag still
+        does bare (unquantized) MODEL offload for anyone who wants it."""
+        if self._profile is not Profile.LOWVRAM:
+            return OffloadMode.NONE
+        if self._smart:
+            if _below(self._vram_gb, _SMART_RESIDENT_MIN_VRAM_GB):
+                return OffloadMode.SEQUENTIAL
+            return OffloadMode.NONE
+        return OffloadMode.MODEL if self._allow_offload else OffloadMode.NONE
 
     def _denoiser_parallel(self) -> Parallel | None:
         """Split the denoiser across GPUs when there are 2+. An explicit override wins; else auto:
@@ -157,6 +217,13 @@ class MemoryPolicy(DevicePolicy):
         return self._profile in (Profile.LOWVRAM, Profile.CPU)
 
     def quantization(self) -> Quantization:
+        # Smart memory quantizes to int8 so the halved model fits RESIDENT on the GPU (see
+        # _offload_mode). The one exception: a GPU so small it must SEQUENTIAL-offload instead runs
+        # unquantized — torchao int8 + CPU offload deadlock together.
+        if self._smart and self._profile is Profile.LOWVRAM:
+            if self._offload_mode() is OffloadMode.SEQUENTIAL:
+                return Quantization.NONE
+            return Quantization.INT8
         if self._profile is Profile.LOWVRAM and _below(self._vram_gb, _QUANT_VRAM_GB):
             return Quantization.INT8
         if self._profile is Profile.CPU and _below(self._ram_gb, _QUANT_RAM_GB):

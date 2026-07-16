@@ -18,4 +18,11 @@ def register_models(registry: Registry, store: TakeStore, policy: DevicePolicy) 
         registered.append("alibaba/z-image-turbo")
     except ImportError:
         pass
+    try:
+        from ..models.zimage.primitives import register_zimage_primitives
+
+        register_zimage_primitives(registry, store, policy)
+        registered.append("primitives:z-image")
+    except ImportError:
+        pass
     return registered

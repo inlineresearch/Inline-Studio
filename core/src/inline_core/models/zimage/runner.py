@@ -12,23 +12,21 @@ import raise, and ``server.bootstrap`` skips the model (best-effort) so the engi
 
 from __future__ import annotations
 
+import logging
 import os
 import random
+import time
 from threading import Lock
 from typing import Any
 
 import torch
-from diffusers import (
-    FlowMatchEulerDiscreteScheduler,
-    ZImageImg2ImgPipeline,
-    ZImagePipeline,
-    ZImageTransformer2DModel,
-)
+from diffusers import ZImageImg2ImgPipeline, ZImagePipeline
 
-from ...device.policy import DevicePolicy, Placement, Profile
+from ...device.policy import DevicePolicy, OffloadMode, Placement, Profile, Quantization
 from ...device.types import DeviceKind, DType
 from ...errors import CancelledError, ComponentError
 from ...graph.descriptor import NodeDescriptor, ParamField, Port, Widget
+from ...graph.loader_runners import ComponentRef
 from ...graph.runners import NodeResult, NodeRunner
 from ...graph.schema import Node, PortKind
 from ...media import MediaKind
@@ -36,6 +34,7 @@ from ...runtime.context import ExecutionContext
 from ...runtime.progress import Phase, ProgressEvent
 from ...runtime.store import TakeStore
 from ...takes import AssetRef
+from .. import loaders
 from . import requirements as reqs
 
 # The models this node needs — the diffusion transformer plus a VAE, text-encoder, tokenizer and
@@ -46,6 +45,38 @@ from . import requirements as reqs
 # downloads them into models/.
 _SEED_MAX = 2**31 - 1
 
+logger = logging.getLogger("inline_core.zimage")
+
+
+def _device_report(policy: DevicePolicy) -> str:
+    """A one-line snapshot of where generation will run — device, dtype, cpu/gpu mode, and (on
+    CUDA) live VRAM used/total/free. Logged around model load + generation so a slow run's cause
+    (CPU fallback, offload, a nearly-full GPU) is visible without a profiler."""
+    placement = policy.placement("denoiser")
+    device = str(placement.device)
+    on_cpu = placement.offload or policy.profile is Profile.CPU
+    parts = [
+        f"device={device}",
+        f"mode={'cpu' if on_cpu else 'gpu'}",
+        f"profile={policy.profile.value}",
+        f"dtype={placement.dtype.value}",
+        f"offload={placement.offload_mode.value}",
+        f"quant={policy.quantization().value}",
+    ]
+    if placement.device.kind is DeviceKind.CUDA and torch.cuda.is_available():
+        idx = placement.device.index or 0
+        try:
+            free, total = torch.cuda.mem_get_info(idx)
+            used = torch.cuda.memory_allocated(idx)
+            parts.append(f"gpu={torch.cuda.get_device_name(idx)}")
+            parts.append(
+                f"vram={used / 1e9:.1f}GB allocated / {total / 1e9:.1f}GB total"
+                f" ({free / 1e9:.1f}GB free)"
+            )
+        except Exception:  # noqa: BLE001 — diagnostics must never break a generation
+            pass
+    return ", ".join(parts)
+
 
 ZIMAGE = NodeDescriptor(
     type="alibaba/z-image-turbo",
@@ -55,6 +86,11 @@ ZIMAGE = NodeDescriptor(
     output_kind=MediaKind.IMAGE,
     inputs=(
         Port("prompt", "Prompt", PortKind.TEXT, required=True),
+        # Optional component handles from load/* subnodes — wire a Load node to override the
+        # corresponding dropdown. Left unwired, the node resolves each file from its own selects.
+        Port("model", "Diffusion model", PortKind.MODEL, required=False),
+        Port("vae", "VAE", PortKind.VAE, required=False),
+        Port("text_encoder", "Text encoder", PortKind.TEXT_ENCODER, required=False),
         # Optional: wire an image to run img2img instead of text-to-image.
         Port("image", "Image (img2img)", PortKind.IMAGE, required=False),
     ),
@@ -72,11 +108,20 @@ ZIMAGE = NodeDescriptor(
             advanced=True,
         ),
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
-        # Advanced, optional: pick a specific diffusion file. "" = auto (the single file found under
-        # models/diffusion_models/). Lives behind the Adjust panel so the node stays one-click.
+        # Advanced, optional: pick a specific file per component. "" = auto (the single file in that
+        # category folder). ComfyUI-style split-file loading — one file each. These live behind the
+        # Adjust panel so the node stays one-click; the model popup downloads the defaults.
         ParamField(
-            "model", "Model file (auto)", Widget.SELECT, "",
+            "model", "Diffusion file (auto)", Widget.SELECT, "",
             options_from="diffusion_models", advanced=True,
+        ),
+        ParamField(
+            "text_encoder", "Text-encoder file (auto)", Widget.SELECT, "",
+            options_from="text_encoders", advanced=True,
+        ),
+        ParamField(
+            "vae", "VAE file (auto)", Widget.SELECT, "",
+            options_from="vae", advanced=True,
         ),
     ),
 )
@@ -107,22 +152,62 @@ class ZImageRunner(NodeRunner):
         image_ref = _first(inputs.get("image"))
         img2img = image_ref is not None
 
-        # No hidden downloads: if a required model isn't on disk, fail fast with a message that
-        # points at the node's model popup instead of letting diffusers silently fetch it.
-        missing = [c.label for c in reqs.zimage_requirements(params) if not c.present]
+        # Optional wired component handles from load/* subnodes override the dropdowns.
+        model_ref = _component_ref(inputs, "model", "diffusion")
+        vae_ref = _component_ref(inputs, "vae", "vae")
+        te_ref = _component_ref(inputs, "text_encoder", "text_encoder")
+        wired = {ref.kind for ref in (model_ref, vae_ref, te_ref) if ref is not None}
+
+        # No hidden downloads: a required component that is neither wired nor on disk fails fast,
+        # pointing at the model popup — never a silent diffusers fetch. Wired components are present
+        # by construction (the Load node resolved a real file, or raised).
+        missing = [
+            c.label for c in reqs.zimage_requirements(params) if not c.present and c.id not in wired
+        ]
         if missing:
             raise ComponentError(
                 "Z-Image models missing: "
                 + ", ".join(missing)
                 + ". Download them from the node's model popup (the hint on the node)."
             )
-        resolved = reqs.resolve_diffusion(params)
-        if resolved is None:  # defensive: the missing-check above already covers this
-            raise ComponentError("Z-Image diffusion model not found in models/diffusion_models/.")
-        source, mode = resolved
 
+        if model_ref is not None:
+            mode, source = "single_file", model_ref.file
+        else:
+            resolved = reqs.resolve_diffusion(params)
+            if resolved is None:  # defensive: the missing-check above already covers this
+                raise ComponentError("Z-Image diffusion model not found in diffusion_models/.")
+            mode, source = resolved  # resolve_diffusion returns (mode, path)
+        # In single-file mode the VAE + text-encoder are their own chosen files (a wired handle, or
+        # the dropdown / split file); in whole-pipeline mode the folder carries them, so these go
+        # unused unless explicitly wired.
+        vae_file = vae_ref.file if vae_ref else _path_or_none(reqs.resolve_vae(params))
+        te_file = te_ref.file if te_ref else _path_or_none(reqs.resolve_text_encoder(params))
+
+        logger.info(
+            "Z-Image run: %dx%d, %d steps, guidance=%.1f, img2img=%s | %s",
+            width,
+            height,
+            steps,
+            guidance,
+            img2img,
+            _device_report(self._policy),
+        )
+        _reset_peak_vram()
         ctx.emitter.emit(_progress(ctx, node, Phase.LOADING, 0.0, status="Loading model…"))
-        pipe = _load_pipeline(self._policy, img2img=img2img, source=source, mode=mode)
+        try:
+            pipe = _load_pipeline(
+                self._policy,
+                img2img=img2img,
+                source=source,
+                mode=mode,
+                vae=vae_file,
+                text=te_file,
+                quant=self._policy.quantization(),
+            )
+        except torch.cuda.OutOfMemoryError as error:
+            _free_vram()
+            raise ComponentError(_oom_message(width, height)) from error
 
         placement = self._policy.placement("denoiser")
         gen_device = "cpu" if (placement.offload or self._policy.profile is Profile.CPU) else str(
@@ -163,9 +248,29 @@ class ZImageRunner(NodeRunner):
             call["image"] = _load_image(image_ref)
             call["strength"] = float(params.get("strength", 0.6))
 
-        image = pipe(**call).images[0]
+        logger.info("Z-Image sampling %d steps on %s…", steps, gen_device)
+        sample_start = time.perf_counter()
+        try:
+            image = pipe(**call).images[0]
+        except torch.cuda.OutOfMemoryError as error:
+            _free_vram()
+            raise ComponentError(_oom_message(width, height)) from error
+        elapsed = time.perf_counter() - sample_start
+        peak_gb = _peak_vram_gb()
+        peak_note = f", peak VRAM {peak_gb:.1f}GB" if peak_gb else ""
+        logger.info(
+            "Z-Image sampled %dx%d in %.1fs (%.2fs/step)%s | %s",
+            width,
+            height,
+            elapsed,
+            elapsed / steps,
+            peak_note,
+            _device_report(self._policy),
+        )
+        _free_vram()  # return fragmented free blocks to the driver between runs (keeps the model)
 
-        ctx.emitter.emit(_progress(ctx, node, Phase.SAVE, 1.0, status="Saving…"))
+        save_status = "Saving…" + (f" (peak VRAM {peak_gb:.1f}GB)" if peak_gb else "")
+        ctx.emitter.emit(_progress(ctx, node, Phase.SAVE, 1.0, status=save_status))
         take = self._store.save(
             ctx.run_id,
             node.id,
@@ -187,110 +292,139 @@ class ZImageRunner(NodeRunner):
 
 # --- pipeline cache -----------------------------------------------------------------------------
 
-# Keyed by (model source, img2img). Built once; diffusers pipelines are not thread-safe, but the run
-# manager executes one run at a time (workers=1). The lock guards concurrent first-time builds.
-_PIPELINES: dict[tuple[str, bool], Any] = {}
+# Keyed by (source, vae, text, img2img, quant). Built once; diffusers pipelines are not thread-safe,
+# but the run manager executes one run at a time (workers=1). Switching any file or the quantization
+# rebuilds — but the loader core caches each component, so only the changed one re-reads from disk.
+# The lock guards concurrent first-time builds.
+_PIPELINES: dict[tuple[str, str, str, bool, str], Any] = {}
 _LOCK = Lock()
 
 
-def _load_pipeline(policy: DevicePolicy, *, img2img: bool, source: str, mode: str) -> Any:
-    key = (source, img2img)
+def _load_pipeline(
+    policy: DevicePolicy,
+    *,
+    img2img: bool,
+    source: str,
+    mode: str,
+    vae: str,
+    text: str,
+    quant: Quantization = Quantization.NONE,
+) -> Any:
+    key = (source, vae, text, img2img, quant.value)
     with _LOCK:
         cached = _PIPELINES.get(key)
         if cached is not None:
+            logger.info(
+                "Pipeline cache hit (%s, img2img=%s) — reusing loaded weights", source, img2img
+            )
             return cached
+        started = time.perf_counter()
+        logger.info(
+            "Loading Z-Image pipeline: source=%s, mode=%s, img2img=%s | %s",
+            source,
+            mode,
+            img2img,
+            _device_report(policy),
+        )
         # An img2img pipe can reuse the base pipe's already-placed weights (no second load).
-        base = _PIPELINES.get((source, False))
+        base = _PIPELINES.get((source, vae, text, False, quant.value))
         if img2img and base is not None:
             pipe = ZImageImg2ImgPipeline.from_pipe(base)
+            logger.info(
+                "Built img2img pipeline from cached base in %.1fs", time.perf_counter() - started
+            )
         else:
             dtype = _torch_dtype(policy.placement("denoiser"))
-            pipe = _build_pipeline(source, mode=mode, img2img=img2img, dtype=dtype)
+            vae_dtype = _torch_dtype(policy.placement("vae"))
+            build_start = time.perf_counter()
+            pipe = _build_pipeline(
+                source,
+                mode=mode,
+                img2img=img2img,
+                dtype=dtype,
+                vae=vae,
+                text=text,
+                quant=quant,
+                vae_dtype=vae_dtype,
+            )
+            logger.info(
+                "Read weights from disk in %.1fs (mode=%s, dtype=%s)",
+                time.perf_counter() - build_start,
+                mode,
+                policy.placement("denoiser").dtype.value,
+            )
+            place_start = time.perf_counter()
             _configure(pipe, policy)
+            logger.info(
+                "Placed pipeline on %s in %.1fs | %s",
+                str(policy.placement("denoiser").device),
+                time.perf_counter() - place_start,
+                _device_report(policy),
+            )
         _PIPELINES[key] = pipe
+        logger.info("Z-Image pipeline ready in %.1fs total", time.perf_counter() - started)
         return pipe
 
 
-def _build_pipeline(source: str, *, mode: str, img2img: bool, dtype: Any) -> Any:
+def _build_pipeline(
+    source: str,
+    *,
+    mode: str,
+    img2img: bool,
+    dtype: Any,
+    vae: str,
+    text: str,
+    quant: Quantization = Quantization.NONE,
+    vae_dtype: Any = None,
+) -> Any:
     """Build a Z-Image pipeline **offline** — never touching the network.
 
     Two shapes, both resolved from files under ``models/`` (see ``requirements.py``):
       - ``mode == "pipeline"``: ``source`` is a whole diffusers folder (``model_index.json`` + all
         components). Loaded with ``local_files_only=True``.
-      - ``mode == "single_file"``: ``source`` is a lone diffusion transformer file. We load the
-        transformer from it and assemble the pipeline from a **local** VAE + text-encoder +
-        tokenizer (present is guaranteed by the missing-check) plus a default flow-match scheduler.
+      - ``mode == "single_file"``: ComfyUI-style. ``source`` / ``vae`` / ``text`` are three single
+        ``.safetensors`` files; the loader core (``models/loaders.py``) builds each component from a
+        bundled config + tokenizer, so nothing is fetched. This is the fast path the docs describe.
 
-    Drop-in / override: a VAE in ``vae/`` (a ``.safetensors`` or a diffusers dir), an HF-format
-    text-encoder dir in ``text_encoders/`` (a bare weights file can't carry its config), or point
-    ``INLINE_ZIMAGE_VAE`` / ``INLINE_ZIMAGE_TEXT_ENCODER`` at them. Nothing is fetched — get missing
-    pieces via the node's model popup, which writes them under ``models/``.
+    ``quant`` (smart memory) quantizes the big weights on load; it applies to the single-file path
+    (the loader builds each component and can quantize it). Whole-pipeline folders load full
+    precision — quantize by using the single-file layout instead.
     """
-    cls = ZImageImg2ImgPipeline if img2img else ZImagePipeline
     if mode == "pipeline":
+        if quant is not Quantization.NONE:
+            logger.warning(
+                "Smart-memory quantization (%s) is not applied to a whole-pipeline folder; use the "
+                "single-file layout (diffusion_models/ + vae/ + text_encoders/) to quantize.",
+                quant.value,
+            )
+        cls = ZImageImg2ImgPipeline if img2img else ZImagePipeline
         return cls.from_pretrained(source, torch_dtype=dtype, local_files_only=True)
 
-    transformer = ZImageTransformer2DModel.from_single_file(
-        source, torch_dtype=dtype, local_files_only=True
-    )
-    vae = _load_local_vae(dtype)
-    text = _load_local_text_encoder(dtype)
-    if vae is None or text is None:
+    if not vae or not text:
         raise ComponentError(
-            "Z-Image needs a local VAE and text-encoder for a single-file diffusion model. "
+            "Z-Image needs a local VAE and text-encoder file for a single-file diffusion model. "
             "Download them from the node's model popup."
         )
-    text_encoder, tokenizer = text
-    scheduler = _load_scheduler()
-    return cls(
-        scheduler=scheduler,
-        vae=vae,
-        text_encoder=text_encoder,
-        tokenizer=tokenizer,
-        transformer=transformer,
+    return loaders.assemble_zimage_pipeline(
+        diffusion_file=source,
+        vae_file=vae,
+        text_encoder_file=text,
+        dtype=dtype,
+        img2img=img2img,
+        quant=quant,
+        vae_dtype=vae_dtype,
     )
-
-
-def _load_scheduler() -> Any:
-    """The flow-match scheduler: from a local pipeline folder's ``scheduler/`` if one exists, else
-    the library default. Config-only, so this never downloads."""
-    pipe_dir = reqs.pipeline_dir(reqs.diffusion_root())
-    if pipe_dir is not None:
-        try:
-            return FlowMatchEulerDiscreteScheduler.from_pretrained(
-                str(pipe_dir), subfolder="scheduler", local_files_only=True
-            )
-        except (OSError, ValueError):
-            pass
-    return FlowMatchEulerDiscreteScheduler()
-
-
-def _load_local_vae(dtype: Any) -> Any:
-    path = reqs.local_component("vae", "INLINE_ZIMAGE_VAE")
-    if path is None:
-        return None
-    from diffusers import AutoencoderKL
-
-    if path.is_file():
-        return AutoencoderKL.from_single_file(str(path), torch_dtype=dtype, local_files_only=True)
-    return AutoencoderKL.from_pretrained(str(path), torch_dtype=dtype, local_files_only=True)
-
-
-def _load_local_text_encoder(dtype: Any) -> tuple[Any, Any] | None:
-    path = reqs.local_component("text_encoders", "INLINE_ZIMAGE_TEXT_ENCODER")
-    if path is None or not path.is_dir():  # transformers needs a config dir, not a bare file
-        return None
-    from transformers import AutoModel, AutoTokenizer
-
-    text_encoder = AutoModel.from_pretrained(str(path), torch_dtype=dtype, local_files_only=True)
-    tokenizer = AutoTokenizer.from_pretrained(str(path), local_files_only=True)
-    return text_encoder, tokenizer
 
 
 def _configure(pipe: Any, policy: DevicePolicy) -> None:
     placement = policy.placement("denoiser")
-    if placement.offload:
-        pipe.enable_model_cpu_offload()  # opt-in only: stream modules on/off the GPU
+    if placement.offload_mode is OffloadMode.SEQUENTIAL:
+        # Lowest peak VRAM: submodules stream on/off the GPU layer-by-layer. Slowest — only when the
+        # GPU is too small even for model offload.
+        pipe.enable_sequential_cpu_offload()
+    elif placement.offload_mode is OffloadMode.MODEL:
+        # Smart memory / opt-in: only the active component sits on the GPU, the rest waits in RAM.
+        pipe.enable_model_cpu_offload()
     else:
         pipe.to(str(placement.device))  # default: weights resident on the GPU
     # Low-VRAM savers that keep weights on the GPU (no offload): slice attention + tile/slice VAE.
@@ -327,7 +461,68 @@ def _torch_dtype(placement: Placement) -> Any:
     }.get(placement.dtype, torch.bfloat16)
 
 
+# --- VRAM helpers (diagnostics + between-run hygiene; never break a generation) ------------------
+
+
+def _reset_peak_vram() -> None:
+    """Zero CUDA's peak-allocation counter so the value read after a run reflects *this* run."""
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:  # noqa: BLE001 — telemetry must never break a generation
+        pass
+
+
+def _peak_vram_gb() -> float:
+    """Peak VRAM allocated since the last reset, in GB (0.0 when unavailable/CPU)."""
+    try:
+        if torch.cuda.is_available():
+            return torch.cuda.max_memory_allocated() / 1e9
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0
+
+
+def _free_vram() -> None:
+    """Release cached-but-unused CUDA blocks back to the driver. Cuts the fragmentation that makes a
+    later allocation fail even with headroom; it does NOT evict the resident (cached) model."""
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _oom_message(width: int, height: int) -> str:
+    """A clear, actionable message for a CUDA out-of-memory — never a raw allocator traceback.
+    Points at smart memory (unless already on) and the resolution, which drives peak memory."""
+    smart = os.environ.get("INLINE_SMART_MEMORY", "").strip().lower() in ("1", "true", "yes", "on")
+    if smart:
+        tip = f"lower the resolution (you're at {width}x{height} — try 768x768 or 512x512)"
+    else:
+        tip = "enable smart memory (run ./webui.sh --smart-memory) or lower the resolution"
+    return f"Ran out of GPU memory generating a {width}x{height} image. Try to {tip}."
+
+
 # --- small helpers ------------------------------------------------------------------------------
+
+
+def _component_ref(inputs: dict[str, list[Any]], port: str, kind: str) -> ComponentRef | None:
+    """A wired ``ComponentRef`` on ``port``, or None if unwired. Guards the kind so a mis-wired
+    handle (e.g. a VAE fed into the model port — which the graph validator already blocks by port
+    kind) can't slip a wrong component into the pipeline."""
+    ref = _first(inputs.get(port))
+    if ref is None:
+        return None
+    if isinstance(ref, ComponentRef) and ref.kind == kind:
+        return ref
+    raise ComponentError(f"Z-Image '{port}' input is not a loadable {kind} handle.")
+
+
+def _path_or_none(path: Any) -> str:
+    """A resolved component path as a string, or ``""`` when absent — the pipeline cache key and the
+    single-file check both want a plain string, not ``Path | None``."""
+    return str(path) if path is not None else ""
 
 
 def _resolve_seed(raw: Any) -> int:

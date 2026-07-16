@@ -105,18 +105,50 @@ def test_single_file_needs_local_vae_and_text_encoder(monkeypatch, tmp_path):
     assert not by_id["vae"].present  # but VAE + text-encoder are not
     assert not by_id["text_encoder"].present
 
-    (root / "vae" / "z-image-turbo").mkdir(parents=True)
-    (root / "vae" / "z-image-turbo" / "config.json").write_text("{}")
-    (root / "text_encoders" / "z-image-turbo").mkdir(parents=True)
-    (root / "text_encoders" / "z-image-turbo" / "config.json").write_text("{}")
+    # Split-file loading: a single weight file per category (a bare config dir no longer counts).
+    (root / "vae").mkdir(parents=True)
+    (root / "vae" / "ae.safetensors").write_bytes(b"")
+    (root / "text_encoders").mkdir(parents=True)
+    (root / "text_encoders" / "qwen_3_4b.safetensors").write_bytes(b"")
     by_id = {c.id: c for c in reqs.zimage_requirements()}
     assert by_id["vae"].present and by_id["text_encoder"].present
 
 
-def test_download_target_is_under_models_root(monkeypatch, tmp_path):
+def test_config_only_dir_is_not_present(monkeypatch, tmp_path):
+    """A folder with only a config (no weights) is not a loadable single file — reads as missing."""
+    root = _models_root(monkeypatch, tmp_path)
+    (root / "vae" / "z-image-turbo").mkdir(parents=True)
+    (root / "vae" / "z-image-turbo" / "config.json").write_text("{}")
+    by_id = {c.id: c for c in reqs.zimage_requirements()}
+    assert not by_id["vae"].present
+
+
+def test_resolvers_prefer_dropdown_pick_then_exact_file(monkeypatch, tmp_path):
+    root = _models_root(monkeypatch, tmp_path)
+    (root / "vae").mkdir(parents=True)
+    (root / "vae" / "ae.safetensors").write_bytes(b"")
+    alt = root / "vae" / "my_vae.safetensors"
+    alt.write_bytes(b"")
+    # No pick -> the recommended split file; an explicit dropdown pick wins.
+    assert reqs.resolve_vae() == root / "vae" / "ae.safetensors"
+    assert reqs.resolve_vae({"vae": "my_vae.safetensors"}) == alt
+
+
+def test_component_points_at_split_files(monkeypatch, tmp_path):
+    _models_root(monkeypatch, tmp_path)
+    by_id = {c.id: c for c in reqs.zimage_requirements()}
+    assert by_id["diffusion"].repo == "Comfy-Org/z_image"
+    assert by_id["diffusion"].repo_file == "split_files/diffusion_models/z_image_bf16.safetensors"
+    assert by_id["vae"].repo_file == "split_files/vae/ae.safetensors"
+    assert by_id["text_encoder"].repo_file == "split_files/text_encoders/qwen_3_4b.safetensors"
+    # The file lands flat in its category so the node's dropdown lists it.
+    assert by_id["vae"].local_path == "vae/ae.safetensors"
+
+
+def test_download_target_is_the_category_dir(monkeypatch, tmp_path):
     root = _models_root(monkeypatch, tmp_path)
     vae = next(c for c in reqs.zimage_requirements() if c.id == "vae")
     target = reqs.download_target(vae)
-    # Downloads land under models/ (never a hidden HF cache).
+    # Downloads land flat under models/<category>/ (never a hidden HF cache).
     assert str(target).startswith(str(root))
-    assert target == root / "vae" / "z-image-turbo"
+    assert target == root / "vae"

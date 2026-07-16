@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 _ZIMAGE_TYPE = "alibaba/z-image-turbo"
-_SKIP_TOP_LEVEL = {".gitattributes", "readme.md", "license", "license.md", ".gitignore"}
 
 
 class ModelDownloads:
@@ -98,31 +98,48 @@ class ModelDownloads:
         return zimage_requirements()
 
     def _download_component(self, comp: Any, on_progress: Callable[[float, str], None]) -> None:
-        """Fetch a component's files from its repo into ``models/<category>/…``, flattening any
-        source subfolders. Downloads into a ``.part`` staging dir first, then moves into place, so a
-        half-finished download never looks installed."""
+        """Fetch a component's single file from its repo into ``models/<category>/`` (flat, so the
+        node's dropdown lists it). Downloads into a ``.part`` staging dir first, then moves the file
+        into place under its basename, so a half-finished download never looks installed."""
         from huggingface_hub import HfApi, hf_hub_download
 
         from ..models.zimage.requirements import download_target
 
-        target: Path = download_target(comp)
-        staging = target.parent / (target.name + ".part")
+        category_dir: Path = download_target(comp)
+        staging = category_dir / (comp.filename + ".part")
         shutil.rmtree(staging, ignore_errors=True)
 
         files = _wanted_files(HfApi(), comp)
-        total = sum(size for _, size in files) or 1
+        total = sum(size for _, size in files)
         on_progress(0.0, f"Downloading {comp.label}…")
 
-        downloaded = 0
-        for rfilename, size in files:
-            hf_hub_download(comp.repo, rfilename, local_dir=str(staging))
-            downloaded += size
-            on_progress(min(0.99, downloaded / total), f"Downloading {comp.label}…")
+        # ``hf_hub_download`` blocks for the whole (multi-GB) file with no per-byte callback, so a
+        # naive "emit after each file" jumps 0 → 99%. Instead, a watcher thread polls the staging
+        # tree's byte size while the download runs and streams a real fraction. It only reports a
+        # fraction when the repo metadata gave us a real total; otherwise size is unknown and we
+        # leave the 0 → 1 endpoints (the status text still shows activity).
+        stop = threading.Event()
 
-        target.mkdir(parents=True, exist_ok=True)
+        def _watch() -> None:
+            while not stop.wait(0.5):
+                if total <= 0:
+                    continue
+                got = _dir_size(staging)
+                if got > 0:
+                    on_progress(min(0.98, got / total), f"Downloading {comp.label}…")
+
+        watcher = threading.Thread(target=_watch, name="model-download-progress", daemon=True)
+        watcher.start()
+        try:
+            for rfilename, _size in files:
+                hf_hub_download(comp.repo, rfilename, local_dir=str(staging))
+        finally:
+            stop.set()
+            watcher.join(timeout=1.0)
+
+        category_dir.mkdir(parents=True, exist_ok=True)
         for rfilename, _ in files:
-            dest = target / _flatten_rel(rfilename, comp.subfolders)
-            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest = category_dir / Path(rfilename).name
             shutil.move(str(staging / rfilename), str(dest))
         shutil.rmtree(staging, ignore_errors=True)
         on_progress(1.0, f"{comp.label} ready")
@@ -144,30 +161,43 @@ def _component_json(component: Any) -> dict[str, Any]:
         "present": component.present,
         "localPath": component.local_path,
         "repo": component.repo,
+        "source": _source_label(component),
     }
 
 
-def _wanted_files(api: Any, comp: Any) -> list[tuple[str, int]]:
-    """(rfilename, size) for the repo files this component needs — a subfolder subset, or the whole
-    repo (minus boilerplate) when it has no subfolders."""
-    info = api.model_info(comp.repo, files_metadata=True)
-    out: list[tuple[str, int]] = []
-    for sibling in info.siblings:
-        name = sibling.rfilename
-        if comp.subfolders:
-            if not any(name.startswith(sf + "/") for sf in comp.subfolders):
+def _source_label(component: Any) -> str:
+    """Human-facing "which model" line: the repo + the exact file this component pulls (e.g.
+    ``Comfy-Org/z_image/ae.safetensors``). Static — no network needed."""
+    filename: str = getattr(component, "filename", "")
+    if filename:
+        return f"{component.repo}/{filename}"
+    return component.repo
+
+
+def _dir_size(path: Path) -> int:
+    """Total bytes under ``path`` (recursively), for live download progress. Counts Hugging Face's
+    ``.incomplete`` temp file as it grows, so the fraction advances during the blocking fetch.
+    Best-effort: a file vanishing mid-walk (the final rename) is ignored."""
+    total = 0
+    try:
+        for child in path.rglob("*"):
+            try:
+                if child.is_file():
+                    total += child.stat().st_size
+            except OSError:
                 continue
-        elif "/" not in name and name.lower() in _SKIP_TOP_LEVEL:
-            continue
-        out.append((name, int(sibling.size or 0)))
-    return out
+    except OSError:
+        return total
+    return total
 
 
-def _flatten_rel(rfilename: str, subfolders: tuple[str, ...]) -> str:
-    """Where a downloaded file lands under the target: subfolder components are flattened (strip the
-    leading ``vae/`` etc.); a whole-repo (pipeline) download keeps its layout."""
-    for sf in subfolders:
-        prefix = sf + "/"
-        if rfilename.startswith(prefix):
-            return rfilename[len(prefix) :]
-    return rfilename
+def _wanted_files(api: Any, comp: Any) -> list[tuple[str, int]]:
+    """(rfilename, size) for the single file this component pulls, sized from the repo metadata.
+
+    Falls back to size 0 (progress by count) if the file isn't in the listing — the download still
+    proceeds; ``hf_hub_download`` is the source of truth for whether the path exists."""
+    info = api.model_info(comp.repo, files_metadata=True)
+    for sibling in info.siblings:
+        if sibling.rfilename == comp.repo_file:
+            return [(comp.repo_file, int(sibling.size or 0))]
+    return [(comp.repo_file, 0)]

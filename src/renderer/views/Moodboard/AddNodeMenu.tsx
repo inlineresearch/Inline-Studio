@@ -67,70 +67,73 @@ export function AddNodeMenu({
         <div className="border-b border-border px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
           Add node
         </div>
-        {ENTRIES.map((e) => (
-          <button
-            key={e.kind}
-            onClick={() => onPick(e.kind)}
-            className={`flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-surface ${
-              e.accent ? 'text-emerald-300' : 'text-zinc-200'
-            }`}
-          >
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center">{e.icon}</span>
-            {e.label}
-          </button>
-        ))}
-        {onPickGen && falGroups.length > 0 && (
-          <div className="max-h-56 overflow-y-auto border-t border-border">
-            <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-              Fal Models
-            </div>
-            {falGroups.map((group) => (
-              <div key={group.owner}>
-                <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
-                  {group.label}
-                </div>
-                {group.defs.map((def) => (
-                  <button
-                    key={def.id}
-                    onClick={() => onPickGen(def.id)}
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
-                  >
-                    <span className="flex h-4 w-4 shrink-0 items-center justify-center text-emerald-300">
-                      <SparklesIcon />
-                    </span>
-                    {def.title}
-                  </button>
-                ))}
+        {/* One scroll area for the whole list (built-ins + fal + Inline Core), not per-section. */}
+        <div className="max-h-[70vh] overflow-y-auto">
+          {ENTRIES.map((e) => (
+            <button
+              key={e.kind}
+              onClick={() => onPick(e.kind)}
+              className={`flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-surface ${
+                e.accent ? 'text-emerald-300' : 'text-zinc-200'
+              }`}
+            >
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center">{e.icon}</span>
+              {e.label}
+            </button>
+          ))}
+          {onPickGen && falGroups.length > 0 && (
+            <div className="border-t border-border">
+              <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+                Fal Models
               </div>
-            ))}
-          </div>
-        )}
-        {addable.length > 0 && (
-          <div className="max-h-56 overflow-y-auto border-t border-border">
-            <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-              Inline Core
-            </div>
-            {groupByCategory(addable).map(([category, nodes]) => (
-              <div key={category}>
-                <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
-                  {category}
+              {falGroups.map((group) => (
+                <div key={group.owner}>
+                  <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
+                    {group.label}
+                  </div>
+                  {group.defs.map((def) => (
+                    <button
+                      key={def.id}
+                      onClick={() => onPickGen(def.id)}
+                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+                    >
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-emerald-300">
+                        <SparklesIcon />
+                      </span>
+                      {def.title}
+                    </button>
+                  ))}
                 </div>
-                {nodes.map((n) => (
-                  <button
-                    key={n.type}
-                    onClick={() => onPickCore?.(n.type)}
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
-                  >
-                    <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                      <NodeGlyph />
-                    </span>
-                    {n.title}
-                  </button>
-                ))}
+              ))}
+            </div>
+          )}
+          {addable.length > 0 && (
+            <div className="border-t border-border">
+              <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+                Inline Core
               </div>
-            ))}
-          </div>
-        )}
+              {groupByCategory(addable).map(([category, nodes]) => (
+                <div key={category}>
+                  <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
+                    {category}
+                  </div>
+                  {nodes.map((n) => (
+                    <button
+                      key={n.type}
+                      onClick={() => onPickCore?.(n.type)}
+                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+                    >
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                        <NodeGlyph />
+                      </span>
+                      {n.title}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </>
   )

@@ -235,6 +235,20 @@ export function PlayIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
+/** Filled square — the Run control turns into this to interrupt an in-progress generation. */
+export function StopIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className ?? 'h-4 w-4'}
+      aria-hidden="true"
+    >
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+    </svg>
+  )
+}
+
 /**
  * Sliders/adjust mark — opens a node's settings sidebar. Shared by the Generate (fal) node and the
  * Inline Core node so both read identically. Has filled dots, so it's its own svg (not the stroked

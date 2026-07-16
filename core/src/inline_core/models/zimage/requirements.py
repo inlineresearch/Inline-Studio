@@ -9,10 +9,11 @@ This module is deliberately **torch-free** (pure filesystem + config), so the re
 the download planning work without the heavy ``zimage`` runtime loaded. The runner imports the
 resolution helpers from here so the "what/where" logic lives in one place.
 
-Z-Image is a single diffusers repo (``Tongyi-MAI/Z-Image-Turbo``) with ``transformer/``, ``vae/``,
-``text_encoder/`` and ``tokenizer/`` subfolders. The user's common path is to drop a single
-diffusion ``.safetensors`` in ``diffusion_models/`` and download the small VAE + text-encoder; the
-popup can also fetch the whole pipeline as one diffusers folder.
+Z-Image loads ComfyUI-style from **three single files** — one diffusion ``.safetensors``, one VAE,
+one text-encoder — pulled from ``Comfy-Org/z_image/split_files`` and dropped flat into
+``diffusion_models/``, ``vae/`` and ``text_encoders/``. The small configs + Qwen tokenizer that
+neither weights file carries come from the loader-core asset bundle (``models/loaders.py``), not
+here. A whole-pipeline diffusers folder in ``diffusion_models/`` is still accepted as a fallback.
 """
 
 from __future__ import annotations
@@ -23,13 +24,22 @@ from pathlib import Path
 
 from ...config import models_dir
 
-#: The reference repo. Used only as an explicit download source (never as an implicit load source).
-BASE_REPO = "Tongyi-MAI/Z-Image-Turbo"
+#: Split-file weights repo — ComfyUI's consolidated single files, one ``.safetensors`` per
+#: component (fast, fully offline to load). The popup pulls exactly one file per component from
+#: here; the configs + tokenizer come from the loader-core asset bundle (see ``models/loaders.py``).
+SPLIT_REPO = "Comfy-Org/z_image"
+#: Back-compat alias — older callers/tests referenced ``BASE_REPO`` as "the download repo".
+BASE_REPO = SPLIT_REPO
+
+#: The exact single files under ``split_files/<category>/`` — mirrors ComfyUI's Z-Image layout. They
+#: land flat in ``models/<category>/`` so the node's per-category dropdowns list them directly.
+DIFFUSION_FILE = "z_image_bf16.safetensors"
+VAE_FILE = "ae.safetensors"
+TEXT_ENCODER_FILE = "qwen_3_4b.safetensors"
+_SPLIT_PREFIX = "split_files"
 
 _WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pt", ".sft")
 _LOCAL_NAMES = ("Z-Image-Turbo", "z-image-turbo", "Z-Image", "z-image")
-#: Folder name new downloads land under, inside each category dir (so re-downloads are idempotent).
-_LOCAL_DIR = "z-image-turbo"
 
 
 # --- filesystem resolution (shared with the runner) ---------------------------------------------
@@ -59,15 +69,27 @@ def pipeline_dir(root: Path) -> Path | None:
         if (candidate / "model_index.json").is_file():
             return candidate
     # Any subfolder that looks like a diffusers pipeline also counts (e.g. a popup download).
-    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+    for child in sorted(p for p in root.iterdir() if p.is_dir() and not _is_staging(p)):
         if (child / "model_index.json").is_file():
             return child
     return None
 
 
-def local_component(category: str, env_var: str) -> Path | None:
-    """A local supporting-model file/dir under ``models/<category>/`` (or an env override), or None.
-    Prefers an explicit env path, then a single weight file, then a subdir (HF snapshot)."""
+def _is_staging(path: Path) -> bool:
+    """A half-finished download's ``.part`` staging dir — never treat it as an installed model."""
+    return path.name.endswith(".part")
+
+
+def _category_file(
+    category: str, filename: str, env_var: str, chosen: object = None
+) -> Path | None:
+    """The single weight file the runner loads for a category, or None if the category is empty.
+
+    Resolution, most specific first: an explicit ``env_var`` path, then a ``chosen`` filename from
+    the node's dropdown, then the exact recommended split file (e.g. ``ae.safetensors``), then any
+    weight file the user dropped in. Files only — the split-file loader needs a single
+    ``.safetensors``; a bare HF snapshot dir has nothing to hand to ``from_single_file``.
+    """
     env = os.environ.get(env_var, "").strip()
     if env:
         path = Path(env)
@@ -75,13 +97,30 @@ def local_component(category: str, env_var: str) -> Path | None:
     root = models_dir() / category
     if not root.is_dir():
         return None
+    chosen_name = str(chosen or "").strip()
+    if chosen_name:
+        picked = root / chosen_name
+        if picked.is_file():
+            return picked
+    exact = root / filename
+    if exact.is_file():
+        return exact
     files = sorted(
         p for p in root.iterdir() if p.is_file() and p.suffix.lower() in _WEIGHT_SUFFIXES
     )
-    if files:
-        return files[0]
-    dirs = sorted(p for p in root.iterdir() if p.is_dir())
-    return dirs[0] if dirs else None
+    return files[0] if files else None
+
+
+def resolve_vae(params: dict[str, object] | None = None) -> Path | None:
+    """The VAE single file (dropdown pick / ``INLINE_ZIMAGE_VAE`` / split ``ae.safetensors``)."""
+    return _category_file("vae", VAE_FILE, "INLINE_ZIMAGE_VAE", (params or {}).get("vae"))
+
+
+def resolve_text_encoder(params: dict[str, object] | None = None) -> Path | None:
+    """The text-encoder single file (dropdown pick / ``INLINE_ZIMAGE_TEXT_ENCODER`` / the split
+    ``qwen_3_4b.safetensors``)."""
+    chosen = (params or {}).get("text_encoder")
+    return _category_file("text_encoders", TEXT_ENCODER_FILE, "INLINE_ZIMAGE_TEXT_ENCODER", chosen)
 
 
 def resolve_diffusion(params: dict[str, object] | None = None) -> tuple[str, str] | None:
@@ -121,60 +160,72 @@ def resolve_diffusion(params: dict[str, object] | None = None) -> tuple[str, str
 
 @dataclass(frozen=True)
 class ModelComponent:
-    """One required model component, whether it's present, and how the popup would download it."""
+    """One required model component: whether it's present, and the exact file the popup fetches."""
 
     id: str  # "diffusion" | "vae" | "text_encoder"
     label: str
     category: str  # models/ subfolder it belongs to
     present: bool
-    local_path: str  # where it's expected / would land (relative to the models root)
+    filename: str  # the single file that lands flat in models/<category>/ (a dropdown entry)
     repo: str  # HF repo the popup downloads from
-    subfolders: tuple[str, ...]  # repo subfolders to fetch & flatten; () = whole repo, keep layout
+    repo_file: str  # exact repo-relative path fetched from ``repo`` (under ``split_files/``)
+
+    @property
+    def local_path(self) -> str:
+        """Where this file lives / lands, relative to the models root (flat in its category)."""
+        return f"{self.category}/{self.filename}"
+
+
+def _split_component(
+    *, id: str, label: str, category: str, filename: str, present: bool
+) -> ModelComponent:
+    return ModelComponent(
+        id=id,
+        label=label,
+        category=category,
+        present=present,
+        filename=filename,
+        repo=SPLIT_REPO,
+        repo_file=f"{_SPLIT_PREFIX}/{category}/{filename}",
+    )
 
 
 def zimage_requirements(params: dict[str, object] | None = None) -> list[ModelComponent]:
     """The three Z-Image components with live presence, for the node's model popup.
 
-    VAE and text-encoder count as present when the diffusion source is a whole-pipeline folder (it
-    already contains them) or when a local file/dir is provided under their category.
+    Presence is the **specific single file** (or any weight the user dropped in that category — see
+    ``_category_file``). A whole-pipeline diffusers folder as the diffusion source still counts for
+    the VAE + text-encoder, since it already bundles them.
     """
     diffusion = resolve_diffusion(params)
     is_pipeline = diffusion is not None and diffusion[0] == "pipeline"
 
-    vae_local = local_component("vae", "INLINE_ZIMAGE_VAE")
-    te_local = local_component("text_encoders", "INLINE_ZIMAGE_TEXT_ENCODER")
-
     return [
-        ModelComponent(
+        _split_component(
             id="diffusion",
             label="Diffusion model",
             category="diffusion_models",
+            filename=DIFFUSION_FILE,
             present=diffusion is not None,
-            local_path=f"diffusion_models/{_LOCAL_DIR}",
-            repo=BASE_REPO,
-            subfolders=(),  # the whole diffusers pipeline as one folder
         ),
-        ModelComponent(
+        _split_component(
             id="vae",
             label="VAE",
             category="vae",
-            present=is_pipeline or vae_local is not None,
-            local_path=f"vae/{_LOCAL_DIR}",
-            repo=BASE_REPO,
-            subfolders=("vae",),
+            filename=VAE_FILE,
+            present=is_pipeline or resolve_vae(params) is not None,
         ),
-        ModelComponent(
+        _split_component(
             id="text_encoder",
             label="Text encoder",
             category="text_encoders",
-            present=is_pipeline or (te_local is not None and te_local.is_dir()),
-            local_path=f"text_encoders/{_LOCAL_DIR}",
-            repo=BASE_REPO,
-            subfolders=("text_encoder", "tokenizer"),
+            filename=TEXT_ENCODER_FILE,
+            present=is_pipeline or resolve_text_encoder(params) is not None,
         ),
     ]
 
 
 def download_target(component: ModelComponent) -> Path:
-    """Absolute local dir a component downloads into (under the models root, never the HF cache)."""
-    return models_dir() / component.local_path
+    """Absolute local dir the component's single file lands in — its category folder, flat, so the
+    node's dropdown lists it (under the models root, never the hidden HF cache)."""
+    return models_dir() / component.category

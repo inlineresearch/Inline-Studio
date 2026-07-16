@@ -28,9 +28,18 @@ export function DeletableEdge(props: EdgeProps): React.JSX.Element {
     sourcePosition,
     targetPosition,
   })
-  const edgeData = data as { functional?: boolean; color?: string } | undefined
+  const edgeData = data as { functional?: boolean; color?: string; kindColor?: string } | undefined
   const functional = edgeData?.functional ?? false
-  const stroke = selected ? '#fb7185' : functional ? '#DCE775' : (edgeData?.color ?? '#52525b')
+  // An engine wire (typed Core port) always shows its dot's kind color; selection just thickens it.
+  // Other links keep the rose-on-select / lime-functional / level-color scheme.
+  const kindColor = edgeData?.kindColor
+  const stroke = kindColor
+    ? kindColor
+    : selected
+      ? '#fb7185'
+      : functional
+        ? '#DCE775'
+        : (edgeData?.color ?? '#52525b')
 
   return (
     <>

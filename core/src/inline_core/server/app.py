@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import tempfile
 from contextlib import asynccontextmanager
@@ -36,12 +37,15 @@ from .serialize import descriptor_json, event_json, run_json, take_json
 _RUN_POLL_PATH = re.compile(r"^/v1/runs/[^/]+$")
 
 
-class _SuppressRunPolling(logging.Filter):
-    """Drop the flood of run-status poll requests from the uvicorn access log.
+class _SuppressAccessNoise(logging.Filter):
+    """Drop high-frequency, uninformative request lines from the uvicorn access log.
 
-    Studio polls ``GET /v1/runs/<id>`` sub-second while a run is in flight, which buries the
-    generation progress bar under identical 200 lines. We hide only those successful polls;
-    submits, cancels, errors, and every other request still log normally.
+    Two floods bury the useful logs (generation progress, real errors) under identical 200 lines:
+      - ``GET /v1/runs/<id>`` — Studio polls run status sub-second while a run is in flight.
+      - ``POST /rpc`` — every Studio backend call (each keystroke's autosave, every store refresh)
+        is one of these; they say nothing on their own.
+    We hide only those successful, chatty lines; submits, cancels, errors, uploads, media, and
+    every other request still log normally.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -49,16 +53,34 @@ class _SuppressRunPolling(logging.Filter):
         if not isinstance(args, tuple) or len(args) < 5:
             return True
         method, path, status = args[1], args[2], args[4]
-        if method == "GET" and status == 200 and _RUN_POLL_PATH.match(str(path)):
+        if status == 200 and method == "GET" and _RUN_POLL_PATH.match(str(path)):
+            return False
+        if status == 200 and method == "POST" and str(path) == "/rpc":
             return False
         return True
 
 
-def _quiet_run_polling() -> None:
-    """Install the poll-suppressing access-log filter once (idempotent across create_app calls)."""
+def _quiet_access_log() -> None:
+    """Install the noise-suppressing access-log filter once (idempotent across create_app calls)."""
     access = logging.getLogger("uvicorn.access")
-    if not any(isinstance(f, _SuppressRunPolling) for f in access.filters):
-        access.addFilter(_SuppressRunPolling())
+    if not any(isinstance(f, _SuppressAccessNoise) for f in access.filters):
+        access.addFilter(_SuppressAccessNoise())
+
+
+def _setup_app_logging() -> None:
+    """Give the engine's own loggers (``inline_core.*``) a stream handler at INFO.
+
+    Uvicorn configures only its own loggers, leaving the root at WARNING with no handler — so the
+    engine's INFO diagnostics (device, model-load timing, VRAM) would be dropped. This attaches one
+    handler to the ``inline_core`` logger (idempotent) at ``INLINE_LOG_LEVEL`` (default INFO).
+    """
+    logger = logging.getLogger("inline_core")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     [inline-core] %(message)s"))
+        logger.addHandler(handler)
+        logger.propagate = False
+    logger.setLevel(os.environ.get("INLINE_LOG_LEVEL", "INFO").upper())
 
 
 def _within(root: Path, path: Path) -> bool:
@@ -97,7 +119,8 @@ def create_app(
     events: EventBroadcaster | None = None,
     studio_store: Any = None,
 ) -> FastAPI:
-    _quiet_run_polling()
+    _setup_app_logging()
+    _quiet_access_log()
     registry = registry or build_default_registry()
     cache = cache or InMemoryCache()
     policy = policy or MemoryPolicy()

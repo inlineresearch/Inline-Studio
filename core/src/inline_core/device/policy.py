@@ -21,6 +21,22 @@ class AttentionBackend(str, Enum):
     SDPA = "sdpa"
 
 
+class OffloadMode(str, Enum):
+    """How a component's weights are split between GPU VRAM and CPU RAM.
+
+    NONE       weights stay resident on the GPU (the default — prefer the GPU we have).
+    MODEL      diffusers ``enable_model_cpu_offload``: only the *active* component (text encoder,
+               then transformer, then VAE) sits on the GPU; the rest waits in CPU RAM. Peak VRAM ≈
+               the largest single component. Fast — the standard low-VRAM fit.
+    SEQUENTIAL diffusers ``enable_sequential_cpu_offload``: submodules stream on/off the GPU
+               layer-by-layer. Lowest peak VRAM, slowest — for GPUs too small for MODEL offload.
+    """
+
+    NONE = "none"
+    MODEL = "model"
+    SEQUENTIAL = "sequential"
+
+
 class Quantization(str, Enum):
     NONE = "none"
     INT8 = "int8"  # torch-native weight-only, portable
@@ -49,10 +65,16 @@ class Placement:
 
     device: Device
     dtype: DType
-    offload: bool = False
+    offload_mode: OffloadMode = OffloadMode.NONE
     # Multi-GPU (denoiser only): the device group + how it is split. Empty/None = single device.
     devices: tuple[Device, ...] = ()
     parallel: Parallel | None = None
+
+    @property
+    def offload(self) -> bool:
+        """Whether any CPU offload is in effect (either MODEL or SEQUENTIAL). Kept as a bool so the
+        many call sites that only care "is this streaming to CPU?" stay simple."""
+        return self.offload_mode is not OffloadMode.NONE
 
 
 class DevicePolicy(ABC):

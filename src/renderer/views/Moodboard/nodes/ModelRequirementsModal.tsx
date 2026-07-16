@@ -18,7 +18,9 @@ function ComponentRow({
 }): React.JSX.Element {
   const download = useModelRequirementsStore((s) => s.download)
   const dl = useModelRequirementsStore((s) => s.downloads[nodeType]?.[comp.id])
-  const busy = dl !== undefined && dl.error === undefined
+  // A present component always reads as "Ready" — never as an in-progress bar (a sibling's reload can
+  // land while this one is mid-download; presence wins).
+  const busy = dl !== undefined && dl.error === undefined && !comp.present
   const pct = Math.round((dl?.fraction ?? 0) * 100)
 
   return (
@@ -26,10 +28,10 @@ function ComponentRow({
       <div className="flex items-center gap-2">
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[12px] font-medium text-zinc-100">{comp.label}</span>
-          <span className="truncate font-mono text-[10px] text-zinc-500">{comp.localPath}</span>
+          <span className="truncate font-mono text-[10px] text-zinc-500">{comp.source}</span>
         </span>
         {comp.present ? (
-          <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+          <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-accent">
             Ready
           </span>
         ) : busy ? (

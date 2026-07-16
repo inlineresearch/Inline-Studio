@@ -120,9 +120,18 @@ between nodes and are never takes.
 - **Server bind** — `INLINE_HOST` (default `127.0.0.1`), `INLINE_PORT` (default `8848`).
 - **Model overrides** — e.g. `INLINE_ZIMAGE_MODEL` (a single `.safetensors` file path, a local
   diffusers dir, or a HF repo id for Z-Image). Auto-resolved from `diffusion_models/` when unset.
-- **Memory** — always prefer the GPU: even under the `lowvram` profile, weights stay resident on the
-  GPU (VAE tiling/slicing + attention slicing + int8 do the saving); we do **not** auto-offload to CPU.
-  `INLINE_ALLOW_CPU_OFFLOAD=1` opts back into `enable_model_cpu_offload()` for extreme cases.
+- **Memory** — by default prefer the GPU: even under the `lowvram` profile, weights stay resident on
+  the GPU (VAE tiling/slicing + attention slicing + int8 do the saving); we do **not** auto-offload to
+  CPU. **Smart memory** (`INLINE_SMART_MEMORY=1`, `webui.sh --smart-memory`) is the opt-in for a model
+  that can't fit resident full-precision: it int8-quantizes the big weights (transformer + text
+  encoder, via torchao) so the **halved** model fits **resident** on the GPU — no CPU offload, because
+  torchao int8 + accelerate's `enable_model_cpu_offload` deadlock together. Only a GPU too small for
+  even int8-resident falls back to unquantized `SEQUENTIAL` submodule streaming. `INLINE_ALLOW_CPU_OFFLOAD=1`
+  is the older bare (unquantized) model-offload knob.
+- **Compute dtype** — bf16 on the GPU by default, but **fp16 on cards without bf16 acceleration**
+  (Turing/Volta — compute capability < 8.0, e.g. a T4): same footprint, but it uses the fp16 tensor
+  cores instead of bf16's slow path. The **VAE stays upcast** (bf16, or fp32 when the denoiser is
+  fp16) because fp16 VAE decode can overflow to black/NaN images (`_compute_dtype` in `device/`).
 - **Multi-GPU** — `INLINE_PARALLEL` (e.g. `pipefusion=2`, `pipefusion=2,ulysses=2`); degrees multiply
   to the world size, which must equal the GPU count.
 

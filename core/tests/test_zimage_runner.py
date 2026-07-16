@@ -55,7 +55,9 @@ class _FakeStore:
 @pytest.fixture
 def use_fake_pipe(monkeypatch: pytest.MonkeyPatch) -> _FakePipe:
     pipe = _FakePipe()
-    monkeypatch.setattr(rz, "_load_pipeline", lambda policy, *, img2img, source, mode: pipe)
+    monkeypatch.setattr(
+        rz, "_load_pipeline", lambda policy, *, img2img, source, mode, vae, text, quant=None: pipe
+    )
     # These tests mock the pipeline, so bypass the "models present on disk" gate.
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
     monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))
@@ -77,8 +79,11 @@ def test_register_adds_descriptor_and_runner() -> None:
     assert registry.has("alibaba/z-image-turbo")
     descriptor = registry.get("alibaba/z-image-turbo")
     assert descriptor.output_kind is not None
-    assert [p.id for p in descriptor.inputs] == ["prompt", "image"]
-    assert descriptor.input("prompt").required and not descriptor.input("image").required
+    assert [p.id for p in descriptor.inputs] == ["prompt", "model", "vae", "text_encoder", "image"]
+    assert descriptor.input("prompt").required
+    # The component handles + image are all optional (wire a Load node, or use the dropdowns).
+    for optional in ("model", "vae", "text_encoder", "image"):
+        assert not descriptor.input(optional).required
     assert registry.runner("alibaba/z-image-turbo").produces_takes
 
 
@@ -103,6 +108,57 @@ def test_run_resolves_inputs_and_saves_take(use_fake_pipe: _FakePipe) -> None:
     assert store.saved[0]["params"]["seed"] == 123
     ticks = [e for e in emitter.events if isinstance(e, ProgressEvent) and e.phase is Phase.SAMPLE]
     assert len(ticks) == 4 and ticks[-1].fraction == pytest.approx(1.0)
+
+
+def test_wired_component_handles_override_dropdowns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A load/* node wired into model/vae/text_encoder feeds its file straight into the pipeline,
+    bypassing the dropdown resolution."""
+    from inline_core.graph.loader_runners import ComponentRef
+
+    captured: dict[str, Any] = {}
+
+    def _fake_load(
+        policy: Any, *, img2img: bool, source: str, mode: str, vae: str, text: str, quant: Any = None
+    ) -> Any:
+        captured.update(source=source, mode=mode, vae=vae, text=text)
+        return _FakePipe()
+
+    monkeypatch.setattr(rz, "_load_pipeline", _fake_load)
+    monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
+    # The dropdown path must NOT be consulted when everything is wired.
+    monkeypatch.setattr(
+        rz.reqs, "resolve_diffusion", lambda params=None: pytest.fail("dropdown used despite wire")
+    )
+    runner = rz.ZImageRunner(_FakeStore(), MemoryPolicy())
+    ctx, _ = _ctx()
+    node = Node(id="f", type="alibaba/z-image-turbo")
+    inputs = {
+        "prompt": ["a fox"],
+        "model": [ComponentRef(kind="diffusion", arch="z-image", file="/m/diff.safetensors")],
+        "vae": [ComponentRef(kind="vae", arch="z-image", file="/m/ae.safetensors")],
+        "text_encoder": [
+            ComponentRef(kind="text_encoder", arch="z-image", file="/m/qwen.safetensors")
+        ],
+    }
+    runner.run(node, inputs, ctx)
+    assert captured == {
+        "source": "/m/diff.safetensors",
+        "mode": "single_file",
+        "vae": "/m/ae.safetensors",
+        "text": "/m/qwen.safetensors",
+    }
+
+
+def test_miswired_handle_is_rejected(use_fake_pipe: _FakePipe) -> None:
+    from inline_core.graph.loader_runners import ComponentRef
+
+    runner = rz.ZImageRunner(_FakeStore(), MemoryPolicy())
+    ctx, _ = _ctx()
+    node = Node(id="f", type="alibaba/z-image-turbo")
+    # A vae handle on the model port (the validator blocks this by kind; the runner guards too).
+    inputs = {"prompt": ["x"], "model": [ComponentRef(kind="vae", arch="z-image", file="/m/ae")]}
+    with pytest.raises(ComponentError, match="diffusion handle"):
+        runner.run(node, inputs, ctx)
 
 
 def test_run_without_prompt_fails(use_fake_pipe: _FakePipe) -> None:
@@ -132,7 +188,7 @@ def test_cancel_during_sampling_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         rz, "_load_pipeline",
-        lambda policy, *, img2img, source, mode: _CancellingPipe(),
+        lambda policy, *, img2img, source, mode, vae, text, quant=None: _CancellingPipe(),
     )
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
     monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))

@@ -7,6 +7,7 @@ import { useFrameStore } from '../../../store/frameStore'
 import { useAssetStore } from '../../../store/assetStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useGenerationStore } from '../../../store/generationStore'
+import { useGraphSelectionStore } from '../../../store/graphSelectionStore'
 import { useLightboxStore } from '../../../store/lightboxStore'
 import {
   getAssetDragIds,
@@ -28,28 +29,13 @@ import {
   VideoGlyph,
 } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
+import { NodeRunToolbar } from './NodeRunToolbar'
 import { resolveInputThumbs } from './inputThumbs'
 import { ModelPicker } from '../ModelPicker'
 import { resolveMedia } from '@/lib/media'
 
 interface GenNodeData extends Record<string, unknown> {
   frameId: string
-}
-
-function PlayIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-      <path d="M8 5v14l11-7z" />
-    </svg>
-  )
-}
-
-function StopIcon(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="h-[18px] w-[18px]">
-      <rect x="6" y="6" width="12" height="12" rx="1.5" />
-    </svg>
-  )
 }
 
 /** Two-sparkle mark flagging an AI/API-backed node. Matches the toolbar's create button. */
@@ -132,6 +118,8 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
   const busy = useGenerationStore((s) => s.busyByFrame[frameId] ?? false)
   const progress = useGenerationStore((s) => s.progressByFrame[frameId])
   const status = useGenerationStore((s) => s.statusByFrame[frameId])
+  // This node is the selected graph's output node → it floats the graph's single Run control.
+  const isRunTarget = useGraphSelectionStore((s) => s.runTargets.includes(id))
   const onMediaContextMenu = useMediaContextMenu()
   const openLightbox = useLightboxStore((s) => s.open)
   const [dropActive, setDropActive] = useState(false)
@@ -255,6 +243,15 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
 
   return (
     <>
+      {/* The graph's single Run control, floated above this output node while the graph is selected. */}
+      <NodeRunToolbar
+        isTarget={isRunTarget}
+        busy={busy}
+        onRun={() => void run(frameId)}
+        onStop={() => void cancel(frameId)}
+        disabled={!!missing}
+        disabledReason={missing ?? undefined}
+      />
       {/* Title + live price-estimate badges — float above the node. */}
       <NodeBadgeRow>
         <NodeBadge icon={<SparkleIcon />}>Generate</NodeBadge>
@@ -396,42 +393,21 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
             )}
           </div>
 
-          {/* Footer: model picker + run/stop + settings. */}
+          {/* Footer: model picker + settings (adjust). Run lives on the graph's output node. */}
           <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface/90 px-1.5 py-1">
             <ModelPicker
               modelId={frame.modelId}
               onSelect={(m) => void setModel(frameId, m)}
               onShowInfo={openModelInfo}
             />
-            <div className="flex shrink-0 items-center gap-0.5">
-              {/* Run / Stop — sits just before the settings (adjust) icon. */}
-              {busy ? (
-                <button
-                  onClick={() => void cancel(frameId)}
-                  title="Cancel generation"
-                  className="nodrag flex h-6 w-6 items-center justify-center rounded text-zinc-300 hover:bg-black/40 hover:text-white"
-                >
-                  <StopIcon />
-                </button>
-              ) : (
-                <button
-                  onClick={() => void run(frameId)}
-                  disabled={!!missing}
-                  title={missing ?? 'Generate this node'}
-                  className="nodrag flex h-6 w-6 items-center justify-center rounded text-emerald-400 hover:bg-black/40 hover:text-emerald-300 disabled:opacity-40"
-                >
-                  <PlayIcon />
-                </button>
-              )}
-              <button
-                onClick={() => toggleSettings(frameId)}
-                title="Settings"
-                data-gen-settings-toggle
-                className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:bg-black/40 hover:text-zinc-100"
-              >
-                <AdjustIcon />
-              </button>
-            </div>
+            <button
+              onClick={() => toggleSettings(frameId)}
+              title="Settings"
+              data-gen-settings-toggle
+              className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:bg-black/40 hover:text-zinc-100"
+            >
+              <AdjustIcon />
+            </button>
           </div>
 
           {dropActive && (
@@ -449,7 +425,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
         <InputHandle
           key={d.id}
           id={d.id}
-          top={`${(((i + 1) / (inputDots.length + 1)) * 100).toFixed(2)}%`}
+          top={`${18 + i * 22}px`}
           colorClass={d.colorClass}
           icon={d.icon}
           label={d.label}

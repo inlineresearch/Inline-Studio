@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from inline_core.device.memory import MemoryPolicy
-from inline_core.device.policy import Parallel, Profile, Quantization
-from inline_core.device.types import Device, DeviceKind
+from inline_core.device.policy import OffloadMode, Parallel, Profile, Quantization
+from inline_core.device.types import Device, DeviceKind, DType
 
 _CUDA = Device(DeviceKind.CUDA, 0)
 _CPU = Device(DeviceKind.CPU)
@@ -41,6 +41,66 @@ def test_lowvram_offload_can_be_forced_off_via_arg() -> None:
     # An explicit allow_offload arg wins over the env default.
     policy = MemoryPolicy(_CUDA, vram_gb=6, allow_offload=True)
     assert policy.placement("denoiser").offload is True
+
+
+def test_bare_offload_is_model_mode() -> None:
+    placement = MemoryPolicy(_CUDA, vram_gb=6, allow_offload=True).placement("denoiser")
+    assert placement.offload_mode is OffloadMode.MODEL
+
+
+def test_smart_memory_quantizes_resident_on_a_tight_gpu() -> None:
+    # A 15.6GB card (lands in lowvram) that OOMs full-resident: smart memory int8-quantizes the
+    # model (halving it) and keeps it RESIDENT — no CPU offload (torchao int8 + offload hangs).
+    policy = MemoryPolicy(_CUDA, vram_gb=15.6, smart_memory=True)
+    assert policy.profile is Profile.LOWVRAM
+    placement = policy.placement("denoiser")
+    assert placement.offload_mode is OffloadMode.NONE
+    assert placement.offload is False
+    assert policy.quantization() is Quantization.INT8
+
+
+def test_smart_memory_escalates_to_sequential_unquantized_on_a_tiny_gpu() -> None:
+    # Too small for even int8-resident: stream submodules (sequential) and skip quant, since torchao
+    # int8 + CPU offload deadlock together.
+    policy = MemoryPolicy(_CUDA, vram_gb=4, smart_memory=True)
+    assert policy.placement("denoiser").offload_mode is OffloadMode.SEQUENTIAL
+    assert policy.quantization() is Quantization.NONE
+
+
+def test_smart_memory_is_off_by_default_prefers_resident_gpu() -> None:
+    policy = MemoryPolicy(_CUDA, vram_gb=15.6)
+    assert policy.placement("denoiser").offload_mode is OffloadMode.NONE
+    assert policy.quantization() is Quantization.NONE
+
+
+def test_smart_memory_noop_on_ample_gpu_stays_gpu_max() -> None:
+    # gpu-max never offloads/quantizes; smart memory only engages the lowvram machinery.
+    policy = MemoryPolicy(_CUDA, vram_gb=24, smart_memory=True)
+    assert policy.profile is Profile.GPU_MAX
+    assert policy.placement("denoiser").offload_mode is OffloadMode.NONE
+    assert policy.quantization() is Quantization.NONE
+
+
+def test_smart_memory_env_flag(monkeypatch) -> None:
+    monkeypatch.setenv("INLINE_SMART_MEMORY", "1")
+    policy = MemoryPolicy(_CUDA, vram_gb=15.6, profile=Profile.LOWVRAM)
+    assert policy.placement("denoiser").offload_mode is OffloadMode.NONE
+    assert policy.quantization() is Quantization.INT8
+
+
+def test_turing_gpu_uses_fp16_with_upcast_vae() -> None:
+    # A GPU without bf16 acceleration (Turing/Volta, e.g. T4): fp16 for the denoiser (uses the fp16
+    # tensor cores), but the VAE stays upcast to fp32 — fp16 VAE decode can overflow to black.
+    policy = MemoryPolicy(_CUDA, vram_gb=15.6, supports_bf16=False)
+    assert policy.placement("denoiser").dtype is DType.FP16
+    assert policy.placement("text_encoder").dtype is DType.FP16
+    assert policy.placement("vae").dtype is DType.FP32
+
+
+def test_ampere_gpu_keeps_bf16_everywhere() -> None:
+    policy = MemoryPolicy(_CUDA, vram_gb=24, supports_bf16=True)
+    assert policy.placement("denoiser").dtype is DType.BF16
+    assert policy.placement("vae").dtype is DType.BF16
 
 
 def test_cpu_uses_fp32_and_quantizes_on_low_ram() -> None:

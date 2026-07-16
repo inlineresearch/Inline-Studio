@@ -21,6 +21,11 @@ zimage = [
   "transformers>=4.44",
   "accelerate>=0.30",
   "safetensors>=0.4",
+  # Smart memory (`webui.sh --smart-memory`) quantizes the big weights to int8 with torchao's
+  # weight-only quant — torch-native and movable, so it coexists with CPU offload. >=0.14 for the
+  # config-object API (Int8WeightOnlyConfig; the "int8_weight_only" string form was dropped).
+  # Best-effort at load time: an absent/incompatible torchao logs and falls back, never crashes.
+  "torchao>=0.14",
   # Explicit model downloads (the node's model popup) go through huggingface_hub. It ships
   # transitively with diffusers/transformers, but pin it here since we call snapshot_download
   # directly and rely on local_dir= to land files in models/ (never the hidden HF cache).

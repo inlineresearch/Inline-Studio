@@ -130,8 +130,16 @@ PRIMITIVES: tuple[NodeDescriptor, ...] = (
 )
 
 
+#: The loader primitives now have runners and are offered in the add-node menu — registered
+#: (unhidden) with their runners by ``graph/loader_runners.py``, so they are skipped here.
+_HAS_RUNNER = {LOAD_DIFFUSION_MODEL.type, LOAD_VAE.type, LOAD_TEXT_ENCODER.type}
+
+
 def register_primitives(registry: Registry) -> None:
-    """Register the primitive descriptors, marked hidden so they never surface in the add-node menu
-    (they stay available for validation/execution). Their runners land in C2."""
+    """Register the still-descriptor-only primitives, marked hidden so they never surface in the
+    add-node menu (they stay available for validation). The loader primitives are registered with
+    runners + unhidden by ``register_loaders``; the sampler/encode/decode runners land in C2."""
     for descriptor in PRIMITIVES:
+        if descriptor.type in _HAS_RUNNER:
+            continue
         registry.register(replace(descriptor, hidden=True))

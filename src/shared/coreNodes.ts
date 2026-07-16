@@ -92,6 +92,8 @@ export interface ModelComponent {
   localPath: string
   /** The Hugging Face repo the popup downloads it from. */
   repo: string
+  /** "Which model" — the repo narrowed to the exact subfolder(s), e.g. `Owner/Repo/vae`. */
+  source: string
 }
 
 /** A node's model requirements with live presence (from `models:requirements`). */
@@ -105,6 +107,18 @@ const ENGINE_KINDS: readonly PortKind[] = ['model', 'vae', 'text-encoder', 'cond
 /** Engine handles are opaque objects passed between low-level nodes; never a take. */
 export function isEngineKind(kind: PortKind): boolean {
   return ENGINE_KINDS.includes(kind)
+}
+
+const MODEL_KINDS: readonly PortKind[] = ['model', 'vae', 'text-encoder']
+
+/**
+ * A "model-family" handle — the loader plumbing (diffusion model, VAE, text encoder) that threads a
+ * component into a node. On the canvas these dots pack to the **bottom** edge of a node while the
+ * content/signal dots (image, latent, conditioning, …) pack to the **top**, so model wiring reads as
+ * one band along the bottom and the actual image flow runs across the top.
+ */
+export function isModelPort(kind: PortKind): boolean {
+  return MODEL_KINDS.includes(kind)
 }
 
 /** A node that emits media (has an `outputKind`) is a Frame with take history. */

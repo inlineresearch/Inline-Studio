@@ -55,10 +55,21 @@ def test_full_project_and_canvas_flow(client) -> None:
     board = rpc(client, "moodboard:list")["value"]
     assert len(board["items"]) == 2 and len(board["connectors"]) == 1
 
-    # Core node palette is served (Z-Image visible, primitives hidden).
+    # Core node palette is served: Z-Image, the loader subnodes, and (once their C2 diffusers
+    # runners register) the decomposed primitives are visible; only the source inputs stay hidden.
     models = rpc(client, "core:models")["value"]
-    visible = [m["type"] for m in models["models"] if not m.get("hidden")]
-    assert visible == ["alibaba/z-image-turbo"]
+    visible = {m["type"] for m in models["models"] if not m.get("hidden")}
+    assert visible == {
+        "alibaba/z-image-turbo",
+        "load/diffusion-model",
+        "load/vae",
+        "load/text-encoder",
+        "encode/text",
+        "latent/empty",
+        "sample",
+        "vae/decode",
+        "vae/encode",
+    }
     assert rpc(client, "core:status")["value"]["running"] is True
 
     # Settings round-trip.

@@ -46,7 +46,9 @@ const MAX_PANEL_WIDTH = 600
 
 export function SideMenu(): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('assets')
-  const [open, setOpen] = useState(true)
+  // Start collapsed to the icon rail: the canvas gets the full width by default, and the user
+  // expands Assets/Outputs/Timeline when they want them.
+  const [open, setOpen] = useState(false)
   const [width, setWidth] = useState(256)
 
   // Drag the right separator to resize the expanded panel. Listeners live on the

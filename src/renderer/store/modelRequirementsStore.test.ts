@@ -5,7 +5,15 @@ import { activeDownload, type ComponentDownload } from './modelRequirementsStore
 const REQS: ModelRequirements = {
   allPresent: false,
   components: [
-    { id: 'vae', label: 'VAE', category: 'vae', present: false, localPath: 'vae/x', repo: 'r' },
+    {
+      id: 'vae',
+      label: 'VAE',
+      category: 'vae',
+      present: false,
+      localPath: 'vae/x',
+      repo: 'r',
+      source: 'r/vae',
+    },
     {
       id: 'diffusion',
       label: 'Diffusion model',
@@ -13,6 +21,7 @@ const REQS: ModelRequirements = {
       present: false,
       localPath: 'd',
       repo: 'r',
+      source: 'r',
     },
   ],
 }
