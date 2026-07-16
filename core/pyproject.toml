@@ -2,7 +2,7 @@
 # PyPI distribution name. The import package is `inline_core` (src/inline_core); PyPI treats the
 # hyphen and underscore as equivalent, so `pip install inline-core` installs the `inline_core` package.
 name = "inline-core"
-version = "0.0.0"
+version = "1.1.1"
 description = "The generation engine behind Inline."
 requires-python = ">=3.11"
 dependencies = [
