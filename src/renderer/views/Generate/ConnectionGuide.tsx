@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { studio } from '@/lib/studio'
+import { copyText } from '@/lib/clipboard'
 
 /**
  * Shown on the Generate tab when no ComfyUI is reachable. Two side-by-side cards
@@ -167,7 +168,8 @@ function Step({ n, children }: { n: number; children: React.ReactNode }): React.
 function CopyBlock({ command }: { command: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const copy = (): void => {
-    void navigator.clipboard.writeText(command).then(() => {
+    void copyText(command).then((ok) => {
+      if (!ok) return
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })

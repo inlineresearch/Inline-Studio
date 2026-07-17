@@ -9,7 +9,7 @@ import { addableCoreNodes, type NodeDescriptor } from '@shared/coreNodes'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
-export type AddNodeKind = 'frame' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
+export type AddNodeKind = 'load' | 'frame' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
 
 interface Entry {
   kind: AddNodeKind
@@ -20,6 +20,7 @@ interface Entry {
 }
 
 const ENTRIES: Entry[] = [
+  { kind: 'load', label: 'Load Assets', icon: <ImageIcon /> },
   { kind: 'frame', label: 'Generate', icon: <SparklesIcon />, accent: true },
   { kind: 'layer', label: 'Layer', icon: <LayerIcon /> },
   { kind: 'preview', label: 'Preview', icon: <ImageIcon /> },

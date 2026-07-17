@@ -206,7 +206,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
     }
     return (
       <>
-        <NodeBadgeRow>
+        <NodeBadgeRow dragNodeId={id}>
           <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>
         </NodeBadgeRow>
         <NodeFrame
@@ -279,7 +279,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         disabledReason="Downloading model…"
       />
       {/* Floating title badge — matches the fal Generate node. */}
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>
         {modelsMissing && (
           <button

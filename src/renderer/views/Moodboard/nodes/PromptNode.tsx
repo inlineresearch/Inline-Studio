@@ -21,7 +21,7 @@ export function PromptNode({ id, selected }: NodeProps): React.JSX.Element {
   return (
     <>
       {/* Label badge — floats above the node, outside its container. */}
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<span className="text-sm font-bold leading-none text-zinc-400">T</span>}>
           Prompt
         </NodeBadge>

@@ -158,7 +158,7 @@ export function DirectorNode({ id, data, selected }: NodeProps): React.JSX.Eleme
   return (
     <>
       {/* Title badge — floats above the node, matching the Generate node. */}
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<ClapperIcon />} title={name || 'Director'}>
           {name || 'Director'}
         </NodeBadge>

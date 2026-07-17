@@ -34,6 +34,28 @@ async function uploadOne(file: File, folderId: string | null): Promise<Asset | n
   return body.ok ? (body.value ?? null) : null
 }
 
+/**
+ * Copy a media file already served by Core (a `/media/...` URL — a take or a Core-node output) into
+ * the Library as a proper asset, so it can be used as a frame/loader input. Fetches the bytes and
+ * re-uploads them via /upload. Returns the created asset, or null on failure.
+ */
+export async function importMediaUrlToLibrary(
+  url: string,
+  name: string,
+  folderId: string | null = null,
+): Promise<Asset | null> {
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    const file = new File([blob], name, { type: blob.type || 'application/octet-stream' })
+    const [asset] = await uploadFiles([file], folderId)
+    return asset ?? null
+  } catch {
+    return null
+  }
+}
+
 /** Open the browser file picker; resolves with the chosen files (empty if cancelled). */
 export function pickFilesViaInput(): Promise<File[]> {
   return new Promise((resolve) => {

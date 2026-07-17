@@ -245,15 +245,30 @@ export interface MoodboardItemData {
   trim?: { inPoint: number; outPoint: number }
   /** Prompt node: the text it feeds into a connected Generate node's prompt input. */
   promptText?: string
+  /** Marks a `frame` item as a pure "Load Assets" loader: no generation, freely resizable (no
+   * aspect-fit snap-back), showing a loaded image/video and passing it straight through as its
+   * output (resolved to its first input asset). */
+  loader?: boolean
   /** Core graph node: the Inline Core node type + its param values (see coreNodes.ts). */
   core?: {
     type: string
     params: Record<string, unknown>
-    /** The active media this node produced — shown large and flowed downstream. Project-relative. */
-    output?: { takeId: string; filePath: string; kind: 'image' | 'video' | 'audio' }
+    /** The active media this node produced — shown large and flowed downstream. Project-relative.
+     * `createdAt` (ms) is stamped at generation; absent on renders made before it was tracked. */
+    output?: {
+      takeId: string
+      filePath: string
+      kind: 'image' | 'video' | 'audio'
+      createdAt?: number
+    }
     /** Recent renders (newest first); `output` points at the active one. Drives the take-history
      * strip on generation nodes. Same shape as `output`. */
-    outputs?: { takeId: string; filePath: string; kind: 'image' | 'video' | 'audio' }[]
+    outputs?: {
+      takeId: string
+      filePath: string
+      kind: 'image' | 'video' | 'audio'
+      createdAt?: number
+    }[]
   }
 }
 

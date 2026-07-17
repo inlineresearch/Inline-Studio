@@ -12,7 +12,7 @@ export function VideoNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // `nodrag` lets the player controls work without the canvas dragging the node.
   return (
     <>
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<VideoGlyph />} title={name}>
           {name}
         </NodeBadge>

@@ -21,7 +21,7 @@ export function AudioNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   return (
     <>
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<AudioGlyph />} title={name}>
           {name}
         </NodeBadge>

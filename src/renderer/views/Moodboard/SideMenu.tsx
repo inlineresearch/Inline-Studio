@@ -7,7 +7,8 @@ import { useAssetStore } from '../../store/assetStore'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useUiStore } from '../../store/uiStore'
 import { LibraryPanel } from '../Library/LibraryPanel'
-import { OutputThumb } from '../Library/OutputThumb'
+import { OutputThumb, type OutputTile } from '../Library/OutputThumb'
+import { useCoreNodesStore } from '../../store/coreNodesStore'
 import { setFrameDragPayload } from '../../lib/dnd'
 import {
   ChevronDownIcon,
@@ -166,21 +167,56 @@ export function SideMenu(): React.JSX.Element {
 }
 
 /**
- * Outputs tab — a flat gallery of every generated take across all frames, newest first.
- * Each tile drags onto a generation node to feed it as an input (via its frame's flow link).
+ * Outputs tab — a flat gallery of every generated render, newest first: frame takes (fal/Comfy)
+ * plus Core-node (e.g. Z-Image) outputs, which aren't Frames and live on their canvas item instead.
+ * Frame tiles drag onto a generation node to feed it as an input (via the frame's flow link).
  */
 function OutputsTab(): React.JSX.Element {
   const frames = useFrameStore((s) => s.frames)
   const takesByFrame = useFrameStore((s) => s.takesByFrame)
+  const items = useMoodboardStore((s) => s.items)
+  const coreDescriptors = useCoreNodesStore((s) => s.descriptors)
 
-  // Ensure frames + their takes are loaded even when the user opens this tab first.
+  // Ensure frames + their takes and the board's items are loaded even if this tab opens first.
   useEffect(() => {
     void useFrameStore.getState().load()
+    void useMoodboardStore.getState().load()
   }, [])
 
-  const outputs = frames
-    .flatMap((f) => (takesByFrame[f.id] ?? []).map((take) => ({ take, frameName: f.name })))
-    .sort((a, b) => b.take.createdAt - a.take.createdAt)
+  // Frame takes: draggable (carry their frame id).
+  const frameOutputs = frames.flatMap((f) =>
+    (takesByFrame[f.id] ?? []).map((take) => ({
+      createdAt: take.createdAt,
+      tile: {
+        id: take.id,
+        filePath: take.filePath,
+        kind: take.kind,
+        label: f.name,
+        frameId: take.frameId,
+      } satisfies OutputTile,
+    })),
+  )
+
+  // Core-node renders live on the moodboard item (data.core.outputs), not the takes table, so surface
+  // them here too. `outputs` already includes the active `output` and is deduped newest-first server-side.
+  const coreOutputs = items.flatMap((it) => {
+    const core = it.type === 'core' ? it.data.core : undefined
+    if (!core) return []
+    const label = coreDescriptors.find((d) => d.type === core.type)?.title ?? core.type
+    const history = core.outputs ?? (core.output ? [core.output] : [])
+    return history.map((o) => ({
+      createdAt: o.createdAt ?? 0,
+      tile: {
+        id: o.takeId,
+        filePath: o.filePath,
+        kind: o.kind,
+        label,
+        frameId: null,
+      } satisfies OutputTile,
+    }))
+  })
+
+  const outputs = [...frameOutputs, ...coreOutputs].sort((a, b) => b.createdAt - a.createdAt)
 
   if (outputs.length === 0) {
     return (
@@ -201,8 +237,8 @@ function OutputsTab(): React.JSX.Element {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         <div className="grid grid-cols-2 gap-2">
-          {outputs.map(({ take, frameName }) => (
-            <OutputThumb key={take.id} take={take} frameName={frameName} />
+          {outputs.map(({ tile }) => (
+            <OutputThumb key={tile.id} tile={tile} />
           ))}
         </div>
       </div>

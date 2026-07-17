@@ -44,6 +44,9 @@ interface MoodboardState {
   ) => Promise<void>
   /** Create an empty frame and place its node on the canvas. Returns the new item. */
   addEmptyFrame: (x: number, y: number) => Promise<MoodboardItem | null>
+  /** Create a "Load Assets" loader — an empty frame flagged as a pure loader (no generation,
+   * freely resizable). Returns the new item. */
+  addLoader: (x: number, y: number) => Promise<MoodboardItem | null>
   /** Add a Preview node. Returns the new item (for connection-drop suggestions). */
   addPreview: (x: number, y: number) => Promise<MoodboardItem | null>
   addLayer: (x: number, y: number) => Promise<void>
@@ -284,6 +287,17 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
       set({ error: ipcErrorMessage(e) })
       return null
     }
+  },
+
+  addLoader: async (x, y) => {
+    // A loader is an empty frame flagged in its item data; reuse the frame plumbing (output handle,
+    // flow-link, take/asset resolution) and just mark it so the node renders as a resizable viewer.
+    const item = await get().addEmptyFrame(x, y)
+    if (!item) return null
+    const data = { ...item.data, loader: true }
+    // Fold into the same history entry addEmptyFrame already recorded (recordHistory = false).
+    await get().updateItem(item.id, { data }, false)
+    return { ...item, data }
   },
 
   addFrameItemInLayer: async (frameId, x, y, parentId) => {

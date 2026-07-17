@@ -120,7 +120,7 @@ export function ChooserNode({ id, data, selected }: NodeProps): React.JSX.Elemen
 
   return (
     <>
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<FilmIcon />} title={frame ? `Frame ${frame.name}` : undefined}>
           Frame {frame?.name ?? '—'}
         </NodeBadge>

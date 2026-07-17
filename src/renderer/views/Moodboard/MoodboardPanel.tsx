@@ -22,7 +22,8 @@ import {
 import '@xyflow/react/dist/style.css'
 import { studio } from '@/lib/studio'
 import { resolveMedia } from '@/lib/media'
-import { importFilesToLibrary } from '@/lib/importFiles'
+import { importFilesToLibrary, importMediaUrlToLibrary } from '@/lib/importFiles'
+import { copyText } from '@/lib/clipboard'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
 import { portKindColor, portsSatisfy, type NodeDescriptor, type PortKind } from '@shared/coreNodes'
 import { useMoodboardStore } from '../../store/moodboardStore'
@@ -35,7 +36,13 @@ import { useGenerationStore } from '../../store/generationStore'
 import { useModelRequirementsStore } from '../../store/modelRequirementsStore'
 import { useTimelineStore } from '../../store/timelineStore'
 import { useUiStore } from '../../store/uiStore'
-import { getAssetDragIds, getFrameDragId, getOutputDragId, getOutputTakeId } from '../../lib/dnd'
+import {
+  getAssetDragIds,
+  getFrameDragId,
+  getMediaFileDrag,
+  getOutputDragId,
+  getOutputTakeId,
+} from '../../lib/dnd'
 import { ImageNode } from './nodes/ImageNode'
 import { VideoNode } from './nodes/VideoNode'
 import { AudioNode } from './nodes/AudioNode'
@@ -64,10 +71,13 @@ import { CheckIcon, CloseIcon, CopyIcon } from '../../components/icons'
  * Every generation node is one `type:'frame'` canvas item (so they share the frame/take/flow-link
  * machinery). Which component renders is decided by the backing frame's provider: `unset` → the
  * ChooserNode (pick an engine); `fal` → the self-contained GenNode; `comfy` (default) → the FrameNode.
+ * A `loader` item is a pure "Load Assets" viewer with no generation, so it always renders as the
+ * FrameNode (loader mode), never the engine chooser.
  */
 function FrameNodeSwitch(props: NodeProps): React.JSX.Element {
-  const { frameId } = props.data as { frameId: string }
+  const { frameId, loader } = props.data as { frameId: string; loader?: boolean }
   const provider = useFrameStore((s) => s.frames.find((f) => f.id === frameId)?.provider)
+  if (loader) return <FrameNode {...props} />
   if (provider === 'fal') return <GenNode {...props} />
   if (provider === 'unset') return <ChooserNode {...props} />
   return <FrameNode {...props} />
@@ -249,6 +259,7 @@ function Board(): React.JSX.Element {
   const addDirector = useMoodboardStore((s) => s.addDirector)
   const addTrim = useMoodboardStore((s) => s.addTrim)
   const addEmptyFrame = useMoodboardStore((s) => s.addEmptyFrame)
+  const addLoader = useMoodboardStore((s) => s.addLoader)
   const addPrompt = useMoodboardStore((s) => s.addPrompt)
   const addCoreNode = useMoodboardStore((s) => s.addCoreNode)
   const addGenNode = useMoodboardStore((s) => s.addGenNode)
@@ -689,6 +700,9 @@ function Board(): React.JSX.Element {
     setAddMenu(null)
     if (!m) return
     switch (kind) {
+      case 'load':
+        void addLoader(m.flowX, m.flowY)
+        break
       case 'frame':
         void addEmptyFrame(m.flowX, m.flowY)
         break
@@ -780,6 +794,19 @@ function Board(): React.JSX.Element {
     e.preventDefault()
     const drop = screenToFlowPosition({ x: e.clientX, y: e.clientY })
 
+    // A raw media file dragged from the Outputs tab (a Core-node render with no frame) → import it
+    // into the Library, then drop a Load Assets loader fed by it at the drop point.
+    const media = getMediaFileDrag(e.dataTransfer)
+    if (media) {
+      void (async () => {
+        const asset = await importMediaUrlToLibrary(resolveMedia(media.filePath), media.name)
+        if (!asset) return
+        const loader = await addLoader(drop.x, drop.y)
+        if (loader?.frameId) await useFrameStore.getState().addInputs(loader.frameId, [asset.id])
+      })()
+      return
+    }
+
     // A generated output dragged from the Outputs tab → create a NEW frame at the drop, fed by
     // that output. Pin the exact take dragged as the source's hero so the new frame shows it.
     const outputFrameId = getOutputDragId(e.dataTransfer)
@@ -841,13 +868,14 @@ function Board(): React.JSX.Element {
     )
   }
 
-  /** On drag stop, persist position and (for frames/previews) re-parent into/out of a layer. */
-  const onNodeDragStop = (_e: unknown, node: Node): void => {
+  /** Persist one dropped node's position and (for frames/previews) re-parent into/out of a layer.
+   * `recordHistory` is set only for the first node of a multi-drag so the whole move is one undo. */
+  const persistNodeDrop = (node: Node, recordHistory: boolean): void => {
     const item = items.find((it) => it.id === node.id)
     if (!item) return
 
     if (item.type !== 'frame' && item.type !== 'preview') {
-      void updateItem(node.id, { x: node.position.x, y: node.position.y })
+      void updateItem(node.id, { x: node.position.x, y: node.position.y }, recordHistory)
       return
     }
 
@@ -861,10 +889,20 @@ function Board(): React.JSX.Element {
     if (newParentId !== item.parentId) {
       const x = target ? abs.x - target.x : abs.x
       const y = target ? abs.y - target.y : abs.y
-      void updateItem(node.id, { parentId: newParentId, x, y })
+      void updateItem(node.id, { parentId: newParentId, x, y }, recordHistory)
     } else {
-      void updateItem(node.id, { x: node.position.x, y: node.position.y })
+      void updateItem(node.id, { x: node.position.x, y: node.position.y }, recordHistory)
     }
+  }
+
+  /**
+   * On drag stop, persist every dragged node — not just the one under the cursor. React Flow passes
+   * the full set of moved nodes as the third arg; ignoring it left the other selected nodes' new
+   * positions unsaved, so they snapped back on the next render/reload.
+   */
+  const onNodeDragStop = (_e: unknown, node: Node, nodes?: Node[]): void => {
+    const dragged = nodes && nodes.length > 0 ? nodes : [node]
+    dragged.forEach((n, i) => persistNodeDrop(n, i === 0))
   }
 
   return (
@@ -1022,13 +1060,11 @@ function GenErrorToast({
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const copy = (): void => {
-    void navigator.clipboard
-      .writeText(message)
-      .then(() => {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 1500)
-      })
-      .catch(() => undefined)
+    void copyText(message).then((ok) => {
+      if (!ok) return
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
   }
   return (
     <div className="absolute left-1/2 top-3 z-30 flex max-w-lg -translate-x-1/2 items-start gap-2 rounded-md border border-red-500/40 bg-red-950/90 px-3 py-2 text-xs text-red-200 shadow-lg">
@@ -1130,7 +1166,11 @@ function itemToNode(
     }
   }
   if (item.type === 'frame') {
-    return { ...common, type: 'frame', data: { frameId: item.frameId } }
+    return {
+      ...common,
+      type: 'frame',
+      data: { frameId: item.frameId, loader: !!item.data.loader },
+    }
   }
   if (item.type === 'preview') {
     return { ...common, type: 'preview', data: {} }

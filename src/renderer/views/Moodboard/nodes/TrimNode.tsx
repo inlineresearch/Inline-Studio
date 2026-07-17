@@ -136,7 +136,7 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
   return (
     <>
       {/* Title + trim-window badges — float above the node, matching the Generate node. */}
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<ScissorsIcon />} title={resolved ? resolved.label : 'Edit Video/Audio'}>
           {resolved ? resolved.label : 'Edit Video/Audio'}
         </NodeBadge>

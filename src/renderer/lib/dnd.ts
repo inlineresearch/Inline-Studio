@@ -70,3 +70,35 @@ export function getOutputDragId(dt: DataTransfer): string | null {
 export function getOutputTakeId(dt: DataTransfer): string | null {
   return parseOutputPayload(dt)?.takeId ?? null
 }
+
+/**
+ * Carries a raw media FILE (project-relative path + kind + name) — used for outputs that have no
+ * backing frame/asset, e.g. a Core node's render (Z-Image). On drop the target imports the file into
+ * the Library (via /media + /upload) and then uses the resulting asset like any other input.
+ */
+export const MEDIA_FILE_DND_TYPE = 'application/x-inlinestudio-mediafile'
+
+export interface MediaFilePayload {
+  filePath: string
+  kind: 'image' | 'video' | 'audio'
+  name: string
+}
+
+export function setMediaFileDragPayload(dt: DataTransfer, payload: MediaFilePayload): void {
+  dt.setData(MEDIA_FILE_DND_TYPE, JSON.stringify(payload))
+  dt.effectAllowed = 'copy'
+}
+
+/** Decode a dragged media file, or null when the drag isn't one. */
+export function getMediaFileDrag(dt: DataTransfer): MediaFilePayload | null {
+  const raw = dt.getData(MEDIA_FILE_DND_TYPE)
+  if (!raw) return null
+  try {
+    const p = JSON.parse(raw) as Partial<MediaFilePayload>
+    if (typeof p.filePath !== 'string' || typeof p.name !== 'string') return null
+    if (p.kind !== 'image' && p.kind !== 'video' && p.kind !== 'audio') return null
+    return { filePath: p.filePath, kind: p.kind, name: p.name }
+  } catch {
+    return null
+  }
+}

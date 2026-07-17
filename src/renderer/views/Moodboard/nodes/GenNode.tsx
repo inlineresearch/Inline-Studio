@@ -253,7 +253,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
         disabledReason={missing ?? undefined}
       />
       {/* Title + live price-estimate badges — float above the node. */}
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<SparkleIcon />}>Generate</NodeBadge>
         {price && (
           <NodeBadge

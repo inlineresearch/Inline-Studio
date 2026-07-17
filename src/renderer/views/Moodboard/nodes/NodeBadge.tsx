@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react'
+import { useCallback, type ReactNode } from 'react'
+import { useReactFlow } from '@xyflow/react'
+import { useMoodboardStore } from '../../../store/moodboardStore'
 
 /**
  * Shared chrome for the canvas node family, matching the Generate node's look: a floating
@@ -7,9 +9,71 @@ import type { ReactNode } from 'react'
  * node — Frame, Preview, Image, Trim, Director… — reads as one consistent card design.
  */
 
-/** Row that holds a node's floating badge(s), pinned above the node's top-left corner. */
-export function NodeBadgeRow({ children }: { children: ReactNode }): React.JSX.Element {
-  return <div className="absolute -top-7 left-0 z-10 flex items-center gap-1">{children}</div>
+/**
+ * Drag ONE node by its title chip, independent of the graph selection. Grabbing a node's body moves
+ * the whole selected graph; grabbing the chip repositions just that node. A custom pointer drag (the
+ * chip is `nodrag`, so React Flow's selection-based multi-drag never starts), persisted on release.
+ */
+function useChipDrag(id: string): (e: React.PointerEvent) => void {
+  const rf = useReactFlow()
+  const updateItem = useMoodboardStore((s) => s.updateItem)
+  return useCallback(
+    (e: React.PointerEvent) => {
+      if (e.button !== 0) return
+      const node = rf.getNode(id)
+      if (!node) return
+      e.stopPropagation()
+      const sx = e.clientX
+      const sy = e.clientY
+      const ox = node.position.x
+      const oy = node.position.y
+      let moved = false
+      const move = (ev: PointerEvent): void => {
+        if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return
+        moved = true
+        const zoom = rf.getViewport().zoom || 1
+        const x = ox + (ev.clientX - sx) / zoom
+        const y = oy + (ev.clientY - sy) / zoom
+        rf.setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, position: { x, y } } : n)))
+      }
+      const up = (): void => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        if (!moved) return
+        const n = rf.getNode(id)
+        if (n) void updateItem(id, { x: n.position.x, y: n.position.y })
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+    },
+    [id, rf, updateItem],
+  )
+}
+
+/**
+ * Row that holds a node's floating badge(s), pinned above the node's top-left corner. Pass
+ * `dragNodeId` (the node's id) to make the chip a per-node drag handle — moving just that node
+ * rather than the whole selected graph.
+ */
+export function NodeBadgeRow({
+  children,
+  dragNodeId,
+}: {
+  children: ReactNode
+  dragNodeId?: string
+}): React.JSX.Element {
+  const onPointerDown = useChipDrag(dragNodeId ?? '')
+  const base = 'absolute -top-7 left-0 z-10 flex items-center gap-1'
+  if (!dragNodeId) return <div className={base}>{children}</div>
+  return (
+    <div
+      className={`${base} nodrag cursor-grab select-none active:cursor-grabbing`}
+      onPointerDown={onPointerDown}
+      title="Drag to move only this node"
+    >
+      {children}
+    </div>
+  )
 }
 
 /**
@@ -326,6 +390,14 @@ export function DownloadIcon({ className }: { className?: string }): React.JSX.E
   return (
     <Icon className={className}>
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+    </Icon>
+  )
+}
+
+export function UploadIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
     </Icon>
   )
 }

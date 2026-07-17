@@ -105,7 +105,7 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
   return (
     <>
       {/* Title + take-count badges — float above the node, matching the Generate node. */}
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<EyeIcon />} title={badgeLabel}>
           {badgeLabel}
         </NodeBadge>
