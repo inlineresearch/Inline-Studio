@@ -262,8 +262,16 @@ def update_item(conn: sqlite3.Connection, item_id: str, patch: dict[str, Any]) -
     return get_item(conn, item_id)
 
 
+# How many recent renders a Core node keeps in its on-node take history (newest first). Bounds the
+# JSON we carry on the moodboard item; older entries drop off (their files stay in takes/).
+_CORE_HISTORY_MAX = 24
+
+
 def set_core_node_output(conn: sqlite3.Connection, item_id: str, output: dict[str, Any]) -> None:
-    """Store the latest render a Core media node produced, for display on the node."""
+    """Record a render a Core media node produced: make it the node's active ``output`` and prepend
+    it to the node's ``outputs`` take history (newest first, deduped by takeId, capped). A fresh
+    generation always becomes the active output; the user can re-activate an older take from the
+    history strip (which just rewrites ``output``)."""
     try:
         item = get_item(conn, item_id)
     except ValueError:
@@ -271,7 +279,14 @@ def set_core_node_output(conn: sqlite3.Connection, item_id: str, output: dict[st
     core = (item.get("data") or {}).get("core")
     if item["type"] != "core" or not core:
         return
-    update_item(conn, item_id, {"data": {**item["data"], "core": {**core, "output": output}}})
+    take_id = output.get("takeId")
+    prior = [o for o in (core.get("outputs") or []) if o.get("takeId") != take_id]
+    outputs = [output, *prior][:_CORE_HISTORY_MAX]
+    update_item(
+        conn,
+        item_id,
+        {"data": {**item["data"], "core": {**core, "output": output, "outputs": outputs}}},
+    )
 
 
 def delete_item(conn: sqlite3.Connection, item_id: str) -> None:

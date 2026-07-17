@@ -155,6 +155,11 @@ Core fits it to the machine automatically, **with no flags**. This is the low-VR
   won't fit).
 - **Switching models frees the old one.** Loading a different checkpoint evicts the previous weights
   rather than stacking them, so you can move between models without accumulating VRAM.
+- **Generation fits too, not just loading.** Prompts encode under `no_grad` so the text-encoder forward
+  never retains its activation graph, and the encoder is parked on the CPU during denoise to free its
+  VRAM; large images (1024² and up) decode the VAE in tiles instead of one full-frame pass. So the
+  memory-heavy steps — encode and decode — stay bounded rather than spiking host RAM or VRAM and taking
+  the server down at high resolution.
 - **Fragmentation-resistant allocator.** `webui.sh` runs with PyTorch expandable CUDA segments, which
   avoids the "allocation failed with VRAM still free" fragmentation OOMs common on low-VRAM cards.
 
