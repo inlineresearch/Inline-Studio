@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { studio } from '@/lib/studio'
 import { Logo } from '../../components/Logo'
 import { useProjectStore } from '../../store/projectStore'
 import { useUpdateStore } from '../../store/updateStore'
@@ -32,7 +33,7 @@ export function ProjectLauncher(): React.JSX.Element {
   // is on the launcher (the auto-updater also checks at startup; this keeps it fresh).
   useEffect(() => {
     void loadCurrentVersion()
-    void window.inlineStudio.updates.check()
+    void studio().updates.check()
   }, [loadCurrentVersion])
 
   const canCreate = name.trim().length > 0 && !loading
@@ -147,7 +148,7 @@ export function ProjectLauncher(): React.JSX.Element {
 
       <div className="mx-auto flex w-full max-w-4xl items-center justify-between pt-10 text-xs text-zinc-500">
         <button
-          onClick={() => void window.inlineStudio.shell.openExternal('https://inlinestudio.art')}
+          onClick={() => void studio().shell.openExternal('https://inlinestudio.art')}
           className="flex items-center gap-1.5 text-accent underline-offset-2 hover:underline"
         >
           inlinestudio.art
@@ -166,9 +167,7 @@ export function ProjectLauncher(): React.JSX.Element {
             </button>
           )}
           <button
-            onClick={() =>
-              void window.inlineStudio.shell.openExternal('https://discord.gg/cSUS88VdY9')
-            }
+            onClick={() => void studio().shell.openExternal('https://discord.gg/cSUS88VdY9')}
             title="Connect with the team on Discord"
             className="text-zinc-400 transition-colors hover:text-accent"
           >

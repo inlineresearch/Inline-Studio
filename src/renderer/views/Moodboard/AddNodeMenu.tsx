@@ -5,8 +5,11 @@
  * Positioning mirrors MoodboardPanel's "Connect to…" menu (container-relative left/top).
  */
 
+import { addableCoreNodes, type NodeDescriptor } from '@shared/coreNodes'
+import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
+
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
-export type AddNodeKind = 'frame' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
+export type AddNodeKind = 'load' | 'frame' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
 
 interface Entry {
   kind: AddNodeKind
@@ -17,6 +20,7 @@ interface Entry {
 }
 
 const ENTRIES: Entry[] = [
+  { kind: 'load', label: 'Load Assets', icon: <ImageIcon /> },
   { kind: 'frame', label: 'Generate', icon: <SparklesIcon />, accent: true },
   { kind: 'layer', label: 'Layer', icon: <LayerIcon /> },
   { kind: 'preview', label: 'Preview', icon: <ImageIcon /> },
@@ -29,7 +33,10 @@ export function AddNodeMenu({
   x,
   y,
   above = false,
+  coreNodes = [],
   onPick,
+  onPickCore,
+  onPickGen,
   onClose,
 }: {
   /** Container-relative anchor point (px). */
@@ -37,9 +44,18 @@ export function AddNodeMenu({
   y: number
   /** When true the menu is centered on x and grows upward from y (used by the toolbar button). */
   above?: boolean
+  /** Inline Core node descriptors (from /v1/models), listed under their categories. */
+  coreNodes?: NodeDescriptor[]
   onPick: (kind: AddNodeKind) => void
+  onPickCore?: (coreType: string) => void
+  /** Create a fal generation node for a specific model id. */
+  onPickGen?: (modelId: string) => void
   onClose: () => void
 }): React.JSX.Element {
+  // Only high-level model nodes are offered; loaders/samplers/inputs are hidden plumbing.
+  const addable = addableCoreNodes(coreNodes)
+  // Fal models, grouped by owner (OpenAI, ByteDance, …) — listed like the Inline Core section.
+  const falGroups = groupByOwner(listNodeDefs())
   return (
     <>
       <div className="absolute inset-0 z-20" onClick={onClose} />
@@ -52,24 +68,98 @@ export function AddNodeMenu({
         <div className="border-b border-border px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
           Add node
         </div>
-        {ENTRIES.map((e) => (
-          <button
-            key={e.kind}
-            onClick={() => onPick(e.kind)}
-            className={`flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-surface ${
-              e.accent ? 'text-emerald-300' : 'text-zinc-200'
-            }`}
-          >
-            <span className="flex h-4 w-4 shrink-0 items-center justify-center">{e.icon}</span>
-            {e.label}
-          </button>
-        ))}
+        {/* One scroll area for the whole list (built-ins + fal + Inline Core), not per-section. */}
+        <div className="max-h-[70vh] overflow-y-auto">
+          {ENTRIES.map((e) => (
+            <button
+              key={e.kind}
+              onClick={() => onPick(e.kind)}
+              className={`flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-surface ${
+                e.accent ? 'text-emerald-300' : 'text-zinc-200'
+              }`}
+            >
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center">{e.icon}</span>
+              {e.label}
+            </button>
+          ))}
+          {onPickGen && falGroups.length > 0 && (
+            <div className="border-t border-border">
+              <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+                Fal Models
+              </div>
+              {falGroups.map((group) => (
+                <div key={group.owner}>
+                  <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
+                    {group.label}
+                  </div>
+                  {group.defs.map((def) => (
+                    <button
+                      key={def.id}
+                      onClick={() => onPickGen(def.id)}
+                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+                    >
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-emerald-300">
+                        <SparklesIcon />
+                      </span>
+                      {def.title}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+          {addable.length > 0 && (
+            <div className="border-t border-border">
+              <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+                Inline Core
+              </div>
+              {groupByCategory(addable).map(([category, nodes]) => (
+                <div key={category}>
+                  <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
+                    {category}
+                  </div>
+                  {nodes.map((n) => (
+                    <button
+                      key={n.type}
+                      onClick={() => onPickCore?.(n.type)}
+                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+                    >
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                        <NodeGlyph />
+                      </span>
+                      {n.title}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </>
   )
 }
 
+function groupByCategory(nodes: NodeDescriptor[]): Array<[string, NodeDescriptor[]]> {
+  const groups = new Map<string, NodeDescriptor[]>()
+  for (const node of nodes) {
+    const list = groups.get(node.category) ?? []
+    list.push(node)
+    groups.set(node.category, list)
+  }
+  return [...groups.entries()]
+}
+
 // ── Node icons (moved here from CanvasToolbar, which no longer shows per-node buttons) ──
+
+function NodeGlyph(): React.JSX.Element {
+  return (
+    <Svg>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M4 10h16" />
+    </Svg>
+  )
+}
 
 function LayerIcon(): React.JSX.Element {
   return (

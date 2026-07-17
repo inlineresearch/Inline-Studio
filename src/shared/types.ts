@@ -50,8 +50,9 @@ export interface Frame {
    * Which generation engine backs this frame. `unset` = a fresh chooser node that hasn't picked an
    * engine yet (renders the Link-ComfyUI / Generate-with-Fal chooser). `comfy` = the embedded
    * ComfyUI workflow (every legacy frame). `fal` = a declarative fal.ai node (see `modelId`/`params`).
+   * `core` = an Inline Core node: same `modelId`/`params`, run by the Inline Core engine.
    */
-  provider: 'comfy' | 'fal' | 'unset'
+  provider: 'comfy' | 'fal' | 'core' | 'unset'
   /** For `provider:'fal'`: the registry model id (e.g. `openai/gpt-image-2`). Null for comfy. */
   modelId: string | null
   /** For `provider:'fal'`: the node's editable param values (keyed by the NodeDef param keys). */
@@ -139,6 +140,8 @@ export type MoodboardItemType =
   | 'trim'
   /** A text-prompt node whose output feeds a Generate node's prompt input. */
   | 'prompt'
+  /** A low-level Inline Core graph node (load/sample/encode/vae); ephemeral, not a Frame. */
+  | 'core'
 
 /** Output settings for a video-director node (stored in its moodboard item data). */
 export interface DirectorItemData {
@@ -242,6 +245,31 @@ export interface MoodboardItemData {
   trim?: { inPoint: number; outPoint: number }
   /** Prompt node: the text it feeds into a connected Generate node's prompt input. */
   promptText?: string
+  /** Marks a `frame` item as a pure "Load Assets" loader: no generation, freely resizable (no
+   * aspect-fit snap-back), showing a loaded image/video and passing it straight through as its
+   * output (resolved to its first input asset). */
+  loader?: boolean
+  /** Core graph node: the Inline Core node type + its param values (see coreNodes.ts). */
+  core?: {
+    type: string
+    params: Record<string, unknown>
+    /** The active media this node produced — shown large and flowed downstream. Project-relative.
+     * `createdAt` (ms) is stamped at generation; absent on renders made before it was tracked. */
+    output?: {
+      takeId: string
+      filePath: string
+      kind: 'image' | 'video' | 'audio'
+      createdAt?: number
+    }
+    /** Recent renders (newest first); `output` points at the active one. Drives the take-history
+     * strip on generation nodes. Same shape as `output`. */
+    outputs?: {
+      takeId: string
+      filePath: string
+      kind: 'image' | 'video' | 'audio'
+      createdAt?: number
+    }[]
+  }
 }
 
 export interface MoodboardItem {
@@ -314,6 +342,27 @@ export interface GenerationErrorEvent {
   error: string
 }
 
+/** Main → renderer: progress (0..1) of an explicit model download (the node's model popup). */
+export interface ModelDownloadProgressEvent {
+  nodeType: string
+  componentId: string
+  fraction: number
+  status?: string
+}
+
+/** Main → renderer: a model component finished downloading (files are now under models/). */
+export interface ModelDownloadDoneEvent {
+  nodeType: string
+  componentId: string
+}
+
+/** Main → renderer: a model download failed. */
+export interface ModelDownloadErrorEvent {
+  nodeType: string
+  componentId: string
+  error: string
+}
+
 export interface WorkflowTemplate {
   id: string
   projectId: string
@@ -337,6 +386,8 @@ export interface WorkflowParam {
 export interface AppSettings {
   /** The ComfyUI backend Inline Studio talks to and embeds. */
   comfyUrl: string
+  /** The Inline Core (/v1) engine URL. */
+  coreUrl: string
 }
 
 /** Whether an API key (e.g. fal.ai) is saved, and how it's stored. */
@@ -365,6 +416,12 @@ export interface UpdateDownloadedEvent {
 
 /** Result of pinging the configured ComfyUI backend. */
 export interface ComfyStatus {
+  running: boolean
+  url: string
+}
+
+/** Result of pinging the configured Inline Core engine. */
+export interface CoreStatus {
   running: boolean
   url: string
 }

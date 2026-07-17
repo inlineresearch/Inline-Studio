@@ -5,13 +5,14 @@
  * handler that opens the shared context menu.
  */
 import type { AssetKind } from '@shared/types'
+import { studio } from '@/lib/studio'
 import { useContextMenuStore, type ContextMenuItem } from '../store/contextMenuStore'
 import { ipcErrorMessage } from './ipcError'
 
 /** Copy a project image (by media URL or relative path) to the system clipboard. */
 async function copyImage(src: string): Promise<void> {
   try {
-    const res = await window.inlineStudio.media.copyImage(src)
+    const res = await studio().media.copyImage(src)
     if (!res.ok) console.error('Copy image failed:', res.error)
   } catch (e) {
     console.error('Copy image failed:', ipcErrorMessage(e))
@@ -21,7 +22,7 @@ async function copyImage(src: string): Promise<void> {
 /** Save a project media file (by media URL or relative path) to a user-chosen location. */
 async function saveMedia(src: string, suggestedName: string): Promise<void> {
   try {
-    const res = await window.inlineStudio.media.save(src, suggestedName)
+    const res = await studio().media.save(src, suggestedName)
     if (!res.ok) console.error('Save media failed:', res.error)
   } catch (e) {
     console.error('Save media failed:', ipcErrorMessage(e))

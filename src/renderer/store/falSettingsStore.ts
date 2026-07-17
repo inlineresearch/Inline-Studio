@@ -4,6 +4,7 @@
  */
 import { create } from 'zustand'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { studio } from '@/lib/studio'
 
 interface FalSettingsState {
   configured: boolean
@@ -21,7 +22,7 @@ export const useFalSettingsStore = create<FalSettingsState>((set) => ({
 
   load: async () => {
     try {
-      const res = await window.inlineStudio.falSettings.status()
+      const res = await studio().falSettings.status()
       if (res.ok) set({ configured: res.value.configured, encrypted: res.value.encrypted })
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
@@ -30,7 +31,7 @@ export const useFalSettingsStore = create<FalSettingsState>((set) => ({
 
   setApiKey: async (key) => {
     try {
-      const res = await window.inlineStudio.falSettings.setApiKey(key)
+      const res = await studio().falSettings.setApiKey(key)
       if (!res.ok) {
         set({ error: res.error })
         return false
@@ -45,7 +46,7 @@ export const useFalSettingsStore = create<FalSettingsState>((set) => ({
 
   clearApiKey: async () => {
     try {
-      const res = await window.inlineStudio.falSettings.clearApiKey()
+      const res = await studio().falSettings.clearApiKey()
       if (!res.ok) return set({ error: res.error })
       set({ configured: res.value.configured, encrypted: res.value.encrypted, error: null })
     } catch (e) {

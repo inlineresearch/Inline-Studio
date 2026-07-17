@@ -11,7 +11,7 @@ export function ImageNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const openLightbox = useLightboxStore((s) => s.open)
   return (
     <>
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<ImageGlyph />} title={name}>
           {name}
         </NodeBadge>

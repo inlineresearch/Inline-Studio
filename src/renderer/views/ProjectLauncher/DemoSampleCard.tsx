@@ -1,3 +1,4 @@
+import { studio } from '@/lib/studio'
 import raceCover from '../../assets/race.png'
 
 /** The Circuit Race tutorial URL — a full walkthrough of a generative short film. */
@@ -13,7 +14,7 @@ export function DemoSampleCard(): React.JSX.Element {
     <section className="rounded-xl border border-border bg-surface p-5">
       <h2 className="mb-3 text-sm font-medium text-zinc-300">Try a demo</h2>
       <button
-        onClick={() => void window.inlineStudio.shell.openExternal(CIRCUIT_RACE_URL)}
+        onClick={() => void studio().shell.openExternal(CIRCUIT_RACE_URL)}
         className="group block w-full overflow-hidden rounded-lg border border-border bg-panel text-left transition-colors hover:border-accent"
       >
         <div className="aspect-video w-full overflow-hidden bg-panel">

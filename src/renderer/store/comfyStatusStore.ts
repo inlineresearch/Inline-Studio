@@ -8,6 +8,7 @@
  * generating. So we only declare it down after 3 consecutive failures (~12s).
  */
 import { create } from 'zustand'
+import { studio } from '@/lib/studio'
 
 /** Poll interval (ms). */
 const POLL_MS = 4000
@@ -41,7 +42,7 @@ export const useComfyStatusStore = create<ComfyStatusState>((set, get) => {
     let down = false
     let nextUrl = get().url
     try {
-      const res = await window.inlineStudio.comfy.status()
+      const res = await studio().comfy.status()
       if (res.ok) {
         nextUrl = res.value.url
         down = !res.value.running

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Handle, Position, useReactFlow, type NodeProps } from '@xyflow/react'
-import { mediaUrl } from '@shared/media'
 import type { DirectorClip } from '@shared/types'
 import { NodeFrame } from './NodeFrame'
 import { ClapperIcon, NodeBadge, NodeBadgeRow } from './NodeBadge'
@@ -8,6 +7,7 @@ import { Waveform } from '../../../components/Waveform'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useTimelineStore } from '../../../store/timelineStore'
 import type { DirectorNodeData } from './nodeData'
+import { resolveMedia } from '@/lib/media'
 
 const VIDEO_PREFIX = 'vin-'
 const AUDIO_PREFIX = 'ain-'
@@ -158,7 +158,7 @@ export function DirectorNode({ id, data, selected }: NodeProps): React.JSX.Eleme
   return (
     <>
       {/* Title badge — floats above the node, matching the Generate node. */}
-      <NodeBadgeRow>
+      <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<ClapperIcon />} title={name || 'Director'}>
           {name || 'Director'}
         </NodeBadge>
@@ -237,7 +237,7 @@ export function DirectorNode({ id, data, selected }: NodeProps): React.JSX.Eleme
               {previewUrl ? (
                 <video
                   ref={videoRef}
-                  src={mediaUrl(previewUrl)}
+                  src={resolveMedia(previewUrl)}
                   controls
                   onTimeUpdate={() => {
                     const v = videoRef.current
@@ -363,7 +363,7 @@ function ClipBlock({
         title={`${clip.label} (${clip.duration.toFixed(1)}s)`}
       >
         <Waveform
-          url={clip.audioPeaks ? mediaUrl(clip.audioPeaks) : null}
+          url={clip.audioPeaks ? resolveMedia(clip.audioPeaks) : null}
           rangeStart={clip.peaksStart}
           rangeEnd={clip.peaksEnd}
           className="h-2/3 w-full text-emerald-400"
@@ -378,7 +378,7 @@ function ClipBlock({
   const bg: React.CSSProperties = clip.thumbnail
     ? {
         width,
-        backgroundImage: `url(${mediaUrl(clip.thumbnail)})`,
+        backgroundImage: `url(${resolveMedia(clip.thumbnail)})`,
         backgroundSize: clip.kind === 'video' ? 'auto 100%' : 'cover',
         backgroundRepeat: clip.kind === 'video' ? 'repeat-x' : 'no-repeat',
         backgroundPosition: 'center',

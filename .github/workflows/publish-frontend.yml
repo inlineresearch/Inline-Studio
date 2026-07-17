@@ -1,0 +1,80 @@
+# Build the SPA and publish the prebuilt-frontend wheel (inline-studio-frontend) to PyPI, so end
+# users get the UI with no Node build — mirroring ComfyUI's comfyui-frontend-package. The engine
+# (inline-core) is published by its own workflow, publish-core.yml. They are split into two
+# files on purpose: PyPI requires each *pending* trusted publisher to have a unique GitHub config
+# (owner + repo + workflow filename + environment), so two packages can't share one workflow file
+# until both projects exist. See packages/frontend/README.md for the manual equivalent.
+#
+# Trigger: push a tag like `v1.1.1`, publish a GitHub Release, or run manually (workflow_dispatch with
+# an explicit version). The version is derived from the tag (`v1.1.1` -> `1.1.1`) and stamped into the
+# wheel so it version-tracks the release.
+#
+# Auth: PyPI Trusted Publishing (OIDC) — add a pending publisher on PyPI for project
+# `inline-studio-frontend`, repo, workflow `publish-frontend.yml`, environment blank. No secrets to
+# store. To use an API token instead, drop `permissions.id-token` and pass
+# `password: ${{ secrets.PYPI_API_TOKEN }}` to the publish step.
+name: Publish frontend to PyPI
+
+on:
+  push:
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 1.1.1). Defaults to the tag.'
+        required: false
+
+jobs:
+  frontend:
+    name: Build SPA + publish inline-studio-frontend
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # PyPI Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $VERSION"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Build the SPA
+        run: |
+          npm ci
+          npm run build:spa   # -> dist-web/
+
+      - name: Stage the build into the wheel payload
+        run: |
+          rm -rf packages/frontend/inline_studio_frontend/static
+          mkdir -p packages/frontend/inline_studio_frontend/static
+          cp -r dist-web/* packages/frontend/inline_studio_frontend/static/
+          test -f packages/frontend/inline_studio_frontend/static/index.html
+
+      - name: Stamp the package version
+        run: |
+          sed -i "s/^version = .*/version = \"${{ steps.ver.outputs.version }}\"/" \
+            packages/frontend/pyproject.toml
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build packages/frontend --outdir dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

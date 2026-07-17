@@ -1,5 +1,6 @@
-import { mediaUrl, takeWaveformPath } from '@shared/media'
+import { takeWaveformPath } from '@shared/media'
 import type { Asset, Frame, FrameInput, Take } from '@shared/types'
+import { resolveMedia } from '@/lib/media'
 
 /** A resolved input thumbnail — from a library asset OR a flow/source-frame input. */
 export interface InputThumb {
@@ -42,13 +43,13 @@ export function resolveInputThumbs(inputs: FrameInput[], ctx: InputThumbCtx): In
         return {
           id: i.id,
           assetId: a.id,
-          url: mediaUrl(
+          url: resolveMedia(
             a.kind === 'image' ? (a.thumbPath ?? a.filePath) : (a.previewPath ?? a.filePath),
           ),
-          saveSrc: mediaUrl(a.filePath),
+          saveSrc: resolveMedia(a.filePath),
           kind: a.kind,
-          poster: a.kind === 'video' && a.thumbPath ? mediaUrl(a.thumbPath) : undefined,
-          waveform: a.kind === 'audio' && a.thumbPath ? mediaUrl(a.thumbPath) : undefined,
+          poster: a.kind === 'video' && a.thumbPath ? resolveMedia(a.thumbPath) : undefined,
+          waveform: a.kind === 'audio' && a.thumbPath ? resolveMedia(a.thumbPath) : undefined,
         }
       }
       if (i.sourceFrameId) {
@@ -60,10 +61,10 @@ export function resolveInputThumbs(inputs: FrameInput[], ctx: InputThumbCtx): In
           return {
             id: i.id,
             assetId: null,
-            url: mediaUrl(take.filePath),
-            saveSrc: mediaUrl(take.filePath),
+            url: resolveMedia(take.filePath),
+            saveSrc: resolveMedia(take.filePath),
             kind: take.kind,
-            waveform: take.kind === 'audio' ? mediaUrl(takeWaveformPath(take.id)) : undefined,
+            waveform: take.kind === 'audio' ? resolveMedia(takeWaveformPath(take.id)) : undefined,
           }
         }
         // No take yet — fall back to the source frame's imported input asset.
@@ -75,16 +76,16 @@ export function resolveInputThumbs(inputs: FrameInput[], ctx: InputThumbCtx): In
           ? {
               id: i.id,
               assetId: null,
-              url: mediaUrl(srcAsset.previewPath ?? srcAsset.filePath),
-              saveSrc: mediaUrl(srcAsset.filePath),
+              url: resolveMedia(srcAsset.previewPath ?? srcAsset.filePath),
+              saveSrc: resolveMedia(srcAsset.filePath),
               kind: srcAsset.kind,
               poster:
                 srcAsset.kind === 'video' && srcAsset.thumbPath
-                  ? mediaUrl(srcAsset.thumbPath)
+                  ? resolveMedia(srcAsset.thumbPath)
                   : undefined,
               waveform:
                 srcAsset.kind === 'audio' && srcAsset.thumbPath
-                  ? mediaUrl(srcAsset.thumbPath)
+                  ? resolveMedia(srcAsset.thumbPath)
                   : undefined,
             }
           : null

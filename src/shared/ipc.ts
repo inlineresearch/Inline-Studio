@@ -3,7 +3,7 @@
  *
  * - `IpcChannels` are the only channel strings allowed (no stringly-typed
  *   `invoke('something')` scattered around — see CLAUDE.md).
- * - `InlineStudioApi` is the exact surface exposed on `window.inlineStudio` by the
+ * - `InlineStudioApi` is the exact backend surface the web client implements against Core; the
  *   preload. The renderer imports this type; the main process implements it.
  */
 import type {
@@ -30,7 +30,11 @@ import type {
   UpdateAvailableEvent,
   UpdateProgressEvent,
   UpdateDownloadedEvent,
+  ModelDownloadProgressEvent,
+  ModelDownloadDoneEvent,
+  ModelDownloadErrorEvent,
   ComfyStatus,
+  CoreStatus,
   ComfyOutput,
   ComfyRun,
   ExportResult,
@@ -38,6 +42,7 @@ import type {
   ProjectMediaDirs,
 } from './types'
 import type { Result } from './result'
+import type { CoreModels, ModelRequirements } from './coreNodes'
 
 export const IpcChannels = {
   project: {
@@ -89,10 +94,12 @@ export const IpcChannels = {
     setFalParams: 'frames:setFalParams',
     setModel: 'frames:setModel',
     setProvider: 'frames:setProvider',
+    resolveFalInputs: 'frames:resolveFalInputs',
   },
   generation: {
     /** Run a fal frame and its upstream chain (topologically). Streams progress via events. */
     run: 'generation:run',
+    runWorkflow: 'generation:runWorkflow',
     /** Abort the in-flight generation run (optionally just one frame's). */
     cancel: 'generation:cancel',
     /** Re-poll + finish any runs that were in flight when the app last closed. */
@@ -117,6 +124,17 @@ export const IpcChannels = {
   settings: {
     get: 'settings:get',
     setComfyUrl: 'settings:setComfyUrl',
+    setCoreUrl: 'settings:setCoreUrl',
+  },
+  core: {
+    status: 'core:status',
+    models: 'core:models',
+  },
+  models: {
+    /** The model components a node needs + whether each is on disk. */
+    requirements: 'models:requirements',
+    /** Explicitly download one component (by id) or `'all'` missing ones into models/. */
+    download: 'models:download',
   },
   export: {
     exportFrames: 'export:exportFrames',
@@ -134,6 +152,7 @@ export const IpcChannels = {
     addTrim: 'moodboard:addTrim',
     addGenNode: 'moodboard:addGenNode',
     addPrompt: 'moodboard:addPrompt',
+    addCoreNode: 'moodboard:addCoreNode',
     updateItem: 'moodboard:updateItem',
     deleteItem: 'moodboard:deleteItem',
     importAndPlace: 'moodboard:importAndPlace',
@@ -179,6 +198,10 @@ export const IpcChannels = {
     generationNodeDone: 'events:generationNodeDone',
     generationDone: 'events:generationDone',
     generationError: 'events:generationError',
+    /** Main → renderer: explicit model-download lifecycle (the node's model popup). */
+    modelDownloadProgress: 'events:modelDownloadProgress',
+    modelDownloadDone: 'events:modelDownloadDone',
+    modelDownloadError: 'events:modelDownloadError',
     /** Main → renderer: auto-update lifecycle. */
     updateAvailable: 'events:updateAvailable',
     updateProgress: 'events:updateProgress',
@@ -205,6 +228,21 @@ export interface CreateFolderInput {
   parentId: string | null
 }
 
+/** A fal frame's inputs resolved for building its request: media as data URIs + the prompt text. */
+export interface ResolvedFalInputs {
+  images: string[]
+  videos: string[]
+  audios: string[]
+  prompt: string | null
+}
+
+/** A prebuilt fal request the browser hands to the backend to run (fal defs are studio-side). */
+export interface FalRunRequest {
+  endpoint: string
+  body: Record<string, unknown>
+  outputKind: 'image' | 'video' | 'audio'
+}
+
 export interface CreateProjectInput {
   /** Display name; also used to derive the `.inlinestudio` folder name. */
   name: string
@@ -212,7 +250,7 @@ export interface CreateProjectInput {
   parentDir: string
 }
 
-/** The API surface the preload exposes on `window.inlineStudio`. */
+/** The backend API surface — implemented by the web client (createWebClient) against Inline Core. */
 export interface InlineStudioApi {
   project: {
     create(input: CreateProjectInput): Promise<Result<Project>>
@@ -305,10 +343,17 @@ export interface InlineStudioApi {
       provider: 'comfy' | 'fal',
       modelId?: string,
     ): Promise<Result<Frame>>
+    /** Resolve a fal frame's inputs (media as data URIs) + prompt, for building its request. */
+    resolveFalInputs(frameId: string): Promise<Result<ResolvedFalInputs>>
   }
   generation: {
-    /** Run a fal frame + its upstream chain. Resolves immediately; progress arrives via events. */
-    run(frameId: string): Promise<Result<void>>
+    /**
+     * Run a fal frame. On the single-process (web) backend the browser passes a prebuilt `request`
+     * (fal defs are studio-side); the Electron backend builds it server-side and ignores `request`.
+     * Resolves immediately; progress arrives via events.
+     */
+    run(frameId: string, request?: FalRunRequest): Promise<Result<void>>
+    runWorkflow(itemId: string): Promise<Result<void>>
     /** Abort the in-flight run — a specific frame's, or all when no id is given. */
     cancel(frameId?: string): Promise<Result<void>>
     /** Re-poll + finish any generations that were in flight when the app last closed. */
@@ -348,6 +393,18 @@ export interface InlineStudioApi {
   settings: {
     get(): Promise<Result<AppSettings>>
     setComfyUrl(url: string): Promise<Result<AppSettings>>
+    setCoreUrl(url: string): Promise<Result<AppSettings>>
+  }
+  core: {
+    status(): Promise<Result<CoreStatus>>
+    models(): Promise<Result<CoreModels>>
+  }
+  models: {
+    /** The model components a node needs + whether each is present under models/. */
+    requirements(nodeType: string): Promise<Result<ModelRequirements>>
+    /** Download one component (its `id`) or `'all'` missing ones into models/. Fire-and-forget;
+     * progress arrives on `events:modelDownload*`. */
+    download(nodeType: string, componentId: string): Promise<Result<void>>
   }
   export: {
     /** Pick a folder and write each frame's Output in order; null if cancelled. */
@@ -378,6 +435,7 @@ export interface InlineStudioApi {
     addGenNode(modelId: string, x: number, y: number): Promise<Result<MoodboardItem>>
     /** Add a text-prompt node (feeds a Generate node's prompt input) at (x, y). */
     addPrompt(x: number, y: number): Promise<Result<MoodboardItem>>
+    addCoreNode(coreType: string, x: number, y: number): Promise<Result<MoodboardItem>>
     updateItem(id: string, patch: MoodboardItemPatch): Promise<Result<MoodboardItem>>
     deleteItem(id: string): Promise<Result<void>>
     /** Import media into the shared library AND place it on the board near (x, y). */
@@ -447,15 +505,13 @@ export interface InlineStudioApi {
     onGenerationNodeDone(callback: (e: GenerationNodeDoneEvent) => void): () => void
     onGenerationDone(callback: (e: GenerationDoneEvent) => void): () => void
     onGenerationError(callback: (e: GenerationErrorEvent) => void): () => void
+    /** Subscribe to explicit model-download lifecycle pushes. Each returns an unsubscribe fn. */
+    onModelDownloadProgress(callback: (e: ModelDownloadProgressEvent) => void): () => void
+    onModelDownloadDone(callback: (e: ModelDownloadDoneEvent) => void): () => void
+    onModelDownloadError(callback: (e: ModelDownloadErrorEvent) => void): () => void
     /** Subscribe to auto-update lifecycle pushes. Each returns an unsubscribe fn. */
     onUpdateAvailable(callback: (e: UpdateAvailableEvent) => void): () => void
     onUpdateProgress(callback: (e: UpdateProgressEvent) => void): () => void
     onUpdateDownloaded(callback: (e: UpdateDownloadedEvent) => void): () => void
-  }
-}
-
-declare global {
-  interface Window {
-    inlineStudio: InlineStudioApi
   }
 }

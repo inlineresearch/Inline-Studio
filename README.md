@@ -2,12 +2,12 @@
 
 <h3 align="center">AI filmmaking on a node canvas</h3>
 
-<p align="center">Inline Studio is a free, open-source desktop app for AI filmmakers. Build a whole visual pipeline on a free-form node canvas, from moodboard to final cut, with hosted models via fal (bring your own key) for instant creative range and your own ComfyUI for infinite control.</p>
+<p align="center">Inline Studio is a free, open-source app for AI filmmakers. Build a whole visual pipeline on a free-form node canvas, from moodboard to final cut, with local diffusion models (the built-in Inline Core engine) and hosted fal models. Every render is kept as a versioned, non-destructive take.</p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge"></a>
-  <a href="../../releases/latest"><img alt="Platforms: macOS, Windows, Linux" src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=for-the-badge"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.0.39-blue?style=for-the-badge"></a>
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.1.2-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -17,115 +17,155 @@
 
 ## What is Inline Studio?
 
-Inline Studio is a free, open-source desktop app for **AI filmmaking on a node canvas, powered by hosted [fal](https://fal.ai) models and your own [ComfyUI](https://github.com/comfyanonymous/ComfyUI)**. It gives AI filmmakers a free-form canvas to build a whole visual pipeline, from moodboard to final cut, where every render is kept as a versioned, non-destructive take. Reach for **fal** when you want instant creative range: hosted closed models like **GPT2 Image**, **Nano Banana**, **Seedance** & many more, no setup and no GPU. Reach for your **own ComfyUI** when you want infinite control over nodes, models, and the render. Mix both in the same film, and Inline Studio handles everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
+Inline Studio is a free, open-source app for **AI filmmaking on a node canvas**, powered by the built-in **Inline Core** engine (local diffusion models) and hosted [fal](https://fal.ai) models. It gives AI filmmakers a free-form canvas to build a whole visual pipeline, from moodboard to final cut.
 
-**Who it's for:** AI filmmakers, motion artists, and generative creators who want to make AI short films and longer cuts with ComfyUI without losing every good version along the way.
+- **Non-destructive by default** - every render is kept as a versioned take; generating again adds one, nothing is overwritten.
+- **Local diffusion generation engine** - the built-in Inline Core engine runs popular diffusion models on your own GPU from a single model file, no external server. Currently supported: **Z-Image Turbo**.
+- **Hosted models via API Nodes** - reach for closed models with no GPU and no setup for instant creative range; see [API Nodes](#api-nodes).
+- **Mix both in the same film** - Inline Studio handles everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
+
+It runs as a **single process on one port**: the Inline Core engine (Python) serves the web UI _and_ does the generation: `python core/main.py` and open the browser. No desktop install, no separate backend.
+
+**Who it's for:** AI filmmakers, motion artists, and generative creators who want to make AI short films and longer cuts without losing every good version along the way.
 
 ## Features
 
 - **Free-form node canvas** - lay out your whole AI film like a mood board that can actually generate. Marquee-select, copy/paste, undo/redo, layers, and text notes all work the way your hands expect.
 - **Versioned, non-destructive takes** - every render is kept. Generating again adds a new take; nothing is overwritten. Star the keeper and it flows downstream.
 - **Chain frames into a generative pipeline** - wire one frame's output into the next frame's input. Refine a shot, feed it forward, regenerate the source, and everything downstream follows.
-- **Video Director node** - a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export.
-- **Trim Video/Audio node** - drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
-- **Generate with closed models, no setup** - run hosted models like GPT Image 2, Nano Banana, Seedance, Krea, and LTX right on the canvas. No ComfyUI, no custom nodes, no GPU. Add a Generate node, pick a model, and bring your own fal.ai key.
-- **Bring your own ComfyUI** - connect any ComfyUI instance, local or cloud. Your media, your models, your machine.
-- **Free & open source (MIT)** and **cross-platform** - macOS (Apple Silicon & Intel), Windows, and Linux.
-
-![Inline Studio dashboard with recent AI film projects](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/screenshot-dashboard.png)
-
-|                                                                       Trim Video/Audio node                                                                       |                                                                               Video Director node                                                                               |
-| :---------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-| ![Trim Video/Audio node with in/out handles over a clip's waveform](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/1.0.34.1.png) | ![Video Director node assembling rendered frames into one cut with layered audio](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/1.0.34.2.png) |
+- **Video editing on the canvas** - the **Video Director node** is a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export; the **Trim Video/Audio node** lets you drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
+- **Local generation, built in** - the Inline Core engine runs diffusion models on your own GPU. Z-Image Turbo from a single model file, no external server to set up.
+- **API Nodes for hosted models** - run closed models right on the canvas with no GPU. Add a Generate node, pick a model, and bring your own provider key. See [API Nodes](#api-nodes).
+- **Free & open source (MIT)** - one process (Python + a browser); runs on macOS, Windows, and Linux.
 
 [**Follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
 
 ## How it works
 
-ComfyUI is the most capable generative engine going - image, video, audio, LLM, every new model lands there first. But generating is the easy part. The work that makes an AI film is what comes after: exploring options, keeping what's good, and shaping a repeatable process out of it. Inline Studio is the layer where that happens, organised around one model:
+Generating a single frame is the easy part. The work that makes an AI film is what comes after: exploring options, keeping what's good, and shaping a repeatable process out of it. Inline Studio is the layer where that happens, organised around one model:
 
 ### Export the whole pipeline, not just the final render
 
-From the home screen, **Export** zips a project into one archive. Import it on the other side and you get everything back: the inputs (every imported asset), the outputs (all the generated takes), and the ComfyUI workflows that turned one into the other. Whoever opens it can re-run the pipeline exactly and keep iterating.
+From the home screen, **Export** zips a project into one archive. Import it on the other side and you get everything back: the inputs (every imported asset), the outputs (all the generated takes), and the graph that turned one into the other. Whoever opens it can re-run the pipeline exactly and keep iterating.
 
-## Bring your own ComfyUI
+## Three ways to generate
 
-Inline Studio doesn't bundle or manage ComfyUI - **you bring your own**, run it wherever you like, and point Inline Studio at it. This keeps you in full control of your nodes, models, and the render.
+Pick whatever fits the shot, and mix all three in one film. However you render, the frame keeps its full take history, so you never lose a good version.
 
-- **Running locally with a GPU?** Start ComfyUI with `--enable-cors-header` and paste its address into the Generate tab.
-- **No GPU?** Spin up ComfyUI on a cloud GPU - the app walks you through deploying it on [RunPod](https://runpod.io) - and paste the public URL. Any reachable ComfyUI works.
+| How you render                          | What it's like                                                                                                                                                                                                                                                                                    | What you need                                                                                                                                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Local GPU: Inline Core** _(built in)_ | Drop a **Z-Image Turbo** node, wire a prompt, hit Run: one node, no loader/sampler wiring. A single `.safetensors` is all you bring; the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Your own GPU. No account, no external server. Low-VRAM friendly: it auto-fits the model to your card (streaming weights + int8) so a model too big for full precision still runs, with no flags. |
+| **Hosted: API Nodes**                   | Add a Generate node and pick a model: hosted, closed models across image, video, and audio. No GPU, instant range. See [API Nodes](#api-nodes) for the model list and providers.                                                                                                                  | A provider key (currently [fal](https://fal.ai/dashboard/keys)); it stays on your machine, and you pay per render (each node estimates the price first).                                         |
+| **Your own ComfyUI** _(legacy)_         | Point Inline Studio at a running ComfyUI server and drive it from the Generate tab.                                                                                                                                                                                                               | A ComfyUI instance. **Being phased out** in favour of Inline Core; fine for now, but don't build on it.                                                                                          |
 
-Your media, your models, your machine. ComfyUI does the rendering. Inline Studio gives the work a shape you can iterate and share.
+For local generation, either drop a Z-Image `.safetensors` into `core/models/diffusion_models/`, or add a Z-Image node and use its **model popup** (a blinking hint shows up when something's missing) to download the diffusion model, VAE, and text-encoder into `core/models/`, with visible progress. The canvas and planning work with no models at all.
 
-## Generate with closed models, no setup
+## Inline Core generation engine
 
-Not every model lives in ComfyUI. The best closed models are hosted only, and standing up a workflow just to try one is friction you don't need. Inline Studio adds a second way to generate: a single Generate node that runs hosted models through [fal](https://fal.ai), with no ComfyUI, no custom nodes, and no GPU.
+Inline Core is a from-scratch generation engine that **replaces ComfyUI** for local rendering. It keeps the open node-graph model (a typed DAG of nodes and edges → immutable "takes"), and Inline Studio drives it as a single process.
 
-Create a frame, choose **Start with Fal API**, pick a model, and run. Everything else works exactly as it does with ComfyUI: takes, flow links between frames, the Video Director, and export. That means you can mix hosted models and your own ComfyUI renders in the same film.
+![Z-Image Turbo generating locally on the Inline Core engine](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/zit.png)
 
-Models available today:
+- **One process, one port** - Inline Studio is a **web SPA** (React) served by Inline Core (a headless Python engine, in `core/`). `core/main.py` runs Core, which serves the built UI and is the app's backend.
+- **Core owns the backend** - the browser reaches it over a small typed RPC/WebSocket contract; Core owns the project database, the filesystem, generation, and the ffmpeg timeline. No Electron, no separate Node server, nothing external to stand up.
+- **Graph decoupled from GPU work** - the graph is the unit of caching; a batched sampler is the unit of batching.
+- **A single device policy owns all placement** - device, dtype, offload, and attention, so the same graph runs on a 4090, a 6 GB laptop, pure CPU, or split across several GPUs without touching the graph.
 
-- **Image:** GPT Image 2, Nano Banana 2, Nano Banana Pro (edit), Krea v2 Large
-- **Video:** LTX 2.3 (image to video), Seedance 2.0 (text, image, and reference to video)
-- **Music:** Sonilo v1.1 (video to music) - scores an original, commercially licensed soundtrack matched to a video's pacing and mood; the prompt is optional, and the result wires straight into the Video Director's music track
+### How it differs from ComfyUI's architecture
 
-It is bring your own key. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings and it stays on your machine, sent only to fal when you generate. You pay fal directly for what you render, and each node shows a rough price estimate before you run it.
+|              | ComfyUI                                                            | Inline Core                                                                                                                              |
+| ------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Graph vs GPU | runs the denoise loop inline, one request at a time                | graph orchestration (cheap, per request) is separate from a batched sampler that groups compatible jobs across requests                  |
+| Schema       | positional `widgets_values`, validated at runtime (dies mid-graph) | typed graph, named params, edges type-checked **before** the run (a bad graph is rejected at submit, never mid-denoise)                  |
+| Multi-GPU    | one image runs on one GPU                                          | one image's **denoise can split across GPUs** _(experimental)_ via xDiT (PipeFusion on PCIe, Ulysses on NVLink), behind the sampler seam |
+| Custom nodes | all load into one interpreter, so any node can break the core      | designed to run out of process, each pack behind a semver SDK                                                                            |
+| Interface    | a web UI over a socket; run state is ephemeral                     | a headless HTTP + WebSocket API; runs are durable and survive a restart                                                                  |
+| Outputs      | files you overwrite                                                | immutable takes; regenerating adds a take, never overwrites (the take history is the core value)                                         |
+| Models       | `models/` dir, dropdowns from a scan                               | same drop-in layout, **bring-your-own with no hidden downloads**; a typed catalog feeds versioned node descriptors                       |
 
-## Install
+### Multi-GPU: split one image across GPUs
 
-Grab a prebuilt installer from the [latest release](../../releases/latest) and open it:
+Got two or more GPUs? Inline Core can cut a single image's latency by running its **denoise loop** (the expensive, iterative sampling step) collectively across them. This is not "one image per GPU" (independent renders); it's **one image whose sampling is shared by all the GPUs**, so a single render finishes faster.
 
-- **macOS:** download the `.dmg` for your chip - `arm64` for Apple Silicon (M1/M2/M3…), `x64` for Intel Macs - open it, and drag Inline Studio into Applications.
-- **Windows:** download the `-setup.exe` and run it.
-- **Linux:** download the `.AppImage`, make it executable (`chmod +x Inline Studio*.AppImage`), and run it.
+It's done with [xDiT](https://github.com/xdit-project/xDiT) (`xfuser`), which parallelizes diffusion-transformer inference in an isolated worker group (one process per GPU via `torchrun`, over local IPC). The HTTP server, database, and graph stay single-process; only the denoise distributes, and it sits behind a sampler seam so single-GPU/CPU runs pay no overhead. The split method is chosen from the interconnect Core detects: **PipeFusion** (default, works over plain PCIe) or **Ulysses** (sequence-parallel attention, used when NVLink is present). Turn it on with `./webui.sh --multi-gpu` after `uv pip install -e ".[parallel]"`.
 
-The builds are currently unsigned, so on first launch your system may warn about an unidentified developer:
+For the full engineering story (the graph/sampler/device-policy design, the node vocabularies, and the xDiT worker group), see **[core/README.md](core/README.md)** and **[core/CLAUDE.md](core/CLAUDE.md)**.
 
-- **macOS:** right-click the app and choose Open, then Open again. If it says the app is "damaged", run `xattr -dr com.apple.quarantine /Applications/Inline Studio.app`.
-- **Windows:** on the SmartScreen prompt, click "More info" then "Run anyway".
+## API Nodes
 
-To actually generate, you'll also need a ComfyUI instance to connect to (see [Bring your own ComfyUI](#bring-your-own-comfyui)). The canvas and planning work without it.
+**API Nodes** bring hosted, closed models onto the same canvas: no GPU, no setup, instant creative range. Add a Generate node, pick a model, and bring your own provider key (it stays on your machine); you pay the provider per render, and each node estimates the price before you run.
 
-New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
+The initial provider is **[fal](https://fal.ai)**, with models across image, video, and audio: **GPT Image 2**, **Nano Banana**, **Seedance**, **LTX**, **Sonilo**, and many more. Add your [fal.ai key](https://fal.ai/dashboard/keys) in Settings to use them. More providers will follow behind the same API Node surface.
 
-## Getting started from source
+However you render, the frame keeps its full, non-destructive take history, so you can mix API Nodes and local generation in the same film without ever losing a good version.
 
-Prefer to run from source? You'll need [Node.js](https://nodejs.org) 20.11+ (22 recommended).
+![Inline Studio dashboard with recent AI film projects](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/screenshot-dashboard.png)
 
-```bash
-git clone <this-repo>
-cd inline-studio
-npm install      # also rebuilds the native SQLite module for Electron
-npm run dev      # launches the app with hot-reload
-```
+## Install & run
 
-To generate, start ComfyUI with CORS enabled and connect it on the Generate tab:
+Inline Studio runs as **one process**: the Inline Core engine serves the web UI _and_ does the generation, on a single port.
 
-```bash
-python main.py --enable-cors-header     # then paste http://127.0.0.1:8188 in-app
-```
+### The easy way (no Node build)
 
-> On macOS sandboxes that set `ELECTRON_RUN_AS_NODE=1`, launch with
-> `env -u ELECTRON_RUN_AS_NODE npm run dev`.
-
-## Build from source (desktop app)
-
-To produce an installer you can hand to someone, package it for your platform:
+Like ComfyUI, the built web UI ships as a Python package, so you only need [Python 3.11+](https://python.org), no Node. With [uv](https://docs.astral.sh/uv/) (or plain `pip`):
 
 ```bash
-npm run package:mac      # arm64 + x64 .dmg in dist/
-npm run package:win      # NSIS .exe installer in dist/
-npm run package:linux    # AppImage in dist/
+git clone https://github.com/inlineresearch/Inline-Studio.git && cd Inline-Studio
+cd core
+./webui.sh --install --extra zimage      # create the venv, install the engine + Z-Image runtime + UI
+./webui.sh                               # serve the UI + API on http://127.0.0.1:8848
 ```
 
-A few things to know:
+`webui.sh` is the one command you need: it installs dependencies, makes sure the web UI is present (the prebuilt `inline-studio-frontend` package, or a local build), then serves everything. See **[Command-line options](#command-line-options)** for every flag (`--listen`, `--port`, `--lowvram`, `--multi-gpu`, …).
 
-- **Build each OS - and each Mac arch - on matching hardware.** Inline Studio ships a native module (SQLite), which has to be compiled for the target machine, so build the Mac app on a Mac and the Windows app on Windows. The same applies to Mac CPU arch: an Intel (`x64`) dmg has to be built on an Intel Mac and an Apple Silicon (`arm64`) dmg on an Apple Silicon Mac - cross-building bundles the wrong native binary. CI handles this for you (see below).
-- **After packaging, `npm run dev` may complain about the native module.** Packaging rebuilds SQLite for the target architecture; run `npm run rebuild` to restore it for local development.
-- **The builds are unsigned.** On first launch macOS and Windows will warn about an unidentified developer. On a Mac, right-click the app and choose Open (or remove the quarantine flag with `xattr -dr com.apple.quarantine /Applications/Inline Studio.app`). For real distribution you'll want code signing and notarization.
-- **App icon.** The icon lives in `build/` (`icon.png` is the source). Replace it there and re-package to rebrand.
+Prefer pip? `pip install -r requirements.txt` (from the repo root) pulls the engine, the prebuilt UI, and the Z-Image runtime from PyPI; then run `inline-studio`.
 
-Releases are automated: bump the version in `package.json` and run the **Build & Release** workflow from the Actions tab. It builds installers for macOS (Apple Silicon **and** Intel - each on its own runner), Windows, and Linux on GitHub Actions and uploads them to a draft GitHub Release.
+### From source (for UI development)
+
+To hack on the web UI you need [Node.js](https://nodejs.org) 20.11+ as well, and you serve a local SPA build:
+
+```bash
+git clone https://github.com/inlineresearch/Inline-Studio.git && cd Inline-Studio
+
+# 1. Build the web UI
+npm install
+npm run build:spa                        # -> dist-web/
+
+# 2. Set up + run the engine, serving your local build
+cd core
+uv sync --extra server --extra zimage    # server + the Z-Image runtime (torch/diffusers)
+uv run python main.py --front-end-root ../dist-web
+```
+
+Then open **http://127.0.0.1:8848**. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings for hosted models, and set up local generation as in [Three ways to generate](#three-ways-to-generate). The canvas and planning work without any models.
+
+**Hot-reload:** run the engine as above, then in another terminal `npm run dev:web` (Vite serves the UI with HMR and proxies API calls to Core).
+
+### Command-line options
+
+The friendly `webui.sh` launcher (in `core/`) maps flags onto the engine's `INLINE_*` environment knobs; `core/main.py` takes the same flags when you run the engine directly. `./webui.sh --help` lists them all.
+
+<details>
+<summary><strong>Show all command-line flags</strong></summary>
+
+| `webui.sh` / `main.py` flag        | Env var                  | What it does                                                                                                                                                              |
+| ---------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--listen`                         | `INLINE_HOST=0.0.0.0`    | Bind all interfaces so other machines can reach it                                                                                                                        |
+| `--host ADDR`                      | `INLINE_HOST`            | Bind a specific address (default `127.0.0.1`)                                                                                                                             |
+| `--port N`                         | `INLINE_PORT`            | Port to serve on (default `8848`)                                                                                                                                         |
+| `--models-dir PATH`                | `INLINE_MODELS_DIR`      | Where model weights are scanned from (default `./models`)                                                                                                                 |
+| `--data-dir PATH`                  | `INLINE_DATA_DIR`        | Where runs + takes are written (default `./.inline`)                                                                                                                      |
+| `--lowvram`                        | `INLINE_PROFILE=lowvram` | Tight-VRAM profile (VAE tiling/slicing, attention slicing)                                                                                                                |
+| `--cpu`                            | `INLINE_PROFILE=cpu`     | Force CPU generation                                                                                                                                                      |
+| `--profile NAME`                   | `INLINE_PROFILE`         | Set the profile explicitly: `gpu-max` \| `lowvram` \| `cpu`                                                                                                               |
+| `--vram-budget GB`                 | `INLINE_VRAM_BUDGET_GB`  | Treat the GPU as having GB of usable VRAM                                                                                                                                 |
+| `--multi-gpu [SPEC]`               | `INLINE_PARALLEL`        | Split one image's denoise across GPUs (e.g. `pipefusion=2`); auto with 2+ GPUs                                                                                            |
+| `--front-end-root DIR` _(main.py)_ | `INLINE_FRONTEND_ROOT`   | Serve a local SPA build instead of the installed UI package (dev)                                                                                                         |
+| `--rebuild` _(webui.sh)_           | n/a                      | Force a fresh SPA build (`npm run build:spa`) from source and serve it on the one port; use after UI changes when not running `--dev`. Needs the repo checkout + Node/npm |
+
+</details>
+
+`webui.sh` also has `--install` / `--extra NAME` to set up the venv. New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
 
 ## FAQ
 
@@ -135,21 +175,25 @@ Yes. Inline Studio is free and open source under the [MIT license](LICENSE). The
 
 ### Do I need a GPU?
 
-Not on the machine running Inline Studio. ComfyUI does the rendering, so you only need a GPU wherever ComfyUI runs - that can be a local GPU on the same machine, or a cloud GPU you connect to. Inline Studio's canvas and planning work without any GPU at all.
+Only for **local** generation. The built-in Inline Core engine renders on the GPU of whatever machine runs it (you can also run it on a remote GPU box and open the UI from your laptop). Hosted **fal** models need no GPU at all, and the canvas + planning work with no GPU either.
 
-### Does Inline Studio include ComfyUI, and how do I connect it?
+### What models can I run?
 
-No - you bring your own ComfyUI. Inline Studio doesn't bundle or manage it. Start ComfyUI with CORS enabled (`python main.py --enable-cors-header`) and paste its address into the Generate tab, or point Inline Studio at a cloud ComfyUI instance by pasting its public URL. Any reachable ComfyUI works.
+See [Three ways to generate](#three-ways-to-generate): local Z-Image on your own GPU, hosted fal models, or your own ComfyUI. Adding a new local model is a Core change (a model runner), no UI release.
 
-### How do I access the nodes and models available in ComfyUI?
+### Does it still use ComfyUI?
 
-Through your own ComfyUI. Connect an existing setup or launch one on a cloud GPU via [RunPod](https://runpod.io) - the app walks you through it - and you keep full control of ComfyUI: its nodes, custom nodes, and models are all yours. The Generate tab embeds the full ComfyUI node graph, so everything you'd do in ComfyUI directly is available inside Inline Studio.
+Not for the built-in generation: that's all Inline Core now, with nothing external to stand up. You _can_ still connect **your own ComfyUI** server and drive it from the Generate tab, but that path is legacy and **being discontinued** in favour of Inline Core, so don't build anything new on it.
 
 ## Contributing
 
 Inline Studio is early and moving fast, any issues, ideas, and pull requests are all welcome. If you're poking at the code, [CLAUDE.md](CLAUDE.md) is the engineering guide: it explains the architecture, the data model, and the conventions to follow.
 
 Want to help by using it for real? Try the [creator task](task.md): build a short 20-second AI film in Inline Studio and send us your feedback.
+
+## Credits
+
+Inline Core's multi-GPU denoise builds on [**xDiT**](https://github.com/xdit-project/xDiT)'s PipeFusion and Ulysses parallelism.
 
 ## Help shape Inline Studio
 

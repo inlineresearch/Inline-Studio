@@ -1,5 +1,12 @@
-import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from '@xyflow/react'
+import {
+  BaseEdge,
+  EdgeLabelRenderer,
+  getBezierPath,
+  getSmoothStepPath,
+  type EdgeProps,
+} from '@xyflow/react'
 import { useMoodboardStore } from '../../../store/moodboardStore'
+import { useCanvasPrefsStore } from '../../../store/canvasPrefsStore'
 
 /**
  * A connector that highlights when clicked and shows a ✕ button at its midpoint to
@@ -20,17 +27,24 @@ export function DeletableEdge(props: EdgeProps): React.JSX.Element {
     data,
   } = props
   const disconnect = useMoodboardStore((s) => s.disconnect)
-  const [path, labelX, labelY] = getBezierPath({
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-    sourcePosition,
-    targetPosition,
-  })
-  const edgeData = data as { functional?: boolean; color?: string } | undefined
+  // Line style is a live canvas preference — every edge subscribes, so switching it in Settings
+  // restyles all connectors at once. `angled` = cornered (smooth step); `wave` = curved (bezier).
+  const edgeStyle = useCanvasPrefsStore((s) => s.edgeStyle)
+  const geom = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }
+  const [path, labelX, labelY] =
+    edgeStyle === 'angled' ? getSmoothStepPath(geom) : getBezierPath(geom)
+  const edgeData = data as { functional?: boolean; color?: string; kindColor?: string } | undefined
   const functional = edgeData?.functional ?? false
-  const stroke = selected ? '#fb7185' : functional ? '#DCE775' : (edgeData?.color ?? '#52525b')
+  // An engine wire (typed Core port) always shows its dot's kind color; selection just thickens it.
+  // Other links keep the rose-on-select / lime-functional / level-color scheme.
+  const kindColor = edgeData?.kindColor
+  const stroke = kindColor
+    ? kindColor
+    : selected
+      ? '#fb7185'
+      : functional
+        ? '#DCE775'
+        : (edgeData?.color ?? '#52525b')
 
   return (
     <>

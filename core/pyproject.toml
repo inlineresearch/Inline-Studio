@@ -1,0 +1,91 @@
+[project]
+# PyPI distribution name. The import package is `inline_core` (src/inline_core); PyPI treats the
+# hyphen and underscore as equivalent, so `pip install inline-core` installs the `inline_core` package.
+name = "inline-core"
+version = "1.1.2"
+description = "The generation engine behind Inline."
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+# Model-runtime deps land with the component implementations. The installer selects the right
+# torch wheel per OS and accelerator (see PLAN.md, cross-platform). Kept out of the core env so
+# the engine skeleton stays light and portable to review.
+zimage = [
+  "torch>=2.2",
+  # Z-Image landed in diffusers 0.36 (ZImagePipeline); diffusers from git main may be required.
+  "diffusers>=0.36",
+  "transformers>=4.44",
+  "accelerate>=0.30",
+  "safetensors>=0.4",
+  # Smart memory (`webui.sh --smart-memory`) quantizes the big weights to int8 with torchao's
+  # weight-only quant — torch-native and movable, so it coexists with CPU offload. >=0.14 for the
+  # config-object API (Int8WeightOnlyConfig; the "int8_weight_only" string form was dropped).
+  # Best-effort at load time: an absent/incompatible torchao logs and falls back, never crashes.
+  "torchao>=0.14",
+  # scipy backs the Beta sigma schedule (FlowMatchEulerDiscreteScheduler.use_beta_sigmas). diffusers
+  # gates that option on scipy at scheduler construction; the sampling registry falls back to the
+  # model default spacing if it is ever absent, but declare it so Beta works out of the box.
+  "scipy>=1.11",
+  # Explicit model downloads (the node's model popup) go through huggingface_hub. It ships
+  # transitively with diffusers/transformers, but pin it here since we call snapshot_download
+  # directly and rely on local_dir= to land files in models/ (never the hidden HF cache).
+  "huggingface_hub>=0.23",
+]
+server = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  # Bundled ffmpeg binary for the Studio timeline render (director preview/export). ffprobe is not
+  # bundled — install a system ffmpeg for duration probing, else clips fall back to a still length.
+  "imageio-ffmpeg>=0.4",
+]
+# The prebuilt web UI (inline-studio-frontend) is NOT a hard dependency here on purpose: it's
+# published separately by CI and a source/dev checkout serves the UI via `--front-end-root ../dist-web`
+# with no wheel at all. End users get it through the pip path — `requirements.txt` (repo root) pins
+# `inline-studio-frontend` alongside the engine (mirrors ComfyUI's requirements.txt), and `webui.sh`
+# installs it on demand. Core's resolve_frontend_root() then finds the installed package's static/.
+# Multi-GPU denoise: split one image across GPUs via xDiT (xfuser). Isolated in the worker group so
+# the core env is unaffected. torchrun ships with torch (from zimage); nvidia-ml-py detects NVLink so
+# the policy picks Ulysses vs PipeFusion. flash-attn (Ulysses/Ring on NVLink) is an opt-in extra.
+parallel = [
+  "inline-core[zimage]",
+  "xfuser>=0.4",
+  "nvidia-ml-py>=12",
+]
+dev = [
+  "inline-core[server]",
+  "pytest>=8",
+  "ruff>=0.6",
+  "pyright>=1.1",
+  "httpx>=0.27",
+]
+
+[project.scripts]
+# One command to run the engine + the Inline Studio UI on one port (see main.py for flags).
+inline-studio = "inline_core.server.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inline_core"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { mediaUrl, takeWaveformPath } from '@shared/media'
+import { studio } from '@/lib/studio'
+import { resolveMedia } from '@/lib/media'
+import { takeWaveformPath } from '@shared/media'
 import type { Asset } from '@shared/types'
 import { useUiStore } from '../../store/uiStore'
 import { useFrameStore } from '../../store/frameStore'
@@ -95,7 +97,7 @@ export function FrameInspector(): React.JSX.Element | null {
     const url = `${comfyUrl.replace(/\/+$/, '')}/userdata/${encodeURIComponent(
       `workflows/${frame.comfyWorkflowName}.json`,
     )}`
-    void window.inlineStudio.shell.openExternal(url)
+    void studio().shell.openExternal(url)
   }
 
   return (
@@ -146,10 +148,12 @@ export function FrameInspector(): React.JSX.Element | null {
                 className="group relative h-16 w-16 cursor-grab overflow-hidden rounded border border-border bg-black/40"
               >
                 <Media
-                  url={mediaUrl(a.previewPath ?? a.filePath)}
+                  url={resolveMedia(a.previewPath ?? a.filePath)}
                   kind={a.kind}
-                  poster={a.kind === 'video' && a.thumbPath ? mediaUrl(a.thumbPath) : undefined}
-                  waveform={a.kind === 'audio' && a.thumbPath ? mediaUrl(a.thumbPath) : undefined}
+                  poster={a.kind === 'video' && a.thumbPath ? resolveMedia(a.thumbPath) : undefined}
+                  waveform={
+                    a.kind === 'audio' && a.thumbPath ? resolveMedia(a.thumbPath) : undefined
+                  }
                 />
                 {inputAssets.length > 1 && (
                   <button
@@ -189,9 +193,11 @@ export function FrameInspector(): React.JSX.Element | null {
                       className="h-full w-full"
                     >
                       <Media
-                        url={mediaUrl(t.filePath)}
+                        url={resolveMedia(t.filePath)}
                         kind={t.kind}
-                        waveform={t.kind === 'audio' ? mediaUrl(takeWaveformPath(t.id)) : undefined}
+                        waveform={
+                          t.kind === 'audio' ? resolveMedia(takeWaveformPath(t.id)) : undefined
+                        }
                       />
                     </button>
                     {isHero && (

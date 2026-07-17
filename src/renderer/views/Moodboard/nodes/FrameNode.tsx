@@ -7,17 +7,25 @@ import { useUiStore } from '../../../store/uiStore'
 import {
   getAssetDragIds,
   getFrameDragId,
+  getMediaFileDrag,
   getOutputTakeId,
   ASSET_DND_TYPE,
   FRAME_DND_TYPE,
+  MEDIA_FILE_DND_TYPE,
 } from '../../../lib/dnd'
 import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
+import { resolveMedia } from '@/lib/media'
+import {
+  importFilesToLibrary,
+  importMediaUrlToLibrary,
+  pickFilesViaInput,
+} from '../../../lib/importFiles'
 import { useLightboxStore } from '../../../store/lightboxStore'
 import { requireComfyConnected } from '../../../lib/requireComfyConnected'
 import { VideoPreview } from '../../../components/VideoPreview'
 import { Waveform } from '../../../components/Waveform'
 import { NodeFrame } from './NodeFrame'
-import { FilmIcon, LinkIcon, NodeBadge, NodeBadgeRow, StarIcon } from './NodeBadge'
+import { FilmIcon, LinkIcon, NodeBadge, NodeBadgeRow, StarIcon, UploadIcon } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
 import { resolveInputThumbs } from './inputThumbs'
 
@@ -77,6 +85,10 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const safeIdx = count ? Math.min(idx, count - 1) : 0
   const cur = count ? thumbs[safeIdx] : undefined
   const linked = !!frame?.comfyWorkflowName
+  // A "Load Assets" loader: a pure viewer with no generation. It's freely resizable (the aspect
+  // auto-fit below is skipped) and passes its loaded asset straight through as its output.
+  const isLoader = !!item?.data.loader
+  const mediaFit = isLoader ? 'object-contain' : 'object-cover'
 
   // Fit the node height to the media's aspect ratio at the current width, so the
   // body shows the image edge-to-edge with no black bars. The `lastFit` guard makes
@@ -86,6 +98,8 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const itemHeight = item?.height
   useLayoutEffect(() => {
     const body = bodyRef.current
+    // Loaders are freely sized by the user — never snap their height back to the media aspect.
+    if (isLoader) return
     if (!aspect || !body || itemHeight == null || itemWidth == null) return
     const sig = `${aspect.toFixed(4)}:${itemWidth}`
     if (lastFit.current === sig) return
@@ -97,7 +111,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
     if (Math.abs(delta) < 1) return
     // Programmatic layout fit — don't pollute the undo history.
     void updateItem(id, { height: Math.round(itemHeight + delta) }, false)
-  }, [aspect, itemWidth, itemHeight, id, updateItem])
+  }, [aspect, itemWidth, itemHeight, id, updateItem, isLoader])
 
   // Drop the aspect lock when the visible input isn't an image/video (audio or none).
   const curKind = cur?.kind
@@ -132,11 +146,32 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
     setIdx(0)
   }
 
-  // Accept both Library assets AND another node's output (a frame/Output tile) dropped onto the
-  // frame as inputs — dropping one at a time accumulates. stopPropagation keeps the canvas from
-  // also handling the drop (which would spawn new frames). Already-present ones are skipped.
+  // Import files chosen from the OS (drag-drop or the "Select from Local" button) into the library,
+  // then wire them as this frame's inputs.
+  const addLocalFiles = async (files: File[]): Promise<void> => {
+    if (files.length === 0) return
+    const added = await importFilesToLibrary(files, null)
+    if (added.length) {
+      await useAssetStore.getState().load() // surface the new assets in the Library panel too
+      void addInputs(
+        frameId,
+        added.map((a) => a.id),
+      )
+    }
+  }
+  const selectLocal = (): void => {
+    void pickFilesViaInput().then(addLocalFiles)
+  }
+
+  // Accept Library assets, another node's output (a frame/Output tile), AND OS files (Finder/
+  // Explorer) dropped onto the frame as inputs — dropping accumulates. stopPropagation keeps the
+  // canvas from also handling the drop (which would spawn new frames). Already-present ones skip.
+  const isFileDrag = (e: React.DragEvent): boolean => e.dataTransfer.types.includes('Files')
   const canDrop = (e: React.DragEvent): boolean =>
-    e.dataTransfer.types.includes(ASSET_DND_TYPE) || e.dataTransfer.types.includes(FRAME_DND_TYPE)
+    e.dataTransfer.types.includes(ASSET_DND_TYPE) ||
+    e.dataTransfer.types.includes(FRAME_DND_TYPE) ||
+    e.dataTransfer.types.includes(MEDIA_FILE_DND_TYPE) ||
+    isFileDrag(e)
 
   const onDragOver = (e: React.DragEvent): void => {
     if (!canDrop(e)) return
@@ -151,6 +186,20 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
     e.preventDefault()
     e.stopPropagation()
     setDropActive(false)
+    // OS files (Finder/Explorer) → import into the library, then add as inputs.
+    if (isFileDrag(e)) {
+      void addLocalFiles(Array.from(e.dataTransfer.files ?? []))
+      return
+    }
+    // A Core-node output (raw media file) → import it into the library, then add as an input.
+    const media = getMediaFileDrag(e.dataTransfer)
+    if (media) {
+      void (async () => {
+        const asset = await importMediaUrlToLibrary(resolveMedia(media.filePath), media.name)
+        if (asset) void addInputs(frameId, [asset.id])
+      })()
+      return
+    }
     // A frame/Output tile → wire it as a flow-link input (resolves to its hero take). If a specific
     // output take was dragged, pin it as the source's hero so this input shows that exact image.
     const droppedFrameId = getFrameDragId(e.dataTransfer)
@@ -169,26 +218,32 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   return (
     <>
-      {/* Title + workflow-link badges — float above the node, matching the Generate node. */}
-      <NodeBadgeRow>
-        <NodeBadge icon={<FilmIcon />} title={frame ? `Frame ${frame.name}` : undefined}>
-          Frame {frame?.name ?? '—'}
-        </NodeBadge>
-        <button
-          onClick={() => void onLink()}
-          disabled={busy}
-          title={linked ? 'Open the linked ComfyUI workflow' : 'Link a ComfyUI workflow'}
-          className="nodrag flex h-6 items-center gap-1 rounded-full border border-blue-500/40 bg-blue-500/10 px-2 text-[10px] font-medium text-blue-300 shadow-sm backdrop-blur hover:bg-blue-500/20 disabled:opacity-40"
+      {/* Title + workflow-link badges — float above the node, matching the Generate node. A loader
+          is a pure viewer, so it drops the generation (workflow-link) control. */}
+      <NodeBadgeRow dragNodeId={id}>
+        <NodeBadge
+          icon={<FilmIcon />}
+          title={isLoader ? 'Load Assets' : frame ? `Frame ${frame.name}` : undefined}
         >
-          {busy ? (
-            '…'
-          ) : (
-            <>
-              <LinkIcon className="h-3 w-3" />
-              {linked ? 'Open Workflow' : 'Link Workflow'}
-            </>
-          )}
-        </button>
+          {isLoader ? 'Load Assets' : `Frame ${frame?.name ?? '—'}`}
+        </NodeBadge>
+        {!isLoader && (
+          <button
+            onClick={() => void onLink()}
+            disabled={busy}
+            title={linked ? 'Open the linked ComfyUI workflow' : 'Link a ComfyUI workflow'}
+            className="nodrag flex h-6 items-center gap-1 rounded-full border border-blue-500/40 bg-blue-500/10 px-2 text-[10px] font-medium text-blue-300 shadow-sm backdrop-blur hover:bg-blue-500/20 disabled:opacity-40"
+          >
+            {busy ? (
+              '…'
+            ) : (
+              <>
+                <LinkIcon className="h-3 w-3" />
+                {linked ? 'Open Workflow' : 'Link Workflow'}
+              </>
+            )}
+          </button>
+        )}
       </NodeBadgeRow>
 
       <NodeFrame
@@ -234,7 +289,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       name: frame ? `Frame ${frame.name}` : 'input',
                     })
                   }
-                  className="h-full w-full object-cover"
+                  className={`h-full w-full ${mediaFit}`}
                 />
               ) : cur.kind === 'audio' ? (
                 <div className="flex h-full w-full items-center px-2">
@@ -263,9 +318,22 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       name: frame ? `Frame ${frame.name}` : 'input',
                     })
                   }
-                  className="h-full w-full object-cover"
+                  className={`h-full w-full ${mediaFit}`}
                 />
               )
+            ) : isLoader ? (
+              <div className="flex flex-col items-center gap-2 p-3 text-center">
+                <span className="text-[11px] text-zinc-500">
+                  Drag an image or video here, from the Library or your computer.
+                </span>
+                <button
+                  onClick={selectLocal}
+                  className="nodrag flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] text-zinc-200 hover:border-zinc-500 hover:text-white"
+                >
+                  <UploadIcon className="h-3.5 w-3.5" />
+                  Select from Local
+                </button>
+              </div>
             ) : (
               <span className="p-3 text-center text-[11px] text-zinc-600">
                 Drop an asset here, or connect a Preview&apos;s output to set this frame&apos;s
@@ -305,6 +373,21 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
               </>
             )}
           </div>
+
+          {/* Loader footer: always-available local picker (also acts as add/replace once media is
+              loaded). Generation frames don't get this — their inputs come from the pipeline. */}
+          {isLoader && cur && (
+            <div className="flex items-center justify-end border-t border-border bg-surface/90 px-2 py-1">
+              <button
+                onClick={selectLocal}
+                title="Add media from your computer"
+                className="nodrag flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-black/40 hover:text-white"
+              >
+                <UploadIcon className="h-3 w-3" />
+                Select from Local
+              </button>
+            </div>
+          )}
 
           {dropActive && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-md border-2 border-dashed border-accent bg-accent/15 text-[11px] font-medium text-panel">

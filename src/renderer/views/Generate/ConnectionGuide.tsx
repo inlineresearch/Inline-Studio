@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { studio } from '@/lib/studio'
+import { copyText } from '@/lib/clipboard'
 
 /**
  * Shown on the Generate tab when no ComfyUI is reachable. Two side-by-side cards
@@ -102,7 +104,7 @@ function CloudCard(): React.JSX.Element {
 function VideoThumb({ videoId, href }: { videoId: string; href: string }): React.JSX.Element {
   return (
     <button
-      onClick={() => void window.inlineStudio.shell.openExternal(href)}
+      onClick={() => void studio().shell.openExternal(href)}
       title="Watch the setup video on YouTube"
       className="group mt-0.5 overflow-hidden rounded-md border border-border hover:border-accent"
     >
@@ -166,7 +168,8 @@ function Step({ n, children }: { n: number; children: React.ReactNode }): React.
 function CopyBlock({ command }: { command: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const copy = (): void => {
-    void navigator.clipboard.writeText(command).then(() => {
+    void copyText(command).then((ok) => {
+      if (!ok) return
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })
@@ -196,7 +199,7 @@ function TemplateLink({
 }): React.JSX.Element {
   return (
     <button
-      onClick={() => void window.inlineStudio.shell.openExternal(href)}
+      onClick={() => void studio().shell.openExternal(href)}
       className="group flex items-center justify-between gap-2 rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-left hover:border-accent hover:bg-surface"
     >
       <span className="min-w-0">

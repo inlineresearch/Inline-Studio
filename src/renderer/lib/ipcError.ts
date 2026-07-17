@@ -1,6 +1,6 @@
 /**
  * Turn anything thrown by an IPC call into a readable message. Guards against the
- * "silent nothing happens" failure mode where a missing/old `window.inlineStudio`
+ * "silent nothing happens" failure mode where a missing/old `studio()`
  * method throws and the rejection is discarded — surface it in the UI instead.
  */
 export function ipcErrorMessage(e: unknown): string {

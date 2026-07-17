@@ -1,0 +1,59 @@
+# Publish the Inline Core engine (inline-core) to PyPI, so `pip install -r requirements.txt`
+# pulls the engine + runtime with no source checkout. The prebuilt web UI is published separately by
+# publish-frontend.yml — kept in its own file so each package's PyPI *pending* trusted publisher has a
+# distinct GitHub config (owner + repo + workflow filename + environment), which PyPI requires.
+#
+# Trigger: push a tag like `v1.1.1`, publish a GitHub Release, or run manually (workflow_dispatch with
+# an explicit version). The version is derived from the tag and stamped into core/pyproject.toml.
+#
+# Auth: PyPI Trusted Publishing (OIDC) — add a pending publisher on PyPI for project
+# `inline-core`, repo, workflow `publish-core.yml`, environment blank. No secrets to store. To
+# use an API token instead, drop `permissions.id-token` and pass
+# `password: ${{ secrets.PYPI_API_TOKEN }}` to the publish step.
+name: Publish engine to PyPI
+
+on:
+  push:
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 1.1.1). Defaults to the tag.'
+        required: false
+
+jobs:
+  engine:
+    name: Publish inline-core
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # PyPI Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $VERSION"
+
+      - name: Stamp the package version
+        run: |
+          sed -i "s/^version = .*/version = \"${{ steps.ver.outputs.version }}\"/" core/pyproject.toml
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build core --outdir dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

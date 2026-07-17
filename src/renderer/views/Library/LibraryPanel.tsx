@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { mediaUrl } from '@shared/media'
+import { resolveMedia } from '@/lib/media'
 import type { Asset, AssetFolder } from '@shared/types'
 import { useAssetStore, folderPath } from '../../store/assetStore'
 import { setAssetDragPayload } from '../../lib/dnd'
@@ -19,7 +19,7 @@ export function LibraryPanel(): React.JSX.Element {
     error,
     load,
     import: importAssets,
-    importPaths,
+    importFiles,
     remove,
     createFolder,
     deleteFolder,
@@ -47,10 +47,8 @@ export function LibraryPanel(): React.JSX.Element {
     if (!isFileDrag(e)) return
     e.preventDefault()
     setFileOver(false)
-    const paths = Array.from(e.dataTransfer.files ?? [])
-      .map((f) => window.inlineStudio.getPathForFile(f))
-      .filter((p) => p.length > 0)
-    if (paths.length > 0) void importPaths(paths)
+    const files = Array.from(e.dataTransfer.files ?? [])
+    if (files.length > 0) void importFiles(files)
   }
 
   const toggleDragSel = (id: string): void =>
@@ -252,20 +250,24 @@ function AssetThumb({
   onToggleDrag: () => void
   onDelete: () => void
 }): React.JSX.Element {
-  const url = mediaUrl(asset.filePath)
+  const url = resolveMedia(asset.filePath)
   // Grid cells are small — render images from their downscaled thumbnail when present.
-  const imageSrc = mediaUrl(
+  const imageSrc = resolveMedia(
     asset.kind === 'image' ? (asset.thumbPath ?? asset.filePath) : asset.filePath,
   )
-  const videoSrc = mediaUrl(asset.previewPath ?? asset.filePath)
-  const poster = asset.thumbPath ? mediaUrl(asset.thumbPath) : undefined
+  const videoSrc = resolveMedia(asset.previewPath ?? asset.filePath)
+  const poster = asset.thumbPath ? resolveMedia(asset.thumbPath) : undefined
   const onContextMenu = useMediaContextMenu()
   return (
     <div className="group relative">
       <button
         onClick={(e) => (e.metaKey || e.ctrlKey ? onToggleDrag() : onSelect())}
         onContextMenu={(e) =>
-          onContextMenu(e, { src: mediaUrl(asset.filePath), name: asset.name, kind: asset.kind })
+          onContextMenu(e, {
+            src: resolveMedia(asset.filePath),
+            name: asset.name,
+            kind: asset.kind,
+          })
         }
         draggable
         onDragStart={(e) => {
@@ -291,7 +293,7 @@ function AssetThumb({
           {asset.kind === 'audio' && (
             <AudioPreview
               src={url}
-              waveformUrl={asset.thumbPath ? mediaUrl(asset.thumbPath) : null}
+              waveformUrl={asset.thumbPath ? resolveMedia(asset.thumbPath) : null}
               className="h-full w-full"
             />
           )}

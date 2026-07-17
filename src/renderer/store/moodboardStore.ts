@@ -2,12 +2,13 @@
  * Moodboard state: the board's items + connectors. The canvas (React Flow) owns
  * transient drag positions; this store is the persisted source of truth and is
  * updated on discrete events (drag stop, resize end, text edit), each persisted
- * to main via window.inlineStudio.moodboard.
+ * to main via studio().moodboard.
  */
 import { create } from 'zustand'
 import type { MoodboardItem, MoodboardConnector } from '@shared/types'
 import type { MoodboardItemPatch } from '@shared/ipc'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { studio } from '@/lib/studio'
 import { useFrameStore } from './frameStore'
 
 /** A board snapshot for the undo/redo stacks. */
@@ -43,6 +44,9 @@ interface MoodboardState {
   ) => Promise<void>
   /** Create an empty frame and place its node on the canvas. Returns the new item. */
   addEmptyFrame: (x: number, y: number) => Promise<MoodboardItem | null>
+  /** Create a "Load Assets" loader — an empty frame flagged as a pure loader (no generation,
+   * freely resizable). Returns the new item. */
+  addLoader: (x: number, y: number) => Promise<MoodboardItem | null>
   /** Add a Preview node. Returns the new item (for connection-drop suggestions). */
   addPreview: (x: number, y: number) => Promise<MoodboardItem | null>
   addLayer: (x: number, y: number) => Promise<void>
@@ -52,6 +56,7 @@ interface MoodboardState {
   addGenNode: (modelId: string, x: number, y: number) => Promise<MoodboardItem | null>
   /** Create a text-prompt node (feeds a Generate node's prompt input). Returns the new item. */
   addPrompt: (x: number, y: number) => Promise<MoodboardItem | null>
+  addCoreNode: (coreType: string, x: number, y: number) => Promise<MoodboardItem | null>
   /** Place an existing asset on the board, parented to a layer when given. */
   addFrameFromAssetInLayer: (
     assetId: string,
@@ -109,12 +114,12 @@ async function copyOne(
   y: number,
   parentId: string | null,
 ): Promise<MoodboardItem | null> {
-  const m = window.inlineStudio.moodboard
+  const m = studio().moodboard
   let res
   switch (item.type) {
     case 'frame': {
       if (!item.frameId) return null
-      const cloned = await window.inlineStudio.frames.clone(item.frameId)
+      const cloned = await studio().frames.clone(item.frameId)
       if (!cloned.ok) return null
       res = await m.addFrameItem(cloned.value.id, x, y)
       break
@@ -165,7 +170,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   load: async () => {
     set({ loading: true, error: null })
     try {
-      const res = await window.inlineStudio.moodboard.list()
+      const res = await studio().moodboard.list()
       if (!res.ok) return set({ loading: false, error: res.error })
       // A fresh load is a new baseline — clear undo history.
       set({
@@ -197,7 +202,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
       connectors: prev.connectors,
     })
     try {
-      const res = await window.inlineStudio.moodboard.replaceBoard(prev.items, prev.connectors)
+      const res = await studio().moodboard.replaceBoard(prev.items, prev.connectors)
       if (!res.ok) set({ error: res.error })
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
@@ -215,7 +220,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
       connectors: next.connectors,
     })
     try {
-      const res = await window.inlineStudio.moodboard.replaceBoard(next.items, next.connectors)
+      const res = await studio().moodboard.replaceBoard(next.items, next.connectors)
       if (!res.ok) set({ error: res.error })
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
@@ -225,7 +230,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addAssetAt: async (assetId, x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addAsset(assetId, x, y)
+      const res = await studio().moodboard.addAsset(assetId, x, y)
       if (!res.ok) return set({ error: res.error })
       set((s) => ({ items: [...s.items, res.value] }))
     } catch (e) {
@@ -236,7 +241,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addTextAt: async (x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addText(x, y)
+      const res = await studio().moodboard.addText(x, y)
       if (!res.ok) return set({ error: res.error })
       set((s) => ({ items: [...s.items, res.value] }))
     } catch (e) {
@@ -247,7 +252,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addFrameFromAsset: async (assetId, x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addFrameFromAsset(assetId, x, y)
+      const res = await studio().moodboard.addFrameFromAsset(assetId, x, y)
       if (!res.ok) return set({ error: res.error })
       set((s) => ({ items: [...s.items, res.value] }))
     } catch (e) {
@@ -258,7 +263,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addFrameItem: async (frameId, x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addFrameItem(frameId, x, y)
+      const res = await studio().moodboard.addFrameItem(frameId, x, y)
       if (!res.ok) return set({ error: res.error })
       set((s) => ({ items: [...s.items, res.value] }))
     } catch (e) {
@@ -269,7 +274,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addEmptyFrame: async (x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addEmptyFrame(x, y)
+      const res = await studio().moodboard.addEmptyFrame(x, y)
       if (!res.ok) {
         set({ error: res.error })
         return null
@@ -284,14 +289,25 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     }
   },
 
+  addLoader: async (x, y) => {
+    // A loader is an empty frame flagged in its item data; reuse the frame plumbing (output handle,
+    // flow-link, take/asset resolution) and just mark it so the node renders as a resizable viewer.
+    const item = await get().addEmptyFrame(x, y)
+    if (!item) return null
+    const data = { ...item.data, loader: true }
+    // Fold into the same history entry addEmptyFrame already recorded (recordHistory = false).
+    await get().updateItem(item.id, { data }, false)
+    return { ...item, data }
+  },
+
   addFrameItemInLayer: async (frameId, x, y, parentId) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addFrameItem(frameId, x, y)
+      const res = await studio().moodboard.addFrameItem(frameId, x, y)
       if (!res.ok) return set({ error: res.error })
       let item = res.value
       if (parentId) {
-        const patched = await window.inlineStudio.moodboard.updateItem(item.id, { parentId })
+        const patched = await studio().moodboard.updateItem(item.id, { parentId })
         if (patched.ok) item = patched.value
       }
       set((s) => ({ items: [...s.items, item] }))
@@ -303,7 +319,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addPreview: async (x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addPreview(x, y)
+      const res = await studio().moodboard.addPreview(x, y)
       if (!res.ok) {
         set({ error: res.error })
         return null
@@ -319,7 +335,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addLayer: async (x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addLayer(x, y)
+      const res = await studio().moodboard.addLayer(x, y)
       if (!res.ok) return set({ error: res.error })
       set((s) => ({ items: [...s.items, res.value] }))
     } catch (e) {
@@ -330,7 +346,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addDirector: async (x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addDirector(x, y)
+      const res = await studio().moodboard.addDirector(x, y)
       if (!res.ok) {
         set({ error: res.error })
         return null
@@ -346,7 +362,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addTrim: async (x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addTrim(x, y)
+      const res = await studio().moodboard.addTrim(x, y)
       if (!res.ok) {
         set({ error: res.error })
         return null
@@ -362,7 +378,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addGenNode: async (modelId, x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addGenNode(modelId, x, y)
+      const res = await studio().moodboard.addGenNode(modelId, x, y)
       if (!res.ok) {
         set({ error: res.error })
         return null
@@ -377,10 +393,26 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     }
   },
 
+  addCoreNode: async (coreType, x, y) => {
+    try {
+      get().record()
+      const res = await studio().moodboard.addCoreNode(coreType, x, y)
+      if (!res.ok) {
+        set({ error: res.error })
+        return null
+      }
+      set((s) => ({ items: [...s.items, res.value] }))
+      return res.value
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+      return null
+    }
+  },
+
   addPrompt: async (x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addPrompt(x, y)
+      const res = await studio().moodboard.addPrompt(x, y)
       if (!res.ok) {
         set({ error: res.error })
         return null
@@ -396,11 +428,11 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   addFrameFromAssetInLayer: async (assetId, x, y, parentId) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.addFrameFromAsset(assetId, x, y)
+      const res = await studio().moodboard.addFrameFromAsset(assetId, x, y)
       if (!res.ok) return set({ error: res.error })
       let item = res.value
       if (parentId) {
-        const patched = await window.inlineStudio.moodboard.updateItem(item.id, { parentId })
+        const patched = await studio().moodboard.updateItem(item.id, { parentId })
         if (patched.ok) item = patched.value
       }
       set((s) => ({ items: [...s.items, item] }))
@@ -415,7 +447,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   connect: async (fromItemId, toItemId, sourceHandle = null, targetHandle = null) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.createConnector(
+      const res = await studio().moodboard.createConnector(
         fromItemId,
         toItemId,
         sourceHandle,
@@ -431,7 +463,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   disconnect: async (connectorId) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.deleteConnector(connectorId)
+      const res = await studio().moodboard.deleteConnector(connectorId)
       if (!res.ok) return set({ error: res.error })
       set((s) => ({ connectors: s.connectors.filter((c) => c.id !== connectorId) }))
     } catch (e) {
@@ -447,7 +479,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
       ),
     }))
     try {
-      const res = await window.inlineStudio.moodboard.setConnectorVolume(connectorId, volume)
+      const res = await studio().moodboard.setConnectorVolume(connectorId, volume)
       if (!res.ok) set({ error: res.error })
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
@@ -457,7 +489,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   importAndPlace: async (x, y) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.importAndPlace(x, y)
+      const res = await studio().moodboard.importAndPlace(x, y)
       if (!res.ok) {
         set({ error: res.error })
         return []
@@ -523,7 +555,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     // Optimistic: keep the canvas snappy, then persist.
     set((s) => ({ items: s.items.map((it) => (it.id === id ? applyPatch(it, patch) : it)) }))
     try {
-      const res = await window.inlineStudio.moodboard.updateItem(id, patch)
+      const res = await studio().moodboard.updateItem(id, patch)
       if (!res.ok) set({ error: res.error })
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
@@ -533,7 +565,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   deleteItem: async (id) => {
     try {
       get().record()
-      const res = await window.inlineStudio.moodboard.deleteItem(id)
+      const res = await studio().moodboard.deleteItem(id)
       if (!res.ok) return set({ error: res.error })
       set((s) => ({
         items: s.items.filter((it) => it.id !== id),

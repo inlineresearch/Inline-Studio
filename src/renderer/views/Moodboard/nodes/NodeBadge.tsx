@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react'
+import { useCallback, type ReactNode } from 'react'
+import { useReactFlow } from '@xyflow/react'
+import { useMoodboardStore } from '../../../store/moodboardStore'
 
 /**
  * Shared chrome for the canvas node family, matching the Generate node's look: a floating
@@ -7,9 +9,71 @@ import type { ReactNode } from 'react'
  * node — Frame, Preview, Image, Trim, Director… — reads as one consistent card design.
  */
 
-/** Row that holds a node's floating badge(s), pinned above the node's top-left corner. */
-export function NodeBadgeRow({ children }: { children: ReactNode }): React.JSX.Element {
-  return <div className="absolute -top-7 left-0 z-10 flex items-center gap-1">{children}</div>
+/**
+ * Drag ONE node by its title chip, independent of the graph selection. Grabbing a node's body moves
+ * the whole selected graph; grabbing the chip repositions just that node. A custom pointer drag (the
+ * chip is `nodrag`, so React Flow's selection-based multi-drag never starts), persisted on release.
+ */
+function useChipDrag(id: string): (e: React.PointerEvent) => void {
+  const rf = useReactFlow()
+  const updateItem = useMoodboardStore((s) => s.updateItem)
+  return useCallback(
+    (e: React.PointerEvent) => {
+      if (e.button !== 0) return
+      const node = rf.getNode(id)
+      if (!node) return
+      e.stopPropagation()
+      const sx = e.clientX
+      const sy = e.clientY
+      const ox = node.position.x
+      const oy = node.position.y
+      let moved = false
+      const move = (ev: PointerEvent): void => {
+        if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return
+        moved = true
+        const zoom = rf.getViewport().zoom || 1
+        const x = ox + (ev.clientX - sx) / zoom
+        const y = oy + (ev.clientY - sy) / zoom
+        rf.setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, position: { x, y } } : n)))
+      }
+      const up = (): void => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        if (!moved) return
+        const n = rf.getNode(id)
+        if (n) void updateItem(id, { x: n.position.x, y: n.position.y })
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+    },
+    [id, rf, updateItem],
+  )
+}
+
+/**
+ * Row that holds a node's floating badge(s), pinned above the node's top-left corner. Pass
+ * `dragNodeId` (the node's id) to make the chip a per-node drag handle — moving just that node
+ * rather than the whole selected graph.
+ */
+export function NodeBadgeRow({
+  children,
+  dragNodeId,
+}: {
+  children: ReactNode
+  dragNodeId?: string
+}): React.JSX.Element {
+  const onPointerDown = useChipDrag(dragNodeId ?? '')
+  const base = 'absolute -top-7 left-0 z-10 flex items-center gap-1'
+  if (!dragNodeId) return <div className={base}>{children}</div>
+  return (
+    <div
+      className={`${base} nodrag cursor-grab select-none active:cursor-grabbing`}
+      onPointerDown={onPointerDown}
+      title="Drag to move only this node"
+    >
+      {children}
+    </div>
+  )
 }
 
 /**
@@ -217,6 +281,123 @@ export function XIcon({ className }: { className?: string }): React.JSX.Element 
   return (
     <Icon className={className ?? 'h-3.5 w-3.5'}>
       <path d="M18 6 6 18M6 6l12 12" />
+    </Icon>
+  )
+}
+
+/** Play triangle — a node's Run control. */
+export function PlayIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className ?? 'h-4 w-4'}
+      aria-hidden="true"
+    >
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  )
+}
+
+/** Filled square — the Run control turns into this to interrupt an in-progress generation. */
+export function StopIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className ?? 'h-4 w-4'}
+      aria-hidden="true"
+    >
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+    </svg>
+  )
+}
+
+/**
+ * Sliders/adjust mark — opens a node's settings sidebar. Shared by the Generate (fal) node and the
+ * Inline Core node so both read identically. Has filled dots, so it's its own svg (not the stroked
+ * Icon wrapper).
+ */
+export function AdjustIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className ?? 'h-4 w-4'}
+      aria-hidden="true"
+    >
+      <line x1="4" y1="8" x2="20" y2="8" />
+      <line x1="4" y1="16" x2="20" y2="16" />
+      <circle cx="9" cy="8" r="2" fill="currentColor" />
+      <circle cx="15" cy="16" r="2" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** Magic wand — a generation model node (Z-Image and other `icon:"wand"` descriptors). */
+export function WandIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5" />
+    </Icon>
+  )
+}
+
+/** Box — a loader-style node (`icon:"box"`). */
+export function BoxIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5M12 22V12" />
+    </Icon>
+  )
+}
+
+/** Type "T" — a text/prompt-style node (`icon:"type"`). */
+export function TypeIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M4 7V4h16v3M9 20h6M12 4v16" />
+    </Icon>
+  )
+}
+
+/** Square — a latent/plumbing node (`icon:"square"`), and the generic fallback glyph. */
+export function SquareIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+    </Icon>
+  )
+}
+
+/** Alert triangle — the "models missing" hint on a model node (opens the model popup). */
+export function AlertIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+      <path d="M12 9v4M12 17h.01" />
+    </Icon>
+  )
+}
+
+/** Download tray with a down arrow — a component's download action in the model popup. */
+export function DownloadIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+    </Icon>
+  )
+}
+
+export function UploadIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
     </Icon>
   )
 }

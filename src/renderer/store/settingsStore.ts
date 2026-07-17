@@ -1,6 +1,7 @@
 /** App settings (currently the ComfyUI backend URL). */
 import { create } from 'zustand'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { studio } from '@/lib/studio'
 
 interface SettingsState {
   comfyUrl: string
@@ -15,7 +16,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   load: async () => {
     try {
-      const res = await window.inlineStudio.settings.get()
+      const res = await studio().settings.get()
       if (res.ok) set({ comfyUrl: res.value.comfyUrl })
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
@@ -24,7 +25,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   setComfyUrl: async (url) => {
     try {
-      const res = await window.inlineStudio.settings.setComfyUrl(url)
+      const res = await studio().settings.setComfyUrl(url)
       if (!res.ok) return set({ error: res.error })
       set({ comfyUrl: res.value.comfyUrl, error: null })
     } catch (e) {

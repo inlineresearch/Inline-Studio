@@ -20,15 +20,29 @@ import {
   type EdgeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { mediaUrl } from '@shared/media'
+import { studio } from '@/lib/studio'
+import { resolveMedia } from '@/lib/media'
+import { importFilesToLibrary, importMediaUrlToLibrary } from '@/lib/importFiles'
+import { copyText } from '@/lib/clipboard'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
+import { portKindColor, portsSatisfy, type NodeDescriptor, type PortKind } from '@shared/coreNodes'
 import { useMoodboardStore } from '../../store/moodboardStore'
+import { useCoreNodesStore } from '../../store/coreNodesStore'
+import { useGraphSelectionStore } from '../../store/graphSelectionStore'
+import { expandToGraphs, runTargets, toEdges } from './graphSelection'
 import { useAssetStore } from '../../store/assetStore'
 import { useFrameStore } from '../../store/frameStore'
 import { useGenerationStore } from '../../store/generationStore'
+import { useModelRequirementsStore } from '../../store/modelRequirementsStore'
 import { useTimelineStore } from '../../store/timelineStore'
 import { useUiStore } from '../../store/uiStore'
-import { getAssetDragIds, getFrameDragId, getOutputDragId, getOutputTakeId } from '../../lib/dnd'
+import {
+  getAssetDragIds,
+  getFrameDragId,
+  getMediaFileDrag,
+  getOutputDragId,
+  getOutputTakeId,
+} from '../../lib/dnd'
 import { ImageNode } from './nodes/ImageNode'
 import { VideoNode } from './nodes/VideoNode'
 import { AudioNode } from './nodes/AudioNode'
@@ -38,11 +52,14 @@ import { GenNode } from './nodes/GenNode'
 import { ChooserNode } from './nodes/ChooserNode'
 import { PromptNode } from './nodes/PromptNode'
 import { GenerateSettingsPanel } from './GenerateSettingsPanel'
+import { CoreSettingsPanel } from './CoreSettingsPanel'
 import { ModelInfoPanel } from './ModelInfoPanel'
+import { ModelRequirementsModal } from './nodes/ModelRequirementsModal'
 import { PreviewNode } from './nodes/PreviewNode'
 import { LayerNode } from './nodes/LayerNode'
 import { DirectorNode } from './nodes/DirectorNode'
 import { TrimNode } from './nodes/TrimNode'
+import { GraphNode } from './nodes/GraphNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
 import { CanvasToolbar } from './CanvasToolbar'
@@ -54,10 +71,13 @@ import { CheckIcon, CloseIcon, CopyIcon } from '../../components/icons'
  * Every generation node is one `type:'frame'` canvas item (so they share the frame/take/flow-link
  * machinery). Which component renders is decided by the backing frame's provider: `unset` → the
  * ChooserNode (pick an engine); `fal` → the self-contained GenNode; `comfy` (default) → the FrameNode.
+ * A `loader` item is a pure "Load Assets" viewer with no generation, so it always renders as the
+ * FrameNode (loader mode), never the engine chooser.
  */
 function FrameNodeSwitch(props: NodeProps): React.JSX.Element {
-  const { frameId } = props.data as { frameId: string }
+  const { frameId, loader } = props.data as { frameId: string; loader?: boolean }
   const provider = useFrameStore((s) => s.frames.find((f) => f.id === frameId)?.provider)
+  if (loader) return <FrameNode {...props} />
   if (provider === 'fal') return <GenNode {...props} />
   if (provider === 'unset') return <ChooserNode {...props} />
   return <FrameNode {...props} />
@@ -74,6 +94,7 @@ const nodeTypes: NodeTypes = {
   director: DirectorNode,
   trim: TrimNode,
   prompt: PromptNode,
+  core: GraphNode,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -136,6 +157,39 @@ function visualEdgeColors(connectors: MoodboardConnector[]): Map<string, string>
     colors.set(c.id, LEVEL_COLORS[d % LEVEL_COLORS.length])
   }
   return colors
+}
+
+/** The port kind of a core node's handle, resolved from its descriptor (null for non-core/unknown). */
+function corePortKindOf(
+  coreType: string | undefined,
+  handle: string,
+  side: 'input' | 'output',
+  descriptorsByType: Map<string, NodeDescriptor>,
+): PortKind | null {
+  if (!coreType) return null
+  const descriptor = descriptorsByType.get(coreType)
+  const ports = side === 'output' ? descriptor?.outputs : descriptor?.inputs
+  return ports?.find((p) => p.id === handle)?.kind ?? null
+}
+
+/**
+ * The wire color for a connector between two low-level Core ports — the source dot's kind color so
+ * the link matches the dots it joins (model = red, vae = orange, latent = blue, …). Falls back to
+ * the target's kind (same kind by the type rule) and finally undefined for non-core links, which keep
+ * the frame-flow visual coloring.
+ */
+function edgeKindColor(
+  from: string,
+  to: string,
+  sourceHandle: string,
+  targetHandle: string,
+  coreTypeById: Map<string, string>,
+  descriptorsByType: Map<string, NodeDescriptor>,
+): string | undefined {
+  const kind =
+    corePortKindOf(coreTypeById.get(from), sourceHandle, 'output', descriptorsByType) ??
+    corePortKindOf(coreTypeById.get(to), targetHandle, 'input', descriptorsByType)
+  return kind ? portKindColor(kind) : undefined
 }
 
 /** Parse the slot index from a director handle id (e.g. "vin-3" → 3), or null. */
@@ -205,7 +259,10 @@ function Board(): React.JSX.Element {
   const addDirector = useMoodboardStore((s) => s.addDirector)
   const addTrim = useMoodboardStore((s) => s.addTrim)
   const addEmptyFrame = useMoodboardStore((s) => s.addEmptyFrame)
+  const addLoader = useMoodboardStore((s) => s.addLoader)
   const addPrompt = useMoodboardStore((s) => s.addPrompt)
+  const addCoreNode = useMoodboardStore((s) => s.addCoreNode)
+  const addGenNode = useMoodboardStore((s) => s.addGenNode)
   const duplicateItems = useMoodboardStore((s) => s.duplicateItems)
   const undo = useMoodboardStore((s) => s.undo)
   const redo = useMoodboardStore((s) => s.redo)
@@ -215,6 +272,11 @@ function Board(): React.JSX.Element {
   const setGenError = useGenerationStore((s) => s.setError)
   const frames = useFrameStore((s) => s.frames)
   const assets = useAssetStore((s) => s.assets)
+  const coreDescriptors = useCoreNodesStore((s) => s.descriptors)
+  // Load the Inline Core node palette once; descriptors drive the low-level graph nodes.
+  useEffect(() => {
+    void useCoreNodesStore.getState().load()
+  }, [])
   const loadAssets = useAssetStore((s) => s.load)
   const loadFrames = useFrameStore((s) => s.load)
   const setCanvasSelection = useUiStore((s) => s.setCanvasSelection)
@@ -256,13 +318,36 @@ function Board(): React.JSX.Element {
 
   const assetsById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets])
 
+  // Compact/plumbing core nodes (no media output — loaders, samplers, encoders) hug their content
+  // rather than stretch to a stored height, so a Load node is just its title + file dropdown.
+  const compactCoreTypes = useMemo(
+    () => new Set(coreDescriptors.filter((d) => d.outputKind === null).map((d) => d.type)),
+    [coreDescriptors],
+  )
+
+  // Lookups for coloring engine wires by their port kind (see edgeKindColor). Keyed by type/id so
+  // they only rebuild when the node set or the palette changes, not on every drag frame.
+  const descriptorsByType = useMemo(
+    () => new Map(coreDescriptors.map((d) => [d.type, d])),
+    [coreDescriptors],
+  )
+  const coreTypeById = useMemo(
+    () =>
+      new Map(
+        items
+          .filter((i) => i.type === 'core' && i.data.core)
+          .map((i) => [i.id, (i.data.core as { type: string }).type]),
+      ),
+    [items],
+  )
+
   useEffect(() => {
-    setNodes(toNodes(items, assetsById))
-  }, [items, assetsById, setNodes])
+    setNodes(toNodes(items, assetsById, compactCoreTypes))
+  }, [items, assetsById, compactCoreTypes, setNodes])
 
   // Director render progress (main → renderer) drives the editor + node progress UI.
   useEffect(() => {
-    return window.inlineStudio.timeline.onProgress((e) => {
+    return studio().timeline.onProgress((e) => {
       useTimelineStore.getState().setProgress(e.ownerItemId, e.fraction >= 1 ? null : e.fraction)
     })
   }, [])
@@ -275,22 +360,34 @@ function Board(): React.JSX.Element {
     // running server-side); their progress/completion arrives through the events below.
     void gen.resumePending()
     const unsubs = [
-      window.inlineStudio.events.onGenerationProgress((e) => {
+      studio().events.onGenerationProgress((e) => {
         gen.setBusy(e.frameId, true)
         gen.setProgress(e.frameId, e.fraction, e.status)
       }),
-      window.inlineStudio.events.onGenerationNodeDone((e) => {
+      studio().events.onGenerationNodeDone((e) => {
         gen.setBusy(e.frameId, false)
         gen.setProgress(e.frameId, null)
         void useFrameStore.getState().load()
       }),
-      window.inlineStudio.events.onGenerationDone(() => {
+      studio().events.onGenerationDone(() => {
         gen.finishAll()
         void useFrameStore.getState().load()
+        // Core workflow outputs are stored on their canvas items — refresh the board to show them.
+        void useMoodboardStore.getState().load()
       }),
-      window.inlineStudio.events.onGenerationError((e) => {
+      studio().events.onGenerationError((e) => {
         gen.finishAll()
         gen.setError(e.error)
+      }),
+      // Explicit model downloads (the node's "missing models" popup) stream here.
+      studio().events.onModelDownloadProgress((e) => {
+        useModelRequirementsStore.getState().onProgress(e)
+      }),
+      studio().events.onModelDownloadDone((e) => {
+        useModelRequirementsStore.getState().onDone(e)
+      }),
+      studio().events.onModelDownloadError((e) => {
+        useModelRequirementsStore.getState().onError(e)
       }),
     ]
     return () => unsubs.forEach((u) => u())
@@ -331,6 +428,16 @@ function Board(): React.JSX.Element {
         // colored by their chain level. A GenNode's audio input ('audio') is a data link too.
         const functional =
           sourceHandle === 'out' && (targetHandle === 'in' || targetHandle === 'audio')
+        // Engine wires (between low-level Core ports) take the source dot's kind color so the link
+        // matches the dots it joins; other links keep the frame-flow coloring.
+        const kindColor = edgeKindColor(
+          c.fromItemId,
+          c.toItemId,
+          sourceHandle,
+          targetHandle,
+          coreTypeById,
+          descriptorsByType,
+        )
         return {
           id: c.id,
           source: c.fromItemId,
@@ -339,11 +446,11 @@ function Board(): React.JSX.Element {
           targetHandle,
           type: 'deletable',
           animated: false,
-          data: { functional, color: levelColors.get(c.id) },
+          data: { functional, color: levelColors.get(c.id), kindColor },
         }
       }),
     )
-  }, [connectors, setEdges])
+  }, [connectors, coreTypeById, descriptorsByType, setEdges])
 
   const onNodesChange = (changes: NodeChange<Node>[]): void => {
     setNodes((nds) => applyNodeChanges(changes, nds))
@@ -360,6 +467,43 @@ function Board(): React.JSX.Element {
   useEffect(() => {
     setCanvasSelection(selectedKey ? selectedKey.split(',') : [])
   }, [selectedKey, setCanvasSelection])
+
+  // Graph-level selection: selecting any node selects its whole connected graph, and the graph's
+  // single Run control lives on its output node (the runnable node with nothing runnable
+  // downstream). Expands the live selection to the full graph(s), then publishes the run target(s).
+  const setRunTargets = useGraphSelectionStore((s) => s.setRunTargets)
+  useEffect(() => {
+    const seeds = selectedKey ? selectedKey.split(',') : []
+    if (seeds.length === 0) {
+      setRunTargets([])
+      return
+    }
+    const byId = new Map(items.map((it) => [it.id, it]))
+    const edges = toEdges(connectors, (id) => byId.has(id))
+    const graph = expandToGraphs(seeds, edges)
+
+    // Pull the selection out to the whole graph (converges: a re-run with the graph already
+    // selected makes no change).
+    if (graph.size !== seeds.length || !seeds.every((id) => graph.has(id))) {
+      setNodes((nds) => nds.map((n) => ({ ...n, selected: graph.has(n.id) })))
+    }
+
+    const isRunnable = (id: string): boolean => {
+      const it = byId.get(id)
+      if (!it) return false
+      if (it.type === 'core') {
+        const type = it.data.core?.type
+        const d = type ? coreDescriptors.find((dd) => dd.type === type) : undefined
+        return !!d && d.outputKind != null // a generation core node (loaders have no media output)
+      }
+      if (it.type === 'frame') {
+        const f = it.frameId ? frames.find((fr) => fr.id === it.frameId) : undefined
+        return f?.provider === 'fal' // a fal Generate node
+      }
+      return false
+    }
+    setRunTargets(runTargets(graph, edges, isRunnable))
+  }, [selectedKey, connectors, items, coreDescriptors, frames, setNodes, setRunTargets])
 
   // Keyboard: copy (⌘/Ctrl-C), paste (⌘/Ctrl-V), undo (⌘/Ctrl-Z), redo (⌘/Ctrl-Shift-Z
   // or ⌘/Ctrl-Y). Delete is handled by React Flow's deleteKeyCode + onNodesDelete.
@@ -418,11 +562,29 @@ function Board(): React.JSX.Element {
     return hit.length ? hit[hit.length - 1] : null
   }
 
+  // The port kind of a low-level Core node's handle (null for non-core nodes / unknown handles).
+  const corePortKind = (
+    itemId: string | null | undefined,
+    handle: string | null | undefined,
+    side: 'input' | 'output',
+  ): PortKind | null => {
+    const item = items.find((it) => it.id === itemId)
+    const core = item?.type === 'core' ? item.data.core : undefined
+    if (!core) return null
+    const descriptor = coreDescriptors.find((d) => d.type === core.type)
+    const ports = side === 'output' ? descriptor?.outputs : descriptor?.inputs
+    return ports?.find((p) => p.id === handle)?.kind ?? null
+  }
+
   // Type-check a wire before it's made: a Prompt node emits text and every other node emits
   // media, so a Prompt may only feed a text ('prompt') input, and a media output may only feed a
-  // non-text input. This blocks a Prompt→image/video dot (and an image/video→prompt dot).
+  // non-text input. This blocks a Prompt→image/video dot (and an image/video→prompt dot). Between
+  // two low-level Core nodes we apply Core's own engine-type rule (model/latent/conditioning/...).
   const isValidConnection = (c: Connection | Edge): boolean => {
     if (!c.source || !c.target || c.source === c.target) return false
+    const srcKind = corePortKind(c.source, c.sourceHandle, 'output')
+    const tgtKind = corePortKind(c.target, c.targetHandle, 'input')
+    if (srcKind && tgtKind && !portsSatisfy(srcKind, tgtKind)) return false
     const sourceIsText = items.find((it) => it.id === c.source)?.type === 'prompt'
     const targetIsText = (c.targetHandle ?? undefined) === 'prompt'
     return sourceIsText === targetIsText
@@ -538,6 +700,9 @@ function Board(): React.JSX.Element {
     setAddMenu(null)
     if (!m) return
     switch (kind) {
+      case 'load':
+        void addLoader(m.flowX, m.flowY)
+        break
       case 'frame':
         void addEmptyFrame(m.flowX, m.flowY)
         break
@@ -557,6 +722,18 @@ function Board(): React.JSX.Element {
         void addPrompt(m.flowX, m.flowY)
         break
     }
+  }
+
+  const onPickCore = (coreType: string): void => {
+    const m = addMenu
+    setAddMenu(null)
+    if (m) void addCoreNode(coreType, m.flowX, m.flowY)
+  }
+
+  const onPickGen = (modelId: string): void => {
+    const m = addMenu
+    setAddMenu(null)
+    if (m) void addGenNode(modelId, m.flowX, m.flowY)
   }
 
   /** Create a preview node and wire the dropped output into it. */
@@ -617,6 +794,19 @@ function Board(): React.JSX.Element {
     e.preventDefault()
     const drop = screenToFlowPosition({ x: e.clientX, y: e.clientY })
 
+    // A raw media file dragged from the Outputs tab (a Core-node render with no frame) → import it
+    // into the Library, then drop a Load Assets loader fed by it at the drop point.
+    const media = getMediaFileDrag(e.dataTransfer)
+    if (media) {
+      void (async () => {
+        const asset = await importMediaUrlToLibrary(resolveMedia(media.filePath), media.name)
+        if (!asset) return
+        const loader = await addLoader(drop.x, drop.y)
+        if (loader?.frameId) await useFrameStore.getState().addInputs(loader.frameId, [asset.id])
+      })()
+      return
+    }
+
     // A generated output dragged from the Outputs tab → create a NEW frame at the drop, fed by
     // that output. Pin the exact take dragged as the source's hero so the new frame shows it.
     const outputFrameId = getOutputDragId(e.dataTransfer)
@@ -645,10 +835,8 @@ function Board(): React.JSX.Element {
     const ids = getAssetDragIds(e.dataTransfer)
     if (ids.length === 0) {
       // Files dropped from the OS → import into the library, then place as frames.
-      const paths = Array.from(e.dataTransfer.files ?? [])
-        .map((f) => window.inlineStudio.getPathForFile(f))
-        .filter((p) => p.length > 0)
-      if (paths.length > 0) void importDroppedFiles(paths, drop)
+      const files = Array.from(e.dataTransfer.files ?? [])
+      if (files.length > 0) void placeDroppedFiles(files, drop)
       return
     }
     placeAssetsAt(ids, drop)
@@ -666,27 +854,28 @@ function Board(): React.JSX.Element {
     })
   }
 
-  /** Import OS files (by absolute path), then place the new assets as frames. */
-  const importDroppedFiles = async (
-    paths: string[],
+  /** Import dropped OS files (paths under Electron, upload in the browser), then place as frames. */
+  const placeDroppedFiles = async (
+    files: File[],
     drop: { x: number; y: number },
   ): Promise<void> => {
-    const res = await window.inlineStudio.assets.importPaths(paths, null)
-    if (!res.ok || res.value.length === 0) return
+    const assets = await importFilesToLibrary(files, null)
+    if (assets.length === 0) return
     await loadAssets() // surface the new media in the Assets panel too
     placeAssetsAt(
-      res.value.map((a) => a.id),
+      assets.map((a) => a.id),
       drop,
     )
   }
 
-  /** On drag stop, persist position and (for frames/previews) re-parent into/out of a layer. */
-  const onNodeDragStop = (_e: unknown, node: Node): void => {
+  /** Persist one dropped node's position and (for frames/previews) re-parent into/out of a layer.
+   * `recordHistory` is set only for the first node of a multi-drag so the whole move is one undo. */
+  const persistNodeDrop = (node: Node, recordHistory: boolean): void => {
     const item = items.find((it) => it.id === node.id)
     if (!item) return
 
     if (item.type !== 'frame' && item.type !== 'preview') {
-      void updateItem(node.id, { x: node.position.x, y: node.position.y })
+      void updateItem(node.id, { x: node.position.x, y: node.position.y }, recordHistory)
       return
     }
 
@@ -700,10 +889,20 @@ function Board(): React.JSX.Element {
     if (newParentId !== item.parentId) {
       const x = target ? abs.x - target.x : abs.x
       const y = target ? abs.y - target.y : abs.y
-      void updateItem(node.id, { parentId: newParentId, x, y })
+      void updateItem(node.id, { parentId: newParentId, x, y }, recordHistory)
     } else {
-      void updateItem(node.id, { x: node.position.x, y: node.position.y })
+      void updateItem(node.id, { x: node.position.x, y: node.position.y }, recordHistory)
     }
+  }
+
+  /**
+   * On drag stop, persist every dragged node — not just the one under the cursor. React Flow passes
+   * the full set of moved nodes as the third arg; ignoring it left the other selected nodes' new
+   * positions unsaved, so they snapped back on the next render/reload.
+   */
+  const onNodeDragStop = (_e: unknown, node: Node, nodes?: Node[]): void => {
+    const dragged = nodes && nodes.length > 0 ? nodes : [node]
+    dragged.forEach((n, i) => persistNodeDrop(n, i === 0))
   }
 
   return (
@@ -818,7 +1017,10 @@ function Board(): React.JSX.Element {
             x={addMenu.x}
             y={addMenu.y}
             above={addMenu.above}
+            coreNodes={coreDescriptors}
             onPick={onPickAddNode}
+            onPickCore={onPickCore}
+            onPickGen={onPickGen}
             onClose={() => setAddMenu(null)}
           />
         )}
@@ -835,7 +1037,9 @@ function Board(): React.JSX.Element {
         />
 
         <GenerateSettingsPanel />
+        <CoreSettingsPanel />
         <ModelInfoPanel />
+        <ModelRequirementsModal />
       </div>
 
       <FrameInspector />
@@ -856,13 +1060,11 @@ function GenErrorToast({
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const copy = (): void => {
-    void navigator.clipboard
-      .writeText(message)
-      .then(() => {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 1500)
-      })
-      .catch(() => undefined)
+    void copyText(message).then((ok) => {
+      if (!ok) return
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
   }
   return (
     <div className="absolute left-1/2 top-3 z-30 flex max-w-lg -translate-x-1/2 items-start gap-2 rounded-md border border-red-500/40 bg-red-950/90 px-3 py-2 text-xs text-red-200 shadow-lg">
@@ -924,11 +1126,12 @@ function toNodes(
     string,
     { filePath: string; kind: string; name: string; thumbPath?: string | null }
   >,
+  compactCoreTypes: Set<string>,
 ): Node[] {
   const ordered = [...items].sort(
     (a, b) => (a.type === 'layer' ? -1 : 0) - (b.type === 'layer' ? -1 : 0),
   )
-  return ordered.map((item) => itemToNode(item, assetsById))
+  return ordered.map((item) => itemToNode(item, assetsById, compactCoreTypes))
 }
 
 function itemToNode(
@@ -937,11 +1140,20 @@ function itemToNode(
     string,
     { filePath: string; kind: string; name: string; thumbPath?: string | null }
   >,
+  compactCoreTypes: Set<string>,
 ): Node {
+  // A compact/plumbing core node auto-sizes its height (hugs content) instead of taking the stored
+  // height; everything else keeps its persisted box.
+  const compact =
+    item.type === 'core' && !!item.data.core && compactCoreTypes.has(item.data.core.type)
   const common: Node = {
     id: item.id,
     position: { x: item.x, y: item.y },
-    style: { width: item.width, height: item.height, zIndex: item.zIndex },
+    style: {
+      width: item.width,
+      height: compact ? undefined : item.height,
+      zIndex: item.zIndex,
+    },
     data: {},
     ...(item.parentId ? { parentId: item.parentId } : {}),
   }
@@ -954,7 +1166,11 @@ function itemToNode(
     }
   }
   if (item.type === 'frame') {
-    return { ...common, type: 'frame', data: { frameId: item.frameId } }
+    return {
+      ...common,
+      type: 'frame',
+      data: { frameId: item.frameId, loader: !!item.data.loader },
+    }
   }
   if (item.type === 'preview') {
     return { ...common, type: 'preview', data: {} }
@@ -972,6 +1188,9 @@ function itemToNode(
   if (item.type === 'prompt') {
     return { ...common, type: 'prompt', data: {} }
   }
+  if (item.type === 'core') {
+    return { ...common, type: 'core', data: { itemId: item.id } }
+  }
   if (item.type === 'text') {
     return { ...common, type: 'text', data: { text: item.data.text ?? FALLBACK_TEXT } }
   }
@@ -979,10 +1198,10 @@ function itemToNode(
   // Images render from their downscaled thumbnail when available (full-res only in the
   // Library/Preview); video/audio keep their own source.
   const src = asset
-    ? mediaUrl(asset.kind === 'image' ? (asset.thumbPath ?? asset.filePath) : asset.filePath)
+    ? resolveMedia(asset.kind === 'image' ? (asset.thumbPath ?? asset.filePath) : asset.filePath)
     : ''
   const type = asset?.kind === 'video' ? 'video' : asset?.kind === 'audio' ? 'audio' : 'image'
   const waveform =
-    asset?.kind === 'audio' && asset.thumbPath ? mediaUrl(asset.thumbPath) : undefined
+    asset?.kind === 'audio' && asset.thumbPath ? resolveMedia(asset.thumbPath) : undefined
   return { ...common, type, data: { src, name: asset?.name ?? '', waveform } }
 }
