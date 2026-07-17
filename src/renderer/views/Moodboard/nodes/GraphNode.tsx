@@ -148,6 +148,14 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const core = item.data.core
   const pct = typeof progress === 'number' ? Math.round(progress * 100) : null
 
+  // Take history for the on-node output strip (newest first). Older items predate history and only
+  // carry a single `output` — treat that as a one-entry history. `output` marks the active take.
+  const outputs = core.outputs ?? (core.output ? [core.output] : [])
+  const activeTakeId = core.output?.takeId
+  const setActiveOutput = (o: NonNullable<typeof core.output>): void => {
+    void updateItem(itemId, { data: { ...item.data, core: { ...core, output: o } } })
+  }
+
   // Real "models missing" signal from the requirements check (replaces the old options heuristic,
   // which wrongly assumed a silent auto-download). Assume OK until requirements load, to avoid a
   // hint flash on first render.
@@ -351,6 +359,37 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
               )
             )}
           </div>
+
+          {/* Take history: every render this node produced, newest first. Click one to make it the
+              active output (shown large + flowed downstream). Only shown once there's more than one. */}
+          {outputs.length > 1 && (
+            <div className="nowheel flex shrink-0 gap-1 overflow-x-auto border-t border-border bg-surface/90 px-1.5 py-1.5">
+              {outputs.map((o) => (
+                <button
+                  key={o.takeId}
+                  onClick={() => setActiveOutput(o)}
+                  title={o.takeId === activeTakeId ? 'Active take' : 'Use this take'}
+                  className={`nodrag relative h-11 w-11 shrink-0 overflow-hidden rounded border transition-colors ${
+                    o.takeId === activeTakeId
+                      ? 'border-emerald-400 ring-1 ring-emerald-400/40'
+                      : 'border-border hover:border-zinc-500'
+                  }`}
+                >
+                  {o.kind === 'image' ? (
+                    <img
+                      src={resolveMedia(o.filePath)}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-black text-[9px] uppercase tracking-wide text-zinc-500">
+                      {o.kind}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Footer: category label + settings (adjust). Run lives on the graph's output node. */}
           <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface/90 px-1.5 py-1">

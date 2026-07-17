@@ -249,8 +249,11 @@ export interface MoodboardItemData {
   core?: {
     type: string
     params: Record<string, unknown>
-    /** The latest media this node produced (media-output nodes only). Project-relative path. */
+    /** The active media this node produced — shown large and flowed downstream. Project-relative. */
     output?: { takeId: string; filePath: string; kind: 'image' | 'video' | 'audio' }
+    /** Recent renders (newest first); `output` points at the active one. Drives the take-history
+     * strip on generation nodes. Same shape as `output`. */
+    outputs?: { takeId: string; filePath: string; kind: 'image' | 'video' | 'audio' }[]
   }
 }
 

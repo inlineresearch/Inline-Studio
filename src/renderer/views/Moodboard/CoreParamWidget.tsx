@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import type { CoreParamField } from '@shared/coreNodes'
 
 /**
@@ -54,21 +55,14 @@ export function CoreParamWidget({
     )
   }
   if (field.widget === 'number' || field.widget === 'seed') {
-    const num = Number(value ?? field.default)
     return (
-      <label className="flex flex-col gap-1">
-        <span className={labelCls}>{field.label}</span>
-        <input
-          type="number"
-          value={num}
-          min={field.min}
-          max={field.max}
-          step={field.step}
-          onChange={(e) => onChange(Number(e.target.value))}
-          onBlur={() => onCommit(num)}
-          className={inputCls}
-        />
-      </label>
+      <NumberField
+        field={field}
+        value={value}
+        onCommit={onCommit}
+        inputCls={inputCls}
+        labelCls={labelCls}
+      />
     )
   }
   // text + textarea: edit locally, persist on blur.
@@ -91,4 +85,68 @@ export function CoreParamWidget({
       )}
     </label>
   )
+}
+
+/**
+ * Number/seed input that keeps a free-form text *draft* while the user types, so the field can be
+ * cleared entirely and edited mid-value (a bare controlled `Number()` snaps an empty box to 0). The
+ * draft only resolves on blur: an empty or unparseable value falls back to the descriptor default,
+ * otherwise it commits the parsed number clamped to the field's declared range.
+ */
+function NumberField({
+  field,
+  value,
+  onCommit,
+  inputCls,
+  labelCls,
+}: {
+  field: CoreParamField
+  value: unknown
+  onCommit: (v: number) => void
+  inputCls: string
+  labelCls: string
+}): React.JSX.Element {
+  const external = value ?? field.default
+  const [draft, setDraft] = useState<string>(external == null ? '' : String(external))
+  // Re-seed the draft when the committed value changes from the outside (e.g. the panel re-seeds for
+  // a different node) — but never while the user is editing this same value.
+  const lastExternal = useRef(external)
+  useEffect(() => {
+    if (external !== lastExternal.current) {
+      lastExternal.current = external
+      setDraft(external == null ? '' : String(external))
+    }
+  }, [external])
+
+  const commit = (): void => {
+    const parsed = draft.trim() === '' ? Number(field.default) : Number(draft)
+    const resolved = Number.isFinite(parsed)
+      ? clamp(parsed, field.min, field.max)
+      : Number(field.default)
+    lastExternal.current = resolved
+    setDraft(String(resolved))
+    onCommit(resolved)
+  }
+
+  return (
+    <label className="flex flex-col gap-1">
+      <span className={labelCls}>{field.label}</span>
+      <input
+        type="number"
+        value={draft}
+        min={field.min}
+        max={field.max}
+        step={field.step}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        className={inputCls}
+      />
+    </label>
+  )
+}
+
+function clamp(n: number, min?: number, max?: number): number {
+  if (min != null && n < min) return min
+  if (max != null && n > max) return max
+  return n
 }

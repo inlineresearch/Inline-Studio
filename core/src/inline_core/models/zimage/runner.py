@@ -45,6 +45,7 @@ from ...runtime.progress import Phase, ProgressEvent
 from ...runtime.store import TakeStore
 from ...takes import AssetRef
 from .. import loaders
+from ..sampling import SamplingFamily, apply_sampling, sampling_param_fields
 from . import requirements as reqs
 
 # The models this node needs — the diffusion transformer plus a VAE, text-encoder, tokenizer and
@@ -112,6 +113,10 @@ ZIMAGE = NodeDescriptor(
         # Z-Image-Turbo is distilled: ~8 steps, CFG off (guidance 0). See the model card.
         ParamField("steps", "Steps", Widget.NUMBER, 8, min=1, max=100, step=1),
         ParamField("guidance", "Guidance (CFG)", Widget.NUMBER, 0.0, min=0.0, max=20.0, step=0.5),
+        # Sampler + scheduler (advanced): the two SELECT dropdowns from the reusable sampling
+        # registry. Z-Image is flow-match, so these tune the FlowMatchEuler scheduler (ancestral +
+        # sigma spacing) rather than swapping sampler classes — see models/sampling.py.
+        *sampling_param_fields(SamplingFamily.FLOW_MATCH),
         # img2img only: how far to move from the input image (0 = keep, 1 = ignore).
         ParamField(
             "strength", "Denoise strength", Widget.NUMBER, 0.6, min=0.0, max=1.0, step=0.05,
@@ -159,6 +164,8 @@ class ZImageRunner(NodeRunner):
         guidance = float(params["guidance"])
         negative = str(params.get("negative_prompt") or "").strip() or None
         seed = _resolve_seed(params.get("seed"))
+        sampler = str(params["sampler"])
+        scheduler = str(params["scheduler"])
         image_ref = _first(inputs.get("image"))
         img2img = image_ref is not None
 
@@ -275,7 +282,24 @@ class ZImageRunner(NodeRunner):
             call["image"] = _load_image(image_ref)
             call["strength"] = float(params.get("strength", 0.6))
 
-        logger.info("Z-Image sampling %d steps on %s…", steps, gen_device)
+        # Rebuild the scheduler for the chosen sampler/scheduler from the pipe's pristine base
+        # config (immutable across cache hits). `uniform` returns an explicit sigmas array; the rest
+        # flip a FlowMatchEuler config flag and return None.
+        base_config = getattr(pipe, "_inline_base_scheduler_config", None)
+        if base_config is not None:
+            sigmas = apply_sampling(
+                pipe, base_config, SamplingFamily.FLOW_MATCH, sampler, scheduler, steps
+            )
+            if sigmas is not None:
+                call["sigmas"] = sigmas
+
+        logger.info(
+            "Z-Image sampling %d steps on %s (sampler=%s, scheduler=%s)…",
+            steps,
+            gen_device,
+            sampler,
+            scheduler,
+        )
         sample_start = time.perf_counter()
         try:
             with _text_encoder_detached(pipe, "prompt_embeds" in call):
@@ -314,6 +338,8 @@ class ZImageRunner(NodeRunner):
                 "height": height,
                 "steps": steps,
                 "guidance": guidance,
+                "sampler": sampler,
+                "scheduler": scheduler,
                 "seed": seed,
                 **({"strength": call["strength"]} if img2img else {}),
             },
@@ -401,9 +427,29 @@ def _load_pipeline(
                 time.perf_counter() - place_start,
                 _device_report(policy),
             )
+        _capture_base_scheduler_config(pipe, base if img2img else None)
         _PIPELINES[key] = pipe
         logger.info("Z-Image pipeline ready in %.1fs total", time.perf_counter() - started)
         return pipe
+
+
+def _capture_base_scheduler_config(pipe: Any, base: Any) -> None:
+    """Stash a pipe's ORIGINAL scheduler config once, so every run rebuilds the scheduler from an
+    immutable snapshot instead of a prior run's mutated one.
+
+    The ``_PIPELINES`` cache key does not include sampler/scheduler, and ``apply_sampling`` replaces
+    ``pipe.scheduler`` per run — so without a pristine snapshot a later run would rebuild on top of
+    an earlier selection's config (a stale-scheduler leak across cache hits). Captured here at build
+    time, before any run mutates the pipe. An img2img pipe built via ``from_pipe`` inherits the base
+    pipe's pristine snapshot (the base's own ``scheduler`` may already be swapped by a run)."""
+    if getattr(pipe, "_inline_base_scheduler_config", None) is not None:
+        return
+    inherited = getattr(base, "_inline_base_scheduler_config", None) if base is not None else None
+    if inherited is not None:
+        pipe._inline_base_scheduler_config = inherited
+        return
+    scheduler = getattr(pipe, "scheduler", None)
+    pipe._inline_base_scheduler_config = dict(scheduler.config) if scheduler is not None else None
 
 
 def _build_pipeline(
