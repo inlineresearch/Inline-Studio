@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,14 @@ class CoreGeneration:
         self._active: dict[str, str] = {}  # canvas item id -> run id
 
     def run_workflow(self, item_id: str) -> None:
+        # If this item still has a run in flight — e.g. the user hit Run again without waiting for a
+        # prior interrupt to land, or an interrupt pressed during the long model load hasn't reached
+        # a cancel checkpoint yet — cancel it first. Otherwise the old run keeps executing (holding
+        # the single worker + the GPU) and the new one just queues behind it, which reads as a stuck
+        # "loading model" and can OOM. The runner now honours cancellation during the load too.
+        previous = self._active.get(item_id)
+        if previous is not None:
+            self._manager.cancel(previous)
         graph_dict, target = build_workflow_graph(
             self._store.conn(), self._store.folder(), item_id
         )
@@ -130,7 +139,15 @@ class CoreGeneration:
         rel = f"takes/{uuid.uuid4()}{ext}"
         (folder / "takes").mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, folder / rel)
-        # take.node_id is the canvas item that produced it (node ids == item ids).
+        # take.node_id is the canvas item that produced it (node ids == item ids). Stamp createdAt
+        # (ms) so the Outputs gallery can interleave these with frame takes newest-first.
         mb.set_core_node_output(
-            self._store.conn(), take.node_id, {"takeId": take.id, "filePath": rel, "kind": kind}
+            self._store.conn(),
+            take.node_id,
+            {
+                "takeId": take.id,
+                "filePath": rel,
+                "kind": kind,
+                "createdAt": int(time.time() * 1000),
+            },
         )

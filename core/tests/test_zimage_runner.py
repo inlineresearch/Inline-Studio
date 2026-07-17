@@ -57,7 +57,9 @@ class _FakeStore:
 def use_fake_pipe(monkeypatch: pytest.MonkeyPatch) -> _FakePipe:
     pipe = _FakePipe()
     monkeypatch.setattr(
-        rz, "_load_pipeline", lambda policy, *, img2img, source, mode, vae, text, quant=None: pipe
+        rz,
+        "_load_pipeline",
+        lambda policy, *, img2img, source, mode, vae, text, quant=None, cancel_check=None: pipe,
     )
     # These tests mock the pipeline, so bypass the "models present on disk" gate.
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
@@ -120,7 +122,7 @@ def test_wired_component_handles_override_dropdowns(monkeypatch: pytest.MonkeyPa
 
     def _fake_load(
         policy: Any, *, img2img: bool, source: str, mode: str, vae: str, text: str,
-        quant: Any = None,
+        quant: Any = None, cancel_check: Any = None,
     ) -> Any:
         captured.update(source=source, mode=mode, vae=vae, text=text)
         return _FakePipe()
@@ -190,8 +192,47 @@ def test_cancel_during_sampling_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         rz, "_load_pipeline",
-        lambda policy, *, img2img, source, mode, vae, text, quant=None: _CancellingPipe(),
+        lambda policy, *, img2img, source, mode, vae, text, quant=None, cancel_check=None: (
+            _CancellingPipe()
+        ),
     )
+    monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
+    monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))
+    runner = rz.ZImageRunner(_FakeStore(), MemoryPolicy())
+    ctx, _ = _ctx(cancel)
+    node = Node(id="f", type="alibaba/z-image-turbo")
+    with pytest.raises(CancelledError):
+        runner.run(node, {"prompt": ["cat"]}, ctx)
+
+
+def test_cancel_before_load_skips_the_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An interrupt that lands before the run starts must bail without loading a 12GB model."""
+    def _must_not_load(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("_load_pipeline must not run once the run is already cancelled")
+
+    monkeypatch.setattr(rz, "_load_pipeline", _must_not_load)
+    monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
+    monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))
+    cancel = CancelToken()
+    cancel.cancel()  # already cancelled before we even start
+    runner = rz.ZImageRunner(_FakeStore(), MemoryPolicy())
+    ctx, _ = _ctx(cancel)
+    node = Node(id="f", type="alibaba/z-image-turbo")
+    with pytest.raises(CancelledError):
+        runner.run(node, {"prompt": ["cat"]}, ctx)
+
+
+def test_cancel_during_load_raises_via_cancel_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The runner hands _load_pipeline a cancel_check that raises once the token is set, so an
+    interrupt mid-load bails between components instead of only at the first denoise step."""
+    cancel = CancelToken()
+
+    def _fake_load(policy: Any, *, cancel_check: Any = None, **_k: Any) -> Any:
+        cancel.cancel()  # user interrupts partway through the load
+        cancel_check()  # the between-components checkpoint must now raise
+        raise AssertionError("cancel_check should have raised")
+
+    monkeypatch.setattr(rz, "_load_pipeline", _fake_load)
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
     monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))
     runner = rz.ZImageRunner(_FakeStore(), MemoryPolicy())
@@ -361,6 +402,18 @@ def test_prompt_kwargs_falls_back_when_encode_fails() -> None:
     kwargs = rz._prompt_kwargs(pipe, policy, prompt="a cat", negative="blurry", guidance=0.0)
 
     assert kwargs == {"prompt": "a cat", "negative_prompt": "blurry"}
+
+
+def test_oom_message_flags_cfg_when_guidance_on() -> None:
+    """The 1024² OOM on a T4 is CFG doubling the denoise batch — the message must say so and point
+    at guidance=0 (turbo runs CFG-free), not just resolution."""
+    with_cfg = rz._oom_message(1024, 1024, guidance=1.0)
+    assert "Guidance" in with_cfg and "CFG-free" in with_cfg
+    without_cfg = rz._oom_message(1024, 1024, guidance=0.0)
+    assert "Guidance (CFG)" not in without_cfg  # no CFG hint when guidance is already off
+    assert "Lower the resolution" in without_cfg
+    # Host-RAM OOM is a load-time failure, unrelated to CFG.
+    assert "Guidance" not in rz._oom_message(1024, 1024, host=True, guidance=1.0)
 
 
 def test_text_encoder_detached_restores() -> None:

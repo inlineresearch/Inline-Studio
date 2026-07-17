@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from inline_core.studio import frames as fr
 from inline_core.studio import moodboard as mb
 from inline_core.studio.generation import CoreGeneration
 from inline_core.studio.graph_build import build_workflow_graph
@@ -30,6 +31,28 @@ def test_build_workflow_graph_prompt_into_zimage(tmp_path) -> None:
     assert by_type["input/text"]["params"] == {"text": "a neon city"}
     zi = by_type["alibaba/z-image-turbo"]
     assert zi["inputs"]["prompt"] == {"from": prompt["id"], "output": "text"}
+
+
+def test_build_workflow_graph_frame_output_into_zimage_image(tmp_path) -> None:
+    """A rendered frame wired into Z-Image's image port becomes an input/image source node pointing
+    at the frame's hero take — no dangling edge to a non-emitted node (the old "No node with id")."""
+    store = _store(tmp_path)
+    conn = store.conn()
+    z = mb.add_core_node(conn, "alibaba/z-image-turbo", 400, 200)
+    frame_item = mb.add_empty_frame(conn, 80, 200)
+    take = fr.add_take(conn, frame_item["frameId"], "takes/hero.png", "image", {})
+    mb.create_connector(conn, frame_item["id"], z["id"], "out", "image")
+
+    graph, _ = build_workflow_graph(conn, store.folder(), z["id"])
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    # The frame item is emitted as an input/image node pointing at its hero take's absolute path.
+    frame_node = by_id[frame_item["id"]]
+    assert frame_node["type"] == "input/image"
+    assert frame_node["params"]["asset"]["path"] == str(store.folder() / "takes/hero.png")
+    # Z-Image's image input references the frame node's "image" output — no dangling edge.
+    zi = by_id[z["id"]]
+    assert zi["inputs"]["image"] == {"from": frame_item["id"], "output": "image"}
+    assert take["id"]  # hero take exists
 
 
 class _Events:

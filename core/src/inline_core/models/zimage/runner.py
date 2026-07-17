@@ -16,7 +16,7 @@ import logging
 import os
 import random
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from threading import Lock
 from typing import Any, cast
@@ -57,6 +57,16 @@ from . import requirements as reqs
 _SEED_MAX = 2**31 - 1
 
 logger = logging.getLogger("inline_core.zimage")
+
+
+def _raise_if_cancelled(ctx: ExecutionContext) -> None:
+    """A cooperative-cancellation checkpoint. The denoise is cancellable per step (``on_step_end``),
+    but the model load and VAE decode are long blocking phases with no step callback — without these
+    checkpoints an interrupt pressed during "Loading model…" is ignored until the load finishes and
+    the first denoise step runs (up to a few minutes on a cold cache). Call this before/around the
+    expensive phases so a cancelled run bails promptly instead of loading a 12GB model first."""
+    if ctx.cancel.cancelled:
+        raise CancelledError("Run cancelled.")
 
 
 def _device_report(policy: DevicePolicy) -> str:
@@ -220,6 +230,7 @@ class ZImageRunner(NodeRunner):
             _device_report(self._policy),
         )
         _reset_peak_vram()
+        _raise_if_cancelled(ctx)  # bail before a 12GB load if already cancelled
         ctx.emitter.emit(_progress(ctx, node, Phase.LOADING, 0.0, status="Loading model…"))
         try:
             pipe = _load_pipeline(
@@ -230,7 +241,11 @@ class ZImageRunner(NodeRunner):
                 vae=vae_file,
                 text=te_file,
                 quant=self._policy.quantization(),
+                cancel_check=lambda: _raise_if_cancelled(ctx),
             )
+        except CancelledError:
+            _free_vram()  # a cancelled load must return whatever VRAM it placed
+            raise
         except torch.cuda.OutOfMemoryError as error:
             _free_vram()
             raise ComponentError(_oom_message(width, height)) from error
@@ -300,13 +315,17 @@ class ZImageRunner(NodeRunner):
             sampler,
             scheduler,
         )
+        _raise_if_cancelled(ctx)  # cancelled during load? don't start the denoise
         sample_start = time.perf_counter()
         try:
             with _text_encoder_detached(pipe, "prompt_embeds" in call):
                 image = pipe(**call).images[0]
+        except CancelledError:
+            _free_vram()  # release the partial-denoise activations so the next run isn't starved
+            raise
         except torch.cuda.OutOfMemoryError as error:
             _free_vram()
-            raise ComponentError(_oom_message(width, height)) from error
+            raise ComponentError(_oom_message(width, height, guidance=guidance)) from error
         except MemoryError as error:
             _free_vram()
             raise ComponentError(_oom_message(width, height, host=True)) from error
@@ -366,6 +385,7 @@ def _load_pipeline(
     vae: str,
     text: str,
     quant: Quantization = Quantization.NONE,
+    cancel_check: Callable[[], None] | None = None,
 ) -> Any:
     key = (source, vae, text, img2img, quant.value)
     with _LOCK:
@@ -375,6 +395,8 @@ def _load_pipeline(
                 "Pipeline cache hit (%s, img2img=%s) — reusing loaded weights", source, img2img
             )
             return cached
+        if cancel_check is not None:
+            cancel_check()  # bail before the disk read if the run was cancelled while queued
         started = time.perf_counter()
         logger.info(
             "Loading Z-Image pipeline: source=%s, mode=%s, img2img=%s | %s",
@@ -412,6 +434,7 @@ def _load_pipeline(
                 quant=quant,
                 vae_dtype=vae_dtype,
                 device=load_device,
+                cancel_check=cancel_check,
             )
             logger.info(
                 "Read weights from disk in %.1fs (mode=%s, dtype=%s)",
@@ -463,6 +486,7 @@ def _build_pipeline(
     quant: Quantization = Quantization.NONE,
     vae_dtype: Any = None,
     device: str | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> Any:
     """Build a Z-Image pipeline **offline** — never touching the network.
 
@@ -501,6 +525,7 @@ def _build_pipeline(
         quant=quant,
         vae_dtype=vae_dtype,
         device=device,
+        cancel_check=cancel_check,
     )
 
 
@@ -801,19 +826,30 @@ def _smaller_resolutions(width: int, height: int) -> list[str]:
     return [f"{half}x{half}"]
 
 
-def _oom_message(width: int, height: int, *, host: bool = False) -> str:
+def _oom_message(width: int, height: int, *, host: bool = False, guidance: float = 0.0) -> str:
     """A clear, actionable message for an out-of-memory — never a raw allocator traceback. ``host``
     distinguishes system-RAM exhaustion from GPU VRAM. Points at the resolution (which drives peak
-    memory) and a smaller model."""
+    memory) and a smaller model. When ``guidance > 0`` it leads with the CFG hint: guidance runs the
+    prompt AND negative prompt through the transformer as a batch of 2, doubling the denoise's peak
+    VRAM — and Z-Image Turbo is distilled to run CFG-free (guidance 0), so dropping guidance to 0 is
+    usually the fix at high resolution (halves the denoise memory) rather than lowering the size."""
     if host:
         return (
             f"Ran out of system RAM loading the model for a {width}x{height} image. Close other "
             "apps, use a machine with more RAM, or pick a smaller model."
         )
+    cfg_hint = (
+        f"Guidance (CFG) is {guidance:g}, which doubles the memory of a {width}x{height} render "
+        "(it runs the prompt and negative prompt together). Z-Image Turbo is distilled to run "
+        "CFG-free — set Guidance to 0 to halve the memory. Or "
+        if guidance > 0
+        else ""
+    )
     suggestions = " or ".join(_smaller_resolutions(width, height))
+    lower = "lower" if guidance > 0 else "Lower"
     return (
-        f"Ran out of GPU memory generating a {width}x{height} image. Lower the resolution "
-        f"(you're at {width}x{height} — try {suggestions}) or pick a smaller model."
+        f"Ran out of GPU memory generating a {width}x{height} image. {cfg_hint}{lower} the "
+        f"resolution (you're at {width}x{height} — try {suggestions}) or pick a smaller model."
     )
 
 

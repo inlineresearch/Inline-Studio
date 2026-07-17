@@ -431,6 +431,7 @@ def assemble_zimage_pipeline(
     quant: Quantization = Quantization.NONE,
     vae_dtype: Any = None,
     device: str | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> Any:
     """Build a Z-Image pipeline from three local single files. Components are cached individually,
     so swapping one file reuses the others. The returned pipeline is unplaced — the runner owns
@@ -439,14 +440,22 @@ def assemble_zimage_pipeline(
     safer dtype than the denoiser — e.g. fp32 when the transformer runs fp16 (whose decode can
     overflow). ``device`` (e.g. ``"cuda:0"``) streams each component straight to the GPU so peak
     host RAM never holds a full component; ``None`` loads to CPU for the offload path. Buffers are
-    released between the three big loads so peak memory tracks one component, not their sum."""
+    released between the three big loads so peak memory tracks one component, not their sum.
+    ``cancel_check`` (if given) is called between the three loads so an interrupt during the multi-
+    second load bails after the current component instead of only at the first denoise step. It
+    cannot break into a single component's blocking read (the transformer dominates), but it stops
+    the run before loading the VAE + text encoder + placing + denoising."""
     from diffusers import ZImageImg2ImgPipeline, ZImagePipeline
 
     arch = _ZIMAGE.key
     transformer = load_diffusion(arch, diffusion_file, dtype, quant, device=device)
     _release_transient()
+    if cancel_check is not None:
+        cancel_check()
     vae = load_vae(arch, vae_file, dtype if vae_dtype is None else vae_dtype, device=device)
     _release_transient()
+    if cancel_check is not None:
+        cancel_check()
     text_encoder, tokenizer = load_text_encoder(
         arch, text_encoder_file, dtype, quant, device=device
     )

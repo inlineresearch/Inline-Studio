@@ -4,6 +4,9 @@
 - a ``core`` item   -> its Core node type + params (handles are already Core port ids)
 - a ``prompt`` item -> an ``input/text`` source node
 - an ``asset`` item -> an ``input/image`` source node (local path ref)
+- a ``frame`` item  -> an ``input/image`` source node pointing at the frame's resolved output file
+  (its hero take), so wiring a rendered frame into a Core node feeds that image without recomputing
+  the frame. This is the closure boundary: upstream frames are frozen curated inputs, not re-run.
 
 Connectors become typed edges (source output port -> target input port). Node ids are the canvas
 item ids, so a produced take's ``node_id`` maps straight back to the item that made it.
@@ -16,13 +19,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import frames as fr
 from . import moodboard as mb
 
 
 def _source_output_port(source: dict[str, Any] | None, source_handle: str | None) -> str:
     if source and source["type"] == "prompt":
         return "text"
-    if source and source["type"] == "asset":
+    # An asset or a rendered frame both become an ``input/image`` source node (output port "image").
+    if source and source["type"] in ("asset", "frame"):
         return "image"
     return source_handle or "out"  # a 'core' item's handles already are Core port ids
 
@@ -48,6 +53,7 @@ def _item_to_node(
     connectors: list[dict[str, Any]],
     by_id: dict[str, dict[str, Any]],
     resolve_asset_path: Callable[[str], str | None],
+    resolve_frame_path: Callable[[str], str | None],
 ) -> dict[str, Any] | None:
     data = item.get("data") or {}
     if item["type"] == "core" and data.get("core"):
@@ -62,6 +68,17 @@ def _item_to_node(
         return {"id": item["id"], "type": "input/text", "params": {"text": text}}
     if item["type"] == "asset" and item.get("assetId"):
         path = resolve_asset_path(item["assetId"])
+        if not path:
+            return None
+        return {
+            "id": item["id"],
+            "type": "input/image",
+            "params": {"asset": {"ref": "path", "path": path}},
+        }
+    # A rendered frame wired into a Core node feeds its output image as a frozen source (its hero
+    # take), so nothing upstream of the frame is recomputed.
+    if item["type"] == "frame" and item.get("frameId"):
+        path = resolve_frame_path(item["frameId"])
         if not path:
             return None
         return {
@@ -98,12 +115,16 @@ def build_workflow_graph(
         row = conn.execute("SELECT file_path FROM assets WHERE id = ?", (asset_id,)).fetchone()
         return str(folder / row["file_path"]) if row else None
 
+    def resolve_frame_path(frame_id: str) -> str | None:
+        out = fr.resolve_frame_file(conn, frame_id)
+        return str(folder / out["filePath"]) if out else None
+
     nodes: list[dict[str, Any]] = []
     for node_id in _upstream_closure(target_item_id, connectors):
         item = by_id.get(node_id)
         if item is None:
             continue
-        node = _item_to_node(item, connectors, by_id, resolve_asset_path)
+        node = _item_to_node(item, connectors, by_id, resolve_asset_path, resolve_frame_path)
         if node is not None:
             nodes.append(node)
     return {"schemaVersion": 1, "nodes": nodes}, target_item_id
