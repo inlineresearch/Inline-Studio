@@ -64,6 +64,8 @@ For local generation, either drop a Z-Image `.safetensors` into `core/models/dif
 
 Inline Core is a from-scratch generation engine that **replaces ComfyUI** for local rendering. It keeps the open node-graph model (a typed DAG of nodes and edges → immutable "takes"), and Inline Studio drives it as a single process.
 
+![Z-Image Turbo generating locally on the Inline Core engine](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/zit.png)
+
 - **One process, one port** - Inline Studio is a **web SPA** (React) served by Inline Core (a headless Python engine, in `core/`). `core/main.py` runs Core, which serves the built UI and is the app's backend.
 - **Core owns the backend** - the browser reaches it over a small typed RPC/WebSocket contract; Core owns the project database, the filesystem, generation, and the ffmpeg timeline. No Electron, no separate Node server, nothing external to stand up.
 - **Graph decoupled from GPU work** - the graph is the unit of caching; a batched sampler is the unit of batching.
