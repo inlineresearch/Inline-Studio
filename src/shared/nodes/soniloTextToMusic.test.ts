@@ -10,21 +10,28 @@ describe('SONILO_T2M.resolveEndpoint', () => {
 
 describe('SONILO_T2M.buildRequest', () => {
   it('sends the trimmed prompt with the duration and sample defaults', () => {
-    const body = SONILO_T2M.buildRequest({
-      ...defaultParams(SONILO_T2M),
-      prompt: '  warm analog synths  ',
-    })
+    const body = SONILO_T2M.buildRequest(
+      { ...defaultParams(SONILO_T2M), prompt: '  warm analog synths  ' },
+      emptyResolvedInputs(),
+    )
     expect(body).toEqual({ prompt: 'warm analog synths', duration: 90, num_samples: 1 })
   })
 
   it('clamps the duration to the 600 s ceiling and coerces the sample count up to 1', () => {
-    const body = SONILO_T2M.buildRequest({ prompt: 'x', duration: 5000, num_samples: 0 })
+    const body = SONILO_T2M.buildRequest(
+      { prompt: 'x', duration: 5000, num_samples: 0 },
+      emptyResolvedInputs(),
+    )
     expect(body).toMatchObject({ duration: 600, num_samples: 1 })
   })
 
   it('falls back to the 90 s default for a non-positive or unparseable duration', () => {
-    expect(SONILO_T2M.buildRequest({ prompt: 'x', duration: 0 }).duration).toBe(90)
-    expect(SONILO_T2M.buildRequest({ prompt: 'x', duration: 'soon' }).duration).toBe(90)
+    expect(
+      SONILO_T2M.buildRequest({ prompt: 'x', duration: 0 }, emptyResolvedInputs()).duration,
+    ).toBe(90)
+    expect(
+      SONILO_T2M.buildRequest({ prompt: 'x', duration: 'soon' }, emptyResolvedInputs()).duration,
+    ).toBe(90)
   })
 })
 
