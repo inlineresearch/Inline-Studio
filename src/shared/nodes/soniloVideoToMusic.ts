@@ -9,7 +9,7 @@
  * use (terms apply — see the fal.ai model page).
  */
 import { type NodeDef, type ResolvedInputs } from './types'
-import { constantEndpoint, parseAudioArray, approxPrice, numberParam } from './builders'
+import { constantEndpoint, approxPrice, numberParam } from './builders'
 
 const ENDPOINT = 'sonilo/v1.1/video-to-music'
 
@@ -57,8 +57,6 @@ export const SONILO_V2M: NodeDef = {
     if (duration !== null) body.duration = duration
     return body
   },
-
-  parseOutputs: (response) => parseAudioArray(response),
 
   // fal bills $0.009 per second of output audio, per sample. The output runs the length of the
   // selected segment; without an explicit duration the video's length isn't known here, so the

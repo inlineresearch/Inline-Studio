@@ -3,13 +3,12 @@ import { useFalSettingsStore } from '../store/falSettingsStore'
 
 /**
  * The fal.ai API key control for the closed-model generation engine, laid out for the Settings
- * panel. A secret, so it's write-only: once saved we only show "connected" (never echo the key
- * back). Saving stores it encrypted in main; "Clear" forgets it. Bring your own key from
- * https://fal.ai/dashboard/keys.
+ * panel. A secret, so it's write-only: the key is never echoed back across the wire — once saved we
+ * only show "Connected". Inline Core keeps it server-side in an owner-only (0600) file; "Clear"
+ * deletes it. Bring your own key from https://fal.ai/dashboard/keys.
  */
 export function FalKeyField(): React.JSX.Element {
   const configured = useFalSettingsStore((s) => s.configured)
-  const encrypted = useFalSettingsStore((s) => s.encrypted)
   const error = useFalSettingsStore((s) => s.error)
   const load = useFalSettingsStore((s) => s.load)
   const setApiKey = useFalSettingsStore((s) => s.setApiKey)
@@ -39,8 +38,9 @@ export function FalKeyField(): React.JSX.Element {
       </div>
 
       <p className="text-[11px] leading-relaxed text-zinc-500">
-        Bring your own key to run the canvas generation nodes. Stored encrypted on this machine — it
-        never leaves it. Get one from fal.ai/dashboard/keys.
+        Bring your own key to run the canvas generation nodes. Inline Core stores it on the machine
+        running the engine, in a file only your user account can read, and never sends it back to
+        the browser. Get one from fal.ai/dashboard/keys.
       </p>
 
       <input
@@ -74,11 +74,6 @@ export function FalKeyField(): React.JSX.Element {
       </div>
 
       {error && <p className="text-[11px] text-red-400">{error}</p>}
-      {configured && !encrypted && (
-        <p className="text-[11px] text-amber-400">
-          No OS keystore available — the key is stored as plaintext (0600).
-        </p>
-      )}
     </div>
   )
 }

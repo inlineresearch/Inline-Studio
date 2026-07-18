@@ -63,7 +63,9 @@ export function NodeBadgeRow({
   dragNodeId?: string
 }): React.JSX.Element {
   const onPointerDown = useChipDrag(dragNodeId ?? '')
-  const base = 'absolute -top-7 left-0 z-10 flex items-center gap-1'
+  // `right-0` bounds the row to the node's width, so a long title gets more room as the node is
+  // widened (it used to be capped at a fixed 160px and stayed ellipsised no matter the width).
+  const base = 'absolute -top-7 left-0 right-0 z-10 flex items-center gap-1'
   if (!dragNodeId) return <div className={base}>{children}</div>
   return (
     <div
@@ -100,18 +102,24 @@ export function NodeBadge({
 }): React.JSX.Element {
   const pad = children == null ? 'px-1.5' : tone === 'info' ? 'px-2' : 'pl-2 pr-2.5'
   const color = tone === 'info' ? (accent ?? 'text-zinc-400') : 'text-zinc-200'
+  // The title pill shrinks (and its label truncates) to fit the node's width; info pills like a
+  // price keep their size so the title yields first. `min-w-0` is required for `truncate` to work
+  // on a flex child — without it the label defines the pill's min width and never ellipsises.
+  const flex = tone === 'info' ? 'shrink-0' : 'min-w-0'
   const pill = (
     <div
       title={tooltip ? undefined : title}
-      className={`flex h-6 items-center gap-1 rounded-full border border-border bg-panel/95 text-[10px] font-medium shadow-sm backdrop-blur ${pad} ${color}`}
+      className={`flex h-6 items-center gap-1 rounded-full border border-border bg-panel/95 text-[10px] font-medium shadow-sm backdrop-blur ${pad} ${color} ${flex}`}
     >
       {icon}
-      {children != null && <span className="max-w-[160px] truncate">{children}</span>}
+      {children != null && <span className="truncate">{children}</span>}
     </div>
   )
   if (!tooltip) return pill
   return (
-    <div className="group relative">
+    // Carries the same flex sizing as the bare pill — with a tooltip this wrapper, not the pill,
+    // is the row's flex child, so the shrink/`min-w-0` has to live here for truncation to work.
+    <div className={`group relative ${flex}`}>
       {pill}
       <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-52 rounded-md border border-border bg-panel/95 px-2 py-1.5 text-[10px] font-normal leading-relaxed text-zinc-300 shadow-lg backdrop-blur group-hover:block">
         {tooltip}

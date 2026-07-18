@@ -9,7 +9,7 @@
  * transport and fal key as every other fal node.
  */
 import { type NodeDef } from './types'
-import { constantEndpoint, parseAudioArray, approxPrice, numberParam } from './builders'
+import { constantEndpoint, approxPrice, numberParam } from './builders'
 
 const ENDPOINT = 'sonilo/v1.1/text-to-music'
 
@@ -49,8 +49,6 @@ export const SONILO_T2M: NodeDef = {
       num_samples: toSamples(params.num_samples),
     }
   },
-
-  parseOutputs: (response) => parseAudioArray(response),
 
   // fal bills $0.009 per second of output audio, per sample. Duration is always known here (it's a
   // param), so the estimate always shows. Source: fal.ai/models/sonilo/v1.1/text-to-music.

@@ -8,7 +8,6 @@
 import { type NodeDef, type ResolvedInputs } from './types'
 import {
   constantEndpoint,
-  parseSingleVideo,
   approxPrice,
   numberParam,
   booleanParam,
@@ -83,8 +82,6 @@ export const LTX_I2V: NodeDef = {
     putSeed(body, params)
     return body
   },
-
-  parseOutputs: (response) => parseSingleVideo(response),
 
   // fal bills $0.0024075 per megapixel of generated video, where MP = width × height × frames.
   // Source: fal.ai/models/fal-ai/ltx-2.3-quality/image-to-video.

@@ -29,13 +29,6 @@ describe('nano-banana-2 (text→image)', () => {
       NANO_BANANA_2.estimatePrice?.({ resolution: '4K', limit_generations: 2 })?.amount,
     ).toBeCloseTo(0.32, 5)
   })
-  it('parses images', () => {
-    expect(
-      NANO_BANANA_2.parseOutputs({
-        images: [{ url: 'https://f/a.png', content_type: 'image/png' }],
-      }),
-    ).toEqual([{ url: 'https://f/a.png', ext: '.png', kind: 'image' }])
-  })
 })
 
 describe('nano-banana-pro/edit (image→image)', () => {

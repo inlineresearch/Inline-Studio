@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { resolveMedia } from '@/lib/media'
+import { audioPeaksPath } from '@shared/media'
 import type { Asset, AssetFolder } from '@shared/types'
 import { useAssetStore, folderPath } from '../../store/assetStore'
 import { setAssetDragPayload } from '../../lib/dnd'
@@ -293,7 +294,9 @@ function AssetThumb({
           {asset.kind === 'audio' && (
             <AudioPreview
               src={url}
-              waveformUrl={asset.thumbPath ? resolveMedia(asset.thumbPath) : null}
+              // Derived from the id rather than `thumbPath` (which is null for audio imports):
+              // Core builds the peaks JSON on first request, so existing assets get a waveform too.
+              waveformUrl={resolveMedia(audioPeaksPath(asset.id))}
               className="h-full w-full"
             />
           )}

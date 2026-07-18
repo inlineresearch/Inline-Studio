@@ -45,28 +45,6 @@ describe('SONILO_V2M.buildRequest', () => {
   })
 })
 
-describe('SONILO_V2M.parseOutputs', () => {
-  it('maps the audios array to m4a refs', () => {
-    const refs = SONILO_V2M.parseOutputs({
-      audio: { url: 'https://fal/a.m4a', content_type: 'audio/mp4' },
-      audios: [
-        { url: 'https://fal/a.m4a', content_type: 'audio/mp4' },
-        { url: 'https://fal/b.m4a', content_type: 'audio/mp4' },
-      ],
-    })
-    expect(refs).toEqual([
-      { url: 'https://fal/a.m4a', ext: '.m4a', kind: 'audio' },
-      { url: 'https://fal/b.m4a', ext: '.m4a', kind: 'audio' },
-    ])
-  })
-
-  it('returns [] when the audios are missing or malformed', () => {
-    expect(SONILO_V2M.parseOutputs({})).toEqual([])
-    expect(SONILO_V2M.parseOutputs({ audios: [{ url: '' }] })).toEqual([])
-    expect(SONILO_V2M.parseOutputs(null)).toEqual([])
-  })
-})
-
 describe('SONILO_V2M.estimatePrice', () => {
   it('prices per second × samples once a segment duration is set', () => {
     // 30 s × 2 samples × $0.009/s = $0.54.

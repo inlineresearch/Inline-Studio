@@ -53,22 +53,6 @@ describe('LTX_I2V.buildRequest', () => {
   })
 })
 
-describe('LTX_I2V.parseOutputs', () => {
-  it('maps the video object to a single mp4 ref', () => {
-    const refs = LTX_I2V.parseOutputs({
-      video: { url: 'https://fal/out.mp4', content_type: 'video/mp4' },
-      seed: 1,
-    })
-    expect(refs).toEqual([{ url: 'https://fal/out.mp4', ext: '.mp4', kind: 'video' }])
-  })
-
-  it('returns [] when the video is missing or malformed', () => {
-    expect(LTX_I2V.parseOutputs({})).toEqual([])
-    expect(LTX_I2V.parseOutputs({ video: { url: '' } })).toEqual([])
-    expect(LTX_I2V.parseOutputs(null)).toEqual([])
-  })
-})
-
 describe('LTX_I2V.estimatePrice', () => {
   it('prices per megapixel = preset width × height × frames × rate', () => {
     // landscape_16_9 = 1024×576; ×121 frames ≈ 71 MP × $0.0024075 ≈ $0.17.

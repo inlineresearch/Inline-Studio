@@ -22,6 +22,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { studio } from '@/lib/studio'
 import { resolveMedia } from '@/lib/media'
+import { audioPeaksPath } from '@shared/media'
 import { importFilesToLibrary, importMediaUrlToLibrary } from '@/lib/importFiles'
 import { copyText } from '@/lib/clipboard'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
@@ -1201,7 +1202,9 @@ function itemToNode(
     ? resolveMedia(asset.kind === 'image' ? (asset.thumbPath ?? asset.filePath) : asset.filePath)
     : ''
   const type = asset?.kind === 'video' ? 'video' : asset?.kind === 'audio' ? 'audio' : 'image'
+  // Derived from the asset id, not `thumbPath` (which is null for audio imports): Core builds the
+  // peaks JSON on first request, so already-imported audio gets a waveform too.
   const waveform =
-    asset?.kind === 'audio' && asset.thumbPath ? resolveMedia(asset.thumbPath) : undefined
+    asset?.kind === 'audio' && item.assetId ? resolveMedia(audioPeaksPath(item.assetId)) : undefined
   return { ...common, type, data: { src, name: asset?.name ?? '', waveform } }
 }

@@ -2,7 +2,7 @@
  * fal.ai `bytedance/seedance-2.0/image-to-video` — ByteDance Seedance 2.0 image-to-video.
  * See https://fal.ai/models/bytedance/seedance-2.0/image-to-video.
  */
-import { constantEndpoint, parseSingleVideo } from './builders'
+import { constantEndpoint } from './builders'
 import { SEEDANCE_PARAMS, buildSeedanceBody, estimateSeedancePrice } from './seedanceShared'
 import type { NodeDef, ResolvedInputs } from './types'
 
@@ -18,6 +18,5 @@ export const SEEDANCE_I2V: NodeDef = {
   resolveEndpoint: constantEndpoint('bytedance/seedance-2.0/image-to-video'),
   buildRequest: (params, resolved: ResolvedInputs) =>
     buildSeedanceBody(params, { image_url: resolved.images[0] ?? '' }),
-  parseOutputs: (response) => parseSingleVideo(response),
   estimatePrice: (params) => estimateSeedancePrice(params),
 }

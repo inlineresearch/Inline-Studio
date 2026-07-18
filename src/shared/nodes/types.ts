@@ -71,14 +71,6 @@ export interface ResolvedInputs {
   texts: string[]
 }
 
-/** One output file the model produced, as a downloadable URL + how to store it. */
-export interface FalOutputRef {
-  url: string
-  /** File extension including the dot, e.g. `.png` / `.mp4`. */
-  ext: string
-  kind: 'image' | 'video' | 'audio'
-}
-
 /** An estimated cost for one generation. Models price differently (per image / MP / second / …). */
 export interface PriceEstimate {
   /** Estimated total USD for one run with the current params. */
@@ -98,8 +90,13 @@ export function formatPrice(est: PriceEstimate): string {
 }
 
 /**
- * A generation node definition. The three functions carry ALL model-specific knowledge and
- * are pure/unit-testable; the executor stays model-agnostic.
+ * A generation node definition. Its functions carry ALL model-specific knowledge and are
+ * pure/unit-testable; the executor stays model-agnostic.
+ *
+ * Note there is deliberately no `parseOutputs` here: the browser builds the request
+ * (`resolveEndpoint` + `buildRequest`) and hands it to Core, which then submits, polls, and
+ * downloads the result asynchronously — the browser is never in the loop for the response. Parsing
+ * therefore lives in Core (`inline_core/studio/fal.py: parse_outputs`), keyed on `outputKind`.
  */
 export interface NodeDef {
   /** The fal model id, e.g. `openai/gpt-image-2`. Also the registry key + `Frame.modelId`. */
@@ -127,8 +124,6 @@ export interface NodeDef {
    * URLs. Params arrive as `unknown` (JSON from the DB), so implementations coerce defensively. PURE.
    */
   buildRequest(params: Record<string, unknown>, resolved: ResolvedInputs): Record<string, unknown>
-  /** Map a raw fal response to output file refs the executor downloads into takes. PURE. */
-  parseOutputs(response: unknown): FalOutputRef[]
   /** Estimate the USD cost of one generation from the current param values. PURE; optional. */
   estimatePrice?(params: Record<string, unknown>): PriceEstimate | null
 }
@@ -145,34 +140,4 @@ export function defaultParams(def: NodeDef): ParamValues {
 /** An empty `ResolvedInputs` (all kinds empty) — a convenience for callers/tests. */
 export function emptyResolvedInputs(): ResolvedInputs {
   return { images: [], masks: [], videos: [], audios: [], texts: [] }
-}
-
-/**
- * Best-effort file extension (incl. dot) for a fal output, from its content-type then file name,
- * falling back to `fallback`. Shared by NodeDefs' `parseOutputs`.
- */
-export function extFromContentTypeOrName(
-  contentType: string | undefined,
-  fileName: string | undefined,
-  fallback: string,
-): string {
-  const fromType: Record<string, string> = {
-    'image/png': '.png',
-    'image/jpeg': '.jpg',
-    'image/jpg': '.jpg',
-    'image/webp': '.webp',
-    'image/gif': '.gif',
-    'video/mp4': '.mp4',
-    'video/webm': '.webm',
-    'audio/mpeg': '.mp3',
-    'audio/wav': '.wav',
-    'audio/mp4': '.m4a',
-    'audio/aac': '.aac',
-  }
-  if (contentType && fromType[contentType.toLowerCase()]) return fromType[contentType.toLowerCase()]
-  if (fileName && fileName.includes('.')) {
-    const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase()
-    if (ext.length >= 2 && ext.length <= 6) return ext
-  }
-  return fallback
 }

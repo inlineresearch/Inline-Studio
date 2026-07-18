@@ -3,13 +3,7 @@
  * See https://fal.ai/models/openai/gpt-image-2.
  */
 import { type NodeDef, type ResolvedInputs } from './types'
-import {
-  constantEndpoint,
-  parseImageArray,
-  approxPrice,
-  selectParam,
-  numberParam,
-} from './builders'
+import { constantEndpoint, approxPrice, selectParam, numberParam } from './builders'
 
 const SIZE_PRESETS = [
   'square_hd',
@@ -65,8 +59,6 @@ export const GPT_IMAGE_2: NodeDef = {
     }
     return body
   },
-
-  parseOutputs: (response) => parseImageArray(response),
 
   // fal bills per image by resolution × quality. We use the ~1MP (1024×768) tier as the baseline
   // (most presets are ~0.5–1MP), times the image count. Source: fal.ai/models/openai/gpt-image-2.

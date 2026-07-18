@@ -50,22 +50,6 @@ describe('SONILO_V2V.buildRequest', () => {
   })
 })
 
-describe('SONILO_V2V.parseOutputs', () => {
-  it('maps the primary video slot to a single mp4 ref, ignoring the videos array', () => {
-    const refs = SONILO_V2V.parseOutputs({
-      video: { url: 'https://fal/out.mp4', content_type: 'video/mp4' },
-      videos: [{ url: 'https://fal/out.mp4', content_type: 'video/mp4' }],
-    })
-    expect(refs).toEqual([{ url: 'https://fal/out.mp4', ext: '.mp4', kind: 'video' }])
-  })
-
-  it('returns [] when the video slot is missing or malformed', () => {
-    expect(SONILO_V2V.parseOutputs({})).toEqual([])
-    expect(SONILO_V2V.parseOutputs({ video: { url: '' } })).toEqual([])
-    expect(SONILO_V2V.parseOutputs(null)).toEqual([])
-  })
-})
-
 describe('SONILO_V2V.estimatePrice', () => {
   it('prices per second × samples once a segment duration is set', () => {
     // 30 s × 2 samples × $0.009/s = $0.54.

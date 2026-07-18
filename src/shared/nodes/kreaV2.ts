@@ -2,14 +2,7 @@
  * fal.ai `krea/v2/large/text-to-image` — Krea v2 Large text-to-image.
  * See https://fal.ai/models/krea/v2/large/text-to-image.
  */
-import {
-  constantEndpoint,
-  parseImageArray,
-  approxPrice,
-  selectParam,
-  seedParam,
-  putSeed,
-} from './builders'
+import { constantEndpoint, approxPrice, selectParam, seedParam, putSeed } from './builders'
 import type { NodeDef } from './types'
 
 const ASPECT_RATIOS = ['1:1', '4:3', '3:2', '16:9', '2.35:1', '4:5', '2:3', '9:16'] as const
@@ -38,6 +31,5 @@ export const KREA_V2: NodeDef = {
     putSeed(body, params)
     return body
   },
-  parseOutputs: (response) => parseImageArray(response),
   estimatePrice: () => approxPrice(0.06),
 }

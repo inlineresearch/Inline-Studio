@@ -1,77 +1,16 @@
 /**
  * Shared, pure helpers for declaring fal generation models (NodeDefs) concisely. Every model reuses
- * these instead of re-implementing endpoint/output/price/param boilerplate — so adding a model is a
+ * these instead of re-implementing endpoint/price/param boilerplate — so adding a model is a
  * short, declarative file. Kept shell-agnostic (imported by both renderer and main).
+ *
+ * Response parsing is deliberately absent: Core owns it (`inline_core/studio/fal.py:
+ * parse_outputs`), since Core — not the browser — polls fal and downloads the result.
  */
-import {
-  extFromContentTypeOrName,
-  type FalOutputRef,
-  type ParamField,
-  type PriceEstimate,
-} from './types'
+import { type ParamField, type PriceEstimate } from './types'
 
 /** A model whose fal endpoint never varies with its inputs (the common case). */
 export function constantEndpoint(id: string): () => string {
   return () => id
-}
-
-interface ImageResult {
-  url?: string
-  content_type?: string
-  file_name?: string
-}
-interface VideoResult {
-  url?: string
-  content_type?: string
-  file_name?: string
-}
-interface AudioResult {
-  url?: string
-  content_type?: string
-  file_name?: string
-}
-
-/** Parse a `{ images: [{ url, content_type, file_name }] }` response into output refs. */
-export function parseImageArray(response: unknown, defaultExt = '.png'): FalOutputRef[] {
-  const images = (response as { images?: ImageResult[] } | null)?.images ?? []
-  return images
-    .filter(
-      (img): img is ImageResult & { url: string } =>
-        typeof img?.url === 'string' && img.url.length > 0,
-    )
-    .map((img) => ({
-      url: img.url,
-      ext: extFromContentTypeOrName(img.content_type, img.file_name, defaultExt),
-      kind: 'image' as const,
-    }))
-}
-
-/** Parse an `{ audios: [{ url, content_type, file_name }] }` response into output refs. */
-export function parseAudioArray(response: unknown, defaultExt = '.m4a'): FalOutputRef[] {
-  const audios = (response as { audios?: AudioResult[] } | null)?.audios ?? []
-  return audios
-    .filter(
-      (aud): aud is AudioResult & { url: string } =>
-        typeof aud?.url === 'string' && aud.url.length > 0,
-    )
-    .map((aud) => ({
-      url: aud.url,
-      ext: extFromContentTypeOrName(aud.content_type, aud.file_name, defaultExt),
-      kind: 'audio' as const,
-    }))
-}
-
-/** Parse a `{ video: { url, content_type, file_name } }` response into a single output ref. */
-export function parseSingleVideo(response: unknown): FalOutputRef[] {
-  const video = (response as { video?: VideoResult } | null)?.video
-  if (!video || typeof video.url !== 'string' || video.url.length === 0) return []
-  return [
-    {
-      url: video.url,
-      ext: extFromContentTypeOrName(video.content_type, video.file_name, '.mp4'),
-      kind: 'video' as const,
-    },
-  ]
 }
 
 /** A rough (always-approximate) USD price estimate. */

@@ -2,13 +2,7 @@
  * fal.ai `fal-ai/nano-banana-pro/edit` — image editing (image-to-image) with Nano Banana Pro.
  * See https://fal.ai/models/fal-ai/nano-banana-pro/edit.
  */
-import {
-  constantEndpoint,
-  parseImageArray,
-  approxPrice,
-  selectParam,
-  numberParam,
-} from './builders'
+import { constantEndpoint, approxPrice, selectParam, numberParam } from './builders'
 import type { NodeDef, ResolvedInputs } from './types'
 
 const ASPECT_RATIOS = [
@@ -47,7 +41,6 @@ export const NANO_BANANA_PRO: NodeDef = {
     resolution: params.resolution ?? '1K',
     num_images: Number(params.num_images ?? 1),
   }),
-  parseOutputs: (response) => parseImageArray(response),
   // $0.15 per image; 4K outputs bill at 2×.
   estimatePrice: (params) => {
     const mult = String(params.resolution ?? '1K') === '4K' ? 2 : 1

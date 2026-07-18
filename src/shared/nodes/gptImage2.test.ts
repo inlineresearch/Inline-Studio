@@ -58,32 +58,6 @@ describe('GPT_IMAGE_2.buildRequest', () => {
   })
 })
 
-describe('GPT_IMAGE_2.parseOutputs', () => {
-  it('maps a single png image', () => {
-    const refs = GPT_IMAGE_2.parseOutputs({
-      images: [{ url: 'https://fal/out.png', content_type: 'image/png' }],
-    })
-    expect(refs).toEqual([{ url: 'https://fal/out.png', ext: '.png', kind: 'image' }])
-  })
-
-  it('maps multiple images and derives ext from content type', () => {
-    const refs = GPT_IMAGE_2.parseOutputs({
-      images: [
-        { url: 'https://fal/a.webp', content_type: 'image/webp' },
-        { url: 'https://fal/b.jpg', content_type: 'image/jpeg' },
-      ],
-    })
-    expect(refs.map((r) => r.ext)).toEqual(['.webp', '.jpg'])
-  })
-
-  it('returns [] for an empty or malformed response', () => {
-    expect(GPT_IMAGE_2.parseOutputs({})).toEqual([])
-    expect(GPT_IMAGE_2.parseOutputs({ images: [] })).toEqual([])
-    expect(GPT_IMAGE_2.parseOutputs({ images: [{ url: '' }] })).toEqual([])
-    expect(GPT_IMAGE_2.parseOutputs(null)).toEqual([])
-  })
-})
-
 describe('GPT_IMAGE_2.estimatePrice', () => {
   it('prices per image by quality × count', () => {
     expect(GPT_IMAGE_2.estimatePrice?.({ quality: 'high', num_images: 1 })).toEqual({

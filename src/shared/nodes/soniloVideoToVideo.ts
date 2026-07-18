@@ -11,13 +11,7 @@
  * fal node.
  */
 import { type NodeDef, type ResolvedInputs } from './types'
-import {
-  constantEndpoint,
-  parseSingleVideo,
-  numberParam,
-  booleanParam,
-  approxPrice,
-} from './builders'
+import { constantEndpoint, numberParam, booleanParam, approxPrice } from './builders'
 
 const ENDPOINT = 'sonilo/v1.1/video-to-video'
 
@@ -69,10 +63,6 @@ export const SONILO_V2V: NodeDef = {
     if (duration !== null) body.duration = duration
     return body
   },
-
-  // The response carries a `video` slot (the first output) plus a `videos` array (one per sample);
-  // the canvas takes one video per node, so parse the single primary video into a take.
-  parseOutputs: (response) => parseSingleVideo(response),
 
   // fal bills $0.009 per second of the mixed output, per sample. Without an explicit duration the
   // video's length isn't known here, so the estimate only shows once a segment duration is set.

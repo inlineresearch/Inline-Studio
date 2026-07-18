@@ -35,28 +35,6 @@ describe('SONILO_T2M.buildRequest', () => {
   })
 })
 
-describe('SONILO_T2M.parseOutputs', () => {
-  it('maps the audios array to m4a refs', () => {
-    const refs = SONILO_T2M.parseOutputs({
-      audio: { url: 'https://fal/a.m4a', content_type: 'audio/mp4' },
-      audios: [
-        { url: 'https://fal/a.m4a', content_type: 'audio/mp4' },
-        { url: 'https://fal/b.m4a', content_type: 'audio/mp4' },
-      ],
-    })
-    expect(refs).toEqual([
-      { url: 'https://fal/a.m4a', ext: '.m4a', kind: 'audio' },
-      { url: 'https://fal/b.m4a', ext: '.m4a', kind: 'audio' },
-    ])
-  })
-
-  it('returns [] when the audios are missing or malformed', () => {
-    expect(SONILO_T2M.parseOutputs({})).toEqual([])
-    expect(SONILO_T2M.parseOutputs({ audios: [{ url: '' }] })).toEqual([])
-    expect(SONILO_T2M.parseOutputs(null)).toEqual([])
-  })
-})
-
 describe('SONILO_T2M.estimatePrice', () => {
   it('prices per second × samples (duration is always known for text-to-music)', () => {
     // 120 s × 2 samples × $0.009/s = $2.16.

@@ -2,13 +2,7 @@
  * fal.ai `fal-ai/nano-banana-2` — text-to-image (Google's Nano Banana 2, served via fal).
  * See https://fal.ai/models/fal-ai/nano-banana-2.
  */
-import {
-  constantEndpoint,
-  parseImageArray,
-  approxPrice,
-  selectParam,
-  numberParam,
-} from './builders'
+import { constantEndpoint, approxPrice, selectParam, numberParam } from './builders'
 import type { NodeDef } from './types'
 
 const ASPECT_RATIOS = [
@@ -47,7 +41,6 @@ export const NANO_BANANA_2: NodeDef = {
     resolution: params.resolution ?? '1K',
     limit_generations: Number(params.limit_generations ?? 1),
   }),
-  parseOutputs: (response) => parseImageArray(response),
   // $0.08 per image at 1K, scaled by resolution tier × count.
   estimatePrice: (params) => {
     const mult = RES_MULT[String(params.resolution ?? '1K')] ?? 1
