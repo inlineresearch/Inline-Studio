@@ -12,6 +12,8 @@ import { SEEDANCE_I2V } from './seedanceI2V'
 import { SEEDANCE_REF2V } from './seedanceRef2V'
 import { KREA_V2 } from './kreaV2'
 import { SONILO_V2M } from './soniloVideoToMusic'
+import { SONILO_T2M } from './soniloTextToMusic'
+import { SONILO_V2V } from './soniloVideoToVideo'
 
 export const NODE_DEFS: readonly NodeDef[] = [
   GPT_IMAGE_2,
@@ -23,6 +25,8 @@ export const NODE_DEFS: readonly NodeDef[] = [
   SEEDANCE_REF2V,
   KREA_V2,
   SONILO_V2M,
+  SONILO_T2M,
+  SONILO_V2V,
 ]
 
 /** Look up a node def by its model id (`Frame.modelId`); undefined if unknown. */
