@@ -1,5 +1,5 @@
 /**
- * Floating bottom-center widget bar: a horizontal strip of canvas tools — Select (edit), Pan
+ * Floating bottom-center widget bar: a horizontal strip of canvas tools - Select (edit), Pan
  * (view), Text, and Add (opens a node list). It sits inside the canvas area, so it tracks the
  * Assets panel as it opens/resizes.
  */

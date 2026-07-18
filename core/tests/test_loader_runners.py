@@ -1,4 +1,4 @@
-"""The load/* runners — torch-free file resolution into a typed ComponentRef handle. No weights are
+"""The load/* runners - torch-free file resolution into a typed ComponentRef handle. No weights are
 read; the runner just points at a file the consuming model runner later loads."""
 
 from __future__ import annotations

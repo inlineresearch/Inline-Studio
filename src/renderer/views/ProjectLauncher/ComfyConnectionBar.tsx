@@ -58,7 +58,7 @@ export function ComfyConnectionBar(): React.JSX.Element {
 
       {!connected && tested === 'fail' && (
         <p className="mt-2 text-xs text-zinc-400">
-          Couldn’t reach ComfyUI at that address yet — open “Need help connecting?” for setup steps.
+          Couldn’t reach ComfyUI at that address yet - open “Need help connecting?” for setup steps.
         </p>
       )}
       {!connected && tested === 'ok' && <p className="mt-2 text-xs text-green-400">Connected.</p>}

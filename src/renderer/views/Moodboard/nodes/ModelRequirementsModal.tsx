@@ -1,6 +1,6 @@
 /**
  * The "missing models" popup for a Core model node (opened from the node's blinking hint). Lists the
- * model components the node needs, whether each is on disk, and where it lives — with a Download
+ * model components the node needs, whether each is on disk, and where it lives - with a Download
  * button per component and a "Download all". **Nothing is downloaded automatically**: this is the one
  * explicit place a model is fetched, and it writes into `core/models/` (never a hidden cache).
  */
@@ -18,7 +18,7 @@ function ComponentRow({
 }): React.JSX.Element {
   const download = useModelRequirementsStore((s) => s.download)
   const dl = useModelRequirementsStore((s) => s.downloads[nodeType]?.[comp.id])
-  // A present component always reads as "Ready" — never as an in-progress bar (a sibling's reload can
+  // A present component always reads as "Ready" - never as an in-progress bar (a sibling's reload can
   // land while this one is mid-download; presence wins).
   const busy = dl !== undefined && dl.error === undefined && !comp.present
   const pct = Math.round((dl?.fraction ?? 0) * 100)
@@ -101,7 +101,7 @@ export function ModelRequirementsModal(): React.JSX.Element | null {
         </header>
 
         <p className="border-b border-border px-4 py-2 text-[11px] leading-relaxed text-zinc-500">
-          These files must be on disk to generate. Nothing is downloaded automatically — grab what's
+          These files must be on disk to generate. Nothing is downloaded automatically - grab what's
           missing below and it's saved into{' '}
           <span className="font-mono text-zinc-400">core/models/</span>.
         </p>

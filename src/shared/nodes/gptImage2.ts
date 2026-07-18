@@ -1,5 +1,5 @@
 /**
- * fal.ai `openai/gpt-image-2` — text-to-image, and image-to-image when image inputs are wired.
+ * fal.ai `openai/gpt-image-2` - text-to-image, and image-to-image when image inputs are wired.
  * See https://fal.ai/models/openai/gpt-image-2.
  */
 import { type NodeDef, type ResolvedInputs } from './types'
@@ -14,11 +14,11 @@ const SIZE_PRESETS = [
   'landscape_16_9',
 ] as const
 
-// OpenAI's models live under the `openai/` owner on fal — NOT the `fal-ai/` namespace (which is
+// OpenAI's models live under the `openai/` owner on fal - NOT the `fal-ai/` namespace (which is
 // only for fal's own models). Prefixing with fal-ai/ makes the queue 404 ("Application openai not found").
 //
 // There is a SINGLE endpoint: passing `image_urls` switches it to image-editing mode. There is no
-// `/image-to-image` sub-path — submitting to one 404s on the queue result fetch.
+// `/image-to-image` sub-path - submitting to one 404s on the queue result fetch.
 // See https://fal.ai/models/openai/gpt-image-2/api.
 const ENDPOINT = 'openai/gpt-image-2'
 
@@ -33,7 +33,7 @@ export const GPT_IMAGE_2: NodeDef = {
     { id: 'images', label: 'Image(s)', kind: 'image[]', required: false },
     { id: 'mask', label: 'Mask', kind: 'image', required: false },
   ],
-  // NOTE: `prompt` is not a param — it's fed via the node's prompt input (a connected Prompt node).
+  // NOTE: `prompt` is not a param - it's fed via the node's prompt input (a connected Prompt node).
   params: [
     selectParam('image_size', 'Size', SIZE_PRESETS, 'landscape_4_3'),
     selectParam('quality', 'Quality', ['low', 'medium', 'high'], 'high'),

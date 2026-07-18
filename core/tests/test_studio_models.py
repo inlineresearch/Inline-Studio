@@ -1,4 +1,4 @@
-"""The explicit model-download backend (studio/models.py) — the torch-free bits: which repo file a
+"""The explicit model-download backend (studio/models.py) - the torch-free bits: which repo file a
 component pulls and the requirements view for unknown node types. The Hugging Face download itself
 is not exercised here (no network); the runner/requirements tests cover presence logic."""
 

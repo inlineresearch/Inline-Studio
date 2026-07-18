@@ -9,10 +9,10 @@ import type { TextNodeData } from './nodeData'
 import type { TextItemData } from '@shared/types'
 
 /**
- * Editable text item — floats bare on the canvas (no surface box), light-grey by
+ * Editable text item - floats bare on the canvas (no surface box), light-grey by
  * default. Double-click to edit; blur persists. Selecting it reveals a formatting
  * toolbar (colour / size / style / align / link). A linked, non-editing node opens
- * its URL in the browser on click. Resizing only changes the box — font size is set
+ * its URL in the browser on click. Resizing only changes the box - font size is set
  * from the toolbar, not from the container dimensions.
  */
 export function TextNode({ id, data, selected }: NodeProps): React.JSX.Element {
@@ -25,7 +25,7 @@ export function TextNode({ id, data, selected }: NodeProps): React.JSX.Element {
   const itemRef = useRef(item)
   itemRef.current = item
 
-  // Keep the node's height wrapped tightly around the text — both growing (e.g.
+  // Keep the node's height wrapped tightly around the text - both growing (e.g.
   // after pasting a long block) and shrinking, so the selectable/clickable box
   // never extends past the visible text into empty canvas. The editable div sizes
   // to its content (no `h-full`), so `scrollHeight` is the true text height; we add
@@ -36,7 +36,7 @@ export function TextNode({ id, data, selected }: NodeProps): React.JSX.Element {
     const it = itemRef.current
     if (!el || !it) return
     const needed = Math.max(32, el.scrollHeight + CHROME)
-    // Programmatic auto-fit — don't pollute the undo history.
+    // Programmatic auto-fit - don't pollute the undo history.
     if (Math.abs(needed - it.height) > 1) void updateItem(id, { height: needed }, false)
   }, [id, updateItem])
 

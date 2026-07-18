@@ -1,4 +1,4 @@
-"""Core-node generation on the single-process path — ported from the Studio
+"""Core-node generation on the single-process path - ported from the Studio
 ``electron/main/generation/coreExecutor.ts``, but running the graph through Core's in-process
 ``RunManager`` instead of over HTTP.
 
@@ -46,9 +46,9 @@ class CoreGeneration:
         self._active: dict[str, str] = {}  # canvas item id -> run id
 
     def run_workflow(self, item_id: str) -> None:
-        # If this item still has a run in flight — e.g. the user hit Run again without waiting for a
+        # If this item still has a run in flight - e.g. the user hit Run again without waiting for a
         # prior interrupt to land, or an interrupt pressed during the long model load hasn't reached
-        # a cancel checkpoint yet — cancel it first. Otherwise the old run keeps executing (holding
+        # a cancel checkpoint yet - cancel it first. Otherwise the old run keeps executing (holding
         # the single worker + the GPU) and the new one just queues behind it, which reads as a stuck
         # "loading model" and can OOM. The runner now honours cancellation during the load too.
         previous = self._active.get(item_id)

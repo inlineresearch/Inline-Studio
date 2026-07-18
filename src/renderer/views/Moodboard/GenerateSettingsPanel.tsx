@@ -34,7 +34,7 @@ export function GenerateSettingsPanel(): React.JSX.Element | null {
     persist,
   )
 
-  // Close when clicking anywhere outside the panel — except the node's adjust (toggle) button,
+  // Close when clicking anywhere outside the panel - except the node's adjust (toggle) button,
   // which manages open/close itself (so a click there doesn't close-then-reopen). Flush pending
   // edits before closing so a click-away never drops the last change.
   useEffect(() => {

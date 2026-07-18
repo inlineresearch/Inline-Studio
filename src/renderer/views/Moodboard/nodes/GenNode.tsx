@@ -57,7 +57,7 @@ function SparkleIcon(): React.JSX.Element {
 }
 
 /**
- * A left-edge input dot that reveals a small hint chip on hover — an icon + label naming what to
+ * A left-edge input dot that reveals a small hint chip on hover - an icon + label naming what to
  * connect (a "T" for the text prompt, an image/video icon for the media input).
  */
 function InputHandle({
@@ -93,7 +93,7 @@ function InputHandle({
 /**
  * A "Generate" node: a portrait card whose body is the edge-to-edge output preview, a title badge
  * + live price estimate above it, a selection-only play control on the right, and a footer that
- * holds the model picker + a settings (adjust) button. Inputs are bare dots — a prompt (fed by a
+ * holds the model picker + a settings (adjust) button. Inputs are bare dots - a prompt (fed by a
  * Prompt node) and, for image models, an image. Backed by a `provider:'fal'` frame.
  */
 export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
@@ -177,7 +177,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
   const pct = typeof progress === 'number' ? Math.round(progress * 100) : null
   const price = def.estimatePrice?.(frame.params) ?? null
 
-  // Left-edge input dots, in order — each only appears when the model's API takes that input.
+  // Left-edge input dots, in order - each only appears when the model's API takes that input.
   // They're spaced evenly down the edge (rendered below), so 1/2/3 dots lay out cleanly.
   const inputDots = [
     {
@@ -252,14 +252,14 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
         disabled={!!missing}
         disabledReason={missing ?? undefined}
       />
-      {/* Title + live price-estimate badges — float above the node. */}
+      {/* Title + live price-estimate badges - float above the node. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<SparkleIcon />}>Generate</NodeBadge>
         {price && (
           <NodeBadge
             tone="info"
             accent="text-emerald-300"
-            tooltip="Rough estimate only — the actual generation cost can differ with resolution, output size and options. Check fal.ai's pricing page for accurate, up-to-date rates."
+            tooltip="Rough estimate only - the actual generation cost can differ with resolution, output size and options. Check fal.ai's pricing page for accurate, up-to-date rates."
           >
             {formatPrice(price)}
           </NodeBadge>
@@ -282,7 +282,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
         >
           {/* Edge-to-edge output preview. */}
           <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
-            {/* Input thumbnails (top) — dropped/wired inputs. Click one to open it big in the
+            {/* Input thumbnails (top) - dropped/wired inputs. Click one to open it big in the
                 zoomable lightbox (the strip is too small to read); hover an item to remove it. */}
             <ThumbStrip
               items={inputThumbs.map((t) => ({
@@ -358,7 +358,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
 
             {busy && (
               <>
-                {/* Live phase + progress (e.g. "Queued", "Generating 40%") — always visible, even
+                {/* Live phase + progress (e.g. "Queued", "Generating 40%") - always visible, even
                     over a previous take while re-generating. */}
                 <span className="absolute left-2 top-2 flex max-w-[calc(100%-1rem)] items-center gap-1 rounded-full bg-black/75 px-2 py-0.5 text-[10px] font-medium text-emerald-300 backdrop-blur">
                   <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />
@@ -418,7 +418,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
         </div>
       </NodeFrame>
 
-      {/* Input dots — hover reveals what to connect. Prompt (amber, text) is universal; media
+      {/* Input dots - hover reveals what to connect. Prompt (amber, text) is universal; media
           (emerald, image/video) and audio (violet) appear only when the model declares that input.
           Evenly spaced down the left edge. Output: indigo. */}
       {inputDots.map((d, i) => (

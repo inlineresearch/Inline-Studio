@@ -3,8 +3,8 @@
 Physical files live flat under the project's ``assets/`` dir; folders are a logical tree in the DB.
 Operates on an open ``sqlite3.Connection`` plus the project folder (for copying imported files).
 
-Poster/thumbnail/transcode generation (ffmpeg) is deferred and best-effort — the UI renders the
-original meanwhile — so import here just copies the file and inserts the row.
+Poster/thumbnail/transcode generation (ffmpeg) is deferred and best-effort - the UI renders the
+original meanwhile - so import here just copies the file and inserts the row.
 """
 
 from __future__ import annotations
@@ -182,7 +182,7 @@ def delete_asset(conn: sqlite3.Connection, asset_id: str) -> list[str]:
     if used > 0:
         plural = "" if used == 1 else "s"
         raise ValueError(
-            f"This asset is used by {used} frame{plural} — remove it from those frames first."
+            f"This asset is used by {used} frame{plural} - remove it from those frames first."
         )
     row = conn.execute(
         "SELECT file_path, thumb_path, preview_path FROM assets WHERE id = ?", (asset_id,)

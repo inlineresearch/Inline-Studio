@@ -3,7 +3,7 @@ import type { CoreParamField } from '@shared/coreNodes'
 
 /**
  * One editable widget for an Inline Core node param, driven by the descriptor's field schema. Mirrors
- * the fal `ParamWidget` look (this is the sidebar variant), but typed for `CoreParamField` — it also
+ * the fal `ParamWidget` look (this is the sidebar variant), but typed for `CoreParamField` - it also
  * handles the `seed` widget and select options fed from Core's model catalog. `onChange` updates the
  * value while typing; `onCommit` persists it. Text/number fields commit on blur; select/checkbox
  * commit immediately.
@@ -109,7 +109,7 @@ function NumberField({
   const external = value ?? field.default
   const [draft, setDraft] = useState<string>(external == null ? '' : String(external))
   // Re-seed the draft when the committed value changes from the outside (e.g. the panel re-seeds for
-  // a different node) — but never while the user is editing this same value.
+  // a different node) - but never while the user is editing this same value.
   const lastExternal = useRef(external)
   useEffect(() => {
     if (external !== lastExternal.current) {

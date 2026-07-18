@@ -1,4 +1,4 @@
-"""Build the ffmpeg args to render a director timeline (EDL) into one muxed MP4 — a faithful
+"""Build the ffmpeg args to render a director timeline (EDL) into one muxed MP4 - a faithful
 port of the Studio ``electron/main/export/compose.ts``. Pure + deterministic, so unit-tested.
 
 Model: clips reference absolute files at ``start_time``, trimmed to in/out. Track 0 = video

@@ -32,7 +32,7 @@ export function NodeFrame({
   minWidth?: number
   minHeight?: number
   padded?: boolean
-  /** Drop the surface box (border + background) — used by text, which floats bare on the canvas. */
+  /** Drop the surface box (border + background) - used by text, which floats bare on the canvas. */
   transparent?: boolean
   /** Use a soft light-grey selection outline instead of the loud accent (for media-heavy nodes). */
   subtleSelect?: boolean

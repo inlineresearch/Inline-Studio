@@ -16,7 +16,7 @@ export interface OutputTile {
   /** Producing frame or node name, shown under the thumb. */
   label: string
   /**
-   * Producing frame id — set for frame takes, which drag as a frame/output payload (fed as a flow
+   * Producing frame id - set for frame takes, which drag as a frame/output payload (fed as a flow
    * link). Null for Core-node outputs, which have no frame, so they drag as a raw media file (the
    * drop target imports it into the Library first).
    */
@@ -26,7 +26,7 @@ export interface OutputTile {
 /**
  * A generated output (take) tile. Drag it onto a generation node to feed it as an input, or onto the
  * canvas to make a new frame. Frame takes carry their frame/output payload; Core-node outputs (no
- * frame) carry a media-file payload — the drop target imports the file into the Library first.
+ * frame) carry a media-file payload - the drop target imports the file into the Library first.
  */
 export function OutputThumb({ tile }: { tile: OutputTile }): React.JSX.Element {
   const { id, filePath, kind, label, frameId } = tile
@@ -48,7 +48,7 @@ export function OutputThumb({ tile }: { tile: OutputTile }): React.JSX.Element {
       draggable
       onDragStart={onDragStart}
       onContextMenu={(e) => onContextMenu(e, { src, name: label, kind })}
-      title={`${label} — drag onto a node to use as input, or onto the canvas to make a frame`}
+      title={`${label} - drag onto a node to use as input, or onto the canvas to make a frame`}
       className="flex w-full cursor-grab flex-col overflow-hidden rounded-md border border-border hover:border-zinc-600"
     >
       <div className="flex aspect-video items-center justify-center bg-black/40">

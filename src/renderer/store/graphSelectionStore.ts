@@ -1,5 +1,5 @@
 /**
- * The run target(s) of the currently-selected graph — the output node(s) that show the Run control.
+ * The run target(s) of the currently-selected graph - the output node(s) that show the Run control.
  * MoodboardPanel computes this from the selection + connectors; each generation node reads whether
  * it is a target (`useIsRunTarget`) to decide whether to float its Run/Stop pill.
  */

@@ -1,5 +1,5 @@
 /**
- * fal.ai `bytedance/seedance-2.0/reference-to-video` — Seedance 2.0 reference-to-video: the prompt
+ * fal.ai `bytedance/seedance-2.0/reference-to-video` - Seedance 2.0 reference-to-video: the prompt
  * references wired image/video/audio inputs (@Image1, @Video1, @Audio1). All inputs are optional.
  * See https://fal.ai/models/bytedance/seedance-2.0/reference-to-video.
  */

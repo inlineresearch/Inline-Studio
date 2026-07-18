@@ -80,7 +80,7 @@ class StudioStore:
             except OSError:
                 pass
         # Autocommit (isolation_level=None) so each write persists immediately, matching the Node
-        # backend's better-sqlite3 default — the domain modules don't manage transactions.
+        # backend's better-sqlite3 default - the domain modules don't manage transactions.
         conn = sqlite3.connect(str(db_path), isolation_level=None)
         conn.row_factory = sqlite3.Row
         apply_schema(conn)
@@ -271,7 +271,7 @@ class StudioStore:
             return None
 
     def fal_status(self) -> dict[str, bool]:
-        # The field MUST be `configured` — that is the frozen wire contract (`ApiKeyStatus` in
+        # The field MUST be `configured` - that is the frozen wire contract (`ApiKeyStatus` in
         # src/shared/types.ts), and the renderer reads `status.configured`. Returning `hasKey` here
         # silently resolved to `undefined` client-side, so a saved key still rendered as "Not set".
         # `encrypted` is False: the key lives in a 0600 file, not OS-encrypted (single-user local).

@@ -6,7 +6,7 @@ import { NodeBadge, NodeBadgeRow } from './NodeBadge'
 
 /**
  * A text-prompt node: a bare textarea whose output (a dot on the right) feeds a Generate node's
- * prompt input. The text is the single source of truth — the executor reads it at run time.
+ * prompt input. The text is the single source of truth - the executor reads it at run time.
  */
 export function PromptNode({ id, selected }: NodeProps): React.JSX.Element {
   const item = useMoodboardStore((s) => s.items.find((it) => it.id === id))
@@ -20,7 +20,7 @@ export function PromptNode({ id, selected }: NodeProps): React.JSX.Element {
 
   return (
     <>
-      {/* Label badge — floats above the node, outside its container. */}
+      {/* Label badge - floats above the node, outside its container. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<span className="text-sm font-bold leading-none text-zinc-400">T</span>}>
           Prompt
@@ -45,7 +45,7 @@ export function PromptNode({ id, selected }: NodeProps): React.JSX.Element {
         />
       </NodeFrame>
 
-      {/* Text output — connect this to a Generate node's prompt dot. */}
+      {/* Text output - connect this to a Generate node's prompt dot. */}
       <Handle
         type="source"
         id="out"

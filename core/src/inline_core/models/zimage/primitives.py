@@ -90,7 +90,7 @@ def _torch_dtype(placement: Placement) -> Any:
 
 def _run_device(policy: DevicePolicy, placement: Placement) -> str:
     """Where a component runs: the policy's device, unless it asked to offload / is CPU-only. We do
-    not build an accelerate offload hook for the decomposed path — the policy only offloads when the
+    not build an accelerate offload hook for the decomposed path - the policy only offloads when the
     user opts in (``INLINE_ALLOW_CPU_OFFLOAD``), and then CPU execution is the safe fallback."""
     if placement.offload or policy.profile is Profile.CPU:
         return "cpu"
@@ -183,8 +183,8 @@ class ZImageScheduler(Scheduler):
         self, latents: torch.Tensor, steps: int, noise: torch.Tensor
     ) -> torch.Tensor:
         """Noise the input latent to the first timestep via flow-match ``scale_noise``. For an empty
-        (zeros) latent at sigma≈1 this returns pure noise — matching text-to-image; for a
-        VAE-encoded image latent it returns the partially-noised start — matching img2img."""
+        (zeros) latent at sigma≈1 this returns pure noise - matching text-to-image; for a
+        VAE-encoded image latent it returns the partially-noised start - matching img2img."""
         self._plan(steps)
         batch = latents.shape[0]
         t0 = self._s.timesteps[:1].to(latents.device).repeat(batch)
@@ -251,7 +251,7 @@ class ZImageDenoiser(Denoiser):
 
 class ZImageSampler(Sampler):
     """The stepping loop, denoiser-agnostic. Streams a tick per step and honours cancellation
-    between steps — the concrete work stays here, off the graph executor (which never samples
+    between steps - the concrete work stays here, off the graph executor (which never samples
     inline)."""
 
     def sample(
@@ -340,7 +340,7 @@ class EncodeTextRunner(NodeRunner):
 
 class EmptyLatentRunner(NodeRunner):
     """``latent/empty``: a zeros latent of the right shape (``sample`` adds the seeded noise, so
-    this stays a pure, cheap, seed-free canvas — the ComfyUI ``Empty Latent`` model)."""
+    this stays a pure, cheap, seed-free canvas - the ComfyUI ``Empty Latent`` model)."""
 
     produces_takes = False
 
@@ -383,7 +383,7 @@ class SampleRunner(NodeRunner):
         seed = _resolve_seed(params.get("seed"))
         # sampler / scheduler selects: only euler + simple (the default flow-match euler schedule)
         # are reproduced faithfully today. Other choices (dpmpp_2m / heun, karras) run the nearest
-        # equivalent — the same flow-match euler loop — rather than crashing; a bespoke schedule per
+        # equivalent - the same flow-match euler loop - rather than crashing; a bespoke schedule per
         # option lands with the broader sampler work.
 
         dtype, device = _placed(self._policy, "denoiser")
@@ -503,7 +503,7 @@ def _require_conditioning(inputs: dict[str, list[Any]], port: str) -> ZImageCond
 
 def _match_batch(embeds: list[torch.Tensor], batch: int) -> list[torch.Tensor]:
     """Fan a per-prompt embedding list out to the latent batch (repeat a single prompt; cycle a
-    shorter list), so one Encode Text feeds a batched Empty Latent — like num_images_per_prompt."""
+    shorter list), so one Encode Text feeds a batched Empty Latent - like num_images_per_prompt."""
     if len(embeds) == batch:
         return embeds
     if not embeds:

@@ -3,7 +3,7 @@ import { useFalSettingsStore } from '../store/falSettingsStore'
 
 /**
  * The fal.ai API key control for the closed-model generation engine, laid out for the Settings
- * panel. A secret, so it's write-only: the key is never echoed back across the wire — once saved we
+ * panel. A secret, so it's write-only: the key is never echoed back across the wire - once saved we
  * only show "Connected". Inline Core keeps it server-side in an owner-only (0600) file; "Clear"
  * deletes it. Bring your own key from https://fal.ai/dashboard/keys.
  */

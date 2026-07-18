@@ -35,7 +35,7 @@ async function uploadOne(file: File, folderId: string | null): Promise<Asset | n
 }
 
 /**
- * Copy a media file already served by Core (a `/media/...` URL — a take or a Core-node output) into
+ * Copy a media file already served by Core (a `/media/...` URL - a take or a Core-node output) into
  * the Library as a proper asset, so it can be used as a frame/loader input. Fetches the bytes and
  * re-uploads them via /upload. Returns the created asset, or null on failure.
  */

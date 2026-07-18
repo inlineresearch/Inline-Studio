@@ -1,7 +1,7 @@
 import { studio } from '@/lib/studio'
 import raceCover from '../../assets/race.png'
 
-/** The Circuit Race tutorial URL — a full walkthrough of a generative short film. */
+/** The Circuit Race tutorial URL - a full walkthrough of a generative short film. */
 const CIRCUIT_RACE_URL = 'https://inlinestudio.art/projects/circuit-race'
 
 /**

@@ -1,7 +1,7 @@
 /**
  * The "Add node" popup opened from the toolbar's + button, or by double-clicking empty canvas in
  * Select mode. Lists every node type. The single "Generate" row creates a unified generation frame
- * (a chooser — Link a ComfyUI Workflow or Generate with Fal API — resolved on the node itself).
+ * (a chooser - Link a ComfyUI Workflow or Generate with Fal API - resolved on the node itself).
  * Positioning mirrors MoodboardPanel's "Connect to…" menu (container-relative left/top).
  */
 
@@ -54,7 +54,7 @@ export function AddNodeMenu({
 }): React.JSX.Element {
   // Only high-level model nodes are offered; loaders/samplers/inputs are hidden plumbing.
   const addable = addableCoreNodes(coreNodes)
-  // Fal models, grouped by owner (OpenAI, ByteDance, …) — listed like the Inline Core section.
+  // Fal models, grouped by owner (OpenAI, ByteDance, …) - listed like the Inline Core section.
   const falGroups = groupByOwner(listNodeDefs())
   return (
     <>

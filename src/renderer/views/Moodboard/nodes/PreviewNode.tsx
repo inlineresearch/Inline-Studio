@@ -14,7 +14,7 @@ import { resolveMedia } from '@/lib/media'
 
 /**
  * A Comfy-style preview node: connect a frame's output handle to its input and it
- * displays that frame's outputs (takes). With several takes it becomes a carousel —
+ * displays that frame's outputs (takes). With several takes it becomes a carousel -
  * page through them and "set hero" to pick the one the timeline points at.
  */
 export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
@@ -89,8 +89,8 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
   const itemWidth = item?.width
   const itemHeight = item?.height
   // The media body is a CSS aspect-ratio box (like the director's preview), so the video
-  // always fills it with no black edges. Here we just size the *node* to hug that box —
-  // node height = header height + (width / aspect) — so resizing the width keeps aspect at
+  // always fills it with no black edges. Here we just size the *node* to hug that box -
+  // node height = header height + (width / aspect) - so resizing the width keeps aspect at
   // any size. (Dragging height alone snaps back, i.e. the node maintains the aspect ratio.)
   useLayoutEffect(() => {
     const body = bodyRef.current
@@ -104,7 +104,7 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
 
   return (
     <>
-      {/* Title + take-count badges — float above the node, matching the Generate node. */}
+      {/* Title + take-count badges - float above the node, matching the Generate node. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<EyeIcon />} title={badgeLabel}>
           {badgeLabel}
@@ -244,7 +244,7 @@ export function PreviewNode({ id, selected }: NodeProps): React.JSX.Element {
             ) : (
               <span className="p-3 text-center text-[11px] text-zinc-500">
                 {frame
-                  ? 'No outputs yet — generate this frame, or it shows its input.'
+                  ? 'No outputs yet - generate this frame, or it shows its input.'
                   : "Connect a frame's output here to preview it"}
               </span>
             )}

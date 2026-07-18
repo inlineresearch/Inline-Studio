@@ -2,7 +2,7 @@ import { takeWaveformPath } from '@shared/media'
 import type { Asset, Frame, FrameInput, Take } from '@shared/types'
 import { resolveMedia } from '@/lib/media'
 
-/** A resolved input thumbnail — from a library asset OR a flow/source-frame input. */
+/** A resolved input thumbnail - from a library asset OR a flow/source-frame input. */
 export interface InputThumb {
   /** The frame_input row id (stable key; used to remove the input). */
   id: string
@@ -29,7 +29,7 @@ export interface InputThumbCtx {
 
 /**
  * Resolve a frame's inputs to thumbnails, in order. Asset inputs map to their library media; flow
- * inputs (`sourceFrameId`, from a wired frame/Preview) map to that frame's hero take — or, when it
+ * inputs (`sourceFrameId`, from a wired frame/Preview) map to that frame's hero take - or, when it
  * hasn't generated yet, its own imported input asset. Shared by the Frame and Generate nodes so
  * both surface their inputs the same way. Rows that don't resolve are dropped.
  */
@@ -67,7 +67,7 @@ export function resolveInputThumbs(inputs: FrameInput[], ctx: InputThumbCtx): In
             waveform: take.kind === 'audio' ? resolveMedia(takeWaveformPath(take.id)) : undefined,
           }
         }
-        // No take yet — fall back to the source frame's imported input asset.
+        // No take yet - fall back to the source frame's imported input asset.
         const srcInput = sf ? (inputsByFrame[sf.id] ?? []).find((x) => x.assetId) : undefined
         const srcAsset = srcInput?.assetId
           ? assets.find((a) => a.id === srcInput.assetId)

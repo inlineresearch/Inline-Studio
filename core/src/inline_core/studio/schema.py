@@ -1,4 +1,4 @@
-"""SQLite schema for a project's ``project.db`` — a faithful port of the Studio TypeScript
+"""SQLite schema for a project's ``project.db`` - a faithful port of the Studio TypeScript
 ``electron/main/db/schema.ts`` (SCHEMA_VERSION 14). The DB is the source of truth for a project;
 "save" is implicit. Bumping ``SCHEMA_VERSION`` + adding a migration is how the schema evolves.
 

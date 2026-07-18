@@ -1,4 +1,4 @@
-"""Resolve a director node's derived timeline from its wired connections — a port of the Studio
+"""Resolve a director node's derived timeline from its wired connections - a port of the Studio
 ``electron/main/timeline/resolve.ts``. Video inputs use the ``vin-*`` handles, user audio (L2) the
 ``ain-*`` handles, in slot order. Each input resolves to a file (a frame's output or an asset), is
 probed for duration, and laid out sequentially. Returns a display model + the ``ResolvedClip`` list
@@ -150,7 +150,7 @@ def resolve_timeline(
                 "frameId": ref["frameId"], "label": ref["label"], "kind": ref["kind"],
                 "startTime": cursor, "duration": duration,
                 # Point at the peaks JSON; Core builds it on first request (studio/peaks.py). Only
-                # time-based media has an audio track — a still image never does.
+                # time-based media has an audio track - a still image never does.
                 "audioPeaks": (
                     audio_peaks_rel(ref["sourceId"]) if ref["kind"] != "image" else None
                 ),

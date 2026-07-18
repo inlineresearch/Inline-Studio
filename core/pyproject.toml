@@ -1,58 +1,39 @@
 [project]
-# PyPI distribution name. The import package is `inline_core` (src/inline_core); PyPI treats the
-# hyphen and underscore as equivalent, so `pip install inline-core` installs the `inline_core` package.
+# PyPI name; the import package is `inline_core` (src/inline_core).
 name = "inline-core"
 version = "1.2.0"
 description = "The generation engine behind Inline."
 requires-python = ">=3.11"
-# Deliberately tiny and torch-free: the engine skeleton must import and serve source nodes on a
-# machine with no ML stack at all. Everything heavy is an extra (see `runtime` below), which is what
-# lets `server/bootstrap.py` skip model registration best-effort instead of failing to boot.
+# Deliberately torch-free so the engine boots and serves source nodes with no ML stack installed.
 dependencies = [
   "numpy>=1.26",
   "psutil>=5.9",
 ]
 
 [project.optional-dependencies]
-# THE central model runtime — every model runner shares this one set. Adding a model (Flux, SDXL, …)
-# must NOT add another torch/diffusers block here; if a model needs something genuinely specific,
-# give it its own small extra that is installed alongside `runtime`, never a second copy of the
-# stack. (This replaced the old per-model `zimage` extra, which duplicated torch per model.)
+# The one shared model runtime. A new model reuses this; it must never add its own torch block.
 runtime = [
-  # NOTE: a bare `torch` resolves to a CPU-only wheel on Windows. `[tool.uv]` below pins the CUDA
-  # index for uv; pip users need the --extra-index-url in requirements.txt, and Core warns at
-  # startup if it finds an NVIDIA GPU but a CPU-only torch.
+  # A bare `torch` is CPU-only on Windows; see [tool.uv] below and requirements.txt.
   "torch>=2.2",
-  # Z-Image landed in diffusers 0.36 (ZImagePipeline); diffusers from git main may be required.
+  # Z-Image needs diffusers >= 0.36 (ZImagePipeline).
   "diffusers>=0.36",
   "transformers>=4.44",
   "accelerate>=0.30",
   "safetensors>=0.4",
-  # Smart memory (`webui.sh --smart-memory`) quantizes the big weights to int8 with torchao's
-  # weight-only quant — torch-native and movable, so it coexists with CPU offload. >=0.14 for the
-  # config-object API (Int8WeightOnlyConfig; the "int8_weight_only" string form was dropped).
-  # Best-effort at load time: an absent/incompatible torchao logs and falls back, never crashes.
+  # int8 weight-only quant for smart memory; best-effort at load, falls back if absent.
   "torchao>=0.14",
-  # scipy backs the Beta sigma schedule (FlowMatchEulerDiscreteScheduler.use_beta_sigmas). diffusers
-  # gates that option on scipy at scheduler construction; the sampling registry falls back to the
-  # model default spacing if it is ever absent, but declare it so Beta works out of the box.
+  # Backs the Beta sigma schedule (diffusers gates use_beta_sigmas on scipy).
   "scipy>=1.11",
-  # Explicit model downloads (the node's model popup) go through huggingface_hub. It ships
-  # transitively with diffusers/transformers, but pin it here since we call snapshot_download
-  # directly and rely on local_dir= to land files in models/ (never the hidden HF cache).
+  # We call snapshot_download directly for the model popup, so pin it rather than rely on transit.
   "huggingface_hub>=0.23",
 ]
 server = [
   "fastapi>=0.110",
   "uvicorn[standard]>=0.29",
-  # Bundled ffmpeg binary for the Studio timeline render (director preview/export) and audio
-  # waveform peaks. ffprobe is not bundled — install a system ffmpeg for duration probing, else
-  # clips fall back to a still length.
+  # Bundled ffmpeg for the timeline render and audio waveform peaks (ffprobe is not bundled).
   "imageio-ffmpeg>=0.4",
 ]
-# Multi-GPU denoise: split one image across GPUs via xDiT (xfuser). Needs `runtime` alongside it
-# (torchrun ships with torch); install as `.[runtime,parallel]`. nvidia-ml-py detects NVLink so the
-# policy picks Ulysses vs PipeFusion. flash-attn (Ulysses/Ring on NVLink) is an opt-in extra.
+# Multi-GPU denoise via xDiT. Install alongside `runtime`: `.[runtime,parallel]`.
 parallel = [
   "xfuser>=0.4",
   "nvidia-ml-py>=12",
@@ -63,9 +44,7 @@ dev = [
   "pyright>=1.1",
   "httpx>=0.27",
 ]
-# Convenience aggregate for "give me everything to run locally". Lists concrete packages rather than
-# self-referencing `inline-core[...]`, which makes the dependency graph circular to read and trips
-# some resolvers/tooling.
+# Everything needed to run locally. Lists concrete packages, never `inline-core[...]` self-refs.
 all = [
   "torch>=2.2",
   "diffusers>=0.36",
@@ -80,11 +59,7 @@ all = [
   "imageio-ffmpeg>=0.4",
 ]
 
-# --- torch wheel selection ------------------------------------------------------------------------
-# PyTorch publishes CPU-only wheels to PyPI for Windows (Linux wheels bundle CUDA). Without this an
-# `uv` install on Windows silently produces CPU-only inference — a working install that is ~100x
-# slower, with no error. Pin the CUDA index for Windows so uv resolves a +cu124 build.
-# pip users: see requirements.txt for the equivalent --extra-index-url.
+# PyPI ships CPU-only torch on Windows; pin the CUDA index there (pip: see requirements.txt).
 [[tool.uv.index]]
 name = "pytorch-cu124"
 url = "https://download.pytorch.org/whl/cu124"
@@ -94,7 +69,6 @@ explicit = true
 torch = [{ index = "pytorch-cu124", marker = "sys_platform == 'win32'" }]
 
 [project.scripts]
-# One command to run the engine + the Inline Studio UI on one port (see main.py for flags).
 inline-studio = "inline_core.server.__main__:main"
 
 [build-system]

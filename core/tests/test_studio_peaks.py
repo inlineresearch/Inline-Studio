@@ -30,7 +30,7 @@ def test_peaks_payload_normalises_and_buckets() -> None:
 
 
 def test_peaks_payload_uses_absolute_magnitude() -> None:
-    """A negative trough is as loud as a positive crest — the envelope must not read as silence."""
+    """A negative trough is as loud as a positive crest - the envelope must not read as silence."""
     assert peaks.peaks_payload(_pcm([-16384, 0]), buckets=1)["peaks"] == [0.5]
     # -32768 has no positive counterpart; it must clamp rather than overflow past 1.0.
     only = peaks.peaks_payload(_pcm([-32768]), buckets=1)["peaks"][0]
@@ -80,7 +80,7 @@ def test_source_for_peaks_maps_takes_and_assets(tmp_path) -> None:
 
 def test_source_for_peaks_resolves_a_frame_id(tmp_path) -> None:
     """The timeline's `sourceId` is a FRAME id for frame/preview/trim sources (what the Trim node
-    passes as `audioPeaks`), not a take id — so resolution must fall through to the frame's file."""
+    passes as `audioPeaks`), not a take id - so resolution must fall through to the frame's file."""
     store = StudioStore(tmp_path / "app", tmp_path / "ws")
     store.create_project("wave")
     conn, folder = store.conn(), store.folder()
@@ -101,7 +101,7 @@ def test_source_for_peaks_resolves_a_frame_id(tmp_path) -> None:
     )
     conn.commit()
 
-    # Keyed by the frame id, not the take id — resolves through the frame's hero/latest take.
+    # Keyed by the frame id, not the take id - resolves through the frame's hero/latest take.
     assert peaks.source_for_peaks(conn, folder, peaks.audio_peaks_rel("frame1")) == media.resolve()
 
 
@@ -111,7 +111,7 @@ def test_audio_peaks_rel_matches_the_shared_convention() -> None:
 
 
 def test_write_peaks_is_best_effort_on_undecodable_input(tmp_path) -> None:
-    """A file with no audio stream must not raise — the UI keeps its flat placeholder."""
+    """A file with no audio stream must not raise - the UI keeps its flat placeholder."""
     src = tmp_path / "junk.m4a"
     src.write_bytes(b"definitely not audio")
     assert peaks.write_peaks(src, tmp_path / "out.peaks.json") is False
@@ -124,7 +124,7 @@ def test_end_to_end_generates_peaks_from_real_audio(tmp_path) -> None:
     src = tmp_path / "tone.wav"
     exe = ffmpeg_exe()
     assert exe is not None
-    # lavfi's `sine` emits at only ~0.125 of full scale, so boost it — that way the peak assertion
+    # lavfi's `sine` emits at only ~0.125 of full scale, so boost it - that way the peak assertion
     # below actually exercises normalisation instead of passing on a near-silent signal.
     subprocess.run(
         [exe, "-v", "quiet", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",

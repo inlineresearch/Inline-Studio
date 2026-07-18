@@ -1,12 +1,12 @@
 /**
  * The declarative contract for a generation node (a fal.ai model surfaced on the canvas).
  *
- * A `NodeDef` is pure data + pure functions — no Electron, no fs, no network. The renderer
+ * A `NodeDef` is pure data + pure functions - no Electron, no fs, no network. The renderer
  * uses it to render input ports + param widgets; the main-process executor uses it to build
  * the fal request and parse the response. Adding a model = one new file + a registry line.
  *
  * This file is imported by BOTH the renderer and main, so it must stay shell-agnostic
- * (open-core rule — see MEMORY: open-core-packages).
+ * (open-core rule - see MEMORY: open-core-packages).
  */
 
 /** The common input/output type system. Ports declare what kind of media flows through them. */
@@ -31,7 +31,7 @@ export interface OutputPort {
 /**
  * One user-editable parameter, rendered generically by GenNode as a widget.
  * `advanced: true` hides it behind the node's "More options" disclosure (only primary params
- * — those without the flag — show by default).
+ * - those without the flag - show by default).
  */
 export type ParamField =
   | { key: string; label: string; widget: 'text' | 'textarea'; default: string; advanced?: boolean }
@@ -95,7 +95,7 @@ export function formatPrice(est: PriceEstimate): string {
  *
  * Note there is deliberately no `parseOutputs` here: the browser builds the request
  * (`resolveEndpoint` + `buildRequest`) and hands it to Core, which then submits, polls, and
- * downloads the result asynchronously — the browser is never in the loop for the response. Parsing
+ * downloads the result asynchronously - the browser is never in the loop for the response. Parsing
  * therefore lives in Core (`inline_core/studio/fal.py: parse_outputs`), keyed on `outputKind`.
  */
 export interface NodeDef {
@@ -109,7 +109,7 @@ export interface NodeDef {
   /** The kind of media this node produces → the backing `Frame.kind`. */
   outputKind: 'image' | 'video' | 'audio'
   /**
-   * When true, the node runs without a connected Prompt node — the model derives its own prompt
+   * When true, the node runs without a connected Prompt node - the model derives its own prompt
    * from its media inputs (e.g. Sonilo reads the video), and a wired prompt only steers the result.
    * Default (absent) keeps the prompt required, which is the norm.
    */
@@ -137,7 +137,7 @@ export function defaultParams(def: NodeDef): ParamValues {
   return out
 }
 
-/** An empty `ResolvedInputs` (all kinds empty) — a convenience for callers/tests. */
+/** An empty `ResolvedInputs` (all kinds empty) - a convenience for callers/tests. */
 export function emptyResolvedInputs(): ResolvedInputs {
   return { images: [], masks: [], videos: [], audios: [], texts: [] }
 }

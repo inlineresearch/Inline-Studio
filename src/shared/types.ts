@@ -62,7 +62,7 @@ export interface Frame {
   /** The ComfyUI workflow (userdata name) this frame is linked to, if any. */
   comfyWorkflowName: string | null
   /**
-   * True once a real (non-seed) workflow graph has been captured for this frame — i.e.
+   * True once a real (non-seed) workflow graph has been captured for this frame - i.e.
    * the user has actually built something, not just clicked Link (which seeds a Note).
    * Lets the UI distinguish "linked but empty" from "ready to generate".
    */
@@ -73,7 +73,7 @@ export interface Frame {
 
 /**
  * One of a frame's inputs (a frame can have several). An input is either a library
- * asset (`assetId`) or a live link to another frame's output (`sourceFrameId`) — the
+ * asset (`assetId`) or a live link to another frame's output (`sourceFrameId`) - the
  * latter resolves to that frame's hero take at generate time (the refine/flow link).
  */
 export interface FrameInput {
@@ -156,7 +156,7 @@ export interface DirectorItemData {
 /**
  * One derived clip on a director node's timeline. The video layer and L1 audio are
  * derived from the videos wired into the node; L2 is the user's wired audio. Positions
- * are sequential (seconds); nothing here is persisted — it's recomputed from the wired
+ * are sequential (seconds); nothing here is persisted - it's recomputed from the wired
  * connections each time.
  */
 export interface DirectorClip {
@@ -220,7 +220,7 @@ export interface TextItemData {
   underline: boolean
   color: string
   align: 'left' | 'center' | 'right'
-  /** Optional http(s) URL — renders the text as a clickable link. */
+  /** Optional http(s) URL - renders the text as a clickable link. */
   link?: string
 }
 
@@ -253,7 +253,7 @@ export interface MoodboardItemData {
   core?: {
     type: string
     params: Record<string, unknown>
-    /** The active media this node produced — shown large and flowed downstream. Project-relative.
+    /** The active media this node produced - shown large and flowed downstream. Project-relative.
      * `createdAt` (ms) is stamped at generation; absent on renders made before it was tracked. */
     output?: {
       takeId: string
@@ -444,9 +444,9 @@ export interface ComfyRun {
 
 /** Absolute media directories of the open project, for sharing with ComfyUI. */
 export interface ProjectMediaDirs {
-  /** Where Inline Studio keeps imported inputs — point ComfyUI's --input-directory here. */
+  /** Where Inline Studio keeps imported inputs - point ComfyUI's --input-directory here. */
   inputDir: string
-  /** Where Inline Studio keeps generated outputs — point ComfyUI's --output-directory here. */
+  /** Where Inline Studio keeps generated outputs - point ComfyUI's --output-directory here. */
   outputDir: string
 }
 

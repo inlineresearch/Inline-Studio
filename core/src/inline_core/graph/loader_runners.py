@@ -1,4 +1,4 @@
-"""Runners for the ``load/*`` primitives — the decomposed loader subnodes on the canvas.
+"""Runners for the ``load/*`` primitives - the decomposed loader subnodes on the canvas.
 
 A Load node resolves a **chosen model file** into a typed handle (``ComponentRef``) that threads
 across a ``model`` / ``vae`` / ``text-encoder`` edge into a model runner (e.g. Z-Image). It is
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from ..runtime.context import ExecutionContext
     from .registry import Registry
 
-# Same weight extensions the catalog scan treats as models — so a Load node's auto-pick matches what
+# Same weight extensions the catalog scan treats as models - so a Load node's auto-pick matches what
 # the dropdown lists.
 _WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf", ".sft")
 _ARCH = "z-image"
@@ -83,7 +83,7 @@ class LoadComponentRunner(NodeRunner):
 
 def register_loaders(registry: Registry) -> None:
     """Register the ``load/*`` nodes **visible** (unhidden) with their runners, so they appear in
-    the add-node menu and can feed a model node's component inputs. Torch-free — always on."""
+    the add-node menu and can feed a model node's component inputs. Torch-free - always on."""
     registry.register(
         replace(LOAD_DIFFUSION_MODEL, hidden=False),
         LoadComponentRunner(kind="diffusion", category="diffusion_models", output_port="model"),

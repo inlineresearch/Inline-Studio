@@ -1,5 +1,5 @@
 /**
- * Unit tests for resolveInputThumbs — the shared Frame/Generate-node input resolver. Pure (no DB
+ * Unit tests for resolveInputThumbs - the shared Frame/Generate-node input resolver. Pure (no DB
  * or DOM): given a frame's inputs + the store slices, it maps each input to a displayable
  * thumbnail. Covers asset inputs, a flow link to a source frame's hero take, and the fallback to a
  * source frame's own imported asset when it hasn't generated yet (the same chain the ComfyUI

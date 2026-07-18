@@ -63,7 +63,7 @@ class NodeDescriptor:
     output_kind: MediaKind | None = None
     icon: str = ""
     source: str = "builtin"
-    # Internal building blocks (loaders, samplers, VAE) — served for validation/execution but never
+    # Internal building blocks (loaders, samplers, VAE) - served for validation/execution but never
     # offered in the UI's add-node menu. Keeps generation one-click: the user sees only high-level
     # model nodes (e.g. Z-Image Turbo); loading a diffusion model / VAE / encoder happens behind it.
     hidden: bool = False

@@ -1,8 +1,8 @@
 """App-global config for the Studio backend: where recents/settings live and where new projects are
 created (the browser has no folder picker). Env-driven, mirroring the legacy Node web server.
 
-``INLINE_STUDIO_DATA_DIR``      — app data (recents, settings). Default ``~/.inline-studio-server``
-``INLINE_STUDIO_WORKSPACE_DIR`` — where new projects are created. Default ``~/InlineStudioProjects``
+``INLINE_STUDIO_DATA_DIR``      - app data (recents, settings). Default ``~/.inline-studio-server``
+``INLINE_STUDIO_WORKSPACE_DIR`` - where new projects are created. Default ``~/InlineStudioProjects``
 
 The old ``STORYLINE_*`` names still work as deprecated aliases (see CLAUDE.md).
 """

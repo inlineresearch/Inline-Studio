@@ -40,7 +40,7 @@ export function UpdateBanner(): React.JSX.Element | null {
             </button>
           </>
         ) : (
-          // 'available' — macOS notify-only path.
+          // 'available' - macOS notify-only path.
           <>
             <span>{v} is available.</span>
             <button

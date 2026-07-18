@@ -1,7 +1,7 @@
 /**
  * Graph-level selection helpers for the canvas: treat a connected set of nodes (joined by
  * connectors) as one runnable graph. Selecting any node selects the whole graph; the graph's Run
- * control lives on its **output node** — the runnable node with nothing runnable downstream of it.
+ * control lives on its **output node** - the runnable node with nothing runnable downstream of it.
  *
  * Pure + framework-free so it unit-tests without React Flow. Connectors are directional
  * (`fromItemId -> toItemId`); connectivity is undirected, "downstream" follows the arrows.
@@ -23,7 +23,7 @@ export function toEdges(
     .map((c) => ({ from: c.fromItemId, to: c.toItemId }))
 }
 
-/** Every node reachable from `seeds` treating edges as undirected — i.e. the full connected graph(s)
+/** Every node reachable from `seeds` treating edges as undirected - i.e. the full connected graph(s)
  * the seeds belong to. Seeds are always included (a lone node is its own one-node graph). */
 export function expandToGraphs(seeds: Iterable<string>, edges: DirectedEdge[]): Set<string> {
   const undirected = new Map<string, Set<string>>()

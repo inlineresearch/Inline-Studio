@@ -1,4 +1,4 @@
-"""Fal generation on the single-process path — the server side of the fal relay.
+"""Fal generation on the single-process path - the server side of the fal relay.
 
 The browser builds the fal request (endpoint + input body) from the studio-side node def, since fal
 node definitions live there. Core owns the run: it submits to ``queue.fal.run`` with the key
@@ -66,7 +66,7 @@ def resolve_fal_inputs(conn: Any, folder: Path, frame_id: str) -> dict[str, Any]
 
 
 # Content-type -> file extension, keyed on the FULL type. The subtype alone is ambiguous: an
-# `audio/mp4` response is an .m4a track while `video/mp4` is an .mp4 clip — both have subtype "mp4",
+# `audio/mp4` response is an .m4a track while `video/mp4` is an .mp4 clip - both have subtype "mp4",
 # so mapping on the subtype saved Sonilo's audio takes with a video extension. Anything not listed
 # falls back to the subtype (e.g. `image/webp` -> .webp), then to the URL, then to `default`.
 _EXT_BY_CONTENT_TYPE = {
@@ -151,7 +151,7 @@ def _fal_error_detail(response: Any) -> str:
         return ""
     try:
         payload = response.json()
-    except Exception:  # noqa: BLE001 — a non-JSON body still has text worth showing
+    except Exception:  # noqa: BLE001 - a non-JSON body still has text worth showing
         return (getattr(response, "text", "") or "").strip()[:300]
     if isinstance(payload, str):
         return payload.strip()[:300]
@@ -199,11 +199,11 @@ def fal_error_message(error: Any) -> str:
     if status in (401, 403):
         return "fal rejected the API key. Check your fal key in Settings. " + detail
     if status == 429:
-        return "fal is rate-limiting this account — wait a moment and run again. " + detail
+        return "fal is rate-limiting this account - wait a moment and run again. " + detail
     if status == 404:
         return f"fal has no such model endpoint. {detail}".strip()
     if status and 500 <= int(status) < 600:
-        return f"fal had a server error ({status}) — try again shortly. {detail}".strip()
+        return f"fal had a server error ({status}) - try again shortly. {detail}".strip()
     if status:
         return f"fal rejected the request ({status}). {detail}".strip()
     return str(error) or "The generation failed."

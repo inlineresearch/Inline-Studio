@@ -1,8 +1,8 @@
-"""Z-Image model resolution + requirements presence — pure path logic, no torch/model invocation.
+"""Z-Image model resolution + requirements presence - pure path logic, no torch/model invocation.
 
 Imports the requirements module (which lives in the zimage package, so torch/diffusers must be
 present); skipped cleanly if the zimage extra is absent. Key contract for Phase 3: **no repo-id
-fallback** — a missing model resolves to ``None`` (reported missing), never a silent download.
+fallback** - a missing model resolves to ``None`` (reported missing), never a silent download.
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ def test_single_file_needs_local_vae_and_text_encoder(monkeypatch, tmp_path):
 
 
 def test_config_only_dir_is_not_present(monkeypatch, tmp_path):
-    """A folder with only a config (no weights) is not a loadable single file — reads as missing."""
+    """A folder with only a config (no weights) is not a loadable single file - reads as missing."""
     root = _models_root(monkeypatch, tmp_path)
     (root / "vae" / "z-image-turbo").mkdir(parents=True)
     (root / "vae" / "z-image-turbo" / "config.json").write_text("{}")

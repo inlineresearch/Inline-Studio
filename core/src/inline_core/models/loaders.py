@@ -1,10 +1,10 @@
-"""Model-agnostic single-file loaders — assemble a diffusers pipeline from individual weight files
+"""Model-agnostic single-file loaders - assemble a diffusers pipeline from individual weight files
 (ComfyUI-style), never touching the network at generation time.
 
 The problem this solves: loading a whole diffusers *pipeline folder* with ``from_pretrained`` is
 slow (sharded weights reconstructed from an index, per-component metadata resolution, and a stall if
 any config is not local). ComfyUI is fast because it loads **one consolidated ``.safetensors`` per
-component**, builds each model from a config it ships, and bundles the tokenizer — zero hub
+component**, builds each model from a config it ships, and bundles the tokenizer - zero hub
 round-trip. This module does the same:
 
   - the big weights come from the user's three files (``diffusion_models/`` / ``vae/`` /
@@ -13,7 +13,7 @@ round-trip. This module does the same:
     (``ensure_assets``), pulled once into the engine data dir and then reused offline.
 
 An ``ArchSpec`` maps a model family to its reference repo (for the small assets) and to how each
-component is built. Only ``z-image`` is wired today; Flux and friends slot in as new specs — the
+component is built. Only ``z-image`` is wired today; Flux and friends slot in as new specs - the
 Z-Image node's dropdowns and the decomposed ``load/*`` subnodes both call through here, so a new
 arch is a data change, not new plumbing.
 
@@ -41,7 +41,7 @@ from ..errors import ComponentError
 class ArchSpec:
     """How to source the small offline assets (configs + tokenizer) for one model family.
 
-    ``asset_files`` are repo-relative paths under ``assets_repo`` — the tiny config/tokenizer files
+    ``asset_files`` are repo-relative paths under ``assets_repo`` - the tiny config/tokenizer files
     (never the multi-GB weights) fetched once into ``data_dir()/assets/<key>``. The subfolder layout
     is preserved, so a component loads its config with ``config=<assets_root>, subfolder="<name>"``.
     """
@@ -52,7 +52,7 @@ class ArchSpec:
 
 
 #: The reference repo carries the small diffusers configs + the Qwen3 tokenizer. Weights are never
-#: taken from here — the user supplies those as single files (see requirements.py).
+#: taken from here - the user supplies those as single files (see requirements.py).
 _ZIMAGE = ArchSpec(
     key="z-image",
     assets_repo="Tongyi-MAI/Z-Image-Turbo",
@@ -94,7 +94,7 @@ def ensure_assets(arch: str) -> Path:
     small files, never the weights) from the reference repo. Idempotent: a ``.complete`` marker
     short-circuits every later call, so generation stays fully offline after the first run.
 
-    Raises ComponentError if the first fetch can't reach the hub — the assets are the only piece not
+    Raises ComponentError if the first fetch can't reach the hub - the assets are the only piece not
     supplied by the user's single files, so we surface it clearly instead of a deep hub traceback.
     """
     spec = _spec(arch)
@@ -110,7 +110,7 @@ def ensure_assets(arch: str) -> Path:
 
             for rel in spec.asset_files:
                 hf_hub_download(spec.assets_repo, rel, local_dir=str(root))
-        except Exception as error:  # noqa: BLE001 — re-raised as a clear component error
+        except Exception as error:  # noqa: BLE001 - re-raised as a clear component error
             raise ComponentError(
                 f"Could not fetch the one-time {arch} config/tokenizer assets from "
                 f"{spec.assets_repo} ({error}). This ~15 MB download happens once; after it, "
@@ -121,7 +121,7 @@ def ensure_assets(arch: str) -> Path:
 
 
 def _link_or_copy(src: Path, dst: Path) -> None:
-    """Make ``dst`` resolve to ``src``'s bytes, preferring a symlink, then a hardlink, then a copy —
+    """Make ``dst`` resolve to ``src``'s bytes, preferring a symlink, then a hardlink, then a copy -
     so the staging dir costs ~zero on Linux but still works where symlinks/hardlinks are unavailable
     (Windows without privilege, cross-device)."""
     if dst.exists() or dst.is_symlink():
@@ -171,7 +171,7 @@ def _staged_encoder_dir(arch: str, file: str) -> Path:
 
 def _release_transient() -> None:
     """Drop the just-loaded checkpoint's transient buffers (mmap views, freed CUDA blocks) so the
-    next big component starts from a clean allocator — keeps peak VRAM/RAM near one component, not
+    next big component starts from a clean allocator - keeps peak VRAM/RAM near one component, not
     the sum of all three. Best-effort; never breaks a load."""
     import gc
 
@@ -181,7 +181,7 @@ def _release_transient() -> None:
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    except Exception:  # noqa: BLE001 — cache hygiene must never break a load
+    except Exception:  # noqa: BLE001 - cache hygiene must never break a load
         pass
 
 
@@ -194,10 +194,10 @@ def _quant_config(quant: Quantization, *, framework: str) -> Any | None:
     ``"diffusers"`` for the transformer, ``"transformers"`` for the Qwen3 text encoder.
 
     INT8 uses torch-native weight-only quantization (torchao) on purpose: unlike bitsandbytes it
-    stays a movable tensor subclass, so it coexists with ``enable_model_cpu_offload`` — exactly the
+    stays a movable tensor subclass, so it coexists with ``enable_model_cpu_offload`` - exactly the
     smart-memory case that spreads the model across VRAM + RAM. NF4 (bitsandbytes) is CUDA-only.
     Best-effort: if the optional backend (torchao/bitsandbytes) is not installed we return None and
-    load full precision rather than crash — the caller (smart memory) still gets CPU offload."""
+    load full precision rather than crash - the caller (smart memory) still gets CPU offload."""
     if quant is Quantization.NONE:
         return None
     try:
@@ -221,11 +221,11 @@ def _quant_config(quant: Quantization, *, framework: str) -> Any | None:
         from transformers import BitsAndBytesConfig as TransformersBnbConfig
 
         return TransformersBnbConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4")
-    except Exception:  # noqa: BLE001 — a missing/incompatible quant backend must not break loading
+    except Exception:  # noqa: BLE001 - a missing/incompatible quant backend must not break loading
         import logging
 
         logging.getLogger("inline_core.zimage").warning(
-            "Quantization %s (%s) unavailable — loading full precision. Install torchao (int8) or "
+            "Quantization %s (%s) unavailable - loading full precision. Install torchao (int8) or "
             "bitsandbytes (nf4) to shrink weights for smart memory.",
             quant.value,
             framework,
@@ -240,7 +240,7 @@ def _quantize_in_place(model: Any, quant: Quantization) -> None:
     weight for an int8 tensor subclass on whatever device the module already sits on.
 
     Best-effort: a missing/incompatible torchao is logged and left full precision rather than crashing
-    the load — the fit estimate that chose int8 will then be optimistic, but that surfaces as a normal
+    the load - the fit estimate that chose int8 will then be optimistic, but that surfaces as a normal
     OOM node error, not a hard import failure. Only INT8 is handled here; NF4 stays config-driven."""
     if quant is not Quantization.INT8:
         return
@@ -248,11 +248,11 @@ def _quantize_in_place(model: Any, quant: Quantization) -> None:
         from torchao.quantization import Int8WeightOnlyConfig, quantize_
 
         quantize_(model, Int8WeightOnlyConfig())
-    except Exception:  # noqa: BLE001 — a missing/incompatible quant backend must not break loading
+    except Exception:  # noqa: BLE001 - a missing/incompatible quant backend must not break loading
         import logging
 
         logging.getLogger("inline_core.zimage").warning(
-            "torchao int8 quantization of the transformer failed — loading full precision. Install "
+            "torchao int8 quantization of the transformer failed - loading full precision. Install "
             "a compatible torchao to shrink the weights for a tight GPU.",
         )
 
@@ -289,7 +289,7 @@ def unload_components(keep_files: set[str] | None = None) -> None:
 
     Called when switching checkpoints so a new model doesn't stack on top of the previous one (the
     cache never evicted before, so a second distinct model roughly doubled resident memory). Only
-    drops references + empties the CUDA cache — it does not move weights to CPU RAM (that would just
+    drops references + empties the CUDA cache - it does not move weights to CPU RAM (that would just
     relocate the pressure on a RAM-tight box). The caller must drop any pipeline holding these
     components first, or the references keep them alive."""
     keep = keep_files or set()
@@ -311,7 +311,7 @@ def load_diffusion(
     """The diffusion transformer from a single ``.safetensors``. diffusers converts the checkpoint
     keys; the config comes from the bundled assets, so nothing is fetched at load time. ``quant``
     (smart memory) quantizes the weights on load. ``device`` (e.g. ``"cuda:0"``) streams each tensor
-    **straight to the GPU** from an mmap-backed checkpoint — the fp16 weights are never materialized
+    **straight to the GPU** from an mmap-backed checkpoint - the fp16 weights are never materialized
     as an anonymous CPU copy (the host-RAM spike that OOM-killed the server), and for the int8 path
     torchao quantizes on-device per tensor. ``None`` loads to CPU (the offload path, where
     accelerate installs its hooks before placing)."""
@@ -332,7 +332,7 @@ def load_diffusion(
         # diffusers' ``from_single_file`` **ignores** ``quantization_config`` (unlike
         # ``from_pretrained``), so the transformer would load at full size and the "int8" plan would
         # blow the VRAM budget (a T4 OOMs mid-load). Quantize it explicitly with torchao after the
-        # load instead — the weights briefly sit full-size on the device, then halve in place.
+        # load instead - the weights briefly sit full-size on the device, then halve in place.
         _quantize_in_place(model, quant)
         return model
 
@@ -361,7 +361,7 @@ def load_vae(arch: str, file: str, dtype: Any, device: str | None = None) -> Any
             local_files_only=True,
         )
 
-    # The VAE stays full precision (it is small — a few hundred MB — and int8 on the conv VAE costs
+    # The VAE stays full precision (it is small - a few hundred MB - and int8 on the conv VAE costs
     # quality for no meaningful memory win); the key still carries a quant slot for a uniform shape.
     return _cached(
         (arch, "vae", file, _dtype_key(dtype), Quantization.NONE.value, _device_key(device)), build
@@ -383,7 +383,7 @@ def load_text_encoder(
     encoder into a CPU RAM dict and bypasses transformers' native mmap → device streaming loader.
     From a directory + ``device_map={"": device}``, transformers materializes each tensor lazily
     onto the GPU, so peak host RAM stays ≈ one tensor. ``quant`` (smart memory) int8-quantizes the
-    encoder — the largest single weight — on load. ``device=None`` loads to CPU for the accelerate
+    encoder - the largest single weight - on load. ``device=None`` loads to CPU for the accelerate
     offload path."""
 
     def build() -> tuple[Any, Any]:
@@ -409,7 +409,7 @@ def load_text_encoder(
 
 
 def load_scheduler(arch: str) -> Any:
-    """The flow-match scheduler, from the bundled config (config-only — never downloads)."""
+    """The flow-match scheduler, from the bundled config (config-only - never downloads)."""
     from diffusers import FlowMatchEulerDiscreteScheduler
 
     root = ensure_assets(arch)
@@ -434,10 +434,10 @@ def assemble_zimage_pipeline(
     cancel_check: Callable[[], None] | None = None,
 ) -> Any:
     """Build a Z-Image pipeline from three local single files. Components are cached individually,
-    so swapping one file reuses the others. The returned pipeline is unplaced — the runner owns
+    so swapping one file reuses the others. The returned pipeline is unplaced - the runner owns
     device placement / low-VRAM tweaks. ``quant`` (smart memory) quantizes the big weights (the
     transformer + text encoder) on load. ``vae_dtype`` (defaults to ``dtype``) lets the VAE keep a
-    safer dtype than the denoiser — e.g. fp32 when the transformer runs fp16 (whose decode can
+    safer dtype than the denoiser - e.g. fp32 when the transformer runs fp16 (whose decode can
     overflow). ``device`` (e.g. ``"cuda:0"``) streams each component straight to the GPU so peak
     host RAM never holds a full component; ``None`` loads to CPU for the offload path. Buffers are
     released between the three big loads so peak memory tracks one component, not their sum.

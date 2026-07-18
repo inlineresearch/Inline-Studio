@@ -1,4 +1,4 @@
-"""Inline Studio — single entrypoint.
+"""Inline Studio - single entrypoint.
 
 Run one Python process that serves both the API and the UI on one port:
 
@@ -33,7 +33,7 @@ def main() -> None:
     parser.add_argument(
         "--front-end-root",
         help="Serve a local frontend build (a dir with index.html) instead of the installed "
-        "inline_studio_frontend package. The dev loop — rebuild locally, no republish.",
+        "inline_studio_frontend package. The dev loop - rebuild locally, no republish.",
     )
     parser.add_argument("--models-dir", help="Models root to scan (default ./models).")
     parser.add_argument("--data-dir", help="Working data dir: runs + takes (default ./.inline).")

@@ -50,7 +50,7 @@ function CheckIcon(): React.JSX.Element {
   )
 }
 
-/** A searchable model selector for a Generate node — lists the registered fal models. */
+/** A searchable model selector for a Generate node - lists the registered fal models. */
 export function ModelPicker({
   modelId,
   onSelect,
@@ -71,7 +71,7 @@ export function ModelPicker({
     ? defs.filter((d) => d.title.toLowerCase().includes(q) || d.category.toLowerCase().includes(q))
     : defs
 
-  // Close on any pointer-down outside the picker. A `fixed inset-0` backdrop doesn't work here —
+  // Close on any pointer-down outside the picker. A `fixed inset-0` backdrop doesn't work here -
   // the dropdown lives inside a React Flow node whose viewport is CSS-transformed, so `fixed` is
   // contained by that transform and canvas clicks miss it.
   useEffect(() => {

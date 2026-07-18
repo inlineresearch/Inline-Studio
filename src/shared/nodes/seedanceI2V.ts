@@ -1,5 +1,5 @@
 /**
- * fal.ai `bytedance/seedance-2.0/image-to-video` — ByteDance Seedance 2.0 image-to-video.
+ * fal.ai `bytedance/seedance-2.0/image-to-video` - ByteDance Seedance 2.0 image-to-video.
  * See https://fal.ai/models/bytedance/seedance-2.0/image-to-video.
  */
 import { constantEndpoint } from './builders'

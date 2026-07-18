@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 /**
  * Draft state for a settings sidebar (fal Generate / Inline Core node params).
  *
- * Params edit into a local draft and are persisted explicitly — via the header **Update** button,
+ * Params edit into a local draft and are persisted explicitly - via the header **Update** button,
  * ⌘/Ctrl+S, or a flush when the panel closes / the open node changes / the panel unmounts. This
  * fixes edits being lost when a click outside closed the panel before the input's blur-commit fired.
  *
@@ -51,7 +51,7 @@ export function useSettingsDraft(
     [persist],
   )
 
-  // Reseed when the open node changes — flushing the previous node's pending edits first so they
+  // Reseed when the open node changes - flushing the previous node's pending edits first so they
   // aren't discarded by the reseed.
   useEffect(() => {
     flush()

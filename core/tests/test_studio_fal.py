@@ -20,7 +20,7 @@ def test_parse_image_and_video_outputs() -> None:
 
 
 def test_parse_audio_outputs() -> None:
-    """Audio is the shape the Sonilo music nodes return, and was previously uncovered here — the
+    """Audio is the shape the Sonilo music nodes return, and was previously uncovered here - the
     only tests for it lived in TypeScript against a `parseOutputs` the engine never called."""
     single = fal.parse_outputs({"audio": {"url": "https://x/t.m4a", "content_type": "audio/mp4"}},
                                "audio")
@@ -37,7 +37,7 @@ def test_parse_audio_outputs() -> None:
 
 def test_parse_outputs_prefers_the_singular_slot_over_the_array() -> None:
     """Documents current behaviour: when fal returns BOTH `audio` and `audios`, only the singular
-    slot is taken — so a `num_samples > 1` request yields one take. Captured here so the trade-off
+    slot is taken - so a `num_samples > 1` request yields one take. Captured here so the trade-off
     is visible and any future change to multi-sample handling is a deliberate, test-breaking one."""
     resp = {
         "audio": {"url": "https://x/first.m4a"},
@@ -152,7 +152,7 @@ def test_fal_key_storage(tmp_path) -> None:
 def test_fal_status_uses_the_contract_field_name(tmp_path) -> None:
     """`ApiKeyStatus` (src/shared/types.ts) is the frozen wire contract: the renderer reads
     `status.configured`. Core previously returned `hasKey`, which resolved to `undefined`
-    client-side — a saved key still showed "Not set" and the input just cleared. Pin the exact
+    client-side - a saved key still showed "Not set" and the input just cleared. Pin the exact
     key set on every status-returning path so the two sides can't drift again."""
     store = StudioStore(tmp_path / "app", tmp_path / "ws")
     expected = {"configured", "encrypted"}

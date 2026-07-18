@@ -10,7 +10,7 @@ interface PeaksData {
 interface WaveformProps {
   /** URL of the peaks JSON (built with mediaUrl), or null while none exists yet. */
   url: string | null
-  /** Playback progress 0..1 — fills bars up to the playhead. */
+  /** Playback progress 0..1 - fills bars up to the playhead. */
   progress?: number
   /** Target number of bars to draw; peaks are max-pooled down to this. */
   bars?: number

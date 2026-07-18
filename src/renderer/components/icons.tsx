@@ -27,7 +27,7 @@ function Svg({
   )
 }
 
-/** `image` — pictures / assets. */
+/** `image` - pictures / assets. */
 export function ImageIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -36,7 +36,7 @@ export function ImageIcon({ className }: { className?: string }): React.JSX.Elem
   )
 }
 
-/** `history` — timeline / past takes. */
+/** `history` - timeline / past takes. */
 export function HistoryIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -45,7 +45,7 @@ export function HistoryIcon({ className }: { className?: string }): React.JSX.El
   )
 }
 
-/** `account_tree` — a linked Comfy workflow. */
+/** `account_tree` - a linked Comfy workflow. */
 export function WorkflowIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -54,7 +54,7 @@ export function WorkflowIcon({ className }: { className?: string }): React.JSX.E
   )
 }
 
-/** `edit` — pencil. */
+/** `edit` - pencil. */
 export function EditIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -63,7 +63,7 @@ export function EditIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
-/** `create_new_folder` — folder with a +. */
+/** `create_new_folder` - folder with a +. */
 export function CreateNewFolderIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -72,7 +72,7 @@ export function CreateNewFolderIcon({ className }: { className?: string }): Reac
   )
 }
 
-/** `file_download` — arrow into a tray, used for import. */
+/** `file_download` - arrow into a tray, used for import. */
 export function DownloadIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -81,7 +81,7 @@ export function DownloadIcon({ className }: { className?: string }): React.JSX.E
   )
 }
 
-/** `add` — plus sign. */
+/** `add` - plus sign. */
 export function PlusIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -90,7 +90,7 @@ export function PlusIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
-/** `folder` — a standard directory. */
+/** `folder` - a standard directory. */
 export function FolderIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -99,7 +99,7 @@ export function FolderIcon({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-/** `settings` — a gear. */
+/** `settings` - a gear. */
 export function SettingsIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -108,7 +108,7 @@ export function SettingsIcon({ className }: { className?: string }): React.JSX.E
   )
 }
 
-/** Two-sparkle mark — flags AI-generated outputs (mirrors the Generate node's badge). */
+/** Two-sparkle mark - flags AI-generated outputs (mirrors the Generate node's badge). */
 export function SparklesIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -118,7 +118,7 @@ export function SparklesIcon({ className }: { className?: string }): React.JSX.E
   )
 }
 
-/** `star` (filled) — the chosen hero take. */
+/** `star` (filled) - the chosen hero take. */
 export function StarIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -127,7 +127,7 @@ export function StarIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
-/** `music_note` — an audio file. */
+/** `music_note` - an audio file. */
 export function MusicNoteIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -136,7 +136,7 @@ export function MusicNoteIcon({ className }: { className?: string }): React.JSX.
   )
 }
 
-/** `close` — an X. */
+/** `close` - an X. */
 export function CloseIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -145,7 +145,7 @@ export function CloseIcon({ className }: { className?: string }): React.JSX.Elem
   )
 }
 
-/** `content_copy` — copy to clipboard. */
+/** `content_copy` - copy to clipboard. */
 export function CopyIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -154,7 +154,7 @@ export function CopyIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
-/** `check` — a tick, e.g. "copied". */
+/** `check` - a tick, e.g. "copied". */
 export function CheckIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -163,7 +163,7 @@ export function CheckIcon({ className }: { className?: string }): React.JSX.Elem
   )
 }
 
-/** `chevron_right` — a right-pointing caret. */
+/** `chevron_right` - a right-pointing caret. */
 export function ChevronRightIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -172,7 +172,7 @@ export function ChevronRightIcon({ className }: { className?: string }): React.J
   )
 }
 
-/** `chevron_left` — a left-pointing caret. */
+/** `chevron_left` - a left-pointing caret. */
 export function ChevronLeftIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -181,7 +181,7 @@ export function ChevronLeftIcon({ className }: { className?: string }): React.JS
   )
 }
 
-/** `expand_more` — a down-pointing caret. */
+/** `expand_more` - a down-pointing caret. */
 export function ChevronDownIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>

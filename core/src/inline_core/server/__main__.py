@@ -6,7 +6,7 @@ import os as _os
 
 # Default PyTorch to expandable CUDA segments before torch initializes its allocator (it reads this
 # env at first CUDA use). Cuts the fragmentation that makes a small allocation fail with VRAM still
-# free — a common low-VRAM (T4) OOM. webui.sh sets the same default; this covers a bare
+# free - a common low-VRAM (T4) OOM. webui.sh sets the same default; this covers a bare
 # `python -m inline_core.server`. A user-set value always wins.
 _os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 

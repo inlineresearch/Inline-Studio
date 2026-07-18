@@ -33,7 +33,7 @@ export function ConnectionGuide(): React.JSX.Element {
         </div>
 
         <p className="mt-4 text-center text-xs text-zinc-500">
-          …or any publicly hosted ComfyUI — just paste its URL above.
+          …or any publicly hosted ComfyUI - just paste its URL above.
         </p>
       </div>
     </div>
@@ -52,7 +52,7 @@ function LocalCard(): React.JSX.Element {
         <code className="rounded bg-black/40 px-1 text-[11px] text-accent">
           --enable-cors-header
         </code>{' '}
-        flag — it lets Inline Studio talk to ComfyUI and is needed for full compatibility.
+        flag - it lets Inline Studio talk to ComfyUI and is needed for full compatibility.
       </Step>
       <CopyBlock command="python main.py --enable-cors-header" />
       <Step n={2}>
@@ -72,9 +72,9 @@ function CloudCard(): React.JSX.Element {
     <Card
       icon={<CloudIcon />}
       title="Cloud GPU (RunPod)"
-      subtitle="No local GPU — deploy in the cloud"
+      subtitle="No local GPU - deploy in the cloud"
     >
-      <Step n={1}>Deploy ComfyUI on RunPod using an official template — pick one:</Step>
+      <Step n={1}>Deploy ComfyUI on RunPod using an official template - pick one:</Step>
       <div className="flex flex-col gap-1.5">
         <TemplateLink
           label="ComfyUI"
@@ -89,7 +89,7 @@ function CloudCard(): React.JSX.Element {
       </div>
       <Step n={2}>
         Once the pod is running, copy its <span className="text-zinc-300">public exposed</span>{' '}
-        ComfyUI URL — it looks like:
+        ComfyUI URL - it looks like:
       </Step>
       <code className="block truncate rounded-md border border-border bg-black/40 px-2 py-1.5 text-[11px] text-zinc-300">
         {EXAMPLE_RUNPOD_URL}
@@ -111,7 +111,7 @@ function VideoThumb({ videoId, href }: { videoId: string; href: string }): React
       <span className="relative block">
         <img
           src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
-          alt="ComfyUI on RunPod — setup video"
+          alt="ComfyUI on RunPod - setup video"
           className="aspect-video w-full object-cover"
         />
         <span className="absolute inset-0 flex items-center justify-center bg-black/30 transition-colors group-hover:bg-black/15">

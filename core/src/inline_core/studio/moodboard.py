@@ -1,5 +1,5 @@
-"""Moodboard persistence — items (assets, text, frames, core nodes, layers, previews, director,
-trim, prompt) and connectors — ported from the Studio ``electron/main/moodboard/store.ts``.
+"""Moodboard persistence - items (assets, text, frames, core nodes, layers, previews, director,
+trim, prompt) and connectors - ported from the Studio ``electron/main/moodboard/store.ts``.
 
 Operates on an open ``sqlite3.Connection``. The frame-creating adders compose with the frames
 domain. Adders that need a fal node def (``add_gen_node``) take the model's kind/params/title from

@@ -1,6 +1,6 @@
 """The decomposed Z-Image primitive runners (encode/text, latent/empty, sample, vae/decode,
 vae/encode). Import-guarded: skipped without the ``zimage`` extra. The heavy diffusers loads are
-stubbed (no weights on disk in CI), but the flow-match scheduler is real torch — so the sample loop,
+stubbed (no weights on disk in CI), but the flow-match scheduler is real torch - so the sample loop,
 its progress ticks, cancellation, and the tensor plumbing are exercised on CPU without a GPU.
 
 Real weights are still needed for an end-to-end image; that is a GPU smoke test, not a unit test."""
@@ -46,7 +46,7 @@ class _FakeStore(TakeStore):
 
 
 def _cpu_policy() -> MemoryPolicy:
-    # Pin CPU/FP32 so the stubbed components stay on CPU even on a CUDA box — deterministic tests.
+    # Pin CPU/FP32 so the stubbed components stay on CPU even on a CUDA box - deterministic tests.
     return MemoryPolicy(Device(DeviceKind.CPU), profile=Profile.CPU)
 
 
@@ -183,7 +183,7 @@ def _load_diffusion_stub(*args: Any, **kw: Any) -> Any:
 
 
 def _load_scheduler_stub(*args: Any, **kw: Any) -> Any:
-    # Real scheduler, no assets/weights needed — the flow-match maths is genuinely exercised.
+    # Real scheduler, no assets/weights needed - the flow-match maths is genuinely exercised.
     from diffusers.schedulers.scheduling_flow_match_euler_discrete import (
         FlowMatchEulerDiscreteScheduler,
     )
@@ -315,7 +315,7 @@ def test_vae_encode_requires_image_path(monkeypatch: pytest.MonkeyPatch) -> None
     ctx, _ = _ctx()
     node = Node(id="ve", type="vae/encode")
     vae = ComponentRef(kind="vae", arch="z-image", file="/m/ae.safetensors")
-    # An asset-id ref (no path) is not readable here — the runner asks for a path input.
+    # An asset-id ref (no path) is not readable here - the runner asks for a path input.
     inputs = {"vae": [vae], "image": [AssetRef(ref="asset", id="x")]}
     with pytest.raises(ComponentError, match="image path"):
         runner.run(node, inputs, ctx)

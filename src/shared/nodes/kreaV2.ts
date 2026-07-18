@@ -1,5 +1,5 @@
 /**
- * fal.ai `krea/v2/large/text-to-image` — Krea v2 Large text-to-image.
+ * fal.ai `krea/v2/large/text-to-image` - Krea v2 Large text-to-image.
  * See https://fal.ai/models/krea/v2/large/text-to-image.
  */
 import { constantEndpoint, approxPrice, selectParam, seedParam, putSeed } from './builders'

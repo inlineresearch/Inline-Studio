@@ -1,5 +1,5 @@
 /**
- * A Core node's model requirements + explicit-download state — the data behind the node's "missing
+ * A Core node's model requirements + explicit-download state - the data behind the node's "missing
  * models" hint and popup. Nothing is auto-downloaded: a component is present only when the user
  * dropped files under models/ or downloaded it here (which writes into models/). Requirements are
  * per node *type* (every Z-Image node shares them), so a download benefits all nodes of that type.
@@ -85,7 +85,7 @@ export const useModelRequirementsStore = create<ModelRequirementsState>((set, ge
       delete forType[e.componentId]
       return { downloads: { ...s.downloads, [e.nodeType]: forType } }
     })
-    // The files are under models/ now — refresh requirements + the node palette (options/version).
+    // The files are under models/ now - refresh requirements + the node palette (options/version).
     void get().load(e.nodeType)
     void useCoreNodesStore.getState().load()
   },

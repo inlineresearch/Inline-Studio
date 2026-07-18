@@ -63,7 +63,7 @@ def test_bare_offload_is_model_mode() -> None:
 
 def test_smart_memory_quantizes_resident_on_a_tight_gpu() -> None:
     # A 15.6GB card (lands in lowvram) that OOMs full-resident: smart memory int8-quantizes the
-    # model (halving it) and keeps it RESIDENT — no CPU offload (torchao int8 + offload hangs).
+    # model (halving it) and keeps it RESIDENT - no CPU offload (torchao int8 + offload hangs).
     policy = MemoryPolicy(_CUDA, vram_gb=15.6, smart_memory=True)
     assert policy.profile is Profile.LOWVRAM
     placement = policy.placement("denoiser")
@@ -103,7 +103,7 @@ def test_smart_memory_env_flag(monkeypatch) -> None:
 
 def test_turing_gpu_uses_fp16_with_upcast_vae() -> None:
     # A GPU without bf16 acceleration (Turing/Volta, e.g. T4): fp16 for the denoiser (uses the fp16
-    # tensor cores), but the VAE stays upcast to fp32 — fp16 VAE decode can overflow to black.
+    # tensor cores), but the VAE stays upcast to fp32 - fp16 VAE decode can overflow to black.
     policy = MemoryPolicy(_CUDA, vram_gb=15.6, supports_bf16=False)
     assert policy.placement("denoiser").dtype is DType.FP16
     assert policy.placement("text_encoder").dtype is DType.FP16
@@ -165,7 +165,7 @@ def test_env_parallel_override(monkeypatch) -> None:
 
 def test_fit_t4_auto_int8_without_smart_memory() -> None:
     # The crash fix: a 15.6 GB T4 can't hold Z-Image full-precision, but int8-resident fits.
-    # With the footprint set, int8 auto-engages — no --smart-memory needed — and stays RESIDENT (no
+    # With the footprint set, int8 auto-engages - no --smart-memory needed - and stays RESIDENT (no
     # offload, since torchao int8 + CPU offload deadlock).
     policy = MemoryPolicy(_CUDA, vram_gb=15.6, ram_gb=16, supports_bf16=False)
     policy.set_footprint(_ZIMAGE_FOOTPRINT)
@@ -173,7 +173,13 @@ def test_fit_t4_auto_int8_without_smart_memory() -> None:
     assert policy.quantization() is Quantization.INT8
     placement = policy.placement("denoiser")
     assert placement.offload_mode is OffloadMode.NONE
-    assert placement.dtype is DType.FP16  # T4: fp16 denoiser, upcast VAE preserved
+    # bf16, NOT fp16, even though a T4 lacks bf16 acceleration: torchao weight-only int8 only
+    # supports a bf16 compute dtype. Under fp16 the quantization silently no-ops, the "int8"
+    # weights load at full fp16 size, and the T4 OOMs mid-load. int8 therefore overrides the
+    # fp16 preference (see MemoryPolicy._compute_dtype), and bf16's fp32-range exponent also
+    # removes the VAE's anti-overflow upcast. This assertion previously read FP16 and had been
+    # failing since the override landed.
+    assert placement.dtype is DType.BF16
     fit = policy.fit_estimate()
     assert fit is not None and fit.plan == "int8" and fit.fits is True
 
@@ -214,7 +220,7 @@ def test_fit_absent_falls_back_to_buckets() -> None:
 
 
 def test_estimate_fit_is_pure_and_does_not_mutate() -> None:
-    # The UI calls estimate_fit() while a run may hold the policy — it must not change placement.
+    # The UI calls estimate_fit() while a run may hold the policy - it must not change placement.
     policy = MemoryPolicy(_CUDA, vram_gb=15.6, ram_gb=16)
     fit = policy.estimate_fit(_ZIMAGE_FOOTPRINT)
     assert fit is not None and fit.plan == "int8"

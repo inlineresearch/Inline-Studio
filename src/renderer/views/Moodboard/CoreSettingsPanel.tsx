@@ -7,7 +7,7 @@ import { CoreParamWidget } from './CoreParamWidget'
 import { SettingsHeader } from './SettingsHeader'
 
 /**
- * Right-hand settings sidebar for an Inline Core node, opened by the node's adjust (sliders) icon —
+ * Right-hand settings sidebar for an Inline Core node, opened by the node's adjust (sliders) icon -
  * the same interaction the Generate (fal) node uses, so both read identically. Shows every param the
  * node's descriptor declares (the node face itself stays clean). Edits persist to the moodboard
  * item's `data.core.params`.
@@ -41,7 +41,7 @@ export function CoreSettingsPanel(): React.JSX.Element | null {
     persist,
   )
 
-  // Close when clicking outside the panel — except the node's adjust (toggle) button, which manages
+  // Close when clicking outside the panel - except the node's adjust (toggle) button, which manages
   // open/close itself (shared attribute with the fal settings panel; only one is open at a time).
   // Flush pending edits before closing so a click-away never drops the last change.
   useEffect(() => {

@@ -1,4 +1,4 @@
-"""Serialize a canvas subgraph into an Inline Core graph (schemaVersion 1) — ported from the Studio
+"""Serialize a canvas subgraph into an Inline Core graph (schemaVersion 1) - ported from the Studio
 ``electron/main/core/workflow.ts``. Walks the connector graph upstream from a target node's closure:
 
 - a ``core`` item   -> its Core node type + params (handles are already Core port ids)

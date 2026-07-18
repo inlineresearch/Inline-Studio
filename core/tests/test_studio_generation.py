@@ -35,7 +35,7 @@ def test_build_workflow_graph_prompt_into_zimage(tmp_path) -> None:
 
 def test_build_workflow_graph_frame_output_into_zimage_image(tmp_path) -> None:
     """A rendered frame wired into Z-Image's image port becomes an input/image source node pointing
-    at the frame's hero take — no dangling edge to a non-emitted node (the old "No node with id")."""
+    at the frame's hero take - no dangling edge to a non-emitted node (the old "No node with id")."""
     store = _store(tmp_path)
     conn = store.conn()
     z = mb.add_core_node(conn, "alibaba/z-image-turbo", 400, 200)
@@ -49,7 +49,7 @@ def test_build_workflow_graph_frame_output_into_zimage_image(tmp_path) -> None:
     frame_node = by_id[frame_item["id"]]
     assert frame_node["type"] == "input/image"
     assert frame_node["params"]["asset"]["path"] == str(store.folder() / "takes/hero.png")
-    # Z-Image's image input references the frame node's "image" output — no dangling edge.
+    # Z-Image's image input references the frame node's "image" output - no dangling edge.
     zi = by_id[z["id"]]
     assert zi["inputs"]["image"] == {"from": frame_item["id"], "output": "image"}
     assert take["id"]  # hero take exists

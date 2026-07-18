@@ -72,7 +72,7 @@ export function getOutputTakeId(dt: DataTransfer): string | null {
 }
 
 /**
- * Carries a raw media FILE (project-relative path + kind + name) — used for outputs that have no
+ * Carries a raw media FILE (project-relative path + kind + name) - used for outputs that have no
  * backing frame/asset, e.g. a Core node's render (Z-Image). On drop the target imports the file into
  * the Library (via /media + /upload) and then uses the resulting asset like any other input.
  */

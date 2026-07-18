@@ -3,7 +3,7 @@
 A single generation node, ``alibaba/z-image-turbo``, backed by diffusers' ``ZImagePipeline``
 (text-to-image) and ``ZImageImg2ImgPipeline`` (when an image is wired in). The heavy pipeline is
 built once and cached across runs; only the descriptor is cheap. Placement (device, dtype, offload,
-tiling) comes from the DevicePolicy — the runner never picks a device itself. Decoded images are
+tiling) comes from the DevicePolicy - the runner never picks a device itself. Decoded images are
 handed to the TakeStore, which owns bytes/hash/uri.
 
 torch + diffusers are imported at module top on purpose: an absent ``zimage`` extra makes this
@@ -48,10 +48,10 @@ from .. import loaders
 from ..sampling import SamplingFamily, apply_sampling, sampling_param_fields
 from . import requirements as reqs
 
-# The models this node needs — the diffusion transformer plus a VAE, text-encoder, tokenizer and
-# scheduler — are assembled entirely from files under models/ (see `requirements.py`). **Nothing is
+# The models this node needs - the diffusion transformer plus a VAE, text-encoder, tokenizer and
+# scheduler - are assembled entirely from files under models/ (see `requirements.py`). **Nothing is
 # ever downloaded here.** Every diffusers/transformers load below runs with local_files_only=True,
-# so a missing model is a clear error pointing at the node's model popup — never a silent fetch from
+# so a missing model is a clear error pointing at the node's model popup - never a silent fetch from
 # Hugging Face. Models arrive by exactly two paths: the user drops files under models/, or the popup
 # downloads them into models/.
 _SEED_MAX = 2**31 - 1
@@ -61,7 +61,7 @@ logger = logging.getLogger("inline_core.zimage")
 
 def _raise_if_cancelled(ctx: ExecutionContext) -> None:
     """A cooperative-cancellation checkpoint. The denoise is cancellable per step (``on_step_end``),
-    but the model load and VAE decode are long blocking phases with no step callback — without these
+    but the model load and VAE decode are long blocking phases with no step callback - without these
     checkpoints an interrupt pressed during "Loading model…" is ignored until the load finishes and
     the first denoise step runs (up to a few minutes on a cold cache). Call this before/around the
     expensive phases so a cancelled run bails promptly instead of loading a 12GB model first."""
@@ -70,7 +70,7 @@ def _raise_if_cancelled(ctx: ExecutionContext) -> None:
 
 
 def _device_report(policy: DevicePolicy) -> str:
-    """A one-line snapshot of where generation will run — device, dtype, cpu/gpu mode, and (on
+    """A one-line snapshot of where generation will run - device, dtype, cpu/gpu mode, and (on
     CUDA) live VRAM used/total/free. Logged around model load + generation so a slow run's cause
     (CPU fallback, offload, a nearly-full GPU) is visible without a profiler."""
     placement = policy.placement("denoiser")
@@ -94,7 +94,7 @@ def _device_report(policy: DevicePolicy) -> str:
                 f"vram={used / 1e9:.1f}GB allocated / {total / 1e9:.1f}GB total"
                 f" ({free / 1e9:.1f}GB free)"
             )
-        except Exception:  # noqa: BLE001 — diagnostics must never break a generation
+        except Exception:  # noqa: BLE001 - diagnostics must never break a generation
             pass
     return ", ".join(parts)
 
@@ -107,7 +107,7 @@ ZIMAGE = NodeDescriptor(
     output_kind=MediaKind.IMAGE,
     inputs=(
         Port("prompt", "Prompt", PortKind.TEXT, required=True),
-        # Optional component handles from load/* subnodes — wire a Load node to override the
+        # Optional component handles from load/* subnodes - wire a Load node to override the
         # corresponding dropdown. Left unwired, the node resolves each file from its own selects.
         Port("model", "Diffusion model", PortKind.MODEL, required=False),
         Port("vae", "VAE", PortKind.VAE, required=False),
@@ -125,7 +125,7 @@ ZIMAGE = NodeDescriptor(
         ParamField("guidance", "Guidance (CFG)", Widget.NUMBER, 0.0, min=0.0, max=20.0, step=0.5),
         # Sampler + scheduler (advanced): the two SELECT dropdowns from the reusable sampling
         # registry. Z-Image is flow-match, so these tune the FlowMatchEuler scheduler (ancestral +
-        # sigma spacing) rather than swapping sampler classes — see models/sampling.py.
+        # sigma spacing) rather than swapping sampler classes - see models/sampling.py.
         *sampling_param_fields(SamplingFamily.FLOW_MATCH),
         # img2img only: how far to move from the input image (0 = keep, 1 = ignore).
         ParamField(
@@ -134,7 +134,7 @@ ZIMAGE = NodeDescriptor(
         ),
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
         # Advanced, optional: pick a specific file per component. "" = auto (the single file in that
-        # category folder). ComfyUI-style split-file loading — one file each. These live behind the
+        # category folder). ComfyUI-style split-file loading - one file each. These live behind the
         # Adjust panel so the node stays one-click; the model popup downloads the defaults.
         ParamField(
             "model", "Diffusion file (auto)", Widget.SELECT, "",
@@ -186,7 +186,7 @@ class ZImageRunner(NodeRunner):
         wired = {ref.kind for ref in (model_ref, vae_ref, te_ref) if ref is not None}
 
         # No hidden downloads: a required component that is neither wired nor on disk fails fast,
-        # pointing at the model popup — never a silent diffusers fetch. Wired components are present
+        # pointing at the model popup - never a silent diffusers fetch. Wired components are present
         # by construction (the Load node resolved a real file, or raised).
         missing = [
             c.label for c in reqs.zimage_requirements(params) if not c.present and c.id not in wired
@@ -212,7 +212,7 @@ class ZImageRunner(NodeRunner):
         te_file = te_ref.file if te_ref else _path_or_none(reqs.resolve_text_encoder(params))
 
         # Size-aware placement: hand the policy the model's on-disk sizes so it fits dtype/quant/
-        # offload to THIS GPU — int8 auto-engages on a card too small for full precision (a T4),
+        # offload to THIS GPU - int8 auto-engages on a card too small for full precision (a T4),
         # with no --smart-memory flag. Then refuse an impossible load up front, so a too-big model
         # is a clean node error instead of a host-RAM OOM-kill that takes the whole server down.
         self._policy.set_footprint(_footprint(mode, source, vae_file, te_file))
@@ -250,9 +250,9 @@ class ZImageRunner(NodeRunner):
             _free_vram()
             raise ComponentError(_oom_message(width, height)) from error
         except MemoryError as error:
-            # Host-RAM exhaustion (a Python MemoryError) — surfaced cleanly. The streaming loaders
+            # Host-RAM exhaustion (a Python MemoryError) - surfaced cleanly. The streaming loaders
             # keep peak RAM ≈ one tensor, so this is the rare tail; an OS OOM-kill (SIGKILL) cannot
-            # be caught here — the pre-flight check above is what prevents ever reaching that spike.
+            # be caught here - the pre-flight check above is what prevents ever reaching that spike.
             _free_vram()
             raise ComponentError(_oom_message(width, height, host=True)) from error
 
@@ -289,7 +289,7 @@ class ZImageRunner(NodeRunner):
             callback_on_step_end=on_step_end,
         )
         # Encode the prompt and (on a resident GPU) drop the text encoder to CPU so its VRAM is free
-        # for the denoise — otherwise it sits idle on the card and OOMs a tight GPU (a 16 GB T4).
+        # for the denoise - otherwise it sits idle on the card and OOMs a tight GPU (a 16 GB T4).
         call.update(
             _prompt_kwargs(pipe, self._policy, prompt=prompt, negative=negative, guidance=guidance)
         )
@@ -370,7 +370,7 @@ class ZImageRunner(NodeRunner):
 
 # Keyed by (source, vae, text, img2img, quant). Built once; diffusers pipelines are not thread-safe,
 # but the run manager executes one run at a time (workers=1). Switching any file or the quantization
-# rebuilds — but the loader core caches each component, so only the changed one re-reads from disk.
+# rebuilds - but the loader core caches each component, so only the changed one re-reads from disk.
 # The lock guards concurrent first-time builds.
 _PIPELINES: dict[tuple[str, str, str, bool, str], Any] = {}
 _LOCK = Lock()
@@ -392,7 +392,7 @@ def _load_pipeline(
         cached = _PIPELINES.get(key)
         if cached is not None:
             logger.info(
-                "Pipeline cache hit (%s, img2img=%s) — reusing loaded weights", source, img2img
+                "Pipeline cache hit (%s, img2img=%s) - reusing loaded weights", source, img2img
             )
             return cached
         if cancel_check is not None:
@@ -407,7 +407,7 @@ def _load_pipeline(
         )
         # Free any *other* model still resident before loading this one, so switching checkpoints
         # doesn't stack VRAM/RAM (the caches never evicted before). Keeps the current source's
-        # components — including a base pipeline reused below for img2img.
+        # components - including a base pipeline reused below for img2img.
         _evict_stale(source, vae, text)
         # An img2img pipe can reuse the base pipe's already-placed weights (no second load).
         base = _PIPELINES.get((source, vae, text, False, quant.value))
@@ -461,7 +461,7 @@ def _capture_base_scheduler_config(pipe: Any, base: Any) -> None:
     immutable snapshot instead of a prior run's mutated one.
 
     The ``_PIPELINES`` cache key does not include sampler/scheduler, and ``apply_sampling`` replaces
-    ``pipe.scheduler`` per run — so without a pristine snapshot a later run would rebuild on top of
+    ``pipe.scheduler`` per run - so without a pristine snapshot a later run would rebuild on top of
     an earlier selection's config (a stale-scheduler leak across cache hits). Captured here at build
     time, before any run mutates the pipe. An img2img pipe built via ``from_pipe`` inherits the base
     pipe's pristine snapshot (the base's own ``scheduler`` may already be swapped by a run)."""
@@ -488,7 +488,7 @@ def _build_pipeline(
     device: str | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> Any:
-    """Build a Z-Image pipeline **offline** — never touching the network.
+    """Build a Z-Image pipeline **offline** - never touching the network.
 
     Two shapes, both resolved from files under ``models/`` (see ``requirements.py``):
       - ``mode == "pipeline"``: ``source`` is a whole diffusers folder (``model_index.json`` + all
@@ -499,7 +499,7 @@ def _build_pipeline(
 
     ``quant`` (smart memory) quantizes the big weights on load; it applies to the single-file path
     (the loader builds each component and can quantize it). Whole-pipeline folders load full
-    precision — quantize by using the single-file layout instead.
+    precision - quantize by using the single-file layout instead.
     """
     if mode == "pipeline":
         if quant is not Quantization.NONE:
@@ -532,7 +532,7 @@ def _build_pipeline(
 def _evict_stale(source: str, vae: str, text: str) -> None:
     """Free every *other* model's pipelines + components before loading a new checkpoint, so a
     second distinct model doesn't stack on the first. Entries for the current ``(source, vae,
-    text)`` — e.g. a cached base pipeline reused for img2img — are kept. Called under ``_LOCK``."""
+    text)`` - e.g. a cached base pipeline reused for img2img - are kept. Called under ``_LOCK``."""
     import gc
 
     keep_triple = (source, vae, text)
@@ -548,7 +548,7 @@ def _evict_stale(source: str, vae: str, text: str) -> None:
 def _configure(pipe: Any, policy: DevicePolicy) -> None:
     placement = policy.placement("denoiser")
     if placement.offload_mode is OffloadMode.SEQUENTIAL:
-        # Lowest peak VRAM: submodules stream on/off the GPU layer-by-layer. Slowest — only when the
+        # Lowest peak VRAM: submodules stream on/off the GPU layer-by-layer. Slowest - only when the
         # GPU is too small even for model offload.
         pipe.enable_sequential_cpu_offload()
     elif placement.offload_mode is OffloadMode.MODEL:
@@ -558,12 +558,12 @@ def _configure(pipe: Any, policy: DevicePolicy) -> None:
         pipe.to(str(placement.device))  # default: weights resident on the GPU
     # Low-VRAM savers that keep weights on the GPU (no offload): slice attention + tile/slice VAE.
     # Wrap each in a lambda so a pipeline that lacks the method (e.g. ZImagePipeline has no
-    # ``enable_vae_tiling``) is skipped by ``_try`` — a bare ``_try(pipe.enable_vae_tiling)`` would
+    # ``enable_vae_tiling``) is skipped by ``_try`` - a bare ``_try(pipe.enable_vae_tiling)`` would
     # raise AttributeError while evaluating the argument, before ``_try`` could swallow it.
     if policy.attention_slicing():
         _try(lambda: pipe.enable_attention_slicing())
     if policy.vae_tiling():
-        # ZImagePipeline exposes NO ``enable_vae_tiling``/``enable_vae_slicing`` — those calls are
+        # ZImagePipeline exposes NO ``enable_vae_tiling``/``enable_vae_slicing`` - those calls are
         # silent no-ops, so a 1024² VAE decode would run un-tiled (full-frame conv activations, a
         # multi-GB VRAM spike). The underlying AutoencoderKL DOES expose the real methods; call them
         # on the VAE directly so tiling actually engages.
@@ -580,7 +580,7 @@ def _shrink_vae_tiles(vae: Any, tile_px: int = 512) -> None:
     """Force the VAE decode to actually tile at 1024².
 
     ``AutoencoderKL._decode`` only tiles when the latent is **strictly larger** than
-    ``tile_latent_min_size`` — which defaults to ``sample_size / spatial_scale`` (128 for this VAE,
+    ``tile_latent_min_size`` - which defaults to ``sample_size / spatial_scale`` (128 for this VAE,
     an 8× downscale of a 1024 sample). A 1024² image has a latent of exactly 128, so ``128 > 128``
     is False: tiling silently does NOT engage even after ``enable_tiling()``, and full-frame decode
     allocates a single ~4.5 GB conv activation that OOMs a T4. Shrinking the tile to ``tile_px``
@@ -599,7 +599,7 @@ def _configure_gpu_speed(pipe: Any, placement: Placement) -> None:
     """Throughput tweaks that only apply on a resident-GPU placement (never CPU/offload).
 
     ``channels_last`` on the conv-based VAE is a safe, default-on win. ``torch.compile`` (the
-    transformer) and xformers attention are opt-in via ``INLINE_COMPILE`` / ``INLINE_XFORMERS`` —
+    transformer) and xformers attention are opt-in via ``INLINE_COMPILE`` / ``INLINE_XFORMERS`` -
     both help but have trade-offs (compile warmup, an extra dep), so they stay off by default. The
     pipeline is cached warm across runs, so a compile cost is paid once. Best-effort."""
     if placement.offload or placement.device.kind is not DeviceKind.CUDA:
@@ -641,13 +641,13 @@ def _text_encoder_detached(pipe: Any, active: bool) -> Iterator[None]:
     """Temporarily remove the text encoder from the pipeline for the denoise, then restore it.
 
     Why: when we pre-encode and park the encoder on the CPU, diffusers' ``_execution_device`` (→
-    ``DiffusionPipeline.device``) picks the device of *some* registered nn.Module — and it iterates
+    ``DiffusionPipeline.device``) picks the device of *some* registered nn.Module - and it iterates
     a **set** of module names, so the pick is non-deterministic. If it lands on the CPU-parked
     encoder, ``prepare_latents`` builds the latents on the CPU while our generator + transformer are
     on CUDA → "Cannot generate a cpu tensor from a generator of type cuda", or a device mismatch.
 
     Since we hand the pipeline precomputed ``prompt_embeds``, ``__call__`` never touches the text
-    encoder — so detaching it for the call leaves only CUDA modules (vae + transformer) for device
+    encoder - so detaching it for the call leaves only CUDA modules (vae + transformer) for device
     inference, making the execution device deterministically the GPU. Restored in ``finally`` so the
     cached pipeline can encode again next run. ``active`` is False on the raw-prompt path (encoder
     still needed), where this is a no-op."""
@@ -674,19 +674,19 @@ def _prompt_kwargs(
 ) -> dict[str, Any]:
     """The prompt argument(s) for the pipeline call.
 
-    On a **resident** GPU placement the text encoder (Qwen3-4B — ~4 GB even int8) otherwise sits
+    On a **resident** GPU placement the text encoder (Qwen3-4B - ~4 GB even int8) otherwise sits
     idle on the card through the entire denoise, starving the sampler + VAE decode of VRAM. So we
     pre-encode the prompt, then park the encoder on the CPU, and hand the pipeline precomputed
-    embeddings — the transformer + VAE stay resident (fast), the denoise gets the encoder's ~4 GB.
+    embeddings - the transformer + VAE stay resident (fast), the denoise gets the encoder's ~4 GB.
 
     Crucially we encode **on the GPU**, not the CPU. torchao weight-only int8 has a real CUDA matmul
-    kernel: it dequantizes each weight to bf16 transiently, per-op, and CUDA frees it immediately —
+    kernel: it dequantizes each weight to bf16 transiently, per-op, and CUDA frees it immediately -
     the forward barely moves peak VRAM (measured: <1 GB over the ~11 GB resident, well inside the
     ~4 GB free on a T4). The CPU has **no** int8 matmul kernel, so a CPU encode instead dequantizes
     the *entire* Qwen3-4B to bf16 in host RAM (~8 GB) and, on a 16 GB box with no swap, the OS
-    OOM-kills the whole server mid-encode — the exact crash in scripts/mem1024.log (host RAM
+    OOM-kills the whole server mid-encode - the exact crash in scripts/mem1024.log (host RAM
     climbed 2.9 → 16.1 GB while VRAM sat flat). So: encode with the encoder resident, THEN move it
-    to the CPU to reclaim its VRAM. Parking is a plain tensor copy — no forward, no dequant — ~4 GB
+    to the CPU to reclaim its VRAM. Parking is a plain tensor copy - no forward, no dequant - ~4 GB
     of (plentiful) host RAM, no spike. On an offload/CPU placement accelerate already streams the
     encoder, so we pass the raw prompt.
 
@@ -714,7 +714,7 @@ def _prompt_kwargs(
         text_encoder.to(device)  # ensure the encoder is on the card for a GPU (int8-kernel) encode
         # ``encode_prompt`` called directly is NOT wrapped in the pipeline's ``@torch.no_grad``
         # (only ``__call__`` is), so without this the Qwen forward runs with autograd ON and keeps
-        # the full activation graph across all 36 layers — ~8 GB on the T4. That graph (not the int8
+        # the full activation graph across all 36 layers - ~8 GB on the T4. That graph (not the int8
         # dequant) is what spiked host RAM to 16 GB on a CPU encode (OOM-kill) and needed the extra
         # ~1.9 GB that OOMed a GPU encode. no_grad (what ``__call__`` uses) drops it: the forward
         # frees each layer's activations as it goes, so the encode fits in the ~4 GB free.
@@ -725,7 +725,7 @@ def _prompt_kwargs(
                 do_classifier_free_guidance=do_cfg,
                 device=torch.device(device),
             )
-        # Reclaim the encoder's ~4 GB of VRAM for the denoise. A plain copy to CPU — no forward
+        # Reclaim the encoder's ~4 GB of VRAM for the denoise. A plain copy to CPU - no forward
         # there, so no int8->bf16 host-RAM dequant spike (the crash we first hit). We do NOT touch
         # the int8 transformer: torchao's ``.to()`` round-trip on quantized weights is unreliable
         # (it strands the weight on the wrong device); keep it resident, get headroom from no_grad.
@@ -736,7 +736,7 @@ def _prompt_kwargs(
         prompt_embeds = _embeds_to(prompt_embeds, device)
         if do_cfg:
             negative_embeds = _embeds_to(negative_embeds, device)
-    except Exception as error:  # noqa: BLE001 — an optimization must never break generation
+    except Exception as error:  # noqa: BLE001 - an optimization must never break generation
         logger.warning(
             "Text-encoder GPU encode failed (%s); denoising with the encoder resident.", error
         )
@@ -759,7 +759,7 @@ def _prompt_kwargs(
 def _embeds_to(embeds: Any, device: str) -> Any:
     """Move encoder output onto ``device``. ``ZImagePipeline.encode_prompt`` returns a *list* of
     per-prompt embedding tensors (variable length, one per prompt); a future/other pipeline might
-    return a single tensor — handle both."""
+    return a single tensor - handle both."""
     if isinstance(embeds, (list, tuple)):
         return [e.to(device) for e in cast("list[Any]", embeds)]
     return embeds.to(device)
@@ -770,7 +770,7 @@ def _embeds_to(embeds: Any, device: str) -> Any:
 
 def _host_ram_gb() -> float:
     """Host RAM currently in use (total − available), in GB. A cheap /proc read so a run's log shows
-    RAM staying flat through encode/denoise — the signal that the CPU-encode OOM-kill is gone. 0.0
+    RAM staying flat through encode/denoise - the signal that the CPU-encode OOM-kill is gone. 0.0
     when /proc/meminfo is unavailable (non-Linux). Never breaks a generation."""
     try:
         with open("/proc/meminfo") as f:
@@ -780,7 +780,7 @@ def _host_ram_gb() -> float:
                 info[key] = float(rest.strip().split()[0]) / 1e6  # kB -> GB
         avail = info.get("MemAvailable", info.get("MemFree", 0.0))
         return max(0.0, info.get("MemTotal", 0.0) - avail)
-    except Exception:  # noqa: BLE001 — telemetry must never break a generation
+    except Exception:  # noqa: BLE001 - telemetry must never break a generation
         return 0.0
 
 
@@ -789,7 +789,7 @@ def _reset_peak_vram() -> None:
     try:
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
-    except Exception:  # noqa: BLE001 — telemetry must never break a generation
+    except Exception:  # noqa: BLE001 - telemetry must never break a generation
         pass
 
 
@@ -814,7 +814,7 @@ def _free_vram() -> None:
 
 
 def _smaller_resolutions(width: int, height: int) -> list[str]:
-    """Standard square sizes strictly smaller than the current image, largest first — so the OOM
+    """Standard square sizes strictly smaller than the current image, largest first - so the OOM
     hint only ever suggests a resolution that actually cuts peak memory. Falls back to halving the
     current size when nothing on the ladder is smaller (e.g. already at or below 512)."""
     ladder = [1024, 768, 512, 384, 256]
@@ -827,11 +827,11 @@ def _smaller_resolutions(width: int, height: int) -> list[str]:
 
 
 def _oom_message(width: int, height: int, *, host: bool = False, guidance: float = 0.0) -> str:
-    """A clear, actionable message for an out-of-memory — never a raw allocator traceback. ``host``
+    """A clear, actionable message for an out-of-memory - never a raw allocator traceback. ``host``
     distinguishes system-RAM exhaustion from GPU VRAM. Points at the resolution (which drives peak
     memory) and a smaller model. When ``guidance > 0`` it leads with the CFG hint: guidance runs the
     prompt AND negative prompt through the transformer as a batch of 2, doubling the denoise's peak
-    VRAM — and Z-Image Turbo is distilled to run CFG-free (guidance 0), so dropping guidance to 0 is
+    VRAM - and Z-Image Turbo is distilled to run CFG-free (guidance 0), so dropping guidance to 0 is
     usually the fix at high resolution (halves the denoise memory) rather than lowering the size."""
     if host:
         return (
@@ -841,7 +841,7 @@ def _oom_message(width: int, height: int, *, host: bool = False, guidance: float
     cfg_hint = (
         f"Guidance (CFG) is {guidance:g}, which doubles the memory of a {width}x{height} render "
         "(it runs the prompt and negative prompt together). Z-Image Turbo is distilled to run "
-        "CFG-free — set Guidance to 0 to halve the memory. Or "
+        "CFG-free - set Guidance to 0 to halve the memory. Or "
         if guidance > 0
         else ""
     )
@@ -849,12 +849,12 @@ def _oom_message(width: int, height: int, *, host: bool = False, guidance: float
     lower = "lower" if guidance > 0 else "Lower"
     return (
         f"Ran out of GPU memory generating a {width}x{height} image. {cfg_hint}{lower} the "
-        f"resolution (you're at {width}x{height} — try {suggestions}) or pick a smaller model."
+        f"resolution (you're at {width}x{height} - try {suggestions}) or pick a smaller model."
     )
 
 
 def _footprint(mode: str, source: str, vae: str, text: str) -> ModelFootprint:
-    """The model's on-disk component sizes for the fit estimate. Single-file mode only — a whole
+    """The model's on-disk component sizes for the fit estimate. Single-file mode only - a whole
     diffusers pipeline folder isn't sized here, so the policy falls back to its VRAM buckets."""
     diffusion = source if mode == "single_file" else ""
     return ModelFootprint(**reqs.footprint_bytes(diffusion, vae, text))
@@ -873,7 +873,7 @@ def _wont_fit_message(fit: FitEstimate) -> str:
 
 def _component_ref(inputs: dict[str, list[Any]], port: str, kind: str) -> ComponentRef | None:
     """A wired ``ComponentRef`` on ``port``, or None if unwired. Guards the kind so a mis-wired
-    handle (e.g. a VAE fed into the model port — which the graph validator already blocks by port
+    handle (e.g. a VAE fed into the model port - which the graph validator already blocks by port
     kind) can't slip a wrong component into the pipeline."""
     ref = _first(inputs.get(port))
     if ref is None:
@@ -884,7 +884,7 @@ def _component_ref(inputs: dict[str, list[Any]], port: str, kind: str) -> Compon
 
 
 def _path_or_none(path: Any) -> str:
-    """A resolved component path as a string, or ``""`` when absent — the pipeline cache key and the
+    """A resolved component path as a string, or ``""`` when absent - the pipeline cache key and the
     single-file check both want a plain string, not ``Path | None``."""
     return str(path) if path is not None else ""
 

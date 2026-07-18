@@ -1,4 +1,4 @@
-"""Explicit, visible model downloads — the backend for the node's "missing models" popup.
+"""Explicit, visible model downloads - the backend for the node's "missing models" popup.
 
 **This is the only place in the engine that fetches a model over the network.** The runner loads
 everything ``local_files_only=True`` (never downloads); here the user explicitly asks for a
@@ -41,7 +41,7 @@ class ModelDownloads:
         ``{components: [...], allPresent, estimate}``.
 
         Returns an empty, all-present view for node types with no requirements (or when the model
-        runtime isn't installed — the node then shows its own "unavailable" state instead)."""
+        runtime isn't installed - the node then shows its own "unavailable" state instead)."""
         components = self._components(node_type)
         return {
             "components": [_component_json(c) for c in components],
@@ -70,7 +70,7 @@ class ModelDownloads:
         footprint = ModelFootprint(
             **footprint_bytes(diffusion_file, resolve_vae(None), resolve_text_encoder(None))
         )
-        fit = self._policy.estimate_fit(footprint)  # pure — never mutates the shared policy
+        fit = self._policy.estimate_fit(footprint)  # pure - never mutates the shared policy
         if fit is None:
             return None
         soft = not fit.fits or fit.plan in ("int8", "offload")
@@ -119,7 +119,7 @@ class ModelDownloads:
                     "events:modelDownloadDone",
                     {"nodeType": node_type, "componentId": payload_id},
                 )
-            except Exception as error:  # noqa: BLE001 — surface as a UI event, never crash the loop
+            except Exception as error:  # noqa: BLE001 - surface as a UI event, never crash the loop
                 self._emit(
                     loop,
                     "events:modelDownloadError",
@@ -134,7 +134,7 @@ class ModelDownloads:
         try:
             from ..models.zimage.requirements import zimage_requirements
         except ImportError:
-            return []  # zimage runtime absent — the node shows "unavailable", no requirements
+            return []  # zimage runtime absent - the node shows "unavailable", no requirements
         return zimage_requirements()
 
     def _download_component(self, comp: Any, on_progress: Callable[[float, str], None]) -> None:
@@ -207,7 +207,7 @@ def _component_json(component: Any) -> dict[str, Any]:
 
 def _source_label(component: Any) -> str:
     """Human-facing "which model" line: the repo + the exact file this component pulls (e.g.
-    ``Comfy-Org/z_image/ae.safetensors``). Static — no network needed."""
+    ``Comfy-Org/z_image/ae.safetensors``). Static - no network needed."""
     filename: str = getattr(component, "filename", "")
     if filename:
         return f"{component.repo}/{filename}"
@@ -234,7 +234,7 @@ def _dir_size(path: Path) -> int:
 def _wanted_files(api: Any, comp: Any) -> list[tuple[str, int]]:
     """(rfilename, size) for the single file this component pulls, sized from the repo metadata.
 
-    Falls back to size 0 (progress by count) if the file isn't in the listing — the download still
+    Falls back to size 0 (progress by count) if the file isn't in the listing - the download still
     proceeds; ``hf_hub_download`` is the source of truth for whether the path exists."""
     info = api.model_info(comp.repo, files_metadata=True)
     for sibling in info.siblings:

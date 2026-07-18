@@ -1,12 +1,12 @@
 /**
- * fal.ai `sonilo/v1.1/video-to-music` — generates an original soundtrack matched to an input video.
+ * fal.ai `sonilo/v1.1/video-to-music` - generates an original soundtrack matched to an input video.
  * See https://fal.ai/models/sonilo/v1.1/video-to-music.
  *
  * The first audio-output model in the registry: it proves the registry generalizes to audio
  * (video input → audio output), and the resulting audio frame wires straight into a Video
- * Director's L2 (music) inputs. The prompt is optional — when none is connected, Sonilo reads
+ * Director's L2 (music) inputs. The prompt is optional - when none is connected, Sonilo reads
  * the video's pacing and mood and writes its own. Outputs are licensed and safe for commercial
- * use (terms apply — see the fal.ai model page).
+ * use (terms apply - see the fal.ai model page).
  */
 import { type NodeDef, type ResolvedInputs } from './types'
 import { constantEndpoint, approxPrice, numberParam } from './builders'
@@ -32,7 +32,7 @@ export const SONILO_V2M: NodeDef = {
   provider: 'fal',
   outputKind: 'audio',
   inputs: [{ id: 'video', label: 'Video', kind: 'video', required: true }],
-  // The prompt only steers the musical style, so it's optional — Sonilo generates one from the
+  // The prompt only steers the musical style, so it's optional - Sonilo generates one from the
   // video when nothing is wired (unlike every other model, where the prompt IS the instruction).
   promptOptional: true,
   params: [

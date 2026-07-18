@@ -73,7 +73,7 @@ export function DirectorNode({ id, data, selected }: NodeProps): React.JSX.Eleme
   const exportTimeline = useTimelineStore((s) => s.exportTimeline)
 
   const incoming = useMemo(() => connectors.filter((c) => c.toItemId === id), [connectors, id])
-  // A signature of the wired inputs — drives re-resolve and rebuild. Includes any upstream
+  // A signature of the wired inputs - drives re-resolve and rebuild. Includes any upstream
   // trim node's in/out window so editing a trim re-resolves this director's timeline.
   const connSig = useMemo(
     () =>
@@ -116,13 +116,13 @@ export function DirectorNode({ id, data, selected }: NodeProps): React.JSX.Eleme
   }, [id, connSig, resolve])
 
   // Debounced proxy rebuild when inputs or volumes change. Any input (video OR audio)
-  // is enough — an audio-only timeline renders over a black frame.
+  // is enough - an audio-only timeline renders over a black frame.
   const hasInput = incoming.some((c) => {
     const h = String(c.data?.targetHandle ?? '')
     return h.startsWith(VIDEO_PREFIX) || h.startsWith(AUDIO_PREFIX)
   })
   // Skip the rebuild on the INITIAL mount (e.g. an app restart). Rebuilding every
-  // director's proxy on load calls `reloadBoard()` — a full board reload — which races
+  // director's proxy on load calls `reloadBoard()` - a full board reload - which races
   // the canvas's node measurement and makes preview nodes collapse/duplicate. Only
   // rebuild when the wired inputs or volumes actually change during the session; the
   // proxy from the previous session is still valid until then.
@@ -157,7 +157,7 @@ export function DirectorNode({ id, data, selected }: NodeProps): React.JSX.Eleme
 
   return (
     <>
-      {/* Title badge — floats above the node, matching the Generate node. */}
+      {/* Title badge - floats above the node, matching the Generate node. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<ClapperIcon />} title={name || 'Director'}>
           {name || 'Director'}
@@ -173,7 +173,7 @@ export function DirectorNode({ id, data, selected }: NodeProps): React.JSX.Eleme
         subtleSelect
       >
         <div className="flex h-full w-full text-zinc-300">
-          {/* Left gutter — a dedicated side panel for the input dots (not on the border). */}
+          {/* Left gutter - a dedicated side panel for the input dots (not on the border). */}
           <div className="flex w-11 shrink-0 flex-col items-center gap-1.5 overflow-y-auto border-r border-border bg-panel py-1">
             {Array.from({ length: videoHandles }).map((_, i) => (
               <GutterDot
@@ -199,7 +199,7 @@ export function DirectorNode({ id, data, selected }: NodeProps): React.JSX.Eleme
 
           {/* Center column */}
           <div className="flex min-w-0 flex-1 flex-col">
-            {/* Header — a controls bar (the title lives in the floating badge above). */}
+            {/* Header - a controls bar (the title lives in the floating badge above). */}
             <div className="flex shrink-0 items-center justify-end gap-1 border-b border-border bg-panel px-2 py-1">
               {rendering && (
                 <span className="mr-auto text-[10px] text-amber-400">
@@ -232,7 +232,7 @@ export function DirectorNode({ id, data, selected }: NodeProps): React.JSX.Eleme
               </span>
             </div>
 
-            {/* Preview — sized to the 16:9 proxy so the video fills it (no black bars). */}
+            {/* Preview - sized to the 16:9 proxy so the video fills it (no black bars). */}
             <div className="relative aspect-video w-full shrink-0 bg-black">
               {previewUrl ? (
                 <video

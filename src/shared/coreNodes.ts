@@ -59,14 +59,14 @@ export interface NodeDescriptor {
   outputs: CorePort[]
   params: CoreParamField[]
   /**
-   * Internal building blocks (loaders, samplers, VAE, source inputs) — served for
+   * Internal building blocks (loaders, samplers, VAE, source inputs) - served for
    * validation/execution but never offered in the add-node menu. Keeps generation one-click: the
    * user sees only high-level model nodes (e.g. Z-Image Turbo). See `addableCoreNodes`.
    */
   hidden?: boolean
 }
 
-/** Descriptors the add-node menu may offer — everything not marked `hidden` by Core. */
+/** Descriptors the add-node menu may offer - everything not marked `hidden` by Core. */
 export function addableCoreNodes(descriptors: NodeDescriptor[]): NodeDescriptor[] {
   return descriptors.filter((d) => !d.hidden)
 }
@@ -78,7 +78,7 @@ export interface CoreModels {
 }
 
 /**
- * One model a node needs, whether it's on disk, and where it lives — the data behind a node's
+ * One model a node needs, whether it's on disk, and where it lives - the data behind a node's
  * "missing models" popup. Nothing is auto-downloaded: a component is `present` only when the user
  * placed files under `models/` or downloaded it from the popup (which writes into `models/`).
  */
@@ -92,7 +92,7 @@ export interface ModelComponent {
   localPath: string
   /** The Hugging Face repo the popup downloads it from. */
   repo: string
-  /** "Which model" — the repo narrowed to the exact subfolder(s), e.g. `Owner/Repo/vae`. */
+  /** "Which model" - the repo narrowed to the exact subfolder(s), e.g. `Owner/Repo/vae`. */
   source: string
 }
 
@@ -112,7 +112,7 @@ export function isEngineKind(kind: PortKind): boolean {
 const MODEL_KINDS: readonly PortKind[] = ['model', 'vae', 'text-encoder']
 
 /**
- * A "model-family" handle — the loader plumbing (diffusion model, VAE, text encoder) that threads a
+ * A "model-family" handle - the loader plumbing (diffusion model, VAE, text encoder) that threads a
  * component into a node. On the canvas these dots pack to the **bottom** edge of a node while the
  * content/signal dots (image, latent, conditioning, …) pack to the **top**, so model wiring reads as
  * one band along the bottom and the actual image flow runs across the top.

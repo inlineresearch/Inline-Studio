@@ -8,7 +8,7 @@ import { NodeBadge, NodeBadgeRow, ScissorsIcon } from './NodeBadge'
 import { Waveform } from '../../../components/Waveform'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 
-const MIN_GAP = 0.1 // seconds — keep the in/out handles from crossing
+const MIN_GAP = 0.1 // seconds - keep the in/out handles from crossing
 
 const fmt = (s: number): string => `${s.toFixed(1)}s`
 
@@ -22,7 +22,7 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
   const item = useMoodboardStore((s) => s.items.find((it) => it.id === id))
   const updateItem = useMoodboardStore((s) => s.updateItem)
 
-  // Signature of the single input connection — re-resolve when it changes.
+  // Signature of the single input connection - re-resolve when it changes.
   const inputSig = useMemo(() => {
     const c = connectors.find((k) => k.toItemId === id)
     return c ? c.fromItemId : ''
@@ -49,7 +49,7 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
   const [elDuration, setElDuration] = useState(0)
   const duration = Math.max(resolved?.durationSec ?? 0, elDuration)
 
-  // Trim window — seeded from the persisted item, defaulting to the full clip.
+  // Trim window - seeded from the persisted item, defaulting to the full clip.
   const stored = item?.data.trim
   const inPoint = stored ? Math.max(0, stored.inPoint) : 0
   const outPoint =
@@ -135,7 +135,7 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
 
   return (
     <>
-      {/* Title + trim-window badges — float above the node, matching the Generate node. */}
+      {/* Title + trim-window badges - float above the node, matching the Generate node. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<ScissorsIcon />} title={resolved ? resolved.label : 'Edit Video/Audio'}>
           {resolved ? resolved.label : 'Edit Video/Audio'}
@@ -176,7 +176,7 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
             </div>
           ) : (
             <div className="flex flex-1 flex-col gap-1 p-2">
-              {/* Media preview — sized to 16:9 like the director node's preview. */}
+              {/* Media preview - sized to 16:9 like the director node's preview. */}
               {src && resolved.kind === 'video' && (
                 <div className="relative aspect-video w-full shrink-0">
                   <video
@@ -240,7 +240,7 @@ export function TrimNode({ id, selected }: NodeProps): React.JSX.Element {
                 />
               </div>
 
-              {/* Play bar — below the media/waveform. */}
+              {/* Play bar - below the media/waveform. */}
               {src && resolved.kind === 'audio' && (
                 <audio
                   src={src}

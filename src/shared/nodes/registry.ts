@@ -40,7 +40,7 @@ export function listNodeDefs(): readonly NodeDef[] {
 }
 
 // ── Provider grouping ──────────────────────────────────────────────────────────
-// A model's "provider" is its owner — the first segment of the fal id (openai/…, fal-ai/…,
+// A model's "provider" is its owner - the first segment of the fal id (openai/…, fal-ai/…,
 // bytedance/…, krea/…). Used to group models under headers in the picker and Add menu.
 
 const OWNER_LABELS: Record<string, string> = {

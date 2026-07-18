@@ -1,6 +1,6 @@
 /**
  * Local project media (assets, takes, thumbs) is served to the renderer through a
- * custom privileged scheme instead of file:// — the sandboxed renderer can't read
+ * custom privileged scheme instead of file:// - the sandboxed renderer can't read
  * the filesystem directly. Main resolves these URLs against the open project folder.
  *
  *   inlinestudio-media://local/assets/<id>.png

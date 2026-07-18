@@ -4,7 +4,7 @@ import { useCanvasPrefsStore, type EdgeStyle } from '../../store/canvasPrefsStor
 
 /**
  * Right-hand Settings sidebar, opened from the workspace header's gear button. Holds
- * app/account configuration — the fal.ai API key, plus per-device canvas display preferences.
+ * app/account configuration - the fal.ai API key, plus per-device canvas display preferences.
  */
 export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
   return (

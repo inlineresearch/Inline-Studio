@@ -56,7 +56,7 @@ export function FrameInspector(): React.JSX.Element | null {
   const orderedIds = inputAssets.map((a) => a.id)
   const linked = !!frame.comfyWorkflowName
   // Linked only means a name was reserved + a seed pushed. "Ready" means the user has
-  // actually built a real workflow — so we don't imply work exists when it doesn't.
+  // actually built a real workflow - so we don't imply work exists when it doesn't.
   const ready = frame.comfyWorkflowReady
 
   const commitName = (): void => {
@@ -82,7 +82,7 @@ export function FrameInspector(): React.JSX.Element | null {
   }
 
   const onLinkOpen = async (): Promise<void> => {
-    // ComfyUI must be reachable to link/open a workflow — otherwise send the user to the
+    // ComfyUI must be reachable to link/open a workflow - otherwise send the user to the
     // Generate tab to connect first.
     if (!(await requireComfyConnected(() => setMode('generate')))) return
     const result = await linkFrame(frame.id)
@@ -144,7 +144,7 @@ export function FrameInspector(): React.JSX.Element | null {
                 onDragStart={(e) => e.dataTransfer.setData(INPUT_DND, a.id)}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={onReorderDrop(a.id)}
-                title={`${a.name} — drag to reorder`}
+                title={`${a.name} - drag to reorder`}
                 className="group relative h-16 w-16 cursor-grab overflow-hidden rounded border border-border bg-black/40"
               >
                 <Media
@@ -174,7 +174,7 @@ export function FrameInspector(): React.JSX.Element | null {
         <Section title={`Outputs${takes.length ? ` (${takes.length})` : ''}`}>
           {takes.length === 0 ? (
             <p className="text-[11px] text-zinc-600">
-              No outputs yet — generate in ComfyUI and capture.
+              No outputs yet - generate in ComfyUI and capture.
             </p>
           ) : (
             <div className="grid grid-cols-3 gap-2">
@@ -228,7 +228,7 @@ export function FrameInspector(): React.JSX.Element | null {
                   className={`h-1.5 w-1.5 rounded-full ${ready ? 'bg-green-500' : 'bg-amber-500'}`}
                 />
                 <span className={ready ? 'text-zinc-400' : 'text-amber-400'}>
-                  {ready ? 'Workflow ready' : 'Not built yet — open and add nodes, edits autosave'}
+                  {ready ? 'Workflow ready' : 'Not built yet - open and add nodes, edits autosave'}
                 </span>
               </div>
               <button

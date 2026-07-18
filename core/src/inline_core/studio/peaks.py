@@ -2,12 +2,12 @@
 
 Restores a capability lost in the Electron -> Python port. The renderer's ``Waveform`` component
 fetches ``thumbs/take-<id>.peaks.json`` (see ``src/shared/media.ts``) and silently falls back to a
-flat baseline when it 404s — which is why audio takes rendered with no waveform anywhere: the old
+flat baseline when it 404s - which is why audio takes rendered with no waveform anywhere: the old
 ``electron/main/media/peaks.ts`` was never reimplemented here.
 
 Peaks are generated **lazily, on first request** (see the ``/media`` route): a miss resolves the id
-back to its source file, builds the JSON, and serves it. That is self-healing — audio generated
-before this existed gets a waveform too, rather than only newly saved takes — and it keeps the cost
+back to its source file, builds the JSON, and serves it. That is self-healing - audio generated
+before this existed gets a waveform too, rather than only newly saved takes - and it keeps the cost
 off the generation path, since most takes are never scrubbed.
 
 Only ffmpeg is required (bundled via ``imageio-ffmpeg``); ffprobe is often absent, so the duration
@@ -66,7 +66,7 @@ def peaks_payload(pcm: bytes, buckets: int = _DEFAULT_BUCKETS) -> dict[str, Any]
 
 def decode_pcm(src: Path, timeout: int = 120) -> bytes | None:
     """Decode ``src``'s audio to mono 16-bit PCM via ffmpeg. None when ffmpeg is missing, the file
-    has no audio stream, or decoding fails — callers then simply skip the waveform."""
+    has no audio stream, or decoding fails - callers then simply skip the waveform."""
     exe = ffmpeg_exe()
     if exe is None or not src.is_file():
         return None
@@ -104,7 +104,7 @@ def write_peaks(src: Path, dest: Path, buckets: int = _DEFAULT_BUCKETS) -> bool:
 
 def audio_peaks_rel(source_id: str) -> str:
     """Project-relative peaks path for a source's audio track. Mirrors ``audioPeaksPath`` in
-    ``src/shared/media.ts`` — keep the two in step."""
+    ``src/shared/media.ts`` - keep the two in step."""
     return f"thumbs/audio-{source_id}.peaks.json"
 
 
@@ -112,11 +112,11 @@ def source_for_peaks(conn: Any, folder: Path, rel: str) -> Path | None:
     """Map a requested peaks path back to the media file it describes, or None.
 
     Two conventions, both from ``src/shared/media.ts``:
-      - ``thumbs/take-<takeId>.peaks.json``  — an audio take's own waveform
-      - ``thumbs/audio-<id>.peaks.json``     — the audio track of whatever produced the media
+      - ``thumbs/take-<takeId>.peaks.json``  - an audio take's own waveform
+      - ``thumbs/audio-<id>.peaks.json``     - the audio track of whatever produced the media
 
     For the ``audio-`` form the id is whatever the timeline calls a ``sourceId``, which is a **frame
-    id** for frame/preview/trim sources and an **asset id** for library sources — so a take lookup
+    id** for frame/preview/trim sources and an **asset id** for library sources - so a take lookup
     alone is not enough; we fall through takes -> assets -> frames.
     """
     name = Path(rel).name
@@ -134,16 +134,16 @@ def source_for_peaks(conn: Any, folder: Path, rel: str) -> Path | None:
     for table in tables:
         try:
             row = conn.execute(
-                f"SELECT file_path FROM {table} WHERE id = ?", (ids,)  # noqa: S608 — fixed literals
+                f"SELECT file_path FROM {table} WHERE id = ?", (ids,)  # noqa: S608 - fixed literals
             ).fetchone()
-        except Exception:  # noqa: BLE001 — a missing table must not break media serving
+        except Exception:  # noqa: BLE001 - a missing table must not break media serving
             continue
         if row and row["file_path"]:
             candidate = (folder / str(row["file_path"])).resolve()
             if candidate.is_file():
                 return candidate
     if try_frame:
-        # A frame id: resolve through its hero take (imported lazily — frames imports back here).
+        # A frame id: resolve through its hero take (imported lazily - frames imports back here).
         try:
             from . import frames as fr
 

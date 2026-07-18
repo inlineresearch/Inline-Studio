@@ -12,7 +12,7 @@ import { ConnectionGuide } from './ConnectionGuide'
  * bypasses cross-origin limits in Electron) to open a frame's saved workflow.
  *
  * Preferred: open the *saved* workflow file through ComfyUI's workflow store (exposed
- * on window.comfyAPI) so it becomes that named tab and Save overwrites the same file —
+ * on window.comfyAPI) so it becomes that named tab and Save overwrites the same file -
  * which keeps the frame↔workflow link intact. Falls back to loadGraphData (which opens
  * an Unsaved Workflow) only if the store isn't reachable. Resolves to a status string:
  * 'opened' (saved tab) | 'loaded' (unsaved fallback) | 'failed'.
@@ -34,7 +34,7 @@ function openWorkflowScript(name: string): string {
     const path = 'workflows/' + base + '.json';
     // Match by BASENAME (filename without folders or .json) so detection is robust
     // across ComfyUI versions that expose the tab as a path, a key, a filename, or a
-    // bare string — the cause of duplicate tabs was a too-strict full-path compare.
+    // bare string - the cause of duplicate tabs was a too-strict full-path compare.
     const baseOf = (w) => {
       if (!w) return '';
       let p = (typeof w === 'string') ? w : (w.path || w.key || w.filename || '');
@@ -64,7 +64,7 @@ function openWorkflowScript(name: string): string {
         const store = useWorkflowStore();
         // 1a) Already the active tab? Nothing to do.
         if (matches(store.activeWorkflow)) return 'active';
-        // 1b) Already open in another tab? Switch to it — never open a duplicate.
+        // 1b) Already open in another tab? Switch to it - never open a duplicate.
         const already = openTabs(store).find(matches);
         if (already) {
           // Resolve to a workflow object (the list may hold bare path strings).
@@ -77,7 +77,7 @@ function openWorkflowScript(name: string): string {
         }
         // 1c) Not open yet. Make sure the store knows the file Inline Studio just pushed
         // (else getWorkflowByPath misses it and we'd open a throwaway Unsaved tab that
-        // future opens can't match — the duplicate-tab loop), then open the SAVED file.
+        // future opens can't match - the duplicate-tab loop), then open the SAVED file.
         for (const m of ['syncWorkflows','loadWorkflows','reloadWorkflows','refreshWorkflows']) {
           if (typeof store[m] === 'function') { try { await store[m](); break; } catch (e) {} }
         }
@@ -117,7 +117,7 @@ function openWorkflowScript(name: string): string {
  *    page can't serialize (older ComfyUI without window.app.graph.serialize).
  *  - `name`: the active workflow's path/name (e.g. "workflows/18 <id>.json"), or null if
  *    it can't be identified.
- * The host uses `name` to attribute the graph to the RIGHT frame — so closing a frame's
+ * The host uses `name` to attribute the graph to the RIGHT frame - so closing a frame's
  * tab (which makes ComfyUI switch to a different tab) can never save the wrong graph.
  */
 function serializeActiveWorkflowScript(): string {
@@ -162,7 +162,7 @@ const WF_SAVED_MARKER = '[inlinestudio:wf-saved]'
  * Injected once into the ComfyUI page. Two layers, both idempotent:
  * (A) Patch `api.fetchApi` to force `overwrite=true` on POSTs to userdata *workflow*
  *     files. ComfyUI otherwise POSTs a freshly-opened workflow with overwrite=false and
- *     the server 409s because Inline Studio already pushed that file on link — the "save
+ *     the server 409s because Inline Studio already pushed that file on link - the "save
  *     fails until app restart" bug. Patching at the fetch layer catches the workflow
  *     service even when it captured the original `storeUserData` before us (it still
  *     resolves `this.fetchApi` at call time) and works whether the tab opened saved or
@@ -184,7 +184,7 @@ function saveHookScript(): string {
     if (!api) return 'no-api';
 
     // (A) Network-level guard: force overwrite=true on every POST to a userdata *workflow*
-    // file. This is the robust fix — ComfyUI's workflow service calls \`this.fetchApi\`
+    // file. This is the robust fix - ComfyUI's workflow service calls \`this.fetchApi\`
     // dynamically, so it lands here even when the service captured the original
     // \`storeUserData\` before our patch below, and regardless of whether the workflow
     // opened as a saved tab or as an "Unsaved Workflow". Without it, a freshly-linked
@@ -256,11 +256,11 @@ export function GeneratePanel(): React.JSX.Element {
   // The frame whose workflow tab is currently open in the webview. Drives autosave and
   // capture-on-switch/leave so the right frame receives the captured graph.
   const prevFrameRef = useRef<string | null>(null)
-  // Consecutive failed status pings — used to debounce the "not reachable" state so a
+  // Consecutive failed status pings - used to debounce the "not reachable" state so a
   // single slow ping doesn't tear down the embedded page (see `check`).
   const failures = useRef(0)
   // Whether ComfyUI has ever been reachable this session. Once it has, we keep the
-  // <webview> mounted and overlay the guide when it drops — never unmount it.
+  // <webview> mounted and overlay the guide when it drops - never unmount it.
   const [everConnected, setEverConnected] = useState(false)
 
   const running = status?.running ?? false
@@ -272,7 +272,7 @@ export function GeneratePanel(): React.JSX.Element {
     setCaptured((s) => new Set(s).add(output.url))
   }
 
-  // Hard-reload the embedded page (bypass cache — a soft reload often leaves ComfyUI's
+  // Hard-reload the embedded page (bypass cache - a soft reload often leaves ComfyUI's
   // SPA looking unchanged). Reset webviewReady so the save / open-workflow hooks re-inject
   // on the next dom-ready. Falls back to a plain reload, then a fresh navigation.
   const reloadWebview = (): void => {
@@ -291,9 +291,9 @@ export function GeneratePanel(): React.JSX.Element {
   }
 
   // Capture the live graph of the CURRENTLY ACTIVE ComfyUI tab into the frame it
-  // belongs to — the core "forgot to Save" fix, made tab-safe. We attribute the graph
+  // belongs to - the core "forgot to Save" fix, made tab-safe. We attribute the graph
   // by the active workflow's name (not the frame Inline Studio last opened), so closing a
-  // tab — which switches ComfyUI's active tab — can never write one frame's graph into
+  // tab - which switches ComfyUI's active tab - can never write one frame's graph into
   // another. `hintFrameId` is used only for the saved-file fallback, which reads that
   // frame's own file and is therefore always safe.
   const captureLiveWorkflow = useCallback(
@@ -317,13 +317,13 @@ export function GeneratePanel(): React.JSX.Element {
           : undefined
         if (frame) await saveLiveWorkflow(frame.id, graph)
         // When switching away from a KNOWN frame (link/open replacing its tab) and the active tab
-        // couldn't be name-matched, save the graph to that frame anyway — a guaranteed autosave so
+        // couldn't be name-matched, save the graph to that frame anyway - a guaranteed autosave so
         // opening the newly-linked workflow can't silently drop the previous frame's unsaved edits.
         else if (forceSaveToHint && hintFrameId) await saveLiveWorkflow(hintFrameId, graph)
         return
       }
       // No live graph (older ComfyUI): fall back to pulling the hinted frame's own
-      // saved file — always its own file, so this never crosses tabs.
+      // saved file - always its own file, so this never crosses tabs.
       if (hintFrameId) void pullWorkflow(hintFrameId)
     },
     [saveLiveWorkflow, pullWorkflow],
@@ -469,7 +469,7 @@ export function GeneratePanel(): React.JSX.Element {
   }, [mode, captureLiveWorkflow])
 
   // Once ComfyUI has been reachable, remember it so the <webview> stays mounted even
-  // across a transient drop — we overlay the guide rather than destroying the page.
+  // across a transient drop - we overlay the guide rather than destroying the page.
   useEffect(() => {
     if (running) setEverConnected(true)
   }, [running])
@@ -510,7 +510,7 @@ export function GeneratePanel(): React.JSX.Element {
 
       <div className="relative flex-1">
         {running || everConnected ? (
-          // Mounted once connected and never unmounted on a transient drop — destroying
+          // Mounted once connected and never unmounted on a transient drop - destroying
           // and recreating this element is a full page reload that loses in-progress work.
           <webview
             ref={webviewRef}

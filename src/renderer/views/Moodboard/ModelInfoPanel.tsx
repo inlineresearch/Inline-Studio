@@ -101,7 +101,7 @@ export function ModelInfoPanel(): React.JSX.Element | null {
 
       <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-3">
         <Section title="Inputs">
-          {/* Every gen node takes a text prompt — a universal input, not listed in def.inputs.
+          {/* Every gen node takes a text prompt - a universal input, not listed in def.inputs.
               Prompt-optional models can run without one (the model derives its own). */}
           <PortRow label="Prompt" kind="text" required={!def.promptOptional} />
           {def.inputs.map((p) => (

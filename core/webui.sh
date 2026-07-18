@@ -87,7 +87,7 @@ while [[ $# -gt 0 ]]; do
     --smart-memory)
       # Spread a too-big model across VRAM + RAM + CPU. Force the lowvram profile so the offload +
       # int8 machinery engages. (The expandable allocator that cuts CUDA fragmentation OOMs is now
-      # set unconditionally below, so every run — not just smart memory — benefits.)
+      # set unconditionally below, so every run - not just smart memory - benefits.)
       SMART_MEMORY=1
       export INLINE_SMART_MEMORY="1"
       export INLINE_PROFILE="${INLINE_PROFILE:-lowvram}"
@@ -111,7 +111,7 @@ export INLINE_PORT="$PORT"
 
 # Always use PyTorch's expandable CUDA segments (unless the user set their own config): it lets the
 # allocator grow/shrink a single reservation instead of fragmenting into many, which is the
-# difference between a small allocation failing "with VRAM still free" and succeeding — a common
+# difference between a small allocation failing "with VRAM still free" and succeeding - a common
 # low-VRAM (e.g. T4) OOM. Harmless on CPU-only runs (torch just ignores it).
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
@@ -129,7 +129,7 @@ if [[ "$RUN_INSTALL" -eq 1 ]]; then
     echo "No NVIDIA GPU detected - installing the default (CPU) build of PyTorch."
   fi
   uv pip install "${TORCH_INDEX[@]}" -e ".[$EXTRAS]"
-  # Pull the prebuilt web UI so there's no Node build (best-effort — it may not be published yet).
+  # Pull the prebuilt web UI so there's no Node build (best-effort - it may not be published yet).
   uv pip install inline-studio-frontend >/dev/null 2>&1 \
     && echo "Installed the prebuilt web UI (inline-studio-frontend)." \
     || echo "Note: inline-studio-frontend not installed; the UI will build from source or run API-only."
@@ -183,7 +183,7 @@ rebuild_frontend() {
 }
 
 # Live-reload dev loop: Core (API) in the background, Vite (HMR) in the foreground proxying to it. The
-# user opens the Vite port (5173), not Core's — edits to src/ hot-reload without a rebuild. Used by --dev.
+# user opens the Vite port (5173), not Core's - edits to src/ hot-reload without a rebuild. Used by --dev.
 run_dev() {
   if [[ ! -f "../package.json" ]] || ! command -v npm >/dev/null 2>&1; then
     echo "--dev needs the repo checkout and Node/npm (https://nodejs.org/)." >&2
@@ -199,7 +199,7 @@ run_dev() {
 }
 
 # Smart memory needs torchao (int8 weight-only quant). It ships in the runtime extra, but an older
-# venv predates it — install it on demand at launch so --smart-memory just works. Best-effort: if the
+# venv predates it - install it on demand at launch so --smart-memory just works. Best-effort: if the
 # install fails, generation still runs, only without int8 (the loader logs and loads full precision).
 ensure_smart_memory_deps() {
   "${PY_CMD[@]}" -c "import torchao" >/dev/null 2>&1 && return 0
@@ -212,13 +212,13 @@ ensure_smart_memory_deps() {
 # Make sure a UI is present before serving: try the pip package, then a local npm build, else warn.
 ensure_frontend() {
   frontend_available && return 0
-  echo "No web UI found — installing the prebuilt package (inline-studio-frontend)…"
+  echo "No web UI found - installing the prebuilt package (inline-studio-frontend)…"
   "${PIP_INSTALL[@]}" inline-studio-frontend >/dev/null 2>&1 && frontend_available && return 0
   if [[ -f "../package.json" ]] && command -v npm >/dev/null 2>&1; then
     echo "Building the web UI from source (npm)…"
     ( cd .. && npm ci && npm run build:spa ) && frontend_available && return 0
   fi
-  echo "WARNING: no web UI available — serving API only. Install Node to build it, or run" >&2
+  echo "WARNING: no web UI available - serving API only. Install Node to build it, or run" >&2
   echo "         '${PIP_INSTALL[*]} inline-studio-frontend' once it's published." >&2
   return 0
 }

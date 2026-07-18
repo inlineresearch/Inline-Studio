@@ -150,7 +150,7 @@ export function SideMenu(): React.JSX.Element {
       </div>
 
       <div className="min-h-0 flex-1">
-        {/* Assets reuses the full library panel — drag a tile onto the canvas to create a frame. */}
+        {/* Assets reuses the full library panel - drag a tile onto the canvas to create a frame. */}
         {tab === 'assets' && <LibraryPanel />}
         {tab === 'outputs' && <OutputsTab />}
         {tab === 'timeline' && <TimelineTab />}
@@ -167,7 +167,7 @@ export function SideMenu(): React.JSX.Element {
 }
 
 /**
- * Outputs tab — a flat gallery of every generated render, newest first: frame takes (fal/Comfy)
+ * Outputs tab - a flat gallery of every generated render, newest first: frame takes (fal/Comfy)
  * plus Core-node (e.g. Z-Image) outputs, which aren't Frames and live on their canvas item instead.
  * Frame tiles drag onto a generation node to feed it as an input (via the frame's flow link).
  */
@@ -271,7 +271,7 @@ function TimelineTab(): React.JSX.Element {
 
   if (frames.length === 0) {
     return (
-      <p className="p-2 text-xs text-zinc-600">No frames yet — drag an asset onto the canvas.</p>
+      <p className="p-2 text-xs text-zinc-600">No frames yet - drag an asset onto the canvas.</p>
     )
   }
 

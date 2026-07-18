@@ -40,7 +40,7 @@ export const useUpdateStore = create<UpdateState>((set) => ({
       const res = await studio().app.version()
       if (res.ok) set({ currentVersion: res.value })
     } catch {
-      // best-effort — the footer just omits the version if this fails
+      // best-effort - the footer just omits the version if this fails
     }
   },
 

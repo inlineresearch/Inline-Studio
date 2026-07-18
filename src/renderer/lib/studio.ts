@@ -1,5 +1,5 @@
 /**
- * The backend seam. The renderer reaches the backend only through `studio()` — an injected
+ * The backend seam. The renderer reaches the backend only through `studio()` - an injected
  * HTTP/WebSocket client that talks to Inline Core on the same origin. `mountStudioApp` calls
  * `setStudioClient` before rendering.
  */

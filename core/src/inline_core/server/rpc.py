@@ -1,4 +1,4 @@
-"""The Studio app-backend on Core: the browser SPA speaks the InlineStudioApi wire protocol —
+"""The Studio app-backend on Core: the browser SPA speaks the InlineStudioApi wire protocol -
 ``POST /rpc`` with ``{channel, args}`` plus an ``/events`` WebSocket, returning the same ``Result``
 envelope (``{"ok": true, "value": ...}`` / ``{"ok": false, "error": ...}``). Core is the sole
 backend; every channel is handled natively (the former proxy to the legacy Node backend is gone).
@@ -32,7 +32,7 @@ class RpcRouter:
             return {"ok": False, "error": f"No handler registered for channel {channel!r}."}
         try:
             return {"ok": True, "value": await handler(args)}
-        except Exception as error:  # noqa: BLE001 — Result envelope: errors never cross raw
+        except Exception as error:  # noqa: BLE001 - Result envelope: errors never cross raw
             return {"ok": False, "error": str(error)}
 
 

@@ -2,7 +2,7 @@
  * The single typed contract for the renderer ↔ main IPC bridge.
  *
  * - `IpcChannels` are the only channel strings allowed (no stringly-typed
- *   `invoke('something')` scattered around — see CLAUDE.md).
+ *   `invoke('something')` scattered around - see CLAUDE.md).
  * - `InlineStudioApi` is the exact backend surface the web client implements against Core; the
  *   preload. The renderer imports this type; the main process implements it.
  */
@@ -250,7 +250,7 @@ export interface CreateProjectInput {
   parentDir: string
 }
 
-/** The backend API surface — implemented by the web client (createWebClient) against Inline Core. */
+/** The backend API surface - implemented by the web client (createWebClient) against Inline Core. */
 export interface InlineStudioApi {
   project: {
     create(input: CreateProjectInput): Promise<Result<Project>>
@@ -322,7 +322,7 @@ export interface InlineStudioApi {
     addSourceInput(frameId: string, sourceFrameId: string): Promise<Result<FrameInput>>
     /** Remove an input by its library asset id (Frame Inspector). */
     removeInput(frameId: string, assetId: string): Promise<Result<void>>
-    /** Remove one input by its row id — works for asset AND flow-link inputs. */
+    /** Remove one input by its row id - works for asset AND flow-link inputs. */
     removeInputById(frameId: string, inputId: string): Promise<Result<void>>
     /** Persist a new input ordering for the frame. */
     reorderInputs(frameId: string, orderedAssetIds: string[]): Promise<Result<void>>
@@ -336,7 +336,7 @@ export interface InlineStudioApi {
     setModel(frameId: string, modelId: string): Promise<Result<Frame>>
     /**
      * Resolve an `unset` chooser frame to an engine: `comfy` (embedded ComfyUI) or `fal` (a
-     * declarative model — `modelId` defaults to the first registered model). Returns the frame.
+     * declarative model - `modelId` defaults to the first registered model). Returns the frame.
      */
     setProvider(
       frameId: string,
@@ -354,7 +354,7 @@ export interface InlineStudioApi {
      */
     run(frameId: string, request?: FalRunRequest): Promise<Result<void>>
     runWorkflow(itemId: string): Promise<Result<void>>
-    /** Abort the in-flight run — a specific frame's, or all when no id is given. */
+    /** Abort the in-flight run - a specific frame's, or all when no id is given. */
     cancel(frameId?: string): Promise<Result<void>>
     /** Re-poll + finish any generations that were in flight when the app last closed. */
     resumePending(): Promise<Result<void>>
@@ -447,7 +447,7 @@ export interface InlineStudioApi {
       targetHandle?: string | null,
     ): Promise<Result<MoodboardConnector>>
     deleteConnector(id: string): Promise<Result<void>>
-    /** Set a connector's per-input audio volume (0..1) — director L1 inputs. */
+    /** Set a connector's per-input audio volume (0..1) - director L1 inputs. */
     setConnectorVolume(id: string, volume: number): Promise<Result<void>>
     /** Replace the entire board (used by canvas undo/redo). */
     replaceBoard(items: MoodboardItem[], connectors: MoodboardConnector[]): Promise<Result<void>>

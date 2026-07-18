@@ -1,5 +1,5 @@
 /**
- * fal.ai `fal-ai/nano-banana-pro/edit` — image editing (image-to-image) with Nano Banana Pro.
+ * fal.ai `fal-ai/nano-banana-pro/edit` - image editing (image-to-image) with Nano Banana Pro.
  * See https://fal.ai/models/fal-ai/nano-banana-pro/edit.
  */
 import { constantEndpoint, approxPrice, selectParam, numberParam } from './builders'

@@ -174,7 +174,7 @@ function corePortKindOf(
 }
 
 /**
- * The wire color for a connector between two low-level Core ports — the source dot's kind color so
+ * The wire color for a connector between two low-level Core ports - the source dot's kind color so
  * the link matches the dots it joins (model = red, vae = orange, latent = blue, …). Falls back to
  * the target's kind (same kind by the type rule) and finally undefined for non-core links, which keep
  * the frame-flow visual coloring.
@@ -299,7 +299,7 @@ function Board(): React.JSX.Element {
     menuX: number
     menuY: number
   } | null>(null)
-  // Active canvas tool: Select (edit — marquee/move) vs Pan (view — drag pans, nodes locked).
+  // Active canvas tool: Select (edit - marquee/move) vs Pan (view - drag pans, nodes locked).
   const [tool, setTool] = useState<'select' | 'pan'>('select')
   // "Add node" list (toolbar + button, or double-click empty canvas in Select mode).
   const [addMenu, setAddMenu] = useState<{
@@ -319,7 +319,7 @@ function Board(): React.JSX.Element {
 
   const assetsById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets])
 
-  // Compact/plumbing core nodes (no media output — loaders, samplers, encoders) hug their content
+  // Compact/plumbing core nodes (no media output - loaders, samplers, encoders) hug their content
   // rather than stretch to a stored height, so a Load node is just its title + file dropdown.
   const compactCoreTypes = useMemo(
     () => new Set(coreDescriptors.filter((d) => d.outputKind === null).map((d) => d.type)),
@@ -373,7 +373,7 @@ function Board(): React.JSX.Element {
       studio().events.onGenerationDone(() => {
         gen.finishAll()
         void useFrameStore.getState().load()
-        // Core workflow outputs are stored on their canvas items — refresh the board to show them.
+        // Core workflow outputs are stored on their canvas items - refresh the board to show them.
         void useMoodboardStore.getState().load()
       }),
       studio().events.onGenerationError((e) => {
@@ -397,7 +397,7 @@ function Board(): React.JSX.Element {
   // `onlyRenderVisibleElements` culls/sizes nodes from their measured dimensions, which
   // come from the pane. While this canvas is hidden (Generate tab → display:none) or the
   // window is minimized/occluded, the pane measures 0×0, so any node re-measured then gets
-  // stuck at zero size and stays invisible after returning — most visibly the preview
+  // stuck at zero size and stays invisible after returning - most visibly the preview
   // nodes (frames self-correct via their aspect-fit re-measure). Force a fresh re-measure
   // of every node whenever the canvas becomes visible again.
   useEffect(() => {
@@ -598,7 +598,7 @@ function Board(): React.JSX.Element {
     const tgt = items.find((it) => it.id === c.target)
 
     // Director input: auto-assign the next free slot on the matching layer (by source
-    // kind), so wiring grows without the user having to hit a specific tiny handle dot —
+    // kind), so wiring grows without the user having to hit a specific tiny handle dot -
     // and the inputs keep increasing one-by-one as they fill.
     if (tgt?.type === 'director') {
       const prefix =
@@ -619,8 +619,8 @@ function Board(): React.JSX.Element {
     void connect(c.source, c.target, c.sourceHandle ?? null, c.targetHandle ?? null)
 
     // Output → Frame/GenNode input ('in', or a GenNode's 'audio' dot): also wire the data flow-link
-    // (the DAG edge). The target frame takes the source's frame — a frame/GenNode directly, or the
-    // frame feeding a Preview — as a live input, resolved to that frame's hero take at generate time.
+    // (the DAG edge). The target frame takes the source's frame - a frame/GenNode directly, or the
+    // frame feeding a Preview - as a live input, resolved to that frame's hero take at generate time.
     if (
       tgt?.type === 'frame' &&
       (c.targetHandle === 'in' || c.targetHandle === 'audio') &&
@@ -663,7 +663,7 @@ function Board(): React.JSX.Element {
     })
   }
 
-  // Open the Add-node list from the toolbar's + button — anchored above the button, new nodes
+  // Open the Add-node list from the toolbar's + button - anchored above the button, new nodes
   // land at the canvas centre.
   const openAddFromButton = (buttonRect: DOMRect): void => {
     const rect = wrapperRef.current?.getBoundingClientRect()
@@ -683,7 +683,7 @@ function Board(): React.JSX.Element {
   const onCanvasDoubleClick = (e: React.MouseEvent): void => {
     if (tool !== 'select') return
     if (!(e.target as HTMLElement).classList.contains('react-flow__pane')) return
-    // The double-click also word-selects nearby text (blue highlight) — clear it.
+    // The double-click also word-selects nearby text (blue highlight) - clear it.
     window.getSelection()?.removeAllRanges()
     const rect = wrapperRef.current?.getBoundingClientRect()
     const flow = screenToFlowPosition({ x: e.clientX, y: e.clientY })
@@ -755,7 +755,7 @@ function Board(): React.JSX.Element {
     if (!item) return
     await connect(m.fromItemId, item.id, 'out', 'in')
     // Resolve the source frame (the output's frame, or the frame feeding a preview) and
-    // wire it as the new frame's input — its hero take flows in at generate time.
+    // wire it as the new frame's input - its hero take flows in at generate time.
     const fromItem = items.find((it) => it.id === m.fromItemId)
     let sourceFrameId: string | undefined
     if (fromItem?.type === 'frame') {
@@ -897,7 +897,7 @@ function Board(): React.JSX.Element {
   }
 
   /**
-   * On drag stop, persist every dragged node — not just the one under the cursor. React Flow passes
+   * On drag stop, persist every dragged node - not just the one under the cursor. React Flow passes
    * the full set of moved nodes as the third arg; ignoring it left the other selected nodes' new
    * positions unsaved, so they snapped back on the next render/reload.
    */
@@ -960,7 +960,7 @@ function Board(): React.JSX.Element {
           minZoom={0.1}
           maxZoom={4}
           // Only mount on-screen nodes/edges. Beyond perf, this keeps the canvas's GPU
-          // compositing layer small — with nodes spread far apart, the full layer can
+          // compositing layer small - with nodes spread far apart, the full layer can
           // exceed the GPU's max texture size and render as grey/blank when scrolling.
           onlyRenderVisibleElements
           fitView
@@ -1120,7 +1120,7 @@ function EmptyCanvasHint(): React.JSX.Element {
   )
 }
 
-/** Map items to React Flow nodes — layers first so they precede their children. */
+/** Map items to React Flow nodes - layers first so they precede their children. */
 function toNodes(
   items: MoodboardItem[],
   assetsById: Map<

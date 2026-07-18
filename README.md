@@ -114,26 +114,26 @@ Prefer pip? `pip install -r requirements.txt` (from the repo root) pulls the eng
 
 ### Hardware support
 
-Honest status — what's actually been run, versus what has a code path but no one has verified:
+Honest status - what's actually been run, versus what has a code path but no one has verified:
 
 | Hardware                | Status                                           | Extra steps                                                                                                                                                                                                                                |
 | ----------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **NVIDIA, Linux**       | **Tested** — Z-Image Turbo 1024² on a T4 (16 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                             |
+| **NVIDIA, Linux**       | **Tested** - Z-Image Turbo 1024² on a T4 (16 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                             |
 | **NVIDIA, Windows**     | Supported, needs one step                        | PyPI's default `torch` is **CPU-only on Windows**. Use `webui.sh --install` (it detects the GPU), or install torch from `https://download.pytorch.org/whl/cu124`. Core warns at startup if it finds an NVIDIA GPU behind a CPU-only torch. |
 | **Apple Silicon (MPS)** | Code path exists, **untested**                   | None. int8 quantisation doesn't apply on MPS, so a model too big for unified memory won't fit.                                                                                                                                             |
-| **AMD (ROCm), Linux**   | **Untested** — reports welcome                   | Needs a ROCm build of PyTorch — see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                             |
+| **AMD (ROCm), Linux**   | **Untested** - reports welcome                   | Needs a ROCm build of PyTorch - see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                             |
 | **CPU only**            | Works, very slow                                 | `./webui.sh --cpu`                                                                                                                                                                                                                         |
 
 #### AMD (ROCm) setup
 
-Nobody has verified Inline Studio on AMD yet, so treat this as a starting point rather than a supported path. Install everything normally **first**, then replace PyTorch with the ROCm build — doing it in this order means nothing can quietly overwrite your ROCm torch afterwards:
+Nobody has verified Inline Studio on AMD yet, so treat this as a starting point rather than a supported path. Install everything normally **first**, then replace PyTorch with the ROCm build - doing it in this order means nothing can quietly overwrite your ROCm torch afterwards:
 
 ```bash
 cd core
 uv venv
 uv pip install -e ".[runtime,server]"        # engine + runtime (pulls the default PyPI torch)
 
-# Replace torch with the ROCm build. Pick the index that matches YOUR ROCm version —
+# Replace torch with the ROCm build. Pick the index that matches YOUR ROCm version -
 # check https://pytorch.org/get-started/locally/ (rocm6.2 shown here as an example).
 uv pip install --force-reinstall --index-url https://download.pytorch.org/whl/rocm6.2 torch
 
@@ -145,13 +145,13 @@ Then run `./webui.sh` as usual.
 
 Two gotchas:
 
-- **Don't run `uv sync` afterwards** — it re-resolves the environment against the lockfile and will pull the PyPI torch back over your ROCm build. Use `uv pip install` for follow-up installs.
-- ROCm presents itself through `torch.cuda`, so the engine will treat it as a CUDA device and may largely work. But the dtype heuristics key off **NVIDIA** compute capability (`< 8.0` → fp16), which is meaningless on RDNA/CDNA, and the int8 (torchao) path is unverified on ROCm. If it works — or doesn't — [open an issue](https://github.com/inlineresearch/Inline-Studio/issues); that's the fastest way to get AMD properly supported.
+- **Don't run `uv sync` afterwards** - it re-resolves the environment against the lockfile and will pull the PyPI torch back over your ROCm build. Use `uv pip install` for follow-up installs.
+- ROCm presents itself through `torch.cuda`, so the engine will treat it as a CUDA device and may largely work. But the dtype heuristics key off **NVIDIA** compute capability (`< 8.0` → fp16), which is meaningless on RDNA/CDNA, and the int8 (torchao) path is unverified on ROCm. If it works - or doesn't - [open an issue](https://github.com/inlineresearch/Inline-Studio/issues); that's the fastest way to get AMD properly supported.
 
 **Known limits, so you can judge before installing:**
 
 - **Local model coverage is Z-Image Turbo only** today. Flux, SDXL and others are planned; hosted models via [API Nodes](#api-nodes) need no GPU at all.
-- **1024² with Guidance (CFG) above 0 needs more than 16 GB.** CFG runs the prompt and negative prompt together, doubling the denoise. Z-Image Turbo is distilled to run CFG-free — at Guidance 0, 1024² fits in ~11.5 GB.
+- **1024² with Guidance (CFG) above 0 needs more than 16 GB.** CFG runs the prompt and negative prompt together, doubling the denoise. Z-Image Turbo is distilled to run CFG-free - at Guidance 0, 1024² fits in ~11.5 GB.
 
 ### From source (for UI development)
 

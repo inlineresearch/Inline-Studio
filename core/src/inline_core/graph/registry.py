@@ -53,7 +53,7 @@ def build_default_registry() -> Registry:
     descriptors.
 
     Source nodes have runners but stay hidden (the Studio drives text/image inputs through its own
-    Prompt/library nodes). The ``load/*`` nodes now have runners and are **visible** — they feed a
+    Prompt/library nodes). The ``load/*`` nodes now have runners and are **visible** - they feed a
     model node's component inputs. The rest of the primitives (encode/sample/decode) are
     descriptor-only and hidden until their runners land (C2).
     """

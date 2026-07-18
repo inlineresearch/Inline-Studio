@@ -1,13 +1,13 @@
 /**
- * fal.ai `sonilo/v1.1/video-to-video` — returns the input video with a generated, licensed track
+ * fal.ai `sonilo/v1.1/video-to-video` - returns the input video with a generated, licensed track
  * mixed in. See https://fal.ai/models/sonilo/v1.1/video-to-video.
  *
  * The video-to-music sibling hands back an audio take you wire into the Video Director; this one
  * hands back the finished video, so it slots in when you want the mix done in one step. Set
  * `keep_speech_vocal` to preserve the original speech alongside the new track. Like video-to-music
- * the prompt is optional — Sonilo reads the video's pacing and mood when nothing is wired, and a
+ * the prompt is optional - Sonilo reads the video's pacing and mood when nothing is wired, and a
  * prompt only steers the musical style. Outputs are licensed and safe for commercial use (terms
- * apply — see the fal.ai model page). It rides the same fal transport and fal key as every other
+ * apply - see the fal.ai model page). It rides the same fal transport and fal key as every other
  * fal node.
  */
 import { type NodeDef, type ResolvedInputs } from './types'
@@ -34,7 +34,7 @@ export const SONILO_V2V: NodeDef = {
   provider: 'fal',
   outputKind: 'video',
   inputs: [{ id: 'video', label: 'Video', kind: 'video', required: true }],
-  // Like video-to-music: the prompt only steers the musical style, so it's optional — Sonilo
+  // Like video-to-music: the prompt only steers the musical style, so it's optional - Sonilo
   // reads the video and writes its own when nothing is wired.
   promptOptional: true,
   params: [

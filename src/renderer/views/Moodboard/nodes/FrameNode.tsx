@@ -33,7 +33,7 @@ interface FrameNodeData extends Record<string, unknown> {
   frameId: string
 }
 
-// Bounds for the media body when fitting to a media's aspect ratio — keeps very
+// Bounds for the media body when fitting to a media's aspect ratio - keeps very
 // wide/tall inputs from collapsing or ballooning the node.
 const MIN_BODY = 160
 const MAX_BODY = 480
@@ -68,7 +68,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const onMediaContextMenu = useMediaContextMenu()
   const openLightbox = useLightboxStore((s) => s.open)
   const [idx, setIdx] = useState(0)
-  // True while assets are dragged over the frame — highlights it as a drop target.
+  // True while assets are dragged over the frame - highlights it as a drop target.
   const [dropActive, setDropActive] = useState(false)
   // Aspect ratio of the current media; drives the node height so the image fills
   // the body with no black letterboxing.
@@ -78,7 +78,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // the height update on every render, which would loop and freeze the canvas.
   const lastFit = useRef<string>('')
 
-  // Resolve each input to a thumbnail (asset media, or a flow link's hero take) — shared with
+  // Resolve each input to a thumbnail (asset media, or a flow link's hero take) - shared with
   // the Generate node so both surface their inputs identically.
   const thumbs = resolveInputThumbs(inputs, { assets, allFrames, takesByFrame, inputsByFrame })
   const count = thumbs.length
@@ -92,13 +92,13 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   // Fit the node height to the media's aspect ratio at the current width, so the
   // body shows the image edge-to-edge with no black bars. The `lastFit` guard makes
-  // this fire at most once per (aspect, width) pair — so the resulting height change
+  // this fire at most once per (aspect, width) pair - so the resulting height change
   // (which re-renders this node) can never feed back into another resize.
   const itemWidth = item?.width
   const itemHeight = item?.height
   useLayoutEffect(() => {
     const body = bodyRef.current
-    // Loaders are freely sized by the user — never snap their height back to the media aspect.
+    // Loaders are freely sized by the user - never snap their height back to the media aspect.
     if (isLoader) return
     if (!aspect || !body || itemHeight == null || itemWidth == null) return
     const sig = `${aspect.toFixed(4)}:${itemWidth}`
@@ -109,7 +109,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
     const targetBody = Math.max(MIN_BODY, Math.min(MAX_BODY, width / aspect))
     const delta = targetBody - body.clientHeight
     if (Math.abs(delta) < 1) return
-    // Programmatic layout fit — don't pollute the undo history.
+    // Programmatic layout fit - don't pollute the undo history.
     void updateItem(id, { height: Math.round(itemHeight + delta) }, false)
   }, [aspect, itemWidth, itemHeight, id, updateItem, isLoader])
 
@@ -121,14 +121,14 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   const onLink = async (): Promise<void> => {
     if (!frame) return
-    // ComfyUI must be reachable to link/open a workflow — otherwise send the user to the
+    // ComfyUI must be reachable to link/open a workflow - otherwise send the user to the
     // Generate tab to connect first.
     if (!(await requireComfyConnected(() => setMode('generate')))) return
     const result = await linkFrame(frame.id)
     setLinkedWorkflow(result?.comfyWorkflowName ?? frame.comfyWorkflowName)
     setActiveFrame(frame.id)
     setMode('generate')
-    // Push this frame's inputs to ComfyUI so they're available in LoadImage — the
+    // Push this frame's inputs to ComfyUI so they're available in LoadImage - the
     // cloud-safe path (no shared local folder needed). Best-effort.
     void uploadInputs(frame.id)
   }
@@ -164,7 +164,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   }
 
   // Accept Library assets, another node's output (a frame/Output tile), AND OS files (Finder/
-  // Explorer) dropped onto the frame as inputs — dropping accumulates. stopPropagation keeps the
+  // Explorer) dropped onto the frame as inputs - dropping accumulates. stopPropagation keeps the
   // canvas from also handling the drop (which would spawn new frames). Already-present ones skip.
   const isFileDrag = (e: React.DragEvent): boolean => e.dataTransfer.types.includes('Files')
   const canDrop = (e: React.DragEvent): boolean =>
@@ -218,7 +218,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   return (
     <>
-      {/* Title + workflow-link badges — float above the node, matching the Generate node. A loader
+      {/* Title + workflow-link badges - float above the node, matching the Generate node. A loader
           is a pure viewer, so it drops the generation (workflow-link) control. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge
@@ -343,7 +343,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
             {count > 1 && (
               <>
-                {/* Thumbnail strip — click an input to show it as this frame's main media. */}
+                {/* Thumbnail strip - click an input to show it as this frame's main media. */}
                 <ThumbStrip
                   items={thumbs.map((t) => ({
                     id: t.id,
@@ -375,7 +375,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
           </div>
 
           {/* Loader footer: always-available local picker (also acts as add/replace once media is
-              loaded). Generation frames don't get this — their inputs come from the pipeline. */}
+              loaded). Generation frames don't get this - their inputs come from the pipeline. */}
           {isLoader && cur && (
             <div className="flex items-center justify-end border-t border-border bg-surface/90 px-2 py-1">
               <button
@@ -397,7 +397,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
         </div>
       </NodeFrame>
 
-      {/* Data handles with hover hints — Input (emerald, left), Output (indigo, right). */}
+      {/* Data handles with hover hints - Input (emerald, left), Output (indigo, right). */}
       <Handle
         type="target"
         id="in"

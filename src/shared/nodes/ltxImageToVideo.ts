@@ -1,5 +1,5 @@
 /**
- * fal.ai `fal-ai/ltx-2.3-quality/image-to-video` — animates a single input image into an MP4.
+ * fal.ai `fal-ai/ltx-2.3-quality/image-to-video` - animates a single input image into an MP4.
  * See https://fal.ai/models/fal-ai/ltx-2.3-quality/image-to-video.
  *
  * This is the video counterpart to GPT Image 2: it proves the registry generalizes across I/O
@@ -18,7 +18,7 @@ import {
 const ENDPOINT = 'fal-ai/ltx-2.3-quality/image-to-video'
 
 /**
- * fal's `resolution` field takes a named aspect preset (or an ImageSize object) — a raw "W x H"
+ * fal's `resolution` field takes a named aspect preset (or an ImageSize object) - a raw "W x H"
  * string 422s. We use the presets (fal maps them to known-good, correctly-divisible dimensions);
  * `width`/`height` are fal's standard preset pixel sizes, used only for the cost estimate.
  */
@@ -52,7 +52,7 @@ export const LTX_I2V: NodeDef = {
   provider: 'fal',
   outputKind: 'video',
   inputs: [{ id: 'image', label: 'Image', kind: 'image', required: true }],
-  // NOTE: `prompt` is not a param — it's fed via the node's prompt input (a connected Prompt node).
+  // NOTE: `prompt` is not a param - it's fed via the node's prompt input (a connected Prompt node).
   params: [
     numberParam('number_of_frames', 'Frames', 96, { min: 1, max: 300, step: 1 }),
     // Custom labels (not value === label), so declared inline rather than via selectParam.

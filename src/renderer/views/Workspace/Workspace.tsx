@@ -71,7 +71,7 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
       <main className="flex min-h-0 flex-1">
         <div className="relative min-h-0 flex-1">
           {/* Generate stays mounted (just hidden) so ComfyUI doesn't reload and
-              restore its previous tab each time — which raced our 'open workflow'
+              restore its previous tab each time - which raced our 'open workflow'
               and selected the wrong frame. */}
           <div className={mode === 'generate' ? 'h-full' : 'hidden'}>
             <GeneratePanel />

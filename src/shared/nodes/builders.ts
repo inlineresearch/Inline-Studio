@@ -1,10 +1,10 @@
 /**
  * Shared, pure helpers for declaring fal generation models (NodeDefs) concisely. Every model reuses
- * these instead of re-implementing endpoint/price/param boilerplate — so adding a model is a
+ * these instead of re-implementing endpoint/price/param boilerplate - so adding a model is a
  * short, declarative file. Kept shell-agnostic (imported by both renderer and main).
  *
  * Response parsing is deliberately absent: Core owns it (`inline_core/studio/fal.py:
- * parse_outputs`), since Core — not the browser — polls fal and downloads the result.
+ * parse_outputs`), since Core - not the browser - polls fal and downloads the result.
  */
 import { type ParamField, type PriceEstimate } from './types'
 
@@ -65,7 +65,7 @@ export function booleanParam(
   return { key, label, widget: 'boolean', default: defaultValue, advanced: opts.advanced ?? true }
 }
 
-/** The common "seed" param — `-1` means a random seed (omitted from the request). */
+/** The common "seed" param - `-1` means a random seed (omitted from the request). */
 export function seedParam(): ParamField {
   return {
     key: 'seed',

@@ -33,7 +33,7 @@ from .rpc import EventBroadcaster, RpcRouter
 from .run_store import RunStore
 from .serialize import descriptor_json, event_json, run_json, take_json
 
-# GET /v1/runs/<id> (the client's run-status poll) — but not /events or nested paths.
+# GET /v1/runs/<id> (the client's run-status poll) - but not /events or nested paths.
 _RUN_POLL_PATH = re.compile(r"^/v1/runs/[^/]+$")
 
 
@@ -41,8 +41,8 @@ class _SuppressAccessNoise(logging.Filter):
     """Drop high-frequency, uninformative request lines from the uvicorn access log.
 
     Two floods bury the useful logs (generation progress, real errors) under identical 200 lines:
-      - ``GET /v1/runs/<id>`` — Studio polls run status sub-second while a run is in flight.
-      - ``POST /rpc`` — every Studio backend call (each keystroke's autosave, every store refresh)
+      - ``GET /v1/runs/<id>`` - Studio polls run status sub-second while a run is in flight.
+      - ``POST /rpc`` - every Studio backend call (each keystroke's autosave, every store refresh)
         is one of these; they say nothing on their own.
     We hide only those successful, chatty lines; submits, cancels, errors, uploads, media, and
     every other request still log normally.
@@ -70,7 +70,7 @@ def _quiet_access_log() -> None:
 def _setup_app_logging() -> None:
     """Give the engine's own loggers (``inline_core.*``) a stream handler at INFO.
 
-    Uvicorn configures only its own loggers, leaving the root at WARNING with no handler — so the
+    Uvicorn configures only its own loggers, leaving the root at WARNING with no handler - so the
     engine's INFO diagnostics (device, model-load timing, VRAM) would be dropped. This attaches one
     handler to the ``inline_core`` logger (idempotent) at ``INLINE_LOG_LEVEL`` (default INFO).
     """
@@ -280,7 +280,7 @@ def create_app(
             events.remove(queue)
 
     # The native Studio app-backend: register the InlineStudioApi channels on the RpcRouter +
-    # project media/uploads (the B1 flip — Core becomes the sole backend, no Node proxy).
+    # project media/uploads (the B1 flip - Core becomes the sole backend, no Node proxy).
     if studio_store is not None:
         from ..studio.fal import FalGeneration
         from ..studio.generation import CoreGeneration

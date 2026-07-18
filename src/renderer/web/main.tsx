@@ -1,5 +1,5 @@
 /**
- * Web SPA entry — the self-booting build that Inline Core serves on its own port (mirrors ComfyUI's
+ * Web SPA entry - the self-booting build that Inline Core serves on its own port (mirrors ComfyUI's
  * frontend package). Unlike the desktop boot (`main.tsx`, which uses the Electron preload), this
  * injects an HTTP/WebSocket backend client pointed at the same origin: every InlineStudioApi call
  * posts to `/rpc` and events stream from `/events` on whatever host served this page (Core in prod,

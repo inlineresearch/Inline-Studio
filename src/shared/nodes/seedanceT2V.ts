@@ -1,5 +1,5 @@
 /**
- * fal.ai `bytedance/seedance-2.0/text-to-video` — ByteDance Seedance 2.0 text-to-video.
+ * fal.ai `bytedance/seedance-2.0/text-to-video` - ByteDance Seedance 2.0 text-to-video.
  * See https://fal.ai/models/bytedance/seedance-2.0/text-to-video.
  */
 import { constantEndpoint } from './builders'

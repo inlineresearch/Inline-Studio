@@ -33,7 +33,7 @@ export function TextToolbar({
     onChange({ fontSize: Math.min(MAX_SIZE, Math.max(MIN_SIZE, text.fontSize + delta)) })
 
   const editLink = (): void => {
-    const next = window.prompt('Link URL (http/https) — leave blank to remove:', text.link ?? '')
+    const next = window.prompt('Link URL (http/https) - leave blank to remove:', text.link ?? '')
     if (next === null) return // cancelled
     const url = next.trim()
     if (url === '') return onChange({ link: undefined })

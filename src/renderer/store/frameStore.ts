@@ -280,7 +280,7 @@ export const useFrameStore = create<FrameState>((set, get) => ({
     try {
       await studio().comfy.pullWorkflow(id)
     } catch {
-      // best-effort sync — a transient failure shouldn't surface as an error
+      // best-effort sync - a transient failure shouldn't surface as an error
     }
   },
 
@@ -293,7 +293,7 @@ export const useFrameStore = create<FrameState>((set, get) => ({
         set((s) => ({ frames: s.frames.map((sh) => (sh.id === frame.id ? frame : sh)) }))
       }
     } catch {
-      // best-effort autosave — a transient failure shouldn't surface as an error
+      // best-effort autosave - a transient failure shouldn't surface as an error
     }
   },
 

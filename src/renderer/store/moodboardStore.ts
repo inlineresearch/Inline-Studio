@@ -44,7 +44,7 @@ interface MoodboardState {
   ) => Promise<void>
   /** Create an empty frame and place its node on the canvas. Returns the new item. */
   addEmptyFrame: (x: number, y: number) => Promise<MoodboardItem | null>
-  /** Create a "Load Assets" loader — an empty frame flagged as a pure loader (no generation,
+  /** Create a "Load Assets" loader - an empty frame flagged as a pure loader (no generation,
    * freely resizable). Returns the new item. */
   addLoader: (x: number, y: number) => Promise<MoodboardItem | null>
   /** Add a Preview node. Returns the new item (for connection-drop suggestions). */
@@ -74,7 +74,7 @@ interface MoodboardState {
     sources: MoodboardItem[],
     offset: { x: number; y: number },
   ) => Promise<MoodboardItem[]>
-  /** `recordHistory: false` skips the undo snapshot — used by programmatic layout fits. */
+  /** `recordHistory: false` skips the undo snapshot - used by programmatic layout fits. */
   updateItem: (id: string, patch: MoodboardItemPatch, recordHistory?: boolean) => Promise<void>
   deleteItem: (id: string) => Promise<void>
   connect: (
@@ -150,7 +150,7 @@ async function copyOne(
     return null
   }
   // Carry over size + parent; copy data only where it holds styling/labels (text,
-  // layer) — for frame/asset/preview the identity lives in their own column.
+  // layer) - for frame/asset/preview the identity lives in their own column.
   const patch: MoodboardItemPatch = { width: item.width, height: item.height, parentId }
   if (item.type === 'text' || item.type === 'layer') patch.data = item.data
   const patched = await m.updateItem(res.value.id, patch)
@@ -172,7 +172,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     try {
       const res = await studio().moodboard.list()
       if (!res.ok) return set({ loading: false, error: res.error })
-      // A fresh load is a new baseline — clear undo history.
+      // A fresh load is a new baseline - clear undo history.
       set({
         items: res.value.items,
         connectors: res.value.connectors,
@@ -280,7 +280,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
         return null
       }
       set((s) => ({ items: [...s.items, res.value] }))
-      // The new frame exists in main — refresh the frame store so its node resolves.
+      // The new frame exists in main - refresh the frame store so its node resolves.
       await useFrameStore.getState().load()
       return res.value
     } catch (e) {
@@ -384,7 +384,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
         return null
       }
       set((s) => ({ items: [...s.items, res.value] }))
-      // The backing fal frame was created in main — refresh the frame store so the node resolves.
+      // The backing fal frame was created in main - refresh the frame store so the node resolves.
       await useFrameStore.getState().load()
       return res.value
     } catch (e) {
@@ -541,7 +541,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
       }
 
       if (created.length) set((s) => ({ items: [...s.items, ...created] }))
-      // Cloned frames are new entities in main — refresh so their nodes resolve.
+      // Cloned frames are new entities in main - refresh so their nodes resolve.
       if (clonedFrame) await useFrameStore.getState().load()
       return created
     } catch (e) {

@@ -1,5 +1,5 @@
 """Source inputs and the not-yet-runnable primitives (encode/sample/decode) are served but marked
-hidden, so the UI never offers them — generation stays one-click on high-level model nodes. The
+hidden, so the UI never offers them - generation stays one-click on high-level model nodes. The
 ``load/*`` loaders are the exception: they have runners and are visible (they feed a model node)."""
 
 from __future__ import annotations

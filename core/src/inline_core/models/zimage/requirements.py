@@ -1,16 +1,16 @@
-"""What Z-Image needs on disk, and whether it's present — the data behind the node's model popup.
+"""What Z-Image needs on disk, and whether it's present - the data behind the node's model popup.
 
 **No hidden downloads.** A component is "present" only if the user placed it under ``models/`` or
 downloaded it through the popup (which also writes into ``models/``). Nothing here or in the runner
-ever fetches a model as a side effect of loading — a missing component is reported, not silently
+ever fetches a model as a side effect of loading - a missing component is reported, not silently
 pulled from Hugging Face.
 
 This module is deliberately **torch-free** (pure filesystem + config), so the requirements check and
 the download planning work without the heavy ``zimage`` runtime loaded. The runner imports the
 resolution helpers from here so the "what/where" logic lives in one place.
 
-Z-Image loads ComfyUI-style from **three single files** — one diffusion ``.safetensors``, one VAE,
-one text-encoder — pulled from ``Comfy-Org/z_image/split_files`` and dropped flat into
+Z-Image loads ComfyUI-style from **three single files** - one diffusion ``.safetensors``, one VAE,
+one text-encoder - pulled from ``Comfy-Org/z_image/split_files`` and dropped flat into
 ``diffusion_models/``, ``vae/`` and ``text_encoders/``. The small configs + Qwen tokenizer that
 neither weights file carries come from the loader-core asset bundle (``models/loaders.py``), not
 here. A whole-pipeline diffusers folder in ``diffusion_models/`` is still accepted as a fallback.
@@ -24,14 +24,14 @@ from pathlib import Path
 
 from ...config import models_dir
 
-#: Split-file weights repo — ComfyUI's consolidated single files, one ``.safetensors`` per
+#: Split-file weights repo - ComfyUI's consolidated single files, one ``.safetensors`` per
 #: component (fast, fully offline to load). The popup pulls exactly one file per component from
 #: here; the configs + tokenizer come from the loader-core asset bundle (see ``models/loaders.py``).
 SPLIT_REPO = "Comfy-Org/z_image"
-#: Back-compat alias — older callers/tests referenced ``BASE_REPO`` as "the download repo".
+#: Back-compat alias - older callers/tests referenced ``BASE_REPO`` as "the download repo".
 BASE_REPO = SPLIT_REPO
 
-#: The exact single files under ``split_files/<category>/`` — mirrors ComfyUI's Z-Image layout. They
+#: The exact single files under ``split_files/<category>/`` - mirrors ComfyUI's Z-Image layout. They
 #: land flat in ``models/<category>/`` so the node's per-category dropdowns list them directly.
 DIFFUSION_FILE = "z_image_bf16.safetensors"
 VAE_FILE = "ae.safetensors"
@@ -76,7 +76,7 @@ def pipeline_dir(root: Path) -> Path | None:
 
 
 def _is_staging(path: Path) -> bool:
-    """A half-finished download's ``.part`` staging dir — never treat it as an installed model."""
+    """A half-finished download's ``.part`` staging dir - never treat it as an installed model."""
     return path.name.endswith(".part")
 
 
@@ -87,7 +87,7 @@ def _category_file(
 
     Resolution, most specific first: an explicit ``env_var`` path, then a ``chosen`` filename from
     the node's dropdown, then the exact recommended split file (e.g. ``ae.safetensors``), then any
-    weight file the user dropped in. Files only — the split-file loader needs a single
+    weight file the user dropped in. Files only - the split-file loader needs a single
     ``.safetensors``; a bare HF snapshot dir has nothing to hand to ``from_single_file``.
     """
     env = os.environ.get(env_var, "").strip()
@@ -126,9 +126,9 @@ def resolve_text_encoder(params: dict[str, object] | None = None) -> Path | None
 def resolve_diffusion(params: dict[str, object] | None = None) -> tuple[str, str] | None:
     """Pick the Z-Image diffusion source without ever inventing a remote one.
 
-    Returns ``(mode, path)`` where ``mode`` is ``"single_file"`` (a lone transformer file — VAE and
+    Returns ``(mode, path)`` where ``mode`` is ``"single_file"`` (a lone transformer file - VAE and
     text-encoder come from local files) or ``"pipeline"`` (a whole diffusers folder). Returns
-    ``None`` when nothing is present locally — reported as missing (no repo-id fallback). Priority:
+    ``None`` when nothing is present locally - reported as missing (no repo-id fallback). Priority:
     node ``model`` param, ``INLINE_ZIMAGE_MODEL`` env, a single weight file, then a diffusers dir.
     """
     root = diffusion_root()
@@ -193,7 +193,7 @@ def _split_component(
 def zimage_requirements(params: dict[str, object] | None = None) -> list[ModelComponent]:
     """The three Z-Image components with live presence, for the node's model popup.
 
-    Presence is the **specific single file** (or any weight the user dropped in that category — see
+    Presence is the **specific single file** (or any weight the user dropped in that category - see
     ``_category_file``). A whole-pipeline diffusers folder as the diffusion source still counts for
     the VAE + text-encoder, since it already bundles them.
     """
@@ -226,7 +226,7 @@ def zimage_requirements(params: dict[str, object] | None = None) -> list[ModelCo
 
 
 def download_target(component: ModelComponent) -> Path:
-    """Absolute local dir the component's single file lands in — its category folder, flat, so the
+    """Absolute local dir the component's single file lands in - its category folder, flat, so the
     node's dropdown lists it (under the models root, never the hidden HF cache)."""
     return models_dir() / component.category
 

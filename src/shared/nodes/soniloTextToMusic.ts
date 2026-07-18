@@ -1,11 +1,11 @@
 /**
- * fal.ai `sonilo/v1.1/text-to-music` — generates an original track from a text description alone
+ * fal.ai `sonilo/v1.1/text-to-music` - generates an original track from a text description alone
  * (no video input). See https://fal.ai/models/sonilo/v1.1/text-to-music.
  *
  * The video-to-music sibling reads a cut and writes to it; this one writes from words. The prompt
- * carries the whole instruction here, so — unlike video-to-music — it stays required: describe the
+ * carries the whole instruction here, so - unlike video-to-music - it stays required: describe the
  * track (mood, instrumentation, tempo) and Sonilo returns audio takes. Outputs are licensed and
- * safe for commercial use (terms apply — see the fal.ai model page). It rides the same fal
+ * safe for commercial use (terms apply - see the fal.ai model page). It rides the same fal
  * transport and fal key as every other fal node.
  */
 import { type NodeDef } from './types'
@@ -32,7 +32,7 @@ export const SONILO_T2M: NodeDef = {
   category: 'Audio',
   provider: 'fal',
   outputKind: 'audio',
-  // No media input — the prompt is the whole instruction, so it stays required (the default).
+  // No media input - the prompt is the whole instruction, so it stays required (the default).
   inputs: [],
   params: [
     numberParam('duration', 'Duration (s)', 90, { min: 1, max: 600, step: 1 }),

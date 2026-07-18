@@ -1,11 +1,11 @@
 """Locate the Inline Studio frontend Core serves on its own port (mirrors ComfyUI's frontend pkg).
 
 Resolution order, most specific first:
-  1. ``INLINE_FRONTEND_ROOT`` — a local SPA build dir (set directly or via ``main.py
-     --front-end-root``); the dev loop — rebuild the UI locally without republishing the package.
-  2. the installed ``inline_studio_frontend`` package's ``static/`` dir — the default for end users
+  1. ``INLINE_FRONTEND_ROOT`` - a local SPA build dir (set directly or via ``main.py
+     --front-end-root``); the dev loop - rebuild the UI locally without republishing the package.
+  2. the installed ``inline_studio_frontend`` package's ``static/`` dir - the default for end users
      (``pip install`` pulls the built frontend; no Node needed).
-  3. ``None`` — Core runs API-only (no UI mounted).
+  3. ``None`` - Core runs API-only (no UI mounted).
 
 A dir only counts when it actually holds an ``index.html``.
 """

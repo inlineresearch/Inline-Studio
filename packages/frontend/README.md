@@ -1,6 +1,6 @@
 # inline-studio-frontend
 
-Prebuilt Inline Studio web UI (SPA), packaged so **Inline Core** can serve it on a single port —
+Prebuilt Inline Studio web UI (SPA), packaged so **Inline Core** can serve it on a single port -
 mirroring ComfyUI's `comfyui-frontend-package`. End users `pip install inline-core` (which depends on
 this), then run `python main.py`; no Node build on their machine.
 
@@ -19,7 +19,7 @@ cd packages/frontend
 python -m build && twine upload dist/*  # publish to PyPI
 ```
 
-## Local development — don't republish
+## Local development - don't republish
 
 Point Core at a local build instead:
 

@@ -7,7 +7,7 @@ interface UiState {
   mode: WorkspaceMode
   /** Name of the most recently linked ComfyUI workflow, for the Generate banner. */
   linkedWorkflow: string | null
-  /** The frame whose workflow is open in Generate — capture targets this frame. */
+  /** The frame whose workflow is open in Generate - capture targets this frame. */
   activeFrameId: string | null
   /** The frame open in the right-side inspector drawer (null = closed). */
   inspectorFrameId: string | null

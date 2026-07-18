@@ -3,12 +3,12 @@
 Profiles: gpu-max (ample VRAM), lowvram (tight VRAM), cpu (fp32, tiling, int8 to fit RAM). By
 default we always prefer the GPU: even under lowvram, weights stay resident on the GPU (tiling +
 attention
-slicing + int8 do the memory saving) and we do NOT auto-offload to CPU — offloading is slow and
+slicing + int8 do the memory saving) and we do NOT auto-offload to CPU - offloading is slow and
 defeats "use the GPU we have".
 
 Smart memory (INLINE_SMART_MEMORY=1, `webui.sh --smart-memory`) is the opt-in escape hatch for a
 model that simply does not fit resident: it spreads the model across VRAM + RAM + CPU by streaming
-components on/off the GPU (a graduated OffloadMode — MODEL, or SEQUENTIAL on a very small GPU) and
+components on/off the GPU (a graduated OffloadMode - MODEL, or SEQUENTIAL on a very small GPU) and
 quantizes the big weights to int8 so the offloaded half also fits in RAM. Slower per image, but it
 runs where full-resident OOMs. Set INLINE_ALLOW_CPU_OFFLOAD=1 for the older bare model-offload knob
 without quantization. Override the profile/budget with INLINE_PROFILE and INLINE_VRAM_BUDGET_GB.
@@ -38,7 +38,7 @@ _GPU_MAX_MIN_VRAM_GB = 16.0  # at or above -> gpu-max, else lowvram
 _QUANT_VRAM_GB = 10.0  # lowvram below this -> int8
 _QUANT_RAM_GB = 48.0  # cpu below this -> int8
 # Smart memory: at/above this VRAM the int8 model fits RESIDENT on the GPU (no offload); below it,
-# even int8 won't fit, so fall to SEQUENTIAL submodule streaming (unquantized — torchao int8 and CPU
+# even int8 won't fit, so fall to SEQUENTIAL submodule streaming (unquantized - torchao int8 and CPU
 # offload deadlock together) so a very small GPU can still run.
 _SMART_RESIDENT_MIN_VRAM_GB = 6.0
 
@@ -74,7 +74,7 @@ def _vram_gb(device: Device) -> float | None:
 
 
 def _free_vram_gb(device: Device) -> float | None:
-    """Live *free* VRAM (mem_get_info[0]) — for diagnostics/UI only. NOT used to choose the plan:
+    """Live *free* VRAM (mem_get_info[0]) - for diagnostics/UI only. NOT used to choose the plan:
     residency-dependent free readings would make the quant/offload decision (and thus the pipeline
     cache key) oscillate. Capacity decisions use total VRAM (``_vram_gb``)."""
     if device.kind is not DeviceKind.CUDA:
@@ -182,7 +182,7 @@ class MemoryPolicy(DevicePolicy):
         self._fit = self._compute_fit(footprint) if footprint is not None else None
 
     def estimate_fit(self, footprint: ModelFootprint) -> FitEstimate | None:
-        """A pure fit verdict — does NOT mutate the policy, so the UI thread can call it while a run
+        """A pure fit verdict - does NOT mutate the policy, so the UI thread can call it while a run
         holds the policy on the worker thread."""
         return self._compute_fit(footprint)
 
@@ -191,7 +191,7 @@ class MemoryPolicy(DevicePolicy):
 
     def _compute_fit(self, fp: ModelFootprint) -> FitEstimate | None:
         """Pick the lightest plan whose weights fit the GPU: full-precision resident, else int8
-        resident, else CPU-offload streaming (unquantized — int8 + offload deadlock). Capacity is
+        resident, else CPU-offload streaming (unquantized - int8 + offload deadlock). Capacity is
         TOTAL VRAM (a fixed device property) minus activation headroom, so the decision is stable
         across runs and doesn't bust the pipeline cache. Returns None (→ coarse buckets) off-CUDA or
         when sizes are unavailable (e.g. a whole-pipeline folder)."""
@@ -283,17 +283,17 @@ class MemoryPolicy(DevicePolicy):
 
     def _compute_dtype(self, role: str) -> DType:
         """The weight/compute dtype for a GPU role. bf16 by default, but fp16 on GPUs without bf16
-        acceleration (Turing/Volta) — same footprint, yet it uses their fp16 tensor cores instead of
+        acceleration (Turing/Volta) - same footprint, yet it uses their fp16 tensor cores instead of
         bf16's slow path. The VAE is the exception: fp16 decode can overflow to black/NaN images, so
-        it stays upcast (bf16, or fp32 on a card that also lacks bf16) — it is tiny, so the cost is
+        it stays upcast (bf16, or fp32 on a card that also lacks bf16) - it is tiny, so the cost is
         nil.
 
         **int8 overrides the fp16 preference to bf16.** torchao weight-only int8 only supports a
-        bf16 compute dtype — with fp16 the quantization silently no-ops, so the "int8" weights load
+        bf16 compute dtype - with fp16 the quantization silently no-ops, so the "int8" weights load
         at *full* fp16 size and blow the VRAM budget (a T4 then OOMs mid-load). The int8 matmul still
         runs on the card's int8 tensor cores; only the residual bf16 activations pay the slow path.
         bf16 also has fp32's exponent range, so the VAE no longer needs the fp32 anti-overflow
-        upcast — it rides along at bf16."""
+        upcast - it rides along at bf16."""
         if self.quantization() is Quantization.INT8:
             return DType.BF16
         if self._bf16:
@@ -301,12 +301,12 @@ class MemoryPolicy(DevicePolicy):
         return DType.FP32 if role == "vae" else DType.FP16
 
     def _offload_mode(self) -> OffloadMode:
-        """Whether (and how) to stream weights to CPU. Default: never — prefer the GPU we have, and
+        """Whether (and how) to stream weights to CPU. Default: never - prefer the GPU we have, and
         let tiling/slicing/int8 do the saving with weights resident.
 
         Smart memory keeps weights RESIDENT and quantizes to int8 instead of offloading: int8 halves
-        the model so a lowvram GPU holds it, and that avoids the slow — and, with torchao int8,
-        hang-prone — accelerate CPU-offload path. Only a GPU too small for even int8-resident
+        the model so a lowvram GPU holds it, and that avoids the slow - and, with torchao int8,
+        hang-prone - accelerate CPU-offload path. Only a GPU too small for even int8-resident
         streams submodules (SEQUENTIAL, unquantized). The older INLINE_ALLOW_CPU_OFFLOAD flag still
         does bare (unquantized) MODEL offload for anyone who wants it."""
         if self._fit is not None:
@@ -339,13 +339,13 @@ class MemoryPolicy(DevicePolicy):
         return self.profile in (Profile.LOWVRAM, Profile.CPU)
 
     def quantization(self) -> Quantization:
-        # A size-aware fit (when set) owns the quant choice — int8 auto-engages when full precision
+        # A size-aware fit (when set) owns the quant choice - int8 auto-engages when full precision
         # won't fit, no --smart-memory flag needed.
         if self._fit is not None:
             return self._fit.quant
         # Smart memory quantizes to int8 so the halved model fits RESIDENT on the GPU (see
         # _offload_mode). The one exception: a GPU so small it must SEQUENTIAL-offload instead runs
-        # unquantized — torchao int8 + CPU offload deadlock together.
+        # unquantized - torchao int8 + CPU offload deadlock together.
         if self._smart and self._profile is Profile.LOWVRAM:
             if self._offload_mode() is OffloadMode.SEQUENTIAL:
                 return Quantization.NONE

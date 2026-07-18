@@ -26,7 +26,7 @@ interface GraphNodeData extends Record<string, unknown> {
 }
 
 // Handles are packed against an edge rather than spread down the whole side: content/signal ports
-// stack from the top, model-family ports (model/vae/text-encoder) stack from the bottom — so model
+// stack from the top, model-family ports (model/vae/text-encoder) stack from the bottom - so model
 // wiring reads as one band along the bottom and the image flow runs across the top.
 const HANDLE_BASE = 18 // px from the packed edge to the first dot
 const HANDLE_GAP = 22 // px between stacked dots
@@ -39,7 +39,7 @@ function bottomStyle(index: number): React.CSSProperties {
   return { top: 'auto', bottom: HANDLE_BASE + index * HANDLE_GAP }
 }
 
-/** One colored port dot with a hover chip naming the port — input (left) or output (right). */
+/** One colored port dot with a hover chip naming the port - input (left) or output (right). */
 function PortHandle({
   port,
   side,
@@ -89,7 +89,7 @@ function coreGlyph(icon: string): React.JSX.Element {
  * A generic Inline Core graph node backed by a `core` moodboard item. Resolves its descriptor from
  * the served `/v1/models` palette and renders in the same card style as the fal Generate node: a
  * floating title badge, an edge-to-edge output preview, and a footer with Run + an adjust (settings)
- * button. Params live behind the adjust button in the Core settings sidebar — the node face stays
+ * button. Params live behind the adjust button in the Core settings sidebar - the node face stays
  * clean, so a model node like Z-Image Turbo reads as one simple node. One colored handle per
  * declared port (inputs left, outputs right, colored by kind).
  */
@@ -149,7 +149,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const pct = typeof progress === 'number' ? Math.round(progress * 100) : null
 
   // Take history for the on-node output strip (newest first). Older items predate history and only
-  // carry a single `output` — treat that as a one-entry history. `output` marks the active take.
+  // carry a single `output` - treat that as a one-entry history. `output` marks the active take.
   const outputs = core.outputs ?? (core.output ? [core.output] : [])
   const activeTakeId = core.output?.takeId
   const setActiveOutput = (o: NonNullable<typeof core.output>): void => {
@@ -163,7 +163,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const download = downloadsForType ? activeDownload(downloadsForType, reqs) : null
   const downloadPct = download ? Math.round(download.fraction * 100) : null
 
-  // A loader/plumbing node (no media output) renders compact — no preview, no Run (it loads with
+  // A loader/plumbing node (no media output) renders compact - no preview, no Run (it loads with
   // whatever downstream node runs). Generation nodes get the full preview card + the graph Run
   // control floated on the output node.
   const isLoader = descriptor.outputKind == null
@@ -195,7 +195,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   if (isLoader) {
     // A loader's whole job is picking a file, so its SELECT dropdown(s) live directly on the node
-    // face (not behind Adjust) — the one exception to "params off the node face", which exists to
+    // face (not behind Adjust) - the one exception to "params off the node face", which exists to
     // keep *generation* one-click. Any non-select params (rare for a loader) stay behind Adjust.
     const selectParams = descriptor.params.filter((p) => p.widget === 'select')
     const otherParams = descriptor.params.filter((p) => p.widget !== 'select')
@@ -278,13 +278,13 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         disabled={download !== null}
         disabledReason="Downloading model…"
       />
-      {/* Floating title badge — matches the fal Generate node. */}
+      {/* Floating title badge - matches the fal Generate node. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>
         {modelsMissing && (
           <button
             onClick={() => openReqs(descriptor.type)}
-            title="Models missing — click to download"
+            title="Models missing - click to download"
             className="nodrag flex h-6 animate-pulse items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 text-[10px] font-medium text-amber-300 shadow-sm backdrop-blur hover:animate-none hover:bg-amber-500/20"
           >
             <AlertIcon className="h-3.5 w-3.5" />
@@ -318,7 +318,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                     : download
                       ? `Downloading ${download.label}…`
                       : modelsMissing
-                        ? 'Models missing — click the hint to download'
+                        ? 'Models missing - click the hint to download'
                         : 'Run to generate'}
                 </span>
               </div>

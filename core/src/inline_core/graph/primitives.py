@@ -130,7 +130,7 @@ PRIMITIVES: tuple[NodeDescriptor, ...] = (
 )
 
 
-#: The loader primitives now have runners and are offered in the add-node menu — registered
+#: The loader primitives now have runners and are offered in the add-node menu - registered
 #: (unhidden) with their runners by ``graph/loader_runners.py``, so they are skipped here.
 _HAS_RUNNER = {LOAD_DIFFUSION_MODEL.type, LOAD_VAE.type, LOAD_TEXT_ENCODER.type}
 

@@ -24,12 +24,12 @@ class AttentionBackend(str, Enum):
 class OffloadMode(str, Enum):
     """How a component's weights are split between GPU VRAM and CPU RAM.
 
-    NONE       weights stay resident on the GPU (the default — prefer the GPU we have).
+    NONE       weights stay resident on the GPU (the default - prefer the GPU we have).
     MODEL      diffusers ``enable_model_cpu_offload``: only the *active* component (text encoder,
                then transformer, then VAE) sits on the GPU; the rest waits in CPU RAM. Peak VRAM ≈
-               the largest single component. Fast — the standard low-VRAM fit.
+               the largest single component. Fast - the standard low-VRAM fit.
     SEQUENTIAL diffusers ``enable_sequential_cpu_offload``: submodules stream on/off the GPU
-               layer-by-layer. Lowest peak VRAM, slowest — for GPUs too small for MODEL offload.
+               layer-by-layer. Lowest peak VRAM, slowest - for GPUs too small for MODEL offload.
     """
 
     NONE = "none"
@@ -79,7 +79,7 @@ class Placement:
 
 @dataclass(frozen=True)
 class ModelFootprint:
-    """On-disk byte sizes of a model's big components — the input to a memory fit estimate. The
+    """On-disk byte sizes of a model's big components - the input to a memory fit estimate. The
     files ship already 16-bit, so a size is a good proxy for the fp16-resident weight footprint;
     int8 halves the two big weights. The policy uses this to pick dtype/quant/offload to the GPU
     instead of a coarse VRAM bucket."""

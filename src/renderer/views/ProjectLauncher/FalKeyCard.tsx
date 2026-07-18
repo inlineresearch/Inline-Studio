@@ -5,7 +5,7 @@ const FAL_KEYS_URL = 'https://fal.ai/dashboard/keys'
 
 /**
  * A home-screen card pitching the fal (Generate) engine: run closed-source models straight from the
- * canvas with no ComfyUI install — you just bring your own fal.ai key. Sits under the "New here?"
+ * canvas with no ComfyUI install - you just bring your own fal.ai key. Sits under the "New here?"
  * card and opens fal.ai's keys dashboard so new users can grab a key (it stays on their device).
  */
 export function FalKeyCard(): React.JSX.Element {
@@ -22,7 +22,7 @@ export function FalKeyCard(): React.JSX.Element {
           Closed models, no ComfyUI setup
         </span>
         <span className="block text-xs text-zinc-400">
-          Run GPT Image, Seedance &amp; more right on the canvas — nothing to install. Bring your
+          Run GPT Image, Seedance &amp; more right on the canvas - nothing to install. Bring your
           own fal.ai API key; it stays on your device.
         </span>
       </span>

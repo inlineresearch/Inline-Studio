@@ -27,7 +27,7 @@ export function DeletableEdge(props: EdgeProps): React.JSX.Element {
     data,
   } = props
   const disconnect = useMoodboardStore((s) => s.disconnect)
-  // Line style is a live canvas preference — every edge subscribes, so switching it in Settings
+  // Line style is a live canvas preference - every edge subscribes, so switching it in Settings
   // restyles all connectors at once. `angled` = cornered (smooth step); `wave` = curved (bezier).
   const edgeStyle = useCanvasPrefsStore((s) => s.edgeStyle)
   const geom = { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }

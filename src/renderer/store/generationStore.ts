@@ -30,7 +30,7 @@ interface GenerationState {
   run: (frameId: string) => Promise<void>
   /** Run a Core workflow up to this canvas node (serializes its upstream closure). */
   runWorkflow: (itemId: string) => Promise<void>
-  /** Abort a frame's run (or all when no id) — resets its node immediately. */
+  /** Abort a frame's run (or all when no id) - resets its node immediately. */
   cancel: (frameId?: string) => Promise<void>
   /** Ask main to re-poll + finish any generations left in flight from a previous session. */
   resumePending: () => Promise<void>
@@ -76,7 +76,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
         progressByFrame: { ...s.progressByFrame, [frameId]: null },
       }))
     try {
-      // Build the fal request client-side — fal node defs live in the browser. The web backend runs
+      // Build the fal request client-side - fal node defs live in the browser. The web backend runs
       // exactly this request; the Electron backend ignores it and builds the request server-side.
       let request: FalRunRequest | undefined
       const frame = useFrameStore.getState().frames.find((f) => f.id === frameId)
@@ -133,7 +133,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
   },
 
   cancel: async (frameId) => {
-    // Reset the node right away — the run is also cancelled server-side, but the UI shouldn't
+    // Reset the node right away - the run is also cancelled server-side, but the UI shouldn't
     // wait on the round-trip. Without a frame id, clear every in-flight node.
     set((s) =>
       frameId
@@ -176,7 +176,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
     try {
       const res = await studio().frames.setModel(frameId, modelId)
       if (!res.ok) return set({ error: res.error })
-      // Output kind + params changed — refresh the frame store so the node re-resolves.
+      // Output kind + params changed - refresh the frame store so the node re-resolves.
       await useFrameStore.getState().load()
     } catch (e) {
       set({ error: ipcErrorMessage(e) })

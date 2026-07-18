@@ -54,7 +54,7 @@ export function ProjectLauncher(): React.JSX.Element {
           </header>
 
           <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
-            {/* Left column — your projects */}
+            {/* Left column - your projects */}
             <div className="flex flex-col gap-6">
               <section className="rounded-xl border border-border bg-surface p-5">
                 <h2 className="mb-3 text-sm font-medium text-zinc-300">New project</h2>
@@ -136,7 +136,7 @@ export function ProjectLauncher(): React.JSX.Element {
               </section>
             </div>
 
-            {/* Right column — getting started + demo */}
+            {/* Right column - getting started + demo */}
             <div className="flex flex-col gap-6">
               <GettingStartedCard />
               <FalKeyCard />

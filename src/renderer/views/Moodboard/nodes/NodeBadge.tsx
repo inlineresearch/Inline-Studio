@@ -6,7 +6,7 @@ import { useMoodboardStore } from '../../../store/moodboardStore'
  * Shared chrome for the canvas node family, matching the Generate node's look: a floating
  * title "pill" pinned just above a node's top-left corner (icon + label), plus the small
  * Lucide-style icons the nodes badge themselves with. Keeping the pill here guarantees every
- * node — Frame, Preview, Image, Trim, Director… — reads as one consistent card design.
+ * node - Frame, Preview, Image, Trim, Director… - reads as one consistent card design.
  */
 
 /**
@@ -52,7 +52,7 @@ function useChipDrag(id: string): (e: React.PointerEvent) => void {
 
 /**
  * Row that holds a node's floating badge(s), pinned above the node's top-left corner. Pass
- * `dragNodeId` (the node's id) to make the chip a per-node drag handle — moving just that node
+ * `dragNodeId` (the node's id) to make the chip a per-node drag handle - moving just that node
  * rather than the whole selected graph.
  */
 export function NodeBadgeRow({
@@ -104,7 +104,7 @@ export function NodeBadge({
   const color = tone === 'info' ? (accent ?? 'text-zinc-400') : 'text-zinc-200'
   // The title pill shrinks (and its label truncates) to fit the node's width; info pills like a
   // price keep their size so the title yields first. `min-w-0` is required for `truncate` to work
-  // on a flex child — without it the label defines the pill's min width and never ellipsises.
+  // on a flex child - without it the label defines the pill's min width and never ellipsises.
   const flex = tone === 'info' ? 'shrink-0' : 'min-w-0'
   const pill = (
     <div
@@ -117,7 +117,7 @@ export function NodeBadge({
   )
   if (!tooltip) return pill
   return (
-    // Carries the same flex sizing as the bare pill — with a tooltip this wrapper, not the pill,
+    // Carries the same flex sizing as the bare pill - with a tooltip this wrapper, not the pill,
     // is the row's flex child, so the shrink/`min-w-0` has to live here for truncation to work.
     <div className={`group relative ${flex}`}>
       {pill}
@@ -128,7 +128,7 @@ export function NodeBadge({
   )
 }
 
-/** Lucide-style stroked icon wrapper — 24×24, inherits colour/size from the caller. */
+/** Lucide-style stroked icon wrapper - 24×24, inherits colour/size from the caller. */
 function Icon({
   className,
   children,
@@ -152,7 +152,7 @@ function Icon({
   )
 }
 
-/** Film frame — the Frame node. */
+/** Film frame - the Frame node. */
 export function FilmIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -162,7 +162,7 @@ export function FilmIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
-/** Eye — the Preview node. */
+/** Eye - the Preview node. */
 export function EyeIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -172,7 +172,7 @@ export function EyeIcon({ className }: { className?: string }): React.JSX.Elemen
   )
 }
 
-/** Picture — an Image asset node. */
+/** Picture - an Image asset node. */
 export function ImageGlyph({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -183,7 +183,7 @@ export function ImageGlyph({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-/** Movie camera — a Video asset node. */
+/** Movie camera - a Video asset node. */
 export function VideoGlyph({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -193,7 +193,7 @@ export function VideoGlyph({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-/** Music note — an Audio asset node. */
+/** Music note - an Audio asset node. */
 export function AudioGlyph({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -204,7 +204,7 @@ export function AudioGlyph({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-/** Scissors — the Edit/Trim node. */
+/** Scissors - the Edit/Trim node. */
 export function ScissorsIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -215,7 +215,7 @@ export function ScissorsIcon({ className }: { className?: string }): React.JSX.E
   )
 }
 
-/** Clapperboard — the Director node. */
+/** Clapperboard - the Director node. */
 export function ClapperIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -226,7 +226,7 @@ export function ClapperIcon({ className }: { className?: string }): React.JSX.El
   )
 }
 
-/** Chain link — the Frame node's "link a ComfyUI workflow" action. */
+/** Chain link - the Frame node's "link a ComfyUI workflow" action. */
 export function LinkIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -260,7 +260,7 @@ export function ChevronDownIcon({ className }: { className?: string }): React.JS
   )
 }
 
-/** Star — "set as hero" / hero marker. `filled` paints it solid for the current hero. */
+/** Star - "set as hero" / hero marker. `filled` paints it solid for the current hero. */
 export function StarIcon({
   className,
   filled,
@@ -284,7 +284,7 @@ export function StarIcon({
   )
 }
 
-/** X — close / delete. */
+/** X - close / delete. */
 export function XIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className ?? 'h-3.5 w-3.5'}>
@@ -293,7 +293,7 @@ export function XIcon({ className }: { className?: string }): React.JSX.Element 
   )
 }
 
-/** Play triangle — a node's Run control. */
+/** Play triangle - a node's Run control. */
 export function PlayIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <svg
@@ -307,7 +307,7 @@ export function PlayIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
-/** Filled square — the Run control turns into this to interrupt an in-progress generation. */
+/** Filled square - the Run control turns into this to interrupt an in-progress generation. */
 export function StopIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <svg
@@ -322,7 +322,7 @@ export function StopIcon({ className }: { className?: string }): React.JSX.Eleme
 }
 
 /**
- * Sliders/adjust mark — opens a node's settings sidebar. Shared by the Generate (fal) node and the
+ * Sliders/adjust mark - opens a node's settings sidebar. Shared by the Generate (fal) node and the
  * Inline Core node so both read identically. Has filled dots, so it's its own svg (not the stroked
  * Icon wrapper).
  */
@@ -346,7 +346,7 @@ export function AdjustIcon({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-/** Magic wand — a generation model node (Z-Image and other `icon:"wand"` descriptors). */
+/** Magic wand - a generation model node (Z-Image and other `icon:"wand"` descriptors). */
 export function WandIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -355,7 +355,7 @@ export function WandIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
-/** Box — a loader-style node (`icon:"box"`). */
+/** Box - a loader-style node (`icon:"box"`). */
 export function BoxIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -365,7 +365,7 @@ export function BoxIcon({ className }: { className?: string }): React.JSX.Elemen
   )
 }
 
-/** Type "T" — a text/prompt-style node (`icon:"type"`). */
+/** Type "T" - a text/prompt-style node (`icon:"type"`). */
 export function TypeIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -374,7 +374,7 @@ export function TypeIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
-/** Square — a latent/plumbing node (`icon:"square"`), and the generic fallback glyph. */
+/** Square - a latent/plumbing node (`icon:"square"`), and the generic fallback glyph. */
 export function SquareIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -383,7 +383,7 @@ export function SquareIcon({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-/** Alert triangle — the "models missing" hint on a model node (opens the model popup). */
+/** Alert triangle - the "models missing" hint on a model node (opens the model popup). */
 export function AlertIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>
@@ -393,7 +393,7 @@ export function AlertIcon({ className }: { className?: string }): React.JSX.Elem
   )
 }
 
-/** Download tray with a down arrow — a component's download action in the model popup. */
+/** Download tray with a down arrow - a component's download action in the model popup. */
 export function DownloadIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Icon className={className}>

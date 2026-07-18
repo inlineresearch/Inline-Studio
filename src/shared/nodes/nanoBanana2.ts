@@ -1,5 +1,5 @@
 /**
- * fal.ai `fal-ai/nano-banana-2` — text-to-image (Google's Nano Banana 2, served via fal).
+ * fal.ai `fal-ai/nano-banana-2` - text-to-image (Google's Nano Banana 2, served via fal).
  * See https://fal.ai/models/fal-ai/nano-banana-2.
  */
 import { constantEndpoint, approxPrice, selectParam, numberParam } from './builders'

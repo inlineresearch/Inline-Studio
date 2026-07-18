@@ -1,4 +1,4 @@
-"""Z-Image runner: registration, input/param resolution, progress, and cancel — with the heavy
+"""Z-Image runner: registration, input/param resolution, progress, and cancel - with the heavy
 diffusers pipeline mocked so nothing is downloaded and no GPU is needed."""
 
 from __future__ import annotations
@@ -321,7 +321,7 @@ class _FakeEmbedPipe:
         neg = [_FakeEmbed("neg-embed")] if do_classifier_free_guidance else []
         return [_FakeEmbed("pos-embed")], neg
 
-    def __call__(  # noqa: D401 — signature is what _supports_prompt_embeds inspects
+    def __call__(  # noqa: D401 - signature is what _supports_prompt_embeds inspects
         self,
         prompt: Any = None,
         prompt_embeds: Any = None,
@@ -334,7 +334,7 @@ class _FakeEmbedPipe:
 
 def test_prompt_kwargs_offloads_text_encoder_on_resident_gpu() -> None:
     """On a resident GPU placement the prompt is pre-encoded **on the GPU** (torchao int8 has a real
-    CUDA matmul kernel, so the dequant is transient — a CPU encode instead OOM-kills a 16 GB host),
+    CUDA matmul kernel, so the dequant is transient - a CPU encode instead OOM-kills a 16 GB host),
     then the encoder is parked on the CPU to free its VRAM for the denoise; the pipe is handed
     embeddings, not a raw prompt."""
     policy = MemoryPolicy(_CUDA, vram_gb=15.6)  # resident, no offload
@@ -356,7 +356,7 @@ def test_prompt_kwargs_offloads_text_encoder_on_resident_gpu() -> None:
 
 
 def test_prompt_kwargs_passes_negatives_when_cfg_on() -> None:
-    """With guidance > 0 the pipeline needs the negative embeddings alongside the positives — both
+    """With guidance > 0 the pipeline needs the negative embeddings alongside the positives - both
     encoded on the GPU, then the encoder is parked on the CPU for the denoise."""
     policy = MemoryPolicy(_CUDA, vram_gb=15.6)
     pipe = _FakeEmbedPipe()
@@ -371,7 +371,7 @@ def test_prompt_kwargs_passes_negatives_when_cfg_on() -> None:
 
 
 def test_prompt_kwargs_raw_prompt_when_offloaded() -> None:
-    """An offload placement lets accelerate stream the encoder — pass the raw prompt, don't touch
+    """An offload placement lets accelerate stream the encoder - pass the raw prompt, don't touch
     the text encoder ourselves."""
     policy = MemoryPolicy(_CUDA, vram_gb=6, allow_offload=True)  # MODEL offload
     assert policy.placement("denoiser").offload is True
@@ -405,7 +405,7 @@ def test_prompt_kwargs_falls_back_when_encode_fails() -> None:
 
 
 def test_oom_message_flags_cfg_when_guidance_on() -> None:
-    """The 1024² OOM on a T4 is CFG doubling the denoise batch — the message must say so and point
+    """The 1024² OOM on a T4 is CFG doubling the denoise batch - the message must say so and point
     at guidance=0 (turbo runs CFG-free), not just resolution."""
     with_cfg = rz._oom_message(1024, 1024, guidance=1.0)
     assert "Guidance" in with_cfg and "CFG-free" in with_cfg
@@ -447,7 +447,7 @@ class _FakeVae:
 
     def __init__(self) -> None:
         self.tile_sample_min_size = 1024
-        self.tile_latent_min_size = 128  # sample_size / 8 — the Z-Image VAE's default
+        self.tile_latent_min_size = 128  # sample_size / 8 - the Z-Image VAE's default
 
 
 def test_shrink_vae_tiles_forces_tiling_at_1024() -> None:

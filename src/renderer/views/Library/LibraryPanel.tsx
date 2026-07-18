@@ -252,7 +252,7 @@ function AssetThumb({
   onDelete: () => void
 }): React.JSX.Element {
   const url = resolveMedia(asset.filePath)
-  // Grid cells are small — render images from their downscaled thumbnail when present.
+  // Grid cells are small - render images from their downscaled thumbnail when present.
   const imageSrc = resolveMedia(
     asset.kind === 'image' ? (asset.thumbPath ?? asset.filePath) : asset.filePath,
   )
@@ -275,7 +275,7 @@ function AssetThumb({
           const ids = dragSelected && dragIds.length > 0 ? dragIds : [asset.id]
           setAssetDragPayload(e.dataTransfer, ids)
         }}
-        title={`${asset.name} — drag onto the Frames Sequence (⌘/Ctrl-click to multi-select)`}
+        title={`${asset.name} - drag onto the Frames Sequence (⌘/Ctrl-click to multi-select)`}
         className={`flex w-full flex-col overflow-hidden rounded-md border text-left ${
           dragSelected
             ? 'border-accent ring-1 ring-accent'

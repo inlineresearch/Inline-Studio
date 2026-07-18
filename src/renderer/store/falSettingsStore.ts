@@ -1,6 +1,6 @@
 /**
  * Renderer state for the fal.ai API key (bring-your-own-key). The key itself never comes back
- * across the bridge — only whether one is configured and if it's stored encrypted.
+ * across the bridge - only whether one is configured and if it's stored encrypted.
  */
 import { create } from 'zustand'
 import { ipcErrorMessage } from '../lib/ipcError'

@@ -2,7 +2,7 @@
 
 Two halves, split to honor the import-guard rule (see core/CLAUDE.md):
 
-- A **torch-free data layer** — the curated sampler/scheduler options per model family plus the two
+- A **torch-free data layer** - the curated sampler/scheduler options per model family plus the two
   ``SELECT`` param fields a runner splices into its descriptor. Importable anywhere; no torch/
   diffusers, only the plain ``graph.descriptor`` dataclasses.
 - A **resolver** (``apply_sampling``) that rebuilds a pipeline's scheduler for a selected
@@ -10,7 +10,7 @@ Two halves, split to honor the import-guard rule (see core/CLAUDE.md):
 
 Why a curated, family-specific set rather than the classic Stable-Diffusion sampler list: Z-Image is
 a **flow-matching** model. Its diffusers pipeline ``__call__`` always forces ``sigmas=`` + ``mu=``
-into ``scheduler.set_timesteps``, and only ``FlowMatchEulerDiscreteScheduler`` accepts both — so the
+into ``scheduler.set_timesteps``, and only ``FlowMatchEulerDiscreteScheduler`` accepts both - so the
 classic DPM++/UniPC/DDIM/Heun sampler *class-swap* is not physically valid on the stock pipeline.
 For this family, selecting a **scheduler** flips a sigma-spacing config flag (Karras/Exponential/
 Beta), and selecting a **sampler** flips the ancestral (``stochastic_sampling``) flag; everything
@@ -19,7 +19,7 @@ class-swap set later without reworking the UI.
 
 (A ``uniform`` scheduler was evaluated and dropped: Z-Image's default sigma spacing already IS a
 linear ramp, so an explicit uniform ramp produced byte-identical output to ``simple`` at every step
-count — a confusing no-op option. ``apply_sampling`` keeps its ``list[float] | None`` return as the
+count - a confusing no-op option. ``apply_sampling`` keeps its ``list[float] | None`` return as the
 seam for a future family whose scheduler genuinely supplies explicit sigmas.)
 """
 
@@ -36,7 +36,7 @@ logger = logging.getLogger("inline_core.sampling")
 
 class SamplingFamily(str, Enum):
     """The math family a model's scheduler belongs to. Only flow-match ships today; epsilon
-    (SDXL-style class-swap samplers) is the intended next entry — add it here plus its option lists
+    (SDXL-style class-swap samplers) is the intended next entry - add it here plus its option lists
     and flag maps, and every flow-match runner keeps working untouched."""
 
     FLOW_MATCH = "flow_match"
@@ -85,7 +85,7 @@ _SCHEDULER_FLAGS: dict[str, dict[str, Any]] = {
 
 def sampling_param_fields(family: SamplingFamily) -> tuple[ParamField, ParamField]:
     """The two ``SELECT`` param fields (sampler, scheduler) a runner splices into its descriptor
-    ``params``. Torch-free — plain dataclasses. Marked ``advanced`` so they live behind the node's
+    ``params``. Torch-free - plain dataclasses. Marked ``advanced`` so they live behind the node's
     Adjust panel and generation stays one-click at the default euler/simple."""
     return (
         ParamField(
@@ -100,7 +100,7 @@ def sampling_param_fields(family: SamplingFamily) -> tuple[ParamField, ParamFiel
 
 
 def _validated(value: Any, options: tuple[Option, ...], default: str) -> str:
-    """Coerce a saved id to a known option, else the family default — safety for an old saved node
+    """Coerce a saved id to a known option, else the family default - safety for an old saved node
     whose stored value predates a curated set (the descriptor ``defaults()`` merge already guards
     the common case; this guards a stale explicit value)."""
     ids = {o.value for o in options}
@@ -119,7 +119,7 @@ def apply_sampling(
     """Rebuild ``pipe.scheduler`` for the selected ``(sampler, scheduler)`` pair.
 
     Returns an explicit ``sigmas`` list when a scheduler supplies its own spacing (none do for
-    the flow-match family today — every option is a config flag — but the return type and ``steps``
+    the flow-match family today - every option is a config flag - but the return type and ``steps``
     are the seam for a future family whose scheduler builds sigmas), else ``None``. The caller adds
     it to the pipeline call as ``sigmas=`` when present.
 
@@ -131,7 +131,7 @@ def apply_sampling(
 
     Flow-match only: the sole compatible scheduler class is ``FlowMatchEulerDiscreteScheduler``.
     If the base config is another class (an unusual whole-pipeline folder), the swap is skipped
-    and the pipeline keeps its own scheduler — defensive, unlikely for Z-Image. Any build failure
+    and the pipeline keeps its own scheduler - defensive, unlikely for Z-Image. Any build failure
     (e.g. a missing optional dep for ``beta``) falls back to the model default spacing and logs,
     never breaking a generation."""
     from diffusers import FlowMatchEulerDiscreteScheduler
@@ -157,7 +157,7 @@ def apply_sampling(
     flags = {**_SAMPLER_FLAGS[sampler_id], **_SCHEDULER_FLAGS[scheduler_id]}
     try:
         pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(base_scheduler_config, **flags)
-    except Exception as error:  # noqa: BLE001 — a sampling choice must never break a generation
+    except Exception as error:  # noqa: BLE001 - a sampling choice must never break a generation
         logger.warning(
             "Could not build scheduler for sampler=%s scheduler=%s (%s); "
             "falling back to the model default spacing.",

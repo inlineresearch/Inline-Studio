@@ -40,7 +40,7 @@ function SparkleIcon(): React.JSX.Element {
 
 /**
  * A freshly-created, engine-unset frame (`provider:'unset'`): the single unified generation node
- * before the user picks how it renders. It offers two paths — ComfyUI Workflow (becomes a FrameNode)
+ * before the user picks how it renders. It offers two paths - ComfyUI Workflow (becomes a FrameNode)
  * or Start with Fal API, which opens a model dropdown under the button; picking a model turns it into
  * a GenNode on that model. Inputs already dropped/wired show at the top and carry over either way.
  */
@@ -77,7 +77,7 @@ export function ChooserNode({ id, data, selected }: NodeProps): React.JSX.Elemen
   const inputThumbs = resolveInputThumbs(inputs, { assets, allFrames, takesByFrame, inputsByFrame })
 
   // Choose ComfyUI: just switch the node into a comfy frame. It renders the FrameNode with its own
-  // "Link Workflow" badge — the user clicks that to link + open the Generate tab. We don't
+  // "Link Workflow" badge - the user clicks that to link + open the Generate tab. We don't
   // navigate automatically, so picking the engine and linking a workflow stay separate steps.
   const onChooseComfy = (): void => {
     void setProvider(frameId, 'comfy')
@@ -145,7 +145,7 @@ export function ChooserNode({ id, data, selected }: NodeProps): React.JSX.Elemen
             className={`relative flex min-h-0 flex-1 flex-col bg-surface/60 ${modelsOpen ? 'overflow-visible' : 'overflow-hidden'}`}
           >
             <div className="relative flex flex-1 flex-col items-center justify-center gap-2.5 p-3">
-              {/* Inputs already fed in — shown at the top, removable, carried into either engine. */}
+              {/* Inputs already fed in - shown at the top, removable, carried into either engine. */}
               <ThumbStrip
                 items={inputThumbs.map((t) => ({
                   id: t.id,
