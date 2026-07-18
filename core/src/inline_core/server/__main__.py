@@ -13,6 +13,7 @@ _os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import uvicorn
 
 from ..config import data_dir, server_host, server_port
+from ..device.detect import cpu_only_torch_warning
 from ..device.memory import MemoryPolicy
 from ..graph.cache import InMemoryCache
 from ..graph.registry import build_default_registry
@@ -35,6 +36,11 @@ def main() -> None:
     run_store = SqliteRunStore(data / "runs.db")
     registered = register_models(registry, store, policy)
     print(f"Registered models: {registered or 'none (source nodes only)'}")
+    # A CPU-only torch wheel on a CUDA machine is a silent ~100x slowdown, so say it loudly here
+    # rather than letting the user conclude the engine is just slow.
+    torch_warning = cpu_only_torch_warning()
+    if torch_warning:
+        print(f"WARNING: {torch_warning}")
     frontend_root = resolve_frontend_root()
     fe = frontend_root or "none (API only); use --front-end-root or install the frontend package"
     print(f"Frontend: {fe}")

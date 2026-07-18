@@ -183,7 +183,9 @@ real codec that moves tensors lives with the model runner.
   `SampleJob` through the batched-sampler seam. The executor orchestrates; it does not sample.
 - **Immutable takes.** The `TakeStore` owns bytes/hash/uri; regenerating adds a take. Never overwrite.
 - **Engine deps are optional and import-guarded.** Heavy deps (torch, diffusers, xfuser) live in
-  `[project.optional-dependencies]` extras (`zimage`, `server`, `parallel`, `dev`). Model-runner
+  `[project.optional-dependencies]` extras (`runtime`, `server`, `parallel`, `dev`). **`runtime` is
+  the single shared ML stack — a new model must reuse it, never declare its own torch/diffusers
+  block.** Model-runner
   subpackages import torch/diffusers at module top **on purpose**: an absent extra makes the import
   raise, and `server/bootstrap.py` skips that model best-effort so a core install still boots and
   serves source nodes. Never import a heavy dep at package top level outside a runner subpackage.
@@ -200,14 +202,14 @@ real codec that moves tensors lives with the model runner.
 
 ```
 uv venv                                   # create ./.venv
-uv pip install -e ".[dev]"                # engine + server + test tooling
-uv pip install -e ".[zimage]"             # + torch, diffusers, transformers (real generation)
-uv pip install -e ".[parallel]"           # + xfuser, for multi-GPU denoise (2+ GPUs)
+uv pip install -e ".[server,dev]"         # engine + server + test tooling
+uv pip install -e ".[runtime]"            # + torch, diffusers, transformers (real generation)
+uv pip install -e ".[runtime,parallel]"   # + xfuser, for multi-GPU denoise (2+ GPUs)
 
 ./webui.sh                                # run (loopback:8848); friendly flags → INLINE_* env
 ./webui.sh --listen --port 9000           # bind all interfaces
 ./webui.sh --lowvram                      # tight-VRAM profile
-./webui.sh --install --extra zimage       # set up ./.venv with the Z-Image runtime, then exit
+./webui.sh --install --extra runtime      # set up ./.venv with the model runtime, then exit
 python -m inline_core.server              # run the server directly (INLINE_HOST / INLINE_PORT)
 
 ruff check .                              # lint (zero warnings)

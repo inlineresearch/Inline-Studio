@@ -10,7 +10,7 @@
 #   ./webui.sh --multi-gpu                  # multi-GPU denoise (auto-detected when 2+ GPUs)
 #   ./webui.sh --multi-gpu pipefusion=2     # force a split
 #   ./webui.sh --lowvram                    # tight-VRAM profile
-#   ./webui.sh --install --extra zimage     # set up the venv with the Z-Image runtime, then exit
+#   ./webui.sh --install --extra runtime    # set up the venv with the local model runtime, then exit
 
 set -euo pipefail
 
@@ -54,7 +54,7 @@ Paths
 
 Setup
   --install              create ./.venv (via uv) and install, then exit
-  --extra NAME           add an install extra (repeatable): zimage, parallel, server
+  --extra NAME           add an install extra (repeatable): runtime, parallel, server
   -h, --help             show this help
 
 Development
@@ -118,7 +118,17 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 if [[ "$RUN_INSTALL" -eq 1 ]]; then
   command -v uv >/dev/null 2>&1 || { echo "uv not found: https://docs.astral.sh/uv/" >&2; exit 1; }
   uv venv
-  uv pip install -e ".[$EXTRAS]"
+  # Pick the right torch wheel. PyPI's default torch is CPU-only on Windows (Linux wheels bundle
+  # CUDA), so installing blind there yields a working install that generates on the CPU ~100x
+  # slower, with no error. When an NVIDIA GPU is present, resolve torch from the CUDA index.
+  TORCH_INDEX=()
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    TORCH_INDEX=(--extra-index-url https://download.pytorch.org/whl/cu124)
+    echo "NVIDIA GPU detected - installing the CUDA build of PyTorch."
+  else
+    echo "No NVIDIA GPU detected - installing the default (CPU) build of PyTorch."
+  fi
+  uv pip install "${TORCH_INDEX[@]}" -e ".[$EXTRAS]"
   # Pull the prebuilt web UI so there's no Node build (best-effort — it may not be published yet).
   uv pip install inline-studio-frontend >/dev/null 2>&1 \
     && echo "Installed the prebuilt web UI (inline-studio-frontend)." \
@@ -188,7 +198,7 @@ run_dev() {
   ( cd .. && INLINE_CORE_URL="http://127.0.0.1:${PORT}" npm run dev:web )
 }
 
-# Smart memory needs torchao (int8 weight-only quant). It ships in the zimage extra, but an older
+# Smart memory needs torchao (int8 weight-only quant). It ships in the runtime extra, but an older
 # venv predates it — install it on demand at launch so --smart-memory just works. Best-effort: if the
 # install fails, generation still runs, only without int8 (the loader logs and loads full precision).
 ensure_smart_memory_deps() {

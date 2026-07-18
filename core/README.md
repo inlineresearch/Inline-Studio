@@ -3,7 +3,7 @@
 The generation engine behind Inline. It takes a typed node graph (JSON) and returns immutable renders
 ("takes"), running image and video models on macOS, Windows, and Linux, from CPU-only boxes and
 low-VRAM laptops up to multi-GPU machines that split a single image's sampling across GPUs (via
-xDiT). It is the render backend that replaces ComfyUI for Inline.
+xDiT). It is Inline Studio's built-in render backend.
 
 First model: Z-Image (Alibaba Tongyi), a 6B rectified-flow diffusion transformer (and a model xDiT
 already supports, so the multi-GPU split works on it from the start).
@@ -16,26 +16,23 @@ already supports, so the multi-GPU split works on it from the start).
 > the policy and IPC round-trip tested), and out-of-process custom nodes are built as seams but not
 > yet running on real hardware.
 
-## How it differs from ComfyUI's architecture
-
-ComfyUI is a great canvas but a fragile engine. Inline Core keeps the open node-graph model and
-rebuilds the engine underneath it.
-
-|              | ComfyUI                                                                     | Inline Core                                                                                                                                      |
-| ------------ | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Graph vs GPU | runs the denoise loop inline, one request at a time                         | graph orchestration (cheap, per request) is separate from a batched sampler that groups compatible jobs across requests                          |
-| Schema       | positional `widgets_values`, validated at runtime (dies mid-graph)          | typed graph, named params, edges type-checked before the run (rejected at submit)                                                                |
-| Devices      | some nodes pin to CPU on a GPU box; Z-Image will not run on CPU             | one device/memory policy owns dtype, placement, offload, and attention; no node hardcodes a device, so one graph runs GPU, low-VRAM, or pure CPU |
-| Multi-GPU    | one image runs on one GPU; splitting a single image needs third-party nodes | one image's denoise can split across GPUs via xDiT (PipeFusion on PCIe, Ulysses on NVLink), in an isolated worker group behind the sampler seam  |
-| Custom nodes | all load into one interpreter and env, so any node can break the core       | run out of process, each pack in its own venv, behind a semver SDK                                                                               |
-| Interface    | a web UI driven by graph JSON over a socket; run state is ephemeral         | a headless `/v1` HTTP + websocket API; runs are durable and survive a restart                                                                    |
-| Outputs      | files you overwrite                                                         | immutable takes; regenerating adds a take, never overwrites                                                                                      |
-| Models       | `models/` dir, dropdowns from a scan                                        | same layout (bring your own, no downloads); a typed catalog feeds versioned node descriptors the UI renders generically                          |
+## Engine design
 
 The two boundaries that matter most: graph orchestration is decoupled from GPU batching (graphs are
 the unit of caching, the sampler is the unit of batching, and the multi-GPU split routes through that
 same seam), and the device policy is the single owner of placement, so the same graph runs on a 4090,
 a 6 GB laptop, pure CPU, or split across several GPUs, without touching the graph.
+
+|              |                                                                                                                                                  |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Graph vs GPU | orchestration (cheap, per request) is separate from a batched sampler that groups compatible jobs across requests                                |
+| Schema       | typed graph, named params, edges type-checked before the run (a bad graph is rejected at submit)                                                 |
+| Devices      | one device/memory policy owns dtype, placement, offload, and attention; no node hardcodes a device, so one graph runs GPU, low-VRAM, or pure CPU |
+| Multi-GPU    | one image's denoise can split across GPUs via xDiT (PipeFusion on PCIe, Ulysses on NVLink), in an isolated worker group behind the sampler seam  |
+| Custom nodes | run out of process, each pack in its own venv, behind a semver SDK                                                                               |
+| Interface    | a headless `/v1` HTTP + websocket API; runs are durable and survive a restart                                                                    |
+| Outputs      | immutable takes; regenerating adds a take, never overwrites                                                                                      |
+| Models       | drop-in `models/` layout (bring your own, no downloads); a typed catalog feeds versioned node descriptors the UI renders generically             |
 
 ## Install
 
@@ -44,8 +41,8 @@ Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 ```
 uv venv
 uv pip install -e ".[server]"     # engine + HTTP/websocket API
-uv pip install -e ".[zimage]"     # + torch, diffusers, transformers (for real generation)
-uv pip install -e ".[parallel]"   # + xfuser, for splitting one image across GPUs (needs 2+ GPUs)
+uv pip install -e ".[runtime]"    # + torch, diffusers, transformers (for real generation)
+uv pip install -e ".[runtime,parallel]"  # + xfuser, to split one image across GPUs (2+ GPUs)
 ```
 
 ## Models
@@ -120,7 +117,7 @@ Enabling it:
 
 1. **Install the extra** and have 2+ CUDA GPUs on one machine:
    ```
-   uv pip install -e ".[parallel]"   # pulls in xfuser and nvidia-ml-py; torchrun ships with torch
+   uv pip install -e ".[runtime,parallel]"  # xfuser + nvidia-ml-py; torchrun ships with torch
    ```
 2. **Run normally.** On the first denoise, the device policy enumerates the GPUs, detects NVLink vs
    PCIe (via `nvidia-ml-py`), and returns a parallel placement when there is more than one GPU. The

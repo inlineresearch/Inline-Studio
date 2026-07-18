@@ -62,26 +62,18 @@ For local generation, either drop a Z-Image `.safetensors` into `core/models/dif
 
 ## Inline Core generation engine
 
-Inline Core is a from-scratch generation engine that **replaces ComfyUI** for local rendering. It keeps the open node-graph model (a typed DAG of nodes and edges → immutable "takes"), and Inline Studio drives it as a single process.
+Inline Core is a from-scratch generation engine for local rendering. It keeps the open node-graph model (a typed DAG of nodes and edges → immutable "takes"), and Inline Studio drives it as a single process.
 
 ![Z-Image Turbo generating locally on the Inline Core engine](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/zit.png)
 
 - **One process, one port** - Inline Studio is a **web SPA** (React) served by Inline Core (a headless Python engine, in `core/`). `core/main.py` runs Core, which serves the built UI and is the app's backend.
 - **Core owns the backend** - the browser reaches it over a small typed RPC/WebSocket contract; Core owns the project database, the filesystem, generation, and the ffmpeg timeline. No Electron, no separate Node server, nothing external to stand up.
-- **Graph decoupled from GPU work** - the graph is the unit of caching; a batched sampler is the unit of batching.
+- **Typed graph, checked before it runs** - named params and type-checked edges, so a bad graph is rejected at submit rather than dying part-way through a denoise.
+- **Immutable takes** - regenerating adds a take; nothing is ever overwritten. The take history is the point.
+- **Durable runs** - a run survives a restart, and progress streams over a WebSocket.
+- **Graph decoupled from GPU work** - the graph is the unit of caching; a batched sampler is the unit of batching, grouping compatible jobs across requests.
 - **A single device policy owns all placement** - device, dtype, offload, and attention, so the same graph runs on a 4090, a 6 GB laptop, pure CPU, or split across several GPUs without touching the graph.
-
-### How it differs from ComfyUI's architecture
-
-|              | ComfyUI                                                            | Inline Core                                                                                                                              |
-| ------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Graph vs GPU | runs the denoise loop inline, one request at a time                | graph orchestration (cheap, per request) is separate from a batched sampler that groups compatible jobs across requests                  |
-| Schema       | positional `widgets_values`, validated at runtime (dies mid-graph) | typed graph, named params, edges type-checked **before** the run (a bad graph is rejected at submit, never mid-denoise)                  |
-| Multi-GPU    | one image runs on one GPU                                          | one image's **denoise can split across GPUs** _(experimental)_ via xDiT (PipeFusion on PCIe, Ulysses on NVLink), behind the sampler seam |
-| Custom nodes | all load into one interpreter, so any node can break the core      | designed to run out of process, each pack behind a semver SDK                                                                            |
-| Interface    | a web UI over a socket; run state is ephemeral                     | a headless HTTP + WebSocket API; runs are durable and survive a restart                                                                  |
-| Outputs      | files you overwrite                                                | immutable takes; regenerating adds a take, never overwrites (the take history is the core value)                                         |
-| Models       | `models/` dir, dropdowns from a scan                               | same drop-in layout, **bring-your-own with no hidden downloads**; a typed catalog feeds versioned node descriptors                       |
+- **Bring your own models, no hidden downloads** - a drop-in `models/` layout feeds a typed catalog and versioned node descriptors; nothing is fetched behind your back.
 
 ### Multi-GPU: split one image across GPUs
 
@@ -112,13 +104,54 @@ Like ComfyUI, the built web UI ships as a Python package, so you only need [Pyth
 ```bash
 git clone https://github.com/inlineresearch/Inline-Studio.git && cd Inline-Studio
 cd core
-./webui.sh --install --extra zimage      # create the venv, install the engine + Z-Image runtime + UI
+./webui.sh --install --extra runtime     # create the venv, install the engine + model runtime + UI
 ./webui.sh                               # serve the UI + API on http://127.0.0.1:8848
 ```
 
 `webui.sh` is the one command you need: it installs dependencies, makes sure the web UI is present (the prebuilt `inline-studio-frontend` package, or a local build), then serves everything. See **[Command-line options](#command-line-options)** for every flag (`--listen`, `--port`, `--lowvram`, `--multi-gpu`, …).
 
-Prefer pip? `pip install -r requirements.txt` (from the repo root) pulls the engine, the prebuilt UI, and the Z-Image runtime from PyPI; then run `inline-studio`.
+Prefer pip? `pip install -r requirements.txt` (from the repo root) pulls the engine, the prebuilt UI, and the local model runtime from PyPI; then run `inline-studio`.
+
+### Hardware support
+
+Honest status — what's actually been run, versus what has a code path but no one has verified:
+
+| Hardware                | Status                                           | Extra steps                                                                                                                                                                                                                                |
+| ----------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **NVIDIA, Linux**       | **Tested** — Z-Image Turbo 1024² on a T4 (16 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                             |
+| **NVIDIA, Windows**     | Supported, needs one step                        | PyPI's default `torch` is **CPU-only on Windows**. Use `webui.sh --install` (it detects the GPU), or install torch from `https://download.pytorch.org/whl/cu124`. Core warns at startup if it finds an NVIDIA GPU behind a CPU-only torch. |
+| **Apple Silicon (MPS)** | Code path exists, **untested**                   | None. int8 quantisation doesn't apply on MPS, so a model too big for unified memory won't fit.                                                                                                                                             |
+| **AMD (ROCm), Linux**   | **Untested** — reports welcome                   | Needs a ROCm build of PyTorch — see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                             |
+| **CPU only**            | Works, very slow                                 | `./webui.sh --cpu`                                                                                                                                                                                                                         |
+
+#### AMD (ROCm) setup
+
+Nobody has verified Inline Studio on AMD yet, so treat this as a starting point rather than a supported path. Install everything normally **first**, then replace PyTorch with the ROCm build — doing it in this order means nothing can quietly overwrite your ROCm torch afterwards:
+
+```bash
+cd core
+uv venv
+uv pip install -e ".[runtime,server]"        # engine + runtime (pulls the default PyPI torch)
+
+# Replace torch with the ROCm build. Pick the index that matches YOUR ROCm version —
+# check https://pytorch.org/get-started/locally/ (rocm6.2 shown here as an example).
+uv pip install --force-reinstall --index-url https://download.pytorch.org/whl/rocm6.2 torch
+
+# Verify you actually got a ROCm build (hip should print a version, not None):
+uv run python -c "import torch; print(torch.cuda.is_available(), torch.version.hip)"
+```
+
+Then run `./webui.sh` as usual.
+
+Two gotchas:
+
+- **Don't run `uv sync` afterwards** — it re-resolves the environment against the lockfile and will pull the PyPI torch back over your ROCm build. Use `uv pip install` for follow-up installs.
+- ROCm presents itself through `torch.cuda`, so the engine will treat it as a CUDA device and may largely work. But the dtype heuristics key off **NVIDIA** compute capability (`< 8.0` → fp16), which is meaningless on RDNA/CDNA, and the int8 (torchao) path is unverified on ROCm. If it works — or doesn't — [open an issue](https://github.com/inlineresearch/Inline-Studio/issues); that's the fastest way to get AMD properly supported.
+
+**Known limits, so you can judge before installing:**
+
+- **Local model coverage is Z-Image Turbo only** today. Flux, SDXL and others are planned; hosted models via [API Nodes](#api-nodes) need no GPU at all.
+- **1024² with Guidance (CFG) above 0 needs more than 16 GB.** CFG runs the prompt and negative prompt together, doubling the denoise. Z-Image Turbo is distilled to run CFG-free — at Guidance 0, 1024² fits in ~11.5 GB.
 
 ### From source (for UI development)
 
@@ -133,7 +166,7 @@ npm run build:spa                        # -> dist-web/
 
 # 2. Set up + run the engine, serving your local build
 cd core
-uv sync --extra server --extra zimage    # server + the Z-Image runtime (torch/diffusers)
+uv sync --extra server --extra runtime   # server + the local model runtime (torch/diffusers)
 uv run python main.py --front-end-root ../dist-web
 ```
 

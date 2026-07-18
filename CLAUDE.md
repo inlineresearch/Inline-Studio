@@ -54,7 +54,7 @@ preload bridge, it's stale.)
   Owns the project SQLite DB, filesystem, generation, and the ffmpeg timeline. Studio's former backend
   lives under `inline_core/studio/` (`store`, `frames`, `moodboard`, `assets`, `generation`, `fal`,
   `timeline`) + the `/rpc`+`/events`+`/media`+`/upload` routes in `inline_core/server/`. Set it up
-  with `cd core && uv sync --extra zimage --extra server`.
+  with `cd core && uv sync --extra runtime --extra server`.
 
 Fal node definitions stay studio-side (`src/shared/nodes/`): the browser builds each fal request and
 Core relays it to `queue.fal.run` with the API key server-side. Core nodes (e.g. Z-Image) run through
