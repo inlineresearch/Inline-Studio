@@ -65,12 +65,32 @@ def resolve_fal_inputs(conn: Any, folder: Path, frame_id: str) -> dict[str, Any]
 # --- output parsing (the standard fal response shapes) -------------------------------------------
 
 
+# Content-type -> file extension, keyed on the FULL type. The subtype alone is ambiguous: an
+# `audio/mp4` response is an .m4a track while `video/mp4` is an .mp4 clip — both have subtype "mp4",
+# so mapping on the subtype saved Sonilo's audio takes with a video extension. Anything not listed
+# falls back to the subtype (e.g. `image/webp` -> .webp), then to the URL, then to `default`.
+_EXT_BY_CONTENT_TYPE = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+    "video/quicktime": ".mov",
+    "audio/mp4": ".m4a",
+    "audio/mpeg": ".mp3",
+    "audio/wav": ".wav",
+    "audio/aac": ".aac",
+}
+
+
 def _ext_from(url: str, content_type: str | None, default: str) -> str:
-    if content_type and "/" in content_type:
-        sub = content_type.split("/")[-1].split(";")[0]
-        mapped = {"jpeg": ".jpg", "quicktime": ".mov", "mpeg": ".mp3"}.get(sub)
+    if content_type:
+        ct = content_type.split(";")[0].strip().lower()
+        mapped = _EXT_BY_CONTENT_TYPE.get(ct)
         if mapped:
             return mapped
+        sub = ct.split("/")[-1] if "/" in ct else ""
         if sub:
             return f".{sub}"
     match = re.search(r"\.[A-Za-z0-9]{1,5}(?:\?|$)", url)
@@ -105,6 +125,88 @@ def parse_outputs(response: Any, output_kind: str) -> list[dict[str, str]]:
                     "kind": output_kind,
                 })
     return refs
+
+
+# --- error reporting (turn a failed fal call into something the user can act on) -----------------
+
+# Wording fal/the upstream model uses when a safety filter rejects a prompt or an input image. The
+# HTTP status alone can't distinguish this from an ordinary validation error (both are 422), so we
+# match the detail text.
+_MODERATION_MARKERS = (
+    "content moderation",
+    "moderation policy",
+    "content policy",
+    "flagged",
+    "safety system",
+    "safety filter",
+    "nsfw",
+)
+
+
+def _fal_error_detail(response: Any) -> str:
+    """The human-readable reason out of a fal error body. fal returns a few shapes: ``{"detail":
+    "..."}``, FastAPI-style ``{"detail": [{"msg": ...}]}``, or ``{"error": ...}``. Falls back to the
+    raw body text so a reason is never silently dropped."""
+    if response is None:
+        return ""
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001 — a non-JSON body still has text worth showing
+        return (getattr(response, "text", "") or "").strip()[:300]
+    if isinstance(payload, str):
+        return payload.strip()[:300]
+    if isinstance(payload, dict):
+        for field in ("detail", "error", "message"):
+            value = payload.get(field)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:300]
+            if isinstance(value, dict):
+                inner = value.get("message") or value.get("detail")
+                if isinstance(inner, str) and inner.strip():
+                    return inner.strip()[:300]
+            if isinstance(value, list):
+                msgs = [
+                    str(item.get("msg") or item.get("message") or "").strip()
+                    for item in value
+                    if isinstance(item, dict)
+                ]
+                joined = "; ".join(m for m in msgs if m)
+                if joined:
+                    return joined[:300]
+    return ""
+
+
+def is_moderation_detail(detail: str) -> bool:
+    return any(marker in detail.lower() for marker in _MODERATION_MARKERS)
+
+
+def fal_error_message(error: Any) -> str:
+    """A clear, actionable message for a failed fal call.
+
+    Without this the user saw httpx's raw text ("Client error '422 Unprocessable Entity' for url
+    ..." plus an MDN link) while fal's real reason sat unread in the response body. Content-filter
+    rejections are the common case and get named explicitly, so the user knows it was the prompt or
+    input image that was refused rather than a bug or an outage."""
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    detail = _fal_error_detail(response)
+
+    if detail and is_moderation_detail(detail):
+        return (
+            "Blocked by the model's content filter, so nothing was generated. The provider said: "
+            f"{detail} Adjust the prompt or input image and run again."
+        )
+    if status in (401, 403):
+        return "fal rejected the API key. Check your fal key in Settings. " + detail
+    if status == 429:
+        return "fal is rate-limiting this account — wait a moment and run again. " + detail
+    if status == 404:
+        return f"fal has no such model endpoint. {detail}".strip()
+    if status and 500 <= int(status) < 600:
+        return f"fal had a server error ({status}) — try again shortly. {detail}".strip()
+    if status:
+        return f"fal rejected the request ({status}). {detail}".strip()
+    return str(error) or "The generation failed."
 
 
 # --- the fal HTTP client (submit / poll / cancel) ------------------------------------------------
@@ -198,8 +300,22 @@ class FalGeneration:
                         "events:generationProgress",
                         {"frameId": frame_id, "fraction": fraction, "status": label},
                     )
-                    if status.get("status") == "COMPLETED":
+                    state = status.get("status")
+                    if state == "COMPLETED":
                         break
+                    if state in ("ERROR", "FAILED", "CANCELLED"):
+                        # Terminal failure reported through the queue rather than an HTTP error.
+                        # Without this the loop would poll a dead request until the user cancels.
+                        detail = str(status.get("error") or status.get("detail") or "").strip()
+                        if detail and is_moderation_detail(detail):
+                            raise RuntimeError(
+                                "Blocked by the model's content filter, so nothing was generated. "
+                                f"The provider said: {detail} Adjust the prompt or input image and "
+                                "run again."
+                            )
+                        raise RuntimeError(
+                            f"fal reported the request as {state.lower()}. {detail}".strip()
+                        )
                 if not self._active.get(frame_id):
                     return  # cancelled
                 result = await client.get(handle["responseUrl"], headers=headers)
@@ -217,7 +333,8 @@ class FalGeneration:
             self._events.broadcast("events:generationDone", {"targetFrameId": frame_id})
         except Exception as error:  # noqa: BLE001
             self._events.broadcast(
-                "events:generationError", {"targetFrameId": frame_id, "error": str(error)}
+                "events:generationError",
+                {"targetFrameId": frame_id, "error": fal_error_message(error)},
             )
         finally:
             self._active.pop(frame_id, None)

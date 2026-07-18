@@ -321,6 +321,15 @@ def create_app(
             if target != root and root not in target.parents:
                 return Response("Forbidden", status_code=403)
             if not target.is_file():
+                # Waveform peaks are built on first request rather than at save time, so audio
+                # that predates this (or was imported elsewhere) still gets a waveform. Everything
+                # else is a genuine 404.
+                if rel.endswith(".peaks.json"):
+                    from ..studio.peaks import ensure_peaks
+
+                    built = ensure_peaks(studio_store.conn(), root, rel)
+                    if built is not None:
+                        return FileResponse(built)
                 return Response("Not found", status_code=404)
             return FileResponse(target)  # Range-aware; Content-Type guessed from the extension
 

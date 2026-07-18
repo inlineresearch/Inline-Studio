@@ -271,8 +271,11 @@ class StudioStore:
             return None
 
     def fal_status(self) -> dict[str, bool]:
+        # The field MUST be `configured` — that is the frozen wire contract (`ApiKeyStatus` in
+        # src/shared/types.ts), and the renderer reads `status.configured`. Returning `hasKey` here
+        # silently resolved to `undefined` client-side, so a saved key still rendered as "Not set".
         # `encrypted` is False: the key lives in a 0600 file, not OS-encrypted (single-user local).
-        return {"hasKey": self.fal_key() is not None, "encrypted": False}
+        return {"configured": self.fal_key() is not None, "encrypted": False}
 
     def set_fal_key(self, key: str) -> dict[str, bool]:
         file = self._fal_key_file()
@@ -288,4 +291,4 @@ class StudioStore:
             self._fal_key_file().unlink(missing_ok=True)
         except OSError:
             pass
-        return {"hasKey": False, "encrypted": False}
+        return {"configured": False, "encrypted": False}

@@ -13,6 +13,7 @@ from typing import Any
 from .. import assets as ax
 from .. import frames as fr
 from .. import moodboard as mb
+from ..peaks import audio_peaks_rel
 from .compose import ResolvedClip
 from .ffmpeg import ffmpeg_available, probe_media
 
@@ -147,7 +148,12 @@ def resolve_timeline(
             clip = {
                 "key": ref["sourceId"], "connectorId": conn_row["id"], "volume": input_volume,
                 "frameId": ref["frameId"], "label": ref["label"], "kind": ref["kind"],
-                "startTime": cursor, "duration": duration, "audioPeaks": None,
+                "startTime": cursor, "duration": duration,
+                # Point at the peaks JSON; Core builds it on first request (studio/peaks.py). Only
+                # time-based media has an audio track — a still image never does.
+                "audioPeaks": (
+                    audio_peaks_rel(ref["sourceId"]) if ref["kind"] != "image" else None
+                ),
                 "peaksStart": 0, "peaksEnd": 1,
                 "thumbnail": ref["filePath"] if ref["kind"] == "image" else None,
             }
@@ -185,5 +191,7 @@ def resolve_trim(conn: Any, folder: Path, item_id: str) -> dict[str, Any] | None
     return {
         "key": ref["sourceId"], "kind": ref["kind"], "label": ref["label"],
         "durationSec": duration, "mediaPath": ref["filePath"],
-        "thumbnail": ref["filePath"] if ref["kind"] == "image" else None, "audioPeaks": None,
+        "thumbnail": ref["filePath"] if ref["kind"] == "image" else None,
+        # The Trim node draws this as its waveform; built on first request (studio/peaks.py).
+        "audioPeaks": audio_peaks_rel(ref["sourceId"]) if ref["kind"] != "image" else None,
     }
