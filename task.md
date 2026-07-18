@@ -76,4 +76,4 @@ Anything else you want us to know:
 
 ## Submission
 
-Put your write-up, screenshots, and the final video (or links to them) in a single private Google Doc, and share it with: `<add owner email>`.
+Put your write-up, screenshots, and the final video (or links to them) in a single private Google Doc, and share it with: `team@inlinestudio.art`.
