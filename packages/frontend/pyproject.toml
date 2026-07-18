@@ -1,6 +1,6 @@
 [project]
 name = "inline-studio-frontend"
-version = "1.1.2"
+version = "1.2.0"
 description = "Prebuilt Inline Studio web UI (SPA), served by Inline Core. Mirrors comfyui-frontend-package."
 requires-python = ">=3.9"
 readme = "README.md"
@@ -11,7 +11,7 @@ build-backend = "hatchling.build"
 
 # The payload is the built SPA under inline_studio_frontend/static/ (index.html + hashed assets),
 # which is a build output and gitignored. `artifacts` tells hatch to include those otherwise-ignored
-# files (in both the sdist and the wheel) exactly once — using force-include here instead would add
+# files (in both the sdist and the wheel) exactly once - using force-include here instead would add
 # them a second time on top of `packages`, which errors with a duplicate index.html.
 [tool.hatch.build]
 artifacts = ["inline_studio_frontend/static/**"]

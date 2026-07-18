@@ -2,7 +2,8 @@
 # PyPI name; the import package is `inline_core` (src/inline_core).
 name = "inline-core"
 version = "1.2.0"
-description = "The generation engine behind Inline."
+description = "The generation engine behind Inline Studio."
+readme = "README.md"
 requires-python = ">=3.11"
 # Deliberately torch-free so the engine boots and serves source nodes with no ML stack installed.
 dependencies = [

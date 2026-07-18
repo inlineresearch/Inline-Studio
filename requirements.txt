@@ -1,4 +1,4 @@
-# End-user install for Inline Studio — the whole app (engine + web UI + local model runtime) from
+# End-user install for Inline Studio - the whole app (engine + web UI + local model runtime) from
 # PyPI, no Node build. Mirrors ComfyUI's requirements.txt. Once the packages are published (by the
 # publish-frontend.yml GitHub Action), run:
 #
@@ -9,13 +9,13 @@
 #
 # NVIDIA GPU users, read this: PyPI's default `torch` is a CPU-ONLY build on Windows (the Linux
 # wheels bundle CUDA). Installing without the line below on Windows gives you a working install that
-# generates on the CPU — roughly 100x slower, with no error. Uncomment it, or run
+# generates on the CPU - roughly 100x slower, with no error. Uncomment it, or run
 # `webui.sh --install`, which detects the GPU and does it for you. Core also warns at startup if it
 # finds an NVIDIA GPU behind a CPU-only torch.
 #
 # --extra-index-url https://download.pytorch.org/whl/cu124
 #
-# Drop the `runtime` extra if you only want hosted (fal) models and no local GPU generation — that
+# Drop the `runtime` extra if you only want hosted (fal) models and no local GPU generation - that
 # skips the ~2.5GB torch download entirely.
 inline-core[server,runtime]
 inline-studio-frontend

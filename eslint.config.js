@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 
 export default tseslint.config(
-  // `core/` is the Python engine (incl. its .venv) — never lint it with the TS/JS linter.
+  // `core/` is the Python engine (incl. its .venv) - never lint it with the TS/JS linter.
   { ignores: ['out', 'dist', 'dist-web', 'node_modules', 'core', '*.config.js', '*.config.ts'] },
 
   // Base TypeScript rules for the whole repo

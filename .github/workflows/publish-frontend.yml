@@ -1,5 +1,5 @@
 # Build the SPA and publish the prebuilt-frontend wheel (inline-studio-frontend) to PyPI, so end
-# users get the UI with no Node build — mirroring ComfyUI's comfyui-frontend-package. The engine
+# users get the UI with no Node build - mirroring ComfyUI's comfyui-frontend-package. The engine
 # (inline-core) is published by its own workflow, publish-core.yml. They are split into two
 # files on purpose: PyPI requires each *pending* trusted publisher to have a unique GitHub config
 # (owner + repo + workflow filename + environment), so two packages can't share one workflow file
@@ -9,7 +9,7 @@
 # an explicit version). The version is derived from the tag (`v1.1.1` -> `1.1.1`) and stamped into the
 # wheel so it version-tracks the release.
 #
-# Auth: PyPI Trusted Publishing (OIDC) — add a pending publisher on PyPI for project
+# Auth: PyPI Trusted Publishing (OIDC) - add a pending publisher on PyPI for project
 # `inline-studio-frontend`, repo, workflow `publish-frontend.yml`, environment blank. No secrets to
 # store. To use an API token instead, drop `permissions.id-token` and pass
 # `password: ${{ secrets.PYPI_API_TOKEN }}` to the publish step.

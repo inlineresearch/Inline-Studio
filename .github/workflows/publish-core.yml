@@ -1,12 +1,12 @@
 # Publish the Inline Core engine (inline-core) to PyPI, so `pip install -r requirements.txt`
 # pulls the engine + runtime with no source checkout. The prebuilt web UI is published separately by
-# publish-frontend.yml — kept in its own file so each package's PyPI *pending* trusted publisher has a
+# publish-frontend.yml - kept in its own file so each package's PyPI *pending* trusted publisher has a
 # distinct GitHub config (owner + repo + workflow filename + environment), which PyPI requires.
 #
 # Trigger: push a tag like `v1.1.1`, publish a GitHub Release, or run manually (workflow_dispatch with
 # an explicit version). The version is derived from the tag and stamped into core/pyproject.toml.
 #
-# Auth: PyPI Trusted Publishing (OIDC) — add a pending publisher on PyPI for project
+# Auth: PyPI Trusted Publishing (OIDC) - add a pending publisher on PyPI for project
 # `inline-core`, repo, workflow `publish-core.yml`, environment blank. No secrets to store. To
 # use an API token instead, drop `permissions.id-token` and pass
 # `password: ${{ secrets.PYPI_API_TOKEN }}` to the publish step.

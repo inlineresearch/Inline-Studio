@@ -1,4 +1,4 @@
-# Model weights (gigabytes). The engine's models root — `models_dir()` defaults to ./models, and
+# Model weights (gigabytes). The engine's models root - `models_dir()` defaults to ./models, and
 # runners scan ./models/<category>/ (e.g. diffusion_models/). Leading slash anchors this to the repo
 # root ONLY, so the source package src/inline_core/models/ (code) stays tracked.
 /models/
