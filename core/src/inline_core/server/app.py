@@ -27,6 +27,8 @@ from ..graph.cache import InMemoryCache, NodeCache
 from ..graph.registry import Registry, build_default_registry
 from ..graph.schema import SCHEMA_VERSION, parse_graph
 from ..models.catalog import ModelCatalog
+from ..models.requirements import RequirementsRegistry
+from ..runtime.file_store import FileTakeStore
 from .assets import AssetStore
 from .manager import RunConflict, RunManager
 from .rpc import EventBroadcaster, RpcRouter
@@ -41,7 +43,7 @@ class _SuppressAccessNoise(logging.Filter):
     """Drop high-frequency, uninformative request lines from the uvicorn access log.
 
     Two floods bury the useful logs (generation progress, real errors) under identical 200 lines:
-      - ``GET /v1/runs/<id>`` - Studio polls run status sub-second while a run is in flight.
+      - ``GET /v1/runs/<id>`` - Studio polls run status module-second while a run is in flight.
       - ``POST /rpc`` - every Studio backend call (each keystroke's autosave, every store refresh)
         is one of these; they say nothing on their own.
     We hide only those successful, chatty lines; submits, cancels, errors, uploads, media, and
@@ -99,10 +101,13 @@ def _error(code: str, message: str, status: int, node_id: str | None = None) -> 
 
 
 def _version(registry: Registry, catalog: ModelCatalog) -> str:
-    """Registry version = node types + the scanned model files, so dropping a file bumps it."""
-    payload = json.dumps(
-        {"types": sorted(d.type for d in registry.descriptors()), "models": catalog.fingerprint()}
-    )
+    """Registry version = full descriptor content + the scanned model files, so dropping a file
+    bumps it - and so does installing, toggling, or version-switching an extension.
+
+    Delegates the descriptor half to ``Registry.version()``: hashing node *types* here would miss a
+    upgrade that changes a param default while keeping its node types, and the client caches
+    ``/v1/models`` against this as an ETag."""
+    payload = json.dumps({"registry": registry.version(), "models": catalog.fingerprint()})
     return f"r_{hashlib.sha256(payload.encode()).hexdigest()[:8]}"
 
 
@@ -118,16 +123,20 @@ def create_app(
     rpc: RpcRouter | None = None,
     events: EventBroadcaster | None = None,
     studio_store: Any = None,
+    requirements: RequirementsRegistry | None = None,
 ) -> FastAPI:
     _setup_app_logging()
     _quiet_access_log()
     registry = registry or build_default_registry()
     cache = cache or InMemoryCache()
     policy = policy or MemoryPolicy()
+    # Empty by default so every existing caller keeps working: a node type with no provider simply
+    # reports no model requirements, which is what a torch-less install already showed.
+    reqs = requirements if requirements is not None else RequirementsRegistry()
     assets = AssetStore(Path(asset_dir or "./.inline-assets"))
     catalog = ModelCatalog(Path(models_root) if models_root else models_dir())
     takes_root = Path(takes_dir or "./.inline-takes")
-    manager = RunManager(registry, cache, policy, store=run_store)
+    manager = RunManager(registry, cache, policy, store=run_store, takes=FileTakeStore(takes_root))
     rpc = rpc or RpcRouter()
     events = events or EventBroadcaster()
 
@@ -282,6 +291,8 @@ def create_app(
     # The native Studio app-backend: register the InlineStudioApi channels on the RpcRouter +
     # project media/uploads (the B1 flip - Core becomes the sole backend, no Node proxy).
     if studio_store is not None:
+        from ..extensions.handlers import register_extension_handlers
+        from ..extensions.install import Installer
         from ..studio.fal import FalGeneration
         from ..studio.generation import CoreGeneration
         from ..studio.handlers import register_studio_handlers
@@ -306,8 +317,23 @@ def create_app(
             fal_generation=FalGeneration(studio_store, events),
             timeline=Timeline(studio_store, events),
             # Explicit model downloads write into models/; rescan so new files bump the registry.
-            # The policy lets the requirements popup show a memory fit estimate before a load.
-            model_downloads=ModelDownloads(events, on_change=catalog.rescan, policy=policy),
+            # The policy lets the requirements popup show a memory fit estimate before a load;
+            # the requirements registry says which node types have models at all.
+            model_downloads=ModelDownloads(
+                events, on_change=catalog.rescan, policy=policy, requirements=reqs
+            ),
+        )
+
+        register_extension_handlers(
+            rpc,
+            Installer(
+                registry,
+                FileTakeStore(takes_root),
+                policy,
+                requirements=reqs,
+                rpc=rpc,
+                events=events,
+            ),
         )
 
         @app.get("/media/{media_path:path}")

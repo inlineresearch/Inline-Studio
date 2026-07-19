@@ -363,6 +363,13 @@ export interface ModelDownloadErrorEvent {
   error: string
 }
 
+/** Main → renderer: extension install progress. Payload shapes live in `extensions.ts`. */
+export type {
+  InstallProgressEvent as ExtensionInstallProgressEvent,
+  InstallSuccess as ExtensionInstallDoneEvent,
+  InstallFailure as ExtensionInstallErrorEvent,
+} from './extensions'
+
 export interface WorkflowTemplate {
   id: string
   projectId: string

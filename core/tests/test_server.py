@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from helpers import FAKE_MODEL
+
 from inline_core.graph.cache import InMemoryCache
 from inline_core.graph.registry import build_default_registry
 from inline_core.graph.runners import NodeResult, NodeRunner

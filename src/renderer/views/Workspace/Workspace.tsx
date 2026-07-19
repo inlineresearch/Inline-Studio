@@ -9,6 +9,7 @@ import { useUiStore, type WorkspaceMode } from '../../store/uiStore'
 import { MoodboardPanel } from '../Moodboard/MoodboardPanel'
 import { GeneratePanel } from '../Generate/GeneratePanel'
 import { SettingsPanel } from '../Settings/SettingsPanel'
+import { ExtensionsDialog } from '../Extensions/ExtensionsDialog'
 import { ContextMenu } from '../../components/ContextMenu'
 import { MediaLightbox } from '../../components/MediaLightbox'
 
@@ -91,6 +92,7 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
 
       <ContextMenu />
       <MediaLightbox />
+      <ExtensionsDialog />
     </div>
   )
 }

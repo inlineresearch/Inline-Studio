@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+
 from inline_core.media import MediaKind
 from inline_core.runtime.file_store import FileTakeStore
 

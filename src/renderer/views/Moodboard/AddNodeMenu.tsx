@@ -6,6 +6,7 @@
  */
 
 import { addableCoreNodes, type NodeDescriptor } from '@shared/coreNodes'
+import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
@@ -53,7 +54,10 @@ export function AddNodeMenu({
   onClose: () => void
 }): React.JSX.Element {
   // Only high-level model nodes are offered; loaders/samplers/inputs are hidden plumbing.
-  const addable = addableCoreNodes(coreNodes)
+  const all = addableCoreNodes(coreNodes)
+  // Extension nodes get their own section so it's clear which are community-provided.
+  const addable = all.filter((n) => !isExtensionNode(n.source))
+  const extensionGroups = groupByExtension(all.filter((n) => isExtensionNode(n.source)))
   // Fal models, grouped by owner (OpenAI, ByteDance, …) - listed like the Inline Core section.
   const falGroups = groupByOwner(listNodeDefs())
   return (
@@ -134,10 +138,48 @@ export function AddNodeMenu({
               ))}
             </div>
           )}
+          {extensionGroups.length > 0 && (
+            <div className="border-t border-border">
+              <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+                Extensions
+              </div>
+              {extensionGroups.map(([extension, nodes]) => (
+                <div key={extension}>
+                  <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
+                    {extension}
+                  </div>
+                  {nodes.map((n) => (
+                    <button
+                      key={n.type}
+                      onClick={() => onPickCore?.(n.type)}
+                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+                    >
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                        <NodeGlyph />
+                      </span>
+                      {n.title}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </>
   )
+}
+
+/** Extension nodes keyed by their owning extension, from the `ext:<extension>:<module>` source. */
+function groupByExtension(nodes: NodeDescriptor[]): Array<[string, NodeDescriptor[]]> {
+  const groups = new Map<string, NodeDescriptor[]>()
+  for (const node of nodes) {
+    const extension = extensionOf(node.source) ?? 'extension'
+    const list = groups.get(extension) ?? []
+    list.push(node)
+    groups.set(extension, list)
+  }
+  return [...groups.entries()]
 }
 
 function groupByCategory(nodes: NodeDescriptor[]): Array<[string, NodeDescriptor[]]> {

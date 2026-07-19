@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from inline_core.config import server_host, server_port
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from inline_core.errors import GraphValidationError
 from inline_core.graph.schema import Edge, PortKind, parse_graph, port_satisfies
 

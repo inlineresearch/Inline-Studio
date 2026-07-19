@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from inline_core.errors import CycleError
 from inline_core.graph.topo import topo_sort, upstream_closure
 

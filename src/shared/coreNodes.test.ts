@@ -31,7 +31,7 @@ describe('kind helpers', () => {
     expect(isModelPort('model')).toBe(true)
     expect(isModelPort('vae')).toBe(true)
     expect(isModelPort('text-encoder')).toBe(true)
-    // Signal/content kinds - including the other engine kinds - pack to the top instead.
+    // Signal/content kinds - including the other engine kinds - extension to the top instead.
     expect(isModelPort('conditioning')).toBe(false)
     expect(isModelPort('latent')).toBe(false)
     expect(isModelPort('image')).toBe(false)

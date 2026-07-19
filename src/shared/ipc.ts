@@ -43,6 +43,17 @@ import type {
 } from './types'
 import type { Result } from './result'
 import type { CoreModels, ModelRequirements } from './coreNodes'
+import type {
+  ExtensionInfo,
+  ExtensionsStatus,
+  InstallFailure,
+  InstallOutcome,
+  InstallProgressEvent,
+  InstallSuccess,
+  LifecycleResult,
+  RegistryIndex,
+  UpdateStatus,
+} from './extensions'
 
 export const IpcChannels = {
   project: {
@@ -136,6 +147,22 @@ export const IpcChannels = {
     /** Explicitly download one component (by id) or `'all'` missing ones into models/. */
     download: 'models:download',
   },
+  extensions: {
+    /** Installed extensions + whether the machine has the tools to install more. */
+    status: 'ext:manage:status',
+    list: 'ext:manage:list',
+    /** Install from a git URL at a tag/branch/sha. Returns a consent pause or an outcome. */
+    install: 'ext:manage:install',
+    uninstall: 'ext:manage:uninstall',
+    setEnabled: 'ext:manage:setEnabled',
+    setNodeEnabled: 'ext:manage:setNodeEnabled',
+    versions: 'ext:manage:versions',
+    /** Roll back (or forward) to an already-installed version. Always needs a restart. */
+    switchVersion: 'ext:manage:switchVersion',
+    /** The published registry index, cached on disk so it works offline. */
+    checkUpdates: 'ext:manage:checkUpdates',
+    registryIndex: 'ext:manage:registryIndex',
+  },
   export: {
     exportFrames: 'export:exportFrames',
   },
@@ -202,6 +229,10 @@ export const IpcChannels = {
     modelDownloadProgress: 'events:modelDownloadProgress',
     modelDownloadDone: 'events:modelDownloadDone',
     modelDownloadError: 'events:modelDownloadError',
+    /** Main → renderer: extension install lifecycle (the Extensions dialog). */
+    extensionInstallProgress: 'events:extensionInstallProgress',
+    extensionInstallDone: 'events:extensionInstallDone',
+    extensionInstallError: 'events:extensionInstallError',
     /** Main → renderer: auto-update lifecycle. */
     updateAvailable: 'events:updateAvailable',
     updateProgress: 'events:updateProgress',
@@ -406,6 +437,33 @@ export interface InlineStudioApi {
      * progress arrives on `events:modelDownload*`. */
     download(nodeType: string, componentId: string): Promise<Result<void>>
   }
+  extensions: {
+    /** Installed extensions + whether git/uv are available to install more. */
+    status(): Promise<Result<ExtensionsStatus>>
+    list(): Promise<Result<ExtensionInfo[]>>
+    /**
+     * Install from a git URL at `ref` - a tag, a branch, or `latest` to resolve the newest
+     * release tag. Returns `needsConsent` (nothing installed) when the scan
+     * raised HIGH/MEDIUM findings; re-call with the report's `consentRules` to proceed.
+     * Progress arrives on `events:extensionInstall*`.
+     */
+    install(source: string, ref?: string, consents?: string[]): Promise<Result<InstallOutcome>>
+    uninstall(extensionId: string): Promise<Result<LifecycleResult>>
+    setEnabled(extensionId: string, enabled: boolean): Promise<Result<LifecycleResult>>
+    setNodeEnabled(
+      extensionId: string,
+      nodeType: string,
+      enabled: boolean,
+    ): Promise<Result<LifecycleResult>>
+    versions(
+      extensionId: string,
+    ): Promise<Result<{ extensionId: string; current: string; versions: string[] }>>
+    /** Point a extension at an already-installed version. Needs a restart to take effect. */
+    switchVersion(extensionId: string, version: string): Promise<Result<LifecycleResult>>
+    /** Network-bound: asks each origin what its ref points at now. Best-effort. */
+    checkUpdates(): Promise<Result<UpdateStatus[]>>
+    registryIndex(refresh?: boolean): Promise<Result<RegistryIndex>>
+  }
   export: {
     /** Pick a folder and write each frame's Output in order; null if cancelled. */
     exportFrames(): Promise<Result<ExportResult | null>>
@@ -509,6 +567,9 @@ export interface InlineStudioApi {
     onModelDownloadProgress(callback: (e: ModelDownloadProgressEvent) => void): () => void
     onModelDownloadDone(callback: (e: ModelDownloadDoneEvent) => void): () => void
     onModelDownloadError(callback: (e: ModelDownloadErrorEvent) => void): () => void
+    onExtensionInstallProgress(callback: (e: InstallProgressEvent) => void): () => void
+    onExtensionInstallDone(callback: (e: InstallSuccess) => void): () => void
+    onExtensionInstallError(callback: (e: InstallFailure) => void): () => void
     /** Subscribe to auto-update lifecycle pushes. Each returns an unsubscribe fn. */
     onUpdateAvailable(callback: (e: UpdateAvailableEvent) => void): () => void
     onUpdateProgress(callback: (e: UpdateProgressEvent) => void): () => void

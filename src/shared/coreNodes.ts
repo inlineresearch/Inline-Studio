@@ -113,8 +113,8 @@ const MODEL_KINDS: readonly PortKind[] = ['model', 'vae', 'text-encoder']
 
 /**
  * A "model-family" handle - the loader plumbing (diffusion model, VAE, text encoder) that threads a
- * component into a node. On the canvas these dots pack to the **bottom** edge of a node while the
- * content/signal dots (image, latent, conditioning, …) pack to the **top**, so model wiring reads as
+ * component into a node. On the canvas these dots extension to the **bottom** edge of a node while the
+ * content/signal dots (image, latent, conditioning, …) extension to the **top**, so model wiring reads as
  * one band along the bottom and the actual image flow runs across the top.
  */
 export function isModelPort(kind: PortKind): boolean {

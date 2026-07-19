@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from helpers import build_ctx, build_graph, make_registry
+
 from inline_core.graph.cache import InMemoryCache
 from inline_core.graph.executor import Executor
 from inline_core.runtime.progress import (

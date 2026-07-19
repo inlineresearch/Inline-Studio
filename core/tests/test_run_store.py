@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from helpers import build_graph, make_registry
+
 from inline_core.graph.cache import InMemoryCache
 from inline_core.runtime.context import CancelToken
 from inline_core.runtime.progress import NodeDoneEvent, Phase, ProgressEvent

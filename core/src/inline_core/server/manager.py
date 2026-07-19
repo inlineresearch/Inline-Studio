@@ -27,6 +27,7 @@ from ..graph.validate import validate
 from ..runtime.context import CancelToken, ExecutionContext
 from ..runtime.progress import ProgressEmitter, ProgressEvent, RunEvent
 from ..runtime.run import NodeRuntimeState, RunState
+from ..runtime.store import TakeStore
 from ..takes import Take
 from .run_store import RunStore
 
@@ -65,6 +66,7 @@ class RunManager:
         policy: DevicePolicy | None = None,
         workers: int = 1,
         store: RunStore | None = None,
+        takes: TakeStore | None = None,
     ) -> None:
         self._registry = registry
         self._cache = cache
@@ -76,6 +78,7 @@ class RunManager:
         self._lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._store = store
+        self._takes = takes
         if store is not None:
             store.interrupt_stale()
 
@@ -163,6 +166,7 @@ class RunManager:
             policy=self._policy,
             emitter=_BroadcastEmitter(self, record),
             cancel=record.cancel,
+            takes=self._takes,
         )
         Executor(self._registry, self._cache).run(graph, target, ctx, record.state)
         record.done = True
