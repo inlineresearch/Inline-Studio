@@ -13,7 +13,7 @@ replaces ComfyUI for Inline.**
 
 > **GitHub org: `inlineresearch`** - never `inline-studio/` or any other org in a URL, manifest, or
 > doc. Sibling repos: `Inline-Studio` (UI + this engine), `Inline-Registry` (the published extension
-> index served to the Available tab), `Inline-Extension-Reference` (the reference extension).
+> index served to the Available tab), `Inline-Studio-Extension-Guide` (the reference extension).
 
 > Read this file before changing code. It defines the architecture and the non-negotiable rules.
 > `README.md` is the user/product-facing version of the same story; this is the engineering contract.

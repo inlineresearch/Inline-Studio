@@ -18,12 +18,12 @@ plus closed models via fal.ai.
 > **GitHub org: `inlineresearch`.** Every repo lives there - never `inline-studio/` or any other
 > org in a URL, manifest, or doc.
 >
-> | Repo                                                                                                        | What it is                                            |
-> | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-> | [`inlineresearch/Inline-Studio`](https://github.com/inlineresearch/Inline-Studio)                           | This repo: the UI client + Inline Core                |
-> | [`inlineresearch/Inline-Core`](https://github.com/inlineresearch/Inline-Core)                               | The engine's own repo (subtree source for `core/`)    |
-> | [`inlineresearch/Inline-Registry`](https://github.com/inlineresearch/Inline-Registry)                       | The published extension index the Available tab reads |
-> | [`inlineresearch/Inline-Extension-Reference`](https://github.com/inlineresearch/Inline-Extension-Reference) | The reference extension authors copy                  |
+> | Repo                                                                                                              | What it is                                            |
+> | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+> | [`inlineresearch/Inline-Studio`](https://github.com/inlineresearch/Inline-Studio)                                 | This repo: the UI client + Inline Core                |
+> | [`inlineresearch/Inline-Core`](https://github.com/inlineresearch/Inline-Core)                                     | The engine's own repo (subtree source for `core/`)    |
+> | [`inlineresearch/Inline-Registry`](https://github.com/inlineresearch/Inline-Registry)                             | The published extension index the Available tab reads |
+> | [`inlineresearch/Inline-Studio-Extension-Guide`](https://github.com/inlineresearch/Inline-Studio-Extension-Guide) | The reference extension authors copy                  |
 
 > Read this file before changing code. It defines the architecture and the non-negotiable rules.
 
