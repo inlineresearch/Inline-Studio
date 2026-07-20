@@ -1,6 +1,7 @@
 import { FalKeyField } from '../../components/FalKeyField'
 import { CloseIcon, SettingsIcon } from '../../components/icons'
 import { useCanvasPrefsStore, type EdgeStyle } from '../../store/canvasPrefsStore'
+import { useExtensionsStore } from '../../store/extensionsStore'
 
 /**
  * Right-hand Settings sidebar, opened from the workspace header's gear button. Holds
@@ -31,8 +32,54 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
         <section className="rounded-lg border border-border bg-panel/40 p-3">
           <ConnectionStyleField />
         </section>
+        <section className="rounded-lg border border-border bg-panel/40 p-3">
+          <ExtensionsField />
+        </section>
       </div>
     </div>
+  )
+}
+
+/** Opens the Extensions dialog, with a count of what is installed. */
+function ExtensionsField(): React.JSX.Element {
+  const openDialog = useExtensionsStore((s) => s.openDialog)
+  const extensions = useExtensionsStore((s) => s.extensions)
+  const enabled = extensions.filter((p) => p.enabled).length
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
+        <span className="text-xs font-medium text-zinc-200">Extensions</span>
+        <span className="text-[11px] text-zinc-500">
+          {extensions.length === 0
+            ? 'Add community nodes to the canvas.'
+            : `${enabled} of ${extensions.length} enabled.`}
+        </span>
+      </div>
+      <button
+        onClick={() => openDialog()}
+        className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-[11px] font-medium text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+      >
+        <PuzzleIcon className="h-3.5 w-3.5" />
+        Manage extensions
+      </button>
+    </div>
+  )
+}
+
+function PuzzleIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M15.5 3.5a2 2 0 1 0-3.9.5H9a1 1 0 0 0-1 1v2.6a2 2 0 1 0-.5 3.9V14a1 1 0 0 0 1 1h2.6a2 2 0 1 1 3.9.5V19a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1V5a1 1 0 0 0-1-1h-3.1a2 2 0 0 0-.4-.5Z" />
+    </svg>
   )
 }
 

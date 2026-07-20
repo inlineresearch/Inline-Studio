@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 from ..errors import UnknownNodeType
 from .descriptor import NodeDescriptor
@@ -23,6 +23,14 @@ class Registry:
         self._descriptors[descriptor.type] = descriptor
         if runner is not None:
             self._runners[descriptor.type] = runner
+
+    def unregister(self, node_type: str) -> None:
+        """Drop a node type. Used when an extension is disabled; unknown types are ignored.
+
+        Only the registry entry goes away - a module already imported stays in ``sys.modules``
+        (Python cannot unload), but nothing can reach it once no descriptor points at its runner."""
+        self._descriptors.pop(node_type, None)
+        self._runners.pop(node_type, None)
 
     def get(self, node_type: str) -> NodeDescriptor:
         descriptor = self._descriptors.get(node_type)
@@ -43,8 +51,19 @@ class Registry:
         return list(self._descriptors.values())
 
     def version(self) -> str:
-        # TODO(phase1): fold resolved dynamic options into this so installing a model bumps it.
-        payload = json.dumps(sorted(self._descriptors), separators=(",", ":"))
+        """A fingerprint of the **full descriptor content**, not just the set of node types.
+
+        Node types alone are not enough now that extensions can be toggled and switched between
+        versions: an upgrade that changes a param default while keeping its node types would
+        produce an identical fingerprint, and the client - which caches ``/v1/models`` against this
+        as an ETag - would keep serving the stale catalog.
+        """
+        payload = json.dumps(
+            [asdict(d) for _, d in sorted(self._descriptors.items())],
+            separators=(",", ":"),
+            sort_keys=True,
+            default=str,  # enum members serialize by value; anything exotic by repr
+        )
         return f"r_{hashlib.sha256(payload.encode()).hexdigest()[:8]}"
 
 

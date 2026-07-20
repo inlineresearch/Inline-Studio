@@ -18,7 +18,7 @@ const SIZE_PRESETS = [
 // only for fal's own models). Prefixing with fal-ai/ makes the queue 404 ("Application openai not found").
 //
 // There is a SINGLE endpoint: passing `image_urls` switches it to image-editing mode. There is no
-// `/image-to-image` sub-path - submitting to one 404s on the queue result fetch.
+// `/image-to-image` module-path - submitting to one 404s on the queue result fetch.
 // See https://fal.ai/models/openai/gpt-image-2/api.
 const ENDPOINT = 'openai/gpt-image-2'
 

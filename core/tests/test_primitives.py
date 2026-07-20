@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from inline_core.errors import PortTypeError, UnknownNodeType
 from inline_core.graph.registry import build_default_registry
 from inline_core.graph.schema import parse_graph

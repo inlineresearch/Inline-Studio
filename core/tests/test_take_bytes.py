@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 from fastapi.testclient import TestClient
 from helpers import FAKE_MODEL
+
 from inline_core.graph.registry import build_default_registry
 from inline_core.graph.runners import NodeResult, NodeRunner
 from inline_core.graph.schema import Node

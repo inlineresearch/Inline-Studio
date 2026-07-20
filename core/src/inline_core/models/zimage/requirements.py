@@ -19,10 +19,30 @@ here. A whole-pipeline diffusers folder in ``diffusion_models/`` is still accept
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
 
 from ...config import models_dir
+from ..requirements import ModelComponent
+
+#: ``ModelComponent`` now lives in ``models/requirements.py`` - it is shared with every other model
+#: and with extension-declared requirements. Re-exported here so existing importers keep working.
+__all__ = [
+    "BASE_REPO",
+    "DIFFUSION_FILE",
+    "SPLIT_REPO",
+    "TEXT_ENCODER_FILE",
+    "VAE_FILE",
+    "ModelComponent",
+    "diffusion_root",
+    "download_target",
+    "find_weight_file",
+    "footprint_bytes",
+    "pipeline_dir",
+    "resolve_diffusion",
+    "resolve_text_encoder",
+    "resolve_vae",
+    "zimage_requirements",
+]
 
 #: Split-file weights repo - ComfyUI's consolidated single files, one ``.safetensors`` per
 #: component (fast, fully offline to load). The popup pulls exactly one file per component from
@@ -156,24 +176,6 @@ def resolve_diffusion(params: dict[str, object] | None = None) -> tuple[str, str
 
 
 # --- the requirements view (the popup's data) ---------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ModelComponent:
-    """One required model component: whether it's present, and the exact file the popup fetches."""
-
-    id: str  # "diffusion" | "vae" | "text_encoder"
-    label: str
-    category: str  # models/ subfolder it belongs to
-    present: bool
-    filename: str  # the single file that lands flat in models/<category>/ (a dropdown entry)
-    repo: str  # HF repo the popup downloads from
-    repo_file: str  # exact repo-relative path fetched from ``repo`` (under ``split_files/``)
-
-    @property
-    def local_path(self) -> str:
-        """Where this file lives / lands, relative to the models root (flat in its category)."""
-        return f"{self.category}/{self.filename}"
 
 
 def _split_component(

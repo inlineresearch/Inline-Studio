@@ -19,6 +19,23 @@ def data_dir() -> Path:
     return Path(env).expanduser() if env else Path(".inline")
 
 
+def extensions_dir() -> Path:
+    """Community extensions root. `INLINE_EXTENSIONS_DIR`, else `./extensions` (so a dev checkout
+    keeps it beside `./models` and `./.inline`). Holds `state.json`, the host constraint snapshot,
+    and one directory per installed extension."""
+    env = os.environ.get("INLINE_EXTENSIONS_DIR")
+    return Path(env).expanduser() if env else Path("extensions")
+
+
+def registry_url() -> str:
+    """Where the Available tab fetches its extension index. `INLINE_EXTENSION_REGISTRY`, else the
+    public registry. Point it at a fork or a file:// path to test a registry change."""
+    return os.environ.get(
+        "INLINE_EXTENSION_REGISTRY",
+        "https://raw.githubusercontent.com/inlineresearch/Inline-Registry/main/index.json",
+    )
+
+
 def server_host() -> str:
     """Address the /v1 server binds. `INLINE_HOST`, else loopback (`127.0.0.1`)."""
     return os.environ.get("INLINE_HOST", "127.0.0.1")

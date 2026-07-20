@@ -11,7 +11,7 @@ describe('GPT_IMAGE_2.resolveEndpoint', () => {
     expect(GPT_IMAGE_2.resolveEndpoint(emptyResolvedInputs())).toBe('openai/gpt-image-2')
   })
 
-  it('uses the same base endpoint when images are wired (editing via image_urls, no sub-path)', () => {
+  it('uses the same base endpoint when images are wired (editing via image_urls, no module-path)', () => {
     expect(GPT_IMAGE_2.resolveEndpoint(withImages(['https://fal/img.png']))).toBe(
       'openai/gpt-image-2',
     )

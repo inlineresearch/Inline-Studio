@@ -1,20 +1,59 @@
 """Best-effort model registration. A model whose deps are absent is skipped; the engine still serves
 source nodes and the rest of the API, so a torch-less install boots cleanly.
+
+Built-ins register first and community extensions last: ``Registry.register`` replaces by node type,
+so the reverse order would let an installed extension silently take over ``alibaba/z-image-turbo``.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 from ..device.policy import DevicePolicy
 from ..graph.registry import Registry
+from ..models.requirements import RequirementsRegistry
 from ..runtime.store import TakeStore
 
+if TYPE_CHECKING:
+    from ..extensions.loader import LoadedExtension
 
-def register_models(registry: Registry, store: TakeStore, policy: DevicePolicy) -> list[str]:
+
+def register_models(
+    registry: Registry,
+    store: TakeStore,
+    policy: DevicePolicy,
+    *,
+    requirements: RequirementsRegistry | None = None,
+    rpc: Any = None,
+    events: Any = None,
+) -> tuple[list[str], list[LoadedExtension]]:
+    """Register the built-in models, then load installed extensions.
+
+    Returns ``(built_in_node_types, loaded_extensions)``. Neither half can take the server down: a
+    built-in whose deps are missing is skipped, and an extension that raises is reported on its
+    ``LoadedExtension`` for the Extensions UI.
+    """
+    reqs = requirements if requirements is not None else RequirementsRegistry()
+    registered = _register_builtins(registry, store, policy, reqs)
+    extensions = _load_extensions(registry, store, policy, reqs, rpc, events)
+    return registered, extensions
+
+
+def _register_builtins(
+    registry: Registry,
+    store: TakeStore,
+    policy: DevicePolicy,
+    requirements: RequirementsRegistry,
+) -> list[str]:
     registered: list[str] = []
     try:
+        from ..models.zimage.provider import ZImageProvider
         from ..models.zimage.runner import register_zimage
 
         register_zimage(registry, store, policy)
+        # Torch-free, but guarded by the same import: with no runtime the node is unavailable, so
+        # advertising its requirements would offer a download for a node that cannot run.
+        requirements.register("alibaba/z-image-turbo", ZImageProvider())
         registered.append("alibaba/z-image-turbo")
     except ImportError:
         pass
@@ -26,3 +65,25 @@ def register_models(registry: Registry, store: TakeStore, policy: DevicePolicy) 
     except ImportError:
         pass
     return registered
+
+
+def _load_extensions(
+    registry: Registry,
+    store: TakeStore,
+    policy: DevicePolicy,
+    requirements: RequirementsRegistry,
+    rpc: Any,
+    events: Any,
+) -> list[LoadedExtension]:
+    try:
+        from ..extensions.loader import load_extensions
+    except ImportError:
+        return []
+    return load_extensions(
+        registry,
+        store,
+        policy,
+        requirements=requirements,
+        rpc=rpc,
+        events=events,
+    )

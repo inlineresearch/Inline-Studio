@@ -6,6 +6,7 @@ import { useGenerationStore } from '../../../store/generationStore'
 import { useGraphSelectionStore } from '../../../store/graphSelectionStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { activeDownload, useModelRequirementsStore } from '../../../store/modelRequirementsStore'
+import { useExtensionsStore } from '../../../store/extensionsStore'
 import { NodeFrame } from './NodeFrame'
 import { NodeRunToolbar } from './NodeRunToolbar'
 import {
@@ -124,11 +125,35 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
     if (coreType) void loadReqs(coreType)
   }, [coreType, registryVersion, loadReqs])
 
+  // An installed-but-disabled extension that declares this node type, so the fallback card can say
+  // "turn it back on" instead of the generic "not registered".
+  const disabledPack = useExtensionsStore((s) =>
+    coreType
+      ? (s.extensions.find((e) => e.nodes.some((n) => n.type === coreType))?.name ?? null)
+      : null,
+  )
+  const openExtensions = useExtensionsStore((s) => s.openDialog)
+
   if (!item || item.type !== 'core' || !item.data.core || !descriptor) {
     return (
       <NodeFrame id={id} selected={!!selected} minWidth={200} minHeight={92} subtleSelect>
         <div className="flex h-full flex-col items-center justify-center gap-1 p-3 text-center">
-          {coreType ? (
+          {coreType && disabledPack ? (
+            // The extension is installed but off, so this is a toggle away from working.
+            <>
+              <span className="text-[11px] font-semibold text-amber-300">Extension disabled</span>
+              <span className="text-[10px] leading-tight text-zinc-400">
+                <span className="text-zinc-300">{coreType}</span> comes from{' '}
+                <span className="text-zinc-300">{disabledPack}</span>, which is turned off.
+              </span>
+              <button
+                onClick={() => openExtensions('installed')}
+                className="mt-1 rounded-md border border-border px-2 py-1 text-[10px] font-medium text-zinc-200 hover:border-emerald-500/50 hover:text-emerald-300"
+              >
+                Open Extensions
+              </button>
+            </>
+          ) : coreType ? (
             <>
               <span className="text-[11px] font-semibold text-amber-300">Node unavailable</span>
               <span className="text-[10px] leading-tight text-zinc-400">

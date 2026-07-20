@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from helpers import make_registry
+
 from inline_core.errors import PortTypeError, UnknownNodeType
 from inline_core.graph.schema import parse_graph
 from inline_core.graph.validate import validate

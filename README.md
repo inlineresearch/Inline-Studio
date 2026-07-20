@@ -36,6 +36,7 @@ It runs as a **single process on one port**: the Inline Core engine (Python) ser
 - **Video editing on the canvas** - the **Video Director node** is a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export; the **Trim Video/Audio node** lets you drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
 - **Local generation, built in** - the Inline Core engine runs diffusion models on your own GPU. Z-Image Turbo from a single model file, no external server to set up.
 - **API Nodes for hosted models** - run closed models right on the canvas with no GPU. Add a Generate node, pick a model, and bring your own provider key. See [API Nodes](#api-nodes).
+- **Community extensions** - install custom nodes from a GitHub repo in one click, security-reviewed and dependency-isolated. Browse the [registry](https://github.com/inlineresearch/Inline-Registry) or [build your own](https://github.com/inlineresearch/Inline-Studio-Extension-Guide).
 - **Free & open source (MIT)** - one process (Python + a browser); runs on macOS, Windows, and Linux.
 
 [**Follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
@@ -75,11 +76,29 @@ Inline Core is a from-scratch generation engine for local rendering. It keeps th
 - **A single device policy owns all placement** - device, dtype, offload, and attention, so the same graph runs on a 4090, a 6 GB laptop, pure CPU, or split across several GPUs without touching the graph.
 - **Bring your own models, no hidden downloads** - a drop-in `models/` layout feeds a typed catalog and versioned node descriptors; nothing is fetched behind your back.
 
-### Multi-GPU: split one image across GPUs
+### Community extensions
+
+Install community-built nodes straight from a GitHub repo, from the Extensions dialog or a repo URL.
+
+- **One-click install**, with a live stepper showing download, security review, dependency resolution, and activation.
+- **Every install is reviewed.** Code that could replace Inline's PyTorch, hide a payload, or run at install time is blocked outright; subprocesses, sockets, and unknown network hosts need your explicit approval.
+- **Extensions can't break your setup.** Their dependencies install into their own folder and can never touch the shared torch/diffusers runtime, and genuine conflicts fail at install with both versions named.
+- **Nodes appear on the canvas immediately**, with their own params, model downloads, take history, and Run control. No restart, and no frontend code from the author.
+- **Toggle any node on or off**, roll back to a previous version, or uninstall, and see when an update is available.
+- **Publish by tagging.** Authors list once in the registry; after that a new tag reaches users with no further PR.
+
+Browse the [**extension registry**](https://github.com/inlineresearch/Inline-Registry), or copy the
+[**extension guide**](https://github.com/inlineresearch/Inline-Studio-Extension-Guide) to build your
+own: four working nodes, declared model downloads, and a full authoring reference.
+
+<details>
+<summary><b>Multi-GPU: split one image across GPUs</b></summary>
 
 Got two or more GPUs? Inline Core can cut a single image's latency by running its **denoise loop** (the expensive, iterative sampling step) collectively across them. This is not "one image per GPU" (independent renders); it's **one image whose sampling is shared by all the GPUs**, so a single render finishes faster.
 
 It's done with [xDiT](https://github.com/xdit-project/xDiT) (`xfuser`), which parallelizes diffusion-transformer inference in an isolated worker group (one process per GPU via `torchrun`, over local IPC). The HTTP server, database, and graph stay single-process; only the denoise distributes, and it sits behind a sampler seam so single-GPU/CPU runs pay no overhead. The split method is chosen from the interconnect Core detects: **PipeFusion** (default, works over plain PCIe) or **Ulysses** (sequence-parallel attention, used when NVLink is present). Turn it on with `./webui.sh --multi-gpu` after `uv pip install -e ".[parallel]"`.
+
+</details>
 
 For the full engineering story (the graph/sampler/device-policy design, the node vocabularies, and the xDiT worker group), see **[core/README.md](core/README.md)** and **[core/CLAUDE.md](core/CLAUDE.md)**.
 
@@ -113,6 +132,9 @@ cd core
 Prefer pip? `pip install -r requirements.txt` (from the repo root) pulls the engine, the prebuilt UI, and the local model runtime from PyPI; then run `inline-studio`.
 
 ### Hardware support
+
+<details>
+<summary><b>GPU, CPU, Apple Silicon, and ROCm setup</b></summary>
 
 Honest status - what's actually been run, versus what has a code path but no one has verified:
 
@@ -153,7 +175,12 @@ Two gotchas:
 - **Local model coverage is Z-Image Turbo only** today. Flux, SDXL and others are planned; hosted models via [API Nodes](#api-nodes) need no GPU at all.
 - **1024² with Guidance (CFG) above 0 needs more than 16 GB.** CFG runs the prompt and negative prompt together, doubling the denoise. Z-Image Turbo is distilled to run CFG-free - at Guidance 0, 1024² fits in ~11.5 GB.
 
+</details>
+
 ### From source (for UI development)
+
+<details>
+<summary><b>Build the UI and run the engine locally</b></summary>
 
 To hack on the web UI you need [Node.js](https://nodejs.org) 20.11+ as well, and you serve a local SPA build:
 
@@ -173,6 +200,8 @@ uv run python main.py --front-end-root ../dist-web
 Then open **http://127.0.0.1:8848**. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings for hosted models, and set up local generation as in [Three ways to generate](#three-ways-to-generate). The canvas and planning work without any models.
 
 **Hot-reload:** run the engine as above, then in another terminal `npm run dev:web` (Vite serves the UI with HMR and proxies API calls to Core).
+
+</details>
 
 ### Command-line options
 

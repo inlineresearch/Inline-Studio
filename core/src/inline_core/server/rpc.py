@@ -21,7 +21,17 @@ class RpcRouter:
         self._handlers: dict[str, Handler] = {}
 
     def register(self, channel: str, handler: Handler) -> None:
+        """Bind a channel. Registration is **exclusive**: re-registering an existing channel raises
+        rather than silently replacing it. Extensions register their own ``ext:<id>:*`` channels
+        through this router, and last-write-wins would let one shadow a core channel
+        (``project:open``, ``settings:get``, ...) and intercept its payloads."""
+        if channel in self._handlers:
+            raise ValueError(f"Channel {channel!r} is already registered.")
         self._handlers[channel] = handler
+
+    def unregister(self, channel: str) -> None:
+        """Drop a channel. Used when an extension is disabled; unknown channels are ignored."""
+        self._handlers.pop(channel, None)
 
     def has(self, channel: str) -> bool:
         return channel in self._handlers

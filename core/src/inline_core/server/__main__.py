@@ -15,8 +15,10 @@ import uvicorn
 from ..config import data_dir, server_host, server_port
 from ..device.detect import cpu_only_torch_warning
 from ..device.memory import MemoryPolicy
+from ..extensions.loader import LoadedExtension
 from ..graph.cache import InMemoryCache
 from ..graph.registry import build_default_registry
+from ..models.requirements import RequirementsRegistry
 from ..runtime.file_store import FileTakeStore
 from ..studio import config as studio_config
 from ..studio.store import StudioStore
@@ -32,10 +34,19 @@ def main() -> None:
     registry = build_default_registry()
     data = data_dir()
     takes = data / "takes"
-    store = FileTakeStore(takes)
+    take_store = FileTakeStore(takes)
     run_store = SqliteRunStore(data / "runs.db")
-    registered = register_models(registry, store, policy)
+    # Built before model registration: extensions register their own `ext:<id>:*` channels and
+    # push events while they load, so both must already exist.
+    rpc = RpcRouter()
+    events = EventBroadcaster()
+    requirements = RequirementsRegistry()
+    registered, extensions = register_models(
+        registry, take_store, policy, requirements=requirements, rpc=rpc, events=events
+    )
     print(f"Registered models: {registered or 'none (source nodes only)'}")
+    if extensions:
+        print(f"Extensions: {_extension_summary(extensions)}")
     # A CPU-only torch wheel on a CUDA machine is a silent ~100x slowdown, so say it loudly here
     # rather than letting the user conclude the engine is just slow.
     torch_warning = cpu_only_torch_warning()
@@ -46,8 +57,6 @@ def main() -> None:
     print(f"Frontend: {fe}")
     # The Studio app-backend: Core is the sole native backend (projects, frames, moodboard, assets,
     # generation, fal, timeline). Every InlineStudioApi channel is handled here.
-    rpc = RpcRouter()
-    events = EventBroadcaster()
     store = StudioStore(
         studio_config.data_dir(),
         studio_config.workspace_dir(),
@@ -65,10 +74,20 @@ def main() -> None:
         rpc=rpc,
         events=events,
         studio_store=store,
+        requirements=requirements,
     )
     host, port = server_host(), server_port()
     print(f"Serving on http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
+
+
+def _extension_summary(extensions: list[LoadedExtension]) -> str:
+    """One line naming what loaded and what didn't, so a broken extension is visible at boot
+    rather than only inside the Extensions dialog."""
+    ok = [p.extension_id for p in extensions if p.error is None]
+    failed = [f"{p.extension_id} ({p.error})" for p in extensions if p.error is not None]
+    parts = [f"{len(ok)} loaded"] + ([f"failed: {', '.join(failed)}"] if failed else [])
+    return "; ".join(parts) + (f" [{', '.join(ok)}]" if ok else "")
 
 
 if __name__ == "__main__":

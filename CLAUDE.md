@@ -15,6 +15,16 @@ plus closed models via fal.ai.
 > `cd core && python main.py --front-end-root ../dist-web` runs Core and serves the built UI on one
 > port.
 
+> **GitHub org: `inlineresearch`.** Every repo lives there - never `inline-studio/` or any other
+> org in a URL, manifest, or doc.
+>
+> | Repo                                                                                                              | What it is                                            |
+> | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+> | [`inlineresearch/Inline-Studio`](https://github.com/inlineresearch/Inline-Studio)                                 | This repo: the UI client + Inline Core                |
+> | [`inlineresearch/Inline-Core`](https://github.com/inlineresearch/Inline-Core)                                     | The engine's own repo (subtree source for `core/`)    |
+> | [`inlineresearch/Inline-Registry`](https://github.com/inlineresearch/Inline-Registry)                             | The published extension index the Available tab reads |
+> | [`inlineresearch/Inline-Studio-Extension-Guide`](https://github.com/inlineresearch/Inline-Studio-Extension-Guide) | The reference extension authors copy                  |
+
 > Read this file before changing code. It defines the architecture and the non-negotiable rules.
 
 ## Mental model (everything is organised around this)
@@ -121,6 +131,10 @@ clear "not available" for them.
   (`src/shared/nodes/`); their execution is Core's fal relay.
 - **Files & naming.** Components `PascalCase.tsx`, hooks `useX.ts`, one component per file,
   feature-foldered views. Keep files under ~300 lines without a good reason.
+- **Comments are short.** One or two lines, and only for the **why** a reader can't infer from the
+  code - a non-obvious constraint, a rejected alternative, an ordering that matters. Never narrate
+  what the code does or restate the line below. If the reasoning needs paragraphs, it belongs in a
+  doc, not in the source.
 - **Icons, never emoji.** Never use emoji in the UI (no 🎬/🎵/✂/🔊 as glyphs). Use crisp,
   consistent line SVG icons (Lucide-style: `viewBox="0 0 24 24"`, `fill="none"`,
   `stroke="currentColor"`) that inherit color/size via `currentColor` + a size class. Follow the

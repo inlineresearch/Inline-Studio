@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import Event
+from typing import TYPE_CHECKING
 
 from ..device.policy import DevicePolicy
 from .progress import ProgressEmitter
+
+if TYPE_CHECKING:
+    from .store import TakeStore
 
 
 class CancelToken:
@@ -29,3 +33,6 @@ class ExecutionContext:
     policy: DevicePolicy
     emitter: ProgressEmitter
     cancel: CancelToken
+    #: Where a node writes its output. Built-in runners hold their own store from construction;
+    #: this is how a node built by the extension registrar (which calls `cls()`) reaches one.
+    takes: TakeStore | None = None

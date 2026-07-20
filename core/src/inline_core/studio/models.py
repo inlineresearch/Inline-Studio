@@ -21,18 +21,28 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-_ZIMAGE_TYPE = "alibaba/z-image-turbo"
+from ..models.requirements import RequirementsProvider, RequirementsRegistry
 
 
 class ModelDownloads:
-    """Answers "what's missing" and downloads components into the models dir on request."""
+    """Answers "what's missing" and downloads components into the models dir on request.
+
+    Model-agnostic: *what* a node needs comes from the ``RequirementsRegistry`` (built-ins register
+    at boot, extensions when they load), and this class only knows how to report presence and move
+    bytes. It contains no per-model knowledge.
+    """
 
     def __init__(
-        self, events: Any, on_change: Callable[[], None] | None = None, policy: Any = None
+        self,
+        events: Any,
+        on_change: Callable[[], None] | None = None,
+        policy: Any = None,
+        requirements: RequirementsRegistry | None = None,
     ) -> None:
         self._events = events
         self._on_change = on_change  # rescan the model catalog after a download lands
         self._policy = policy  # device policy, for the memory fit estimate (optional)
+        self._requirements = requirements if requirements is not None else RequirementsRegistry()
 
     # --- requirements (the popup's data) --------------------------------------------------------
 
@@ -50,39 +60,16 @@ class ModelDownloads:
         }
 
     def _estimate(self, node_type: str) -> dict[str, Any] | None:
-        """Whether the model will fit this machine, and how (resident / int8 / offload / won't fit),
-        so the popup warns BEFORE a load. Pure ``stat`` + a live VRAM/RAM probe; ``None`` when the
-        runtime/policy is absent or the sizes/device can't be measured (a whole-pipeline folder)."""
-        if node_type != _ZIMAGE_TYPE or self._policy is None:
+        """Whether the model will fit this machine - delegated to the node's provider, which owns
+        the footprint knowledge. ``None`` whenever it can't be sized: a wrong estimate is worse
+        than none, so the popup simply omits the warning."""
+        provider = self._requirements.get(node_type)
+        if provider is None or self._policy is None:
             return None
         try:
-            from ..device.policy import ModelFootprint
-            from ..models.zimage.requirements import (
-                footprint_bytes,
-                resolve_diffusion,
-                resolve_text_encoder,
-                resolve_vae,
-            )
-        except ImportError:
+            return provider.estimate(self._policy)
+        except Exception:  # noqa: BLE001 - a provider is extension code; never break the popup
             return None
-        diffusion = resolve_diffusion(None)
-        diffusion_file = diffusion[1] if diffusion and diffusion[0] == "single_file" else None
-        footprint = ModelFootprint(
-            **footprint_bytes(diffusion_file, resolve_vae(None), resolve_text_encoder(None))
-        )
-        fit = self._policy.estimate_fit(footprint)  # pure - never mutates the shared policy
-        if fit is None:
-            return None
-        soft = not fit.fits or fit.plan in ("int8", "offload")
-        return {
-            "plan": fit.plan,
-            "fits": fit.fits,
-            "requiredVramMb": int(fit.required_vram_gb * 1024),
-            "totalVramMb": int(fit.total_vram_gb * 1024) if fit.total_vram_gb else None,
-            "freeVramMb": self._policy.free_vram_mb(),
-            "freeRamMb": self._policy.free_ram_mb(),
-            "warning": fit.note if soft else None,
-        }
 
     # --- download (explicit, user-triggered) ----------------------------------------------------
 
@@ -92,6 +79,9 @@ class ModelDownloads:
         asyncio.create_task(asyncio.to_thread(self._run, node_type, component_id, loop))
 
     def _run(self, node_type: str, component_id: str, loop: asyncio.AbstractEventLoop) -> None:
+        provider = self._requirements.get(node_type)
+        if provider is None:
+            return
         components = self._components(node_type)
         if component_id == "all":
             targets = [c for c in components if not c.present]
@@ -101,6 +91,7 @@ class ModelDownloads:
             payload_id = comp.id
             try:
                 self._download_component(
+                    provider,
                     comp,
                     lambda frac, status, cid=payload_id: self._emit(
                         loop,
@@ -129,23 +120,28 @@ class ModelDownloads:
     # --- internals ------------------------------------------------------------------------------
 
     def _components(self, node_type: str) -> list[Any]:
-        if node_type != _ZIMAGE_TYPE:
+        """The node's components, or ``[]`` for a node type with no registered provider (which is
+        also what a torch-less install sees - the node shows its own "unavailable" state)."""
+        provider = self._requirements.get(node_type)
+        if provider is None:
             return []
         try:
-            from ..models.zimage.requirements import zimage_requirements
-        except ImportError:
-            return []  # zimage runtime absent - the node shows "unavailable", no requirements
-        return zimage_requirements()
+            return list(provider.components())
+        except Exception:  # noqa: BLE001 - a provider is extension code; never break the popup
+            return []
 
-    def _download_component(self, comp: Any, on_progress: Callable[[float, str], None]) -> None:
+    def _download_component(
+        self,
+        provider: RequirementsProvider,
+        comp: Any,
+        on_progress: Callable[[float, str], None],
+    ) -> None:
         """Fetch a component's single file from its repo into ``models/<category>/`` (flat, so the
         node's dropdown lists it). Downloads into a ``.part`` staging dir first, then moves the file
         into place under its basename, so a half-finished download never looks installed."""
         from huggingface_hub import HfApi, hf_hub_download
 
-        from ..models.zimage.requirements import download_target
-
-        category_dir: Path = download_target(comp)
+        category_dir: Path = provider.download_target(comp)
         staging = category_dir / (comp.filename + ".part")
         shutil.rmtree(staging, ignore_errors=True)
 
