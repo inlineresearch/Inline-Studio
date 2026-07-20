@@ -50,7 +50,7 @@ def register_extension_handlers(rpc: Any, installer: Installer) -> None:
         }
 
     def versions(extension_id: str) -> dict[str, Any]:
-        extension = ExtensionsRoot.resolve().extension(extension_id)
+        extension = installer.paths.extension(extension_id)
         return {
             "extensionId": extension_id,
             "current": extension.current() or "",
@@ -58,7 +58,7 @@ def register_extension_handlers(rpc: Any, installer: Installer) -> None:
         }
 
     def registry_index(refresh: bool = False) -> dict[str, Any]:
-        return _registry_index(refresh=refresh)
+        return _registry_index(installer.paths, refresh=refresh)
 
     reg("list", installer.list_packs)
     reg("status", status)
@@ -72,13 +72,12 @@ def register_extension_handlers(rpc: Any, installer: Installer) -> None:
     reg("registryIndex", registry_index)
 
 
-def _registry_index(*, refresh: bool) -> dict[str, Any]:
+def _registry_index(paths: ExtensionsRoot, *, refresh: bool) -> dict[str, Any]:
     """The published extension list, from ``config.registry_url()``.
 
     Cached on disk with its ETag: a refresh is a conditional GET, and an unreachable registry
     degrades to the cached entries marked ``stale`` rather than an empty dialog.
     """
-    paths = ExtensionsRoot.resolve()
     cached, etag = _read_cache(paths)
     if not refresh and cached is not None:
         return {"entries": cached, "stale": False}

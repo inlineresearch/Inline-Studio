@@ -146,6 +146,12 @@ class Installer:
     def state(self) -> StateStore:
         return self._state
 
+    @property
+    def paths(self) -> ExtensionsRoot:
+        """The root this installer works in. Callers must use this rather than resolving from the
+        environment, or they silently read and write a different directory."""
+        return self._paths
+
     # --- install ----------------------------------------------------------------------------------
 
     async def install(self, request: InstallRequest) -> InstallResult:

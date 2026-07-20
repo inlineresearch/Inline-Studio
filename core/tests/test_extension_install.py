@@ -486,3 +486,30 @@ def test_an_extension_node_runs_as_a_graph_and_produces_a_take(
 
     written = list(takes_dir.glob("*.png"))
     assert len(written) == 1, "the run wrote exactly one take"
+
+
+def test_every_channel_uses_the_installers_root_not_the_environment(
+    installer: Installer, tmp_path: Path
+) -> None:
+    """A regression guard: handlers once resolved the root from the environment, so `versions` and
+    `registryIndex` read and wrote a different directory than the installer used - which quietly
+    littered the repo's default `./extensions` during tests."""
+    import asyncio
+
+    from inline_core.extensions.handlers import register_extension_handlers
+
+    rpc = RpcRouter()
+    register_extension_handlers(rpc, installer)
+    _install(installer, _make_repo(tmp_path, _renamed(MANIFEST, "root-extension")))
+
+    async def call(channel: str, args: list[Any]) -> Any:
+        out = await rpc.dispatch(channel, args)
+        assert out["ok"], out
+        return out["value"]
+
+    versions = asyncio.run(call("ext:manage:versions", ["root-extension"]))
+    assert versions["versions"], "versions must be read from the installer's own root"
+
+    # The registry cache must land under the installer's root, never the process default.
+    asyncio.run(call("ext:manage:registryIndex", []))
+    assert not (Path.cwd() / "extensions").exists(), "wrote to the default root instead"
