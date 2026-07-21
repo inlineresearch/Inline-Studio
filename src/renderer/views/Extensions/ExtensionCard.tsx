@@ -69,6 +69,25 @@ function ExternalIcon(): React.JSX.Element {
   )
 }
 
+function TrashIcon(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5"
+    >
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  )
+}
+
 /** Read the link as a repository rather than a raw URL. */
 function repoLabel(repo: string): string {
   return repo
@@ -148,11 +167,42 @@ export function ExtensionCard({ extension }: { extension: ExtensionInfo }): Reac
             )}
           </div>
         </div>
-        <Toggle
-          on={extension.enabled}
-          onChange={(next) => void setEnabled(extension.extensionId, next)}
-          label={`Enable ${extension.name}`}
-        />
+        <div className="flex shrink-0 items-center gap-2">
+          <Toggle
+            on={extension.enabled}
+            onChange={(next) => void setEnabled(extension.extensionId, next)}
+            label={`Enable ${extension.name}`}
+          />
+          {confirming ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-zinc-400">Remove?</span>
+              <button
+                onClick={() => setConfirming(false)}
+                className="rounded border border-border px-2 py-1 text-[11px] text-zinc-300 hover:bg-surface"
+              >
+                No
+              </button>
+              <button
+                onClick={() => {
+                  setConfirming(false)
+                  void uninstall(extension.extensionId)
+                }}
+                className="rounded bg-red-500/80 px-2 py-1 text-[11px] font-semibold text-black hover:bg-red-400"
+              >
+                Uninstall
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirming(true)}
+              aria-label={`Uninstall ${extension.name}`}
+              title="Uninstall"
+              className="rounded-md border border-border p-1.5 text-zinc-400 hover:border-red-500/40 hover:text-red-300"
+            >
+              <TrashIcon />
+            </button>
+          )}
+        </div>
       </div>
 
       <button
@@ -181,8 +231,8 @@ export function ExtensionCard({ extension }: { extension: ExtensionInfo }): Reac
             </div>
           ))}
 
-          <div className="mt-1 flex items-center justify-between gap-2 border-t border-border pt-2.5">
-            {others.length > 0 ? (
+          {others.length > 0 ? (
+            <div className="mt-1 flex items-center gap-2 border-t border-border pt-2.5">
               <select
                 value=""
                 onChange={(e) => {
@@ -197,38 +247,12 @@ export function ExtensionCard({ extension }: { extension: ExtensionInfo }): Reac
                   </option>
                 ))}
               </select>
-            ) : (
+            </div>
+          ) : (
+            <div className="mt-1 border-t border-border pt-2.5">
               <span className="font-mono text-[10px] text-zinc-600">{extension.installed}</span>
-            )}
-
-            {confirming ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] text-zinc-400">Remove?</span>
-                <button
-                  onClick={() => setConfirming(false)}
-                  className="rounded border border-border px-2 py-1 text-[11px] text-zinc-300 hover:bg-surface"
-                >
-                  No
-                </button>
-                <button
-                  onClick={() => {
-                    setConfirming(false)
-                    void uninstall(extension.extensionId)
-                  }}
-                  className="rounded bg-red-500/80 px-2 py-1 text-[11px] font-semibold text-black hover:bg-red-400"
-                >
-                  Uninstall
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setConfirming(true)}
-                className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-zinc-400 hover:border-red-500/40 hover:text-red-300"
-              >
-                Uninstall
-              </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
     </div>

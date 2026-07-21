@@ -6,6 +6,10 @@
 # Engine working data: the run DB and generated takes (also grows to gigabytes).
 /.inline/
 
+# Installed community extensions - `extensions_dir()` defaults to ./extensions (state.json, the
+# per-extension source/venv, and the .cache/git mirrors). Runtime data, never committed.
+/extensions/
+
 # Studio app data + project workspace (when created under the repo) and local server logs.
 /.inline-studio-server/
 /InlineStudioProjects/

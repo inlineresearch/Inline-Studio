@@ -233,6 +233,22 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
       <>
         <NodeBadgeRow dragNodeId={id}>
           <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>
+          {/* A loader can also declare downloadable weights (e.g. an extension's `models`). It has
+              no preview overlay to host the download state, so surface it on the title badge. */}
+          {(modelsMissing || download) && (
+            <button
+              onClick={() => openReqs(descriptor.type)}
+              title={download ? 'Downloading model…' : 'Models missing - click to download'}
+              className={`nodrag flex h-6 items-center gap-1 rounded-full border px-2 text-[10px] font-medium shadow-sm backdrop-blur ${
+                download
+                  ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                  : 'animate-pulse border-amber-500/40 bg-amber-500/10 text-amber-300 hover:animate-none hover:bg-amber-500/20'
+              }`}
+            >
+              <AlertIcon className="h-3.5 w-3.5" />
+              {download ? `${downloadPct}%` : 'Models'}
+            </button>
+          )}
         </NodeBadgeRow>
         <NodeFrame
           id={id}

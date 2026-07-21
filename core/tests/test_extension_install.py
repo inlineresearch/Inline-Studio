@@ -369,6 +369,25 @@ def test_uninstall_removes_the_extension_from_disk_and_state(
     assert not installer._registry.has("demo/invert")
 
 
+def test_reinstall_recovers_from_a_corrupt_cached_mirror(
+    installer: Installer, tmp_path: Path
+) -> None:
+    """A clone interrupted mid-write leaves a mirror with objects/refs but no HEAD. Uninstall never
+    touches the cache, so a plain re-clone would hit "destination already exists". Reinstall must
+    heal it instead of failing at fetch."""
+    repo = _make_repo(tmp_path, MANIFEST)
+    _install(installer, repo)
+    installer.uninstall("demo-extension")
+
+    mirror = next((installer.paths.cache / "git").glob("*.git"))
+    (mirror / "HEAD").unlink()  # wedge the mirror the way an aborted clone would
+
+    result = _install(installer, repo)
+
+    assert result.name == "Demo Extension"
+    assert (mirror / "HEAD").is_file()
+
+
 def test_switching_to_an_uninstalled_version_is_refused(
     installer: Installer, tmp_path: Path
 ) -> None:

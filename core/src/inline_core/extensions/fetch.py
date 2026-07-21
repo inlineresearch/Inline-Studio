@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import re
+import shutil
 import subprocess
 import tarfile
 from dataclasses import dataclass
@@ -66,11 +67,17 @@ def _validate(url: str, ref: str) -> None:
 
 
 def _sync_mirror(url: str, mirror: Path) -> None:
+    # A valid bare mirror has HEAD at its top; a clone interrupted mid-write leaves objects/refs but
+    # no HEAD, and `git clone` would then refuse the non-empty directory ("already exists").
     if (mirror / "HEAD").is_file():
-        # Re-point at the URL in case a registry entry moved the repo.
-        _git("remote", "set-url", "origin", url, cwd=mirror)
-        _git("fetch", "--prune", "--tags", "origin", "+refs/heads/*:refs/heads/*", cwd=mirror)
-        return
+        try:
+            # Re-point at the URL in case a registry entry moved the repo.
+            _git("remote", "set-url", "origin", url, cwd=mirror)
+            _git("fetch", "--prune", "--tags", "origin", "+refs/heads/*:refs/heads/*", cwd=mirror)
+            return
+        except FetchError:
+            pass  # A wedged mirror must not strand reinstall; drop it and re-clone below.
+    shutil.rmtree(mirror, ignore_errors=True)
     mirror.parent.mkdir(parents=True, exist_ok=True)
     _git("clone", "--bare", "--quiet", url, str(mirror))
 
