@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { isModelPort, portKindColor, type CorePort } from '@shared/coreNodes'
+import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { useCoreNodesStore } from '../../../store/coreNodesStore'
 import { useGenerationStore } from '../../../store/generationStore'
 import { useGraphSelectionStore } from '../../../store/graphSelectionStore'
@@ -194,6 +195,9 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const isLoader = descriptor.outputKind == null
   const fileParam = core?.params?.file
   const fileLabel = fileParam ? String(fileParam) : 'Auto'
+  // An extension-provided node carries its owning extension's id (`ext:<id>:<module>`) - surface it
+  // as a chip so it's clear which extension a canvas node came from.
+  const extName = isExtensionNode(descriptor.source) ? extensionOf(descriptor.source) : null
 
   // Split each side into content (top-packed) and model-family (bottom-packed) ports.
   const inContent = descriptor.inputs.filter((p) => !isModelPort(p.kind))
@@ -233,6 +237,11 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
       <>
         <NodeBadgeRow dragNodeId={id}>
           <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>
+          {extName && (
+            <NodeBadge tone="info" title={`From the ${extName} extension`}>
+              {extName}
+            </NodeBadge>
+          )}
           {/* A loader can also declare downloadable weights (e.g. an extension's `models`). It has
               no preview overlay to host the download state, so surface it on the title badge. */}
           {(modelsMissing || download) && (
@@ -322,6 +331,11 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
       {/* Floating title badge - matches the fal Generate node. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>
+        {extName && (
+          <NodeBadge tone="info" title={`From the ${extName} extension`}>
+            {extName}
+          </NodeBadge>
+        )}
         {modelsMissing && (
           <button
             onClick={() => openReqs(descriptor.type)}
