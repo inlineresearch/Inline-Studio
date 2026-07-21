@@ -11,7 +11,7 @@ already supports, so the multi-GPU split works on it from the start).
 > Status: early, and running end to end against a stub engine. In place and tested: the graph engine,
 > the typed `/v1` HTTP + websocket API (durable runs, streamed progress, coalescing), the model-dir
 > scan, the device + memory policy (profiles, dtype, offload, int8), the low-level primitive node
-> vocabulary, and a ComfyUI workflow importer. The Z-Image loader is written and validates on a GPU.
+> vocabulary. The Z-Image loader is written and validates on a GPU.
 > Cross-request batching, single-image multi-GPU (an xDiT worker group behind the sampler seam, with
 > the policy and IPC round-trip tested), and out-of-process custom nodes are built as seams but not
 > yet running on real hardware.
@@ -89,8 +89,7 @@ Underneath, a **low-level primitive vocabulary** exists (`load/diffusion-model`,
 `load/text-encoder`, `encode/text`, `latent/empty`, `sample`, `vae/decode`, `vae/encode`) - the
 ComfyUI-equivalent decomposed graph, kept for validation/execution - but these are marked **`hidden`**
 and never appear in the add-node menu. Engine handles (`model`, `vae`, `text-encoder`, `conditioning`,
-`latent`) are typed sockets between nodes; only media outputs become Frames with take history. A
-best-effort ComfyUI importer maps existing workflows onto the primitives.
+`latent`) are typed sockets between nodes; only media outputs become Frames with take history.
 
 ## Multi-GPU: split one image across GPUs
 

@@ -49,15 +49,14 @@ Generating a single frame is the easy part. The work that makes an AI film is wh
 
 From the home screen, **Export** zips a project into one archive. Import it on the other side and you get everything back: the inputs (every imported asset), the outputs (all the generated takes), and the graph that turned one into the other. Whoever opens it can re-run the pipeline exactly and keep iterating.
 
-## Three ways to generate
+## Two ways to generate
 
-Pick whatever fits the shot, and mix all three in one film. However you render, the frame keeps its full take history, so you never lose a good version.
+Pick whatever fits the shot, and mix both in one film. However you render, the frame keeps its full take history, so you never lose a good version.
 
 | How you render                          | What it's like                                                                                                                                                                                                                                                                                    | What you need                                                                                                                                                                                    |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Local GPU: Inline Core** _(built in)_ | Drop a **Z-Image Turbo** node, wire a prompt, hit Run: one node, no loader/sampler wiring. A single `.safetensors` is all you bring; the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Your own GPU. No account, no external server. Low-VRAM friendly: it auto-fits the model to your card (streaming weights + int8) so a model too big for full precision still runs, with no flags. |
 | **Hosted: API Nodes**                   | Add a Generate node and pick a model: hosted, closed models across image, video, and audio. No GPU, instant range. See [API Nodes](#api-nodes) for the model list and providers.                                                                                                                  | A provider key (currently [fal](https://fal.ai/dashboard/keys)); it stays on your machine, and you pay per render (each node estimates the price first).                                         |
-| **Your own ComfyUI** _(legacy)_         | Point Inline Studio at a running ComfyUI server and drive it from the Generate tab.                                                                                                                                                                                                               | A ComfyUI instance. **Being phased out** in favour of Inline Core; fine for now, but don't build on it.                                                                                          |
 
 For local generation, either drop a Z-Image `.safetensors` into `core/models/diffusion_models/`, or add a Z-Image node and use its **model popup** (a blinking hint shows up when something's missing) to download the diffusion model, VAE, and text-encoder into `core/models/`, with visible progress. The canvas and planning work with no models at all.
 
@@ -118,7 +117,7 @@ Inline Studio runs as **one process**: the Inline Core engine serves the web UI 
 
 ### The easy way (no Node build)
 
-Like ComfyUI, the built web UI ships as a Python package, so you only need [Python 3.11+](https://python.org), no Node. With [uv](https://docs.astral.sh/uv/) (or plain `pip`):
+The built web UI ships as a Python package, so you only need [Python 3.11+](https://python.org), no Node. With [uv](https://docs.astral.sh/uv/) (or plain `pip`):
 
 ```bash
 git clone https://github.com/inlineresearch/Inline-Studio.git && cd Inline-Studio
@@ -241,11 +240,11 @@ Only for **local** generation. The built-in Inline Core engine renders on the GP
 
 ### What models can I run?
 
-See [Three ways to generate](#three-ways-to-generate): local Z-Image on your own GPU, hosted fal models, or your own ComfyUI. Adding a new local model is a Core change (a model runner), no UI release.
+See [Two ways to generate](#two-ways-to-generate): local Z-Image on your own GPU, or hosted fal models. Adding a new local model is a Core change (a model runner), no UI release.
 
-### Does it still use ComfyUI?
+### Does it use ComfyUI?
 
-Not for the built-in generation: that's all Inline Core now, with nothing external to stand up. You _can_ still connect **your own ComfyUI** server and drive it from the Generate tab, but that path is legacy and **being discontinued** in favour of Inline Core, so don't build anything new on it.
+No. Built-in generation is all Inline Core (local, on your own GPU) plus hosted fal models — nothing external to stand up. There's no ComfyUI connection, Generate tab, or workflow linking.
 
 ## Contributing
 
