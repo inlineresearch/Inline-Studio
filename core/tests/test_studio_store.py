@@ -97,13 +97,10 @@ def test_settings_defaults_and_overrides(tmp_path) -> None:
     store = StudioStore(
         tmp_path / "a",
         tmp_path / "w",
-        default_comfy_url="http://comfy",
         default_core_url="http://core",
     )
-    assert store.get_settings() == {"comfyUrl": "http://comfy", "coreUrl": "http://core"}
+    assert store.get_settings() == {"coreUrl": "http://core"}
     assert store.set_core_url("http://127.0.0.1:9999")["coreUrl"] == "http://127.0.0.1:9999"
-    # Persisted + comfy still defaulted.
     assert store.get_settings()["coreUrl"] == "http://127.0.0.1:9999"
-    assert store.get_settings()["comfyUrl"] == "http://comfy"
     # Blank falls back to the default.
-    assert store.set_comfy_url("  ")["comfyUrl"] == "http://comfy"
+    assert store.set_core_url("  ")["coreUrl"] == "http://core"

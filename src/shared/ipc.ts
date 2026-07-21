@@ -33,10 +33,7 @@ import type {
   ModelDownloadProgressEvent,
   ModelDownloadDoneEvent,
   ModelDownloadErrorEvent,
-  ComfyStatus,
   CoreStatus,
-  ComfyOutput,
-  ComfyRun,
   ExportResult,
   ProjectExportResult,
   ProjectMediaDirs,
@@ -89,7 +86,6 @@ export const IpcChannels = {
     reorder: 'frames:reorder',
     delete: 'frames:delete',
     clone: 'frames:clone',
-    unlink: 'frames:unlink',
     setHero: 'frames:setHero',
     listTakes: 'frames:listTakes',
     heroTakes: 'frames:heroTakes',
@@ -121,20 +117,8 @@ export const IpcChannels = {
     setApiKey: 'falSettings:setApiKey',
     clearApiKey: 'falSettings:clearApiKey',
   },
-  comfy: {
-    status: 'comfy:status',
-    linkFrame: 'comfy:linkFrame',
-    uploadInputs: 'comfy:uploadInputs',
-    pullWorkflow: 'comfy:pullWorkflow',
-    saveLiveWorkflow: 'comfy:saveLiveWorkflow',
-    pushWorkflow: 'comfy:pushWorkflow',
-    pullLatest: 'comfy:pullLatest',
-    latestRun: 'comfy:latestRun',
-    captureOutput: 'comfy:captureOutput',
-  },
   settings: {
     get: 'settings:get',
-    setComfyUrl: 'settings:setComfyUrl',
     setCoreUrl: 'settings:setCoreUrl',
   },
   core: {
@@ -177,6 +161,7 @@ export const IpcChannels = {
     addLayer: 'moodboard:addLayer',
     addDirector: 'moodboard:addDirector',
     addTrim: 'moodboard:addTrim',
+    addLoader: 'moodboard:addLoader',
     addGenNode: 'moodboard:addGenNode',
     addPrompt: 'moodboard:addPrompt',
     addCoreNode: 'moodboard:addCoreNode',
@@ -333,10 +318,8 @@ export interface InlineStudioApi {
     /** Persist a new left-to-right ordering. */
     reorder(orderedIds: string[]): Promise<Result<void>>
     delete(id: string): Promise<Result<void>>
-    /** Duplicate a frame (its inputs + stored workflow); the clone starts unlinked. */
+    /** Duplicate a frame (its inputs). */
     clone(id: string): Promise<Result<Frame>>
-    /** Detach the frame's ComfyUI workflow link. */
-    unlink(id: string): Promise<Result<Frame>>
     /** Choose which take is the frame's Output (null clears it). */
     setHero(id: string, takeId: string | null): Promise<Result<Frame>>
     /** The frame's generated takes, newest first. */
@@ -366,14 +349,10 @@ export interface InlineStudioApi {
     /** Switch a fal frame to a different model (resets params + output kind). Returns the frame. */
     setModel(frameId: string, modelId: string): Promise<Result<Frame>>
     /**
-     * Resolve an `unset` chooser frame to an engine: `comfy` (embedded ComfyUI) or `fal` (a
-     * declarative model - `modelId` defaults to the first registered model). Returns the frame.
+     * Resolve a frame to the `fal` engine (a declarative model - `modelId` defaults to the first
+     * registered model). Returns the frame.
      */
-    setProvider(
-      frameId: string,
-      provider: 'comfy' | 'fal',
-      modelId?: string,
-    ): Promise<Result<Frame>>
+    setProvider(frameId: string, provider: 'fal', modelId?: string): Promise<Result<Frame>>
     /** Resolve a fal frame's inputs (media as data URIs) + prompt, for building its request. */
     resolveFalInputs(frameId: string): Promise<Result<ResolvedFalInputs>>
   }
@@ -398,32 +377,8 @@ export interface InlineStudioApi {
     /** Forget the stored fal key. */
     clearApiKey(): Promise<Result<ApiKeyStatus>>
   }
-  comfy: {
-    /** Is the configured ComfyUI reachable? */
-    status(): Promise<Result<ComfyStatus>>
-    /** Create/ensure this frame's linked ComfyUI workflow; returns the updated frame. */
-    linkFrame(frameId: string): Promise<Result<Frame>>
-    /** Upload the frame's input assets to ComfyUI (cloud-safe); returns stored names. */
-    uploadInputs(frameId: string): Promise<Result<string[]>>
-    /** Pull the frame's workflow from ComfyUI into the project copy; true if changed. */
-    pullWorkflow(frameId: string): Promise<Result<boolean>>
-    /**
-     * Capture the live (possibly unsaved) graph serialized off the ComfyUI canvas into
-     * the project copy. Returns the updated frame if anything changed, else null.
-     */
-    saveLiveWorkflow(frameId: string, workflow: unknown): Promise<Result<Frame | null>>
-    /** Push the project's copy of the frame's workflow to ComfyUI. */
-    pushWorkflow(frameId: string): Promise<Result<void>>
-    /** Pull ComfyUI's latest output and attach it to the frame as its Output take. */
-    pullLatest(frameId: string): Promise<Result<Take>>
-    /** The most recent ComfyUI run + all its output files (for the capture strip). */
-    latestRun(): Promise<Result<ComfyRun | null>>
-    /** Download a specific ComfyUI output and attach it to the frame as a take. */
-    captureOutput(frameId: string, output: ComfyOutput): Promise<Result<Take>>
-  }
   settings: {
     get(): Promise<Result<AppSettings>>
-    setComfyUrl(url: string): Promise<Result<AppSettings>>
     setCoreUrl(url: string): Promise<Result<AppSettings>>
   }
   core: {
@@ -489,6 +444,8 @@ export interface InlineStudioApi {
     addDirector(x: number, y: number): Promise<Result<MoodboardItem>>
     /** Add an "Edit Video/Audio" (trim) node at (x, y). */
     addTrim(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Create a standalone "Load Assets" node (holds library asset refs in its data). */
+    addLoader(x: number, y: number): Promise<Result<MoodboardItem>>
     /** Create a fal generation frame for `modelId` AND place its node on the canvas at (x, y). */
     addGenNode(modelId: string, x: number, y: number): Promise<Result<MoodboardItem>>
     /** Add a text-prompt node (feeds a Generate node's prompt input) at (x, y). */

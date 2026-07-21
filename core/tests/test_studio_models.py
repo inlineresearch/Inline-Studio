@@ -7,49 +7,25 @@ from __future__ import annotations
 import types
 from pathlib import Path
 
+import pytest
+
 from inline_core.studio.models import (
     ModelDownloads,
     _component_json,
-    _dir_size,
-    _wanted_files,
+    _progress_tqdm,
 )
 
 
-def _fake_api(files: list[tuple[str, int]]):
-    siblings = [types.SimpleNamespace(rfilename=name, size=size) for name, size in files]
-    info = types.SimpleNamespace(siblings=siblings)
-    return types.SimpleNamespace(model_info=lambda repo, files_metadata=False: info)
-
-
-def test_wanted_files_picks_the_one_repo_file_with_size():
-    api = _fake_api(
-        [
-            ("split_files/vae/ae.safetensors", 100),
-            ("split_files/diffusion_models/z_image_bf16.safetensors", 999),
-            ("README.md", 2),
-        ]
-    )
-    comp = types.SimpleNamespace(repo="r", repo_file="split_files/vae/ae.safetensors")
-    assert _wanted_files(api, comp) == [("split_files/vae/ae.safetensors", 100)]
-
-
-def test_wanted_files_falls_back_to_zero_size_when_absent():
-    # Not in the listing -> still attempt the download (size 0 = unknown total, no live fraction).
-    api = _fake_api([("split_files/vae/ae.safetensors", 100)])
-    comp = types.SimpleNamespace(repo="r", repo_file="split_files/vae/missing.safetensors")
-    assert _wanted_files(api, comp) == [("split_files/vae/missing.safetensors", 0)]
-
-
-def test_dir_size_sums_nested_files(tmp_path: Path):
-    (tmp_path / "a.bin").write_bytes(b"x" * 10)
-    nested = tmp_path / ".cache" / "download"
-    nested.mkdir(parents=True)
-    (nested / "b.incomplete").write_bytes(b"y" * 25)
-    assert _dir_size(tmp_path) == 35
-
-
-def test_dir_size_missing_dir_is_zero(tmp_path: Path):
-    assert _dir_size(tmp_path / "nope") == 0
+def test_progress_tqdm_forwards_the_download_fraction():
+    """The tqdm subclass handed to hf_hub_download must turn its byte counter into a 0..0.99
+    fraction on our callback."""
+    pytest.importorskip("tqdm")
+    seen: list[float] = []
+    cls = _progress_tqdm(lambda frac, status: seen.append(frac), "VAE")
+    bar = cls(total=100, disable=True)
+    bar.update(50)
+    bar.update(50)  # reaches total, but the cap keeps 1.0 for the post-move "ready"
+    assert seen == [0.5, 0.99]
 
 
 def test_requirements_empty_for_unknown_node_type():
@@ -59,6 +35,36 @@ def test_requirements_empty_for_unknown_node_type():
         "allPresent": True,
         "estimate": None,  # no requirements + no policy -> no fit estimate
     }
+
+
+def test_download_retries_anonymously_when_a_cached_token_is_invalid(tmp_path, monkeypatch):
+    """A stale/invalid cached HF token 401s even on a public repo (masked as "not found"). The
+    download must drop the token and retry anonymously, not fail."""
+    hub = pytest.importorskip("huggingface_hub")
+    from huggingface_hub.utils import HfHubHTTPError
+
+    tokens_seen: list[object] = []
+
+    def fake_download(repo, rfilename, local_dir, token=None, tqdm_class=None):
+        tokens_seen.append(token)
+        if token is not False:  # ambient (stale) token -> 401 the way HF does
+            response = types.SimpleNamespace(status_code=401, headers={}, request=None)
+            raise HfHubHTTPError("401 Client Error. Repository Not Found", response=response)
+        dest = Path(local_dir) / rfilename
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"data")
+        return str(dest)
+
+    monkeypatch.setattr(hub, "hf_hub_download", fake_download)
+
+    downloads = ModelDownloads(events=None)
+    comp = types.SimpleNamespace(repo="lokCX/4x-Ultrasharp", repo_file="w.pth", filename="w.pth",
+                                 label="4x UltraSharp")
+    provider = types.SimpleNamespace(download_target=lambda c: tmp_path)
+    downloads._download_component(provider, comp, lambda frac, status: None)
+
+    assert (tmp_path / "w.pth").read_bytes() == b"data"
+    assert tokens_seen == [None, False]  # tried the ambient token, then fell back to anonymous
 
 
 def test_component_json_shape():

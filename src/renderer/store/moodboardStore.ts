@@ -44,9 +44,14 @@ interface MoodboardState {
   ) => Promise<void>
   /** Create an empty frame and place its node on the canvas. Returns the new item. */
   addEmptyFrame: (x: number, y: number) => Promise<MoodboardItem | null>
-  /** Create a "Load Assets" loader - an empty frame flagged as a pure loader (no generation,
-   * freely resizable). Returns the new item. */
+  /** Create a standalone "Load Assets" loader (a `type:'loader'` item holding asset refs). */
   addLoader: (x: number, y: number) => Promise<MoodboardItem | null>
+  /** Append library assets to a loader's ordered asset list (deduped). */
+  addLoaderAssets: (itemId: string, assetIds: string[]) => Promise<void>
+  /** Remove one asset from a loader. */
+  removeLoaderAsset: (itemId: string, assetId: string) => Promise<void>
+  /** Move an asset to the front of a loader's list (its hero, fed downstream). */
+  setLoaderHero: (itemId: string, assetId: string) => Promise<void>
   /** Add a Preview node. Returns the new item (for connection-drop suggestions). */
   addPreview: (x: number, y: number) => Promise<MoodboardItem | null>
   addLayer: (x: number, y: number) => Promise<void>
@@ -290,14 +295,44 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   },
 
   addLoader: async (x, y) => {
-    // A loader is an empty frame flagged in its item data; reuse the frame plumbing (output handle,
-    // flow-link, take/asset resolution) and just mark it so the node renders as a resizable viewer.
-    const item = await get().addEmptyFrame(x, y)
-    if (!item) return null
-    const data = { ...item.data, loader: true }
-    // Fold into the same history entry addEmptyFrame already recorded (recordHistory = false).
-    await get().updateItem(item.id, { data }, false)
-    return { ...item, data }
+    // A "Load Assets" node is a standalone `type:'loader'` item holding library asset refs in its
+    // data (no frame). It renders as a resizable viewer and feeds its hero asset downstream.
+    try {
+      get().record()
+      const res = await studio().moodboard.addLoader(x, y)
+      if (!res.ok) {
+        set({ error: res.error })
+        return null
+      }
+      set((s) => ({ items: [...s.items, res.value] }))
+      return res.value
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+      return null
+    }
+  },
+
+  addLoaderAssets: async (itemId, assetIds) => {
+    const item = get().items.find((i) => i.id === itemId)
+    if (!item) return
+    const current = item.data.assetIds ?? []
+    const next = [...current, ...assetIds.filter((id) => !current.includes(id))]
+    if (next.length === current.length) return
+    await get().updateItem(itemId, { data: { ...item.data, assetIds: next } })
+  },
+
+  removeLoaderAsset: async (itemId, assetId) => {
+    const item = get().items.find((i) => i.id === itemId)
+    if (!item) return
+    const next = (item.data.assetIds ?? []).filter((id) => id !== assetId)
+    await get().updateItem(itemId, { data: { ...item.data, assetIds: next } })
+  },
+
+  setLoaderHero: async (itemId, assetId) => {
+    const item = get().items.find((i) => i.id === itemId)
+    if (!item) return
+    const rest = (item.data.assetIds ?? []).filter((id) => id !== assetId)
+    await get().updateItem(itemId, { data: { ...item.data, assetIds: [assetId, ...rest] } })
   },
 
   addFrameItemInLayer: async (frameId, x, y, parentId) => {

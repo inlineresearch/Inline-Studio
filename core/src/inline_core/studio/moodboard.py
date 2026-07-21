@@ -233,6 +233,14 @@ def add_trim(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     )
 
 
+def add_loader(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
+    # A "Load Assets" node holds library asset refs in its data (no frame, no frame_inputs) and
+    # feeds its hero (first) asset downstream via graph_build.
+    return _insert_item(
+        conn, item_type="loader", x=x, y=y, width=220, height=200, data={"assetIds": []}
+    )
+
+
 def add_prompt(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     return _insert_item(
         conn, item_type="prompt", x=x, y=y, width=240, height=120, data={"promptText": ""}

@@ -388,6 +388,33 @@ def test_reinstall_recovers_from_a_corrupt_cached_mirror(
     assert (mirror / "HEAD").is_file()
 
 
+def test_remote_sha_peels_an_annotated_tag_to_its_commit(tmp_path: Path) -> None:
+    """An annotated tag's ls-remote lists the tag object first and the commit on a `^{}` line. The
+    update check compares against the installed *commit*, so remote_sha must peel - otherwise every
+    annotated-tag release reads as perpetually 'update available'."""
+    from inline_core.extensions.fetch import remote_sha
+
+    repo = tmp_path / "annotated-repo"
+    repo.mkdir()
+    _git("init", "-q", "-b", "main", cwd=repo)
+    _git("config", "user.email", "test@example.com", cwd=repo)
+    _git("config", "user.name", "Test", cwd=repo)
+    (repo / "file.txt").write_text("hi", encoding="utf-8")
+    _git("add", "-A", cwd=repo)
+    _git("commit", "-q", "-m", "initial", cwd=repo)
+    _git("tag", "-a", "v1.0.0", "-m", "release", cwd=repo)  # annotated, not lightweight
+
+    commit = subprocess.run(
+        ["git", "rev-parse", "v1.0.0^{commit}"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    assert remote_sha(f"file://{repo}", "v1.0.0") == commit
+
+
 def test_switching_to_an_uninstalled_version_is_refused(
     installer: Installer, tmp_path: Path
 ) -> None:

@@ -97,9 +97,6 @@ def test_asset_upload_and_media_serving(client) -> None:
 
 def test_unported_channels_degrade_gracefully(client) -> None:
     rpc(client, "project:create", {"name": "P", "parentDir": None})
-    # Embedded ComfyUI is desktop-only - a clear error, not a crash.
-    cf = rpc(client, "comfy:linkFrame", "frame-x")
-    assert cf["ok"] is False and "comfyui" in cf["error"].lower()
     # Cancel is a safe no-op.
     assert rpc(client, "generation:cancel")["ok"] is True
 

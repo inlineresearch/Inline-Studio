@@ -69,6 +69,24 @@ function ExternalIcon(): React.JSX.Element {
   )
 }
 
+function DownloadIcon(): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3 w-3"
+    >
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  )
+}
+
 function TrashIcon(): React.JSX.Element {
   return (
     <svg
@@ -102,6 +120,7 @@ export function ExtensionCard({ extension }: { extension: ExtensionInfo }): Reac
   const setNodeEnabled = useExtensionsStore((s) => s.setNodeEnabled)
   const switchVersion = useExtensionsStore((s) => s.switchVersion)
   const uninstall = useExtensionsStore((s) => s.uninstall)
+  const runUpdate = useExtensionsStore((s) => s.update)
   const update = useExtensionsStore((s) => s.updates[extension.extensionId])
   const [expanded, setExpanded] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -123,18 +142,20 @@ export function ExtensionCard({ extension }: { extension: ExtensionInfo }): Reac
               </span>
             )}
             {update?.behind && (
-              <span
+              <button
+                onClick={() => void runUpdate(extension.extensionId)}
                 title={
                   update.latestTag && update.latestTag !== extension.ref
-                    ? `${update.latestTag} has been published`
-                    : `Installed ${update.installedSha}, upstream is at ${update.remoteSha}`
+                    ? `Update to ${update.latestTag}`
+                    : `Reinstall the newest ${extension.ref} (installed ${update.installedSha}, upstream ${update.remoteSha})`
                 }
-                className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300"
+                className="group flex shrink-0 items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300 hover:bg-amber-500/25"
               >
+                <DownloadIcon />
                 {update.latestTag && update.latestTag !== extension.ref
-                  ? `${update.latestTag} available`
-                  : 'Update available'}
-              </span>
+                  ? `Update to ${update.latestTag}`
+                  : 'Update'}
+              </button>
             )}
           </div>
 

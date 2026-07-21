@@ -59,6 +59,7 @@ interface ExtensionsState {
   loadRegistry: (refresh?: boolean) => Promise<void>
   checkUpdates: () => Promise<void>
   beginInstall: (source: string, ref?: string, consents?: string[]) => Promise<void>
+  update: (extensionId: string) => Promise<void>
   clearInstall: () => void
   setEnabled: (extensionId: string, enabled: boolean) => Promise<void>
   setNodeEnabled: (extensionId: string, nodeType: string, enabled: boolean) => Promise<void>
@@ -162,6 +163,17 @@ export const useExtensionsStore = create<ExtensionsState>((set, get) => ({
     await get().refresh()
     // New node types are live: refresh the palette so they appear in the add-node menu.
     await useCoreNodesStore.getState().load()
+    // Re-evaluate drift so an install/update clears its own "update available" badge instead of
+    // leaving a stale one that reappears on the freshly installed card.
+    await get().checkUpdates()
+  },
+
+  update: async (extensionId) => {
+    const ext = get().extensions.find((e) => e.extensionId === extensionId)
+    if (!ext) return
+    // Updating is reinstalling from the same source at the newest ref; beginInstall handles the
+    // rest (progress, refresh, node reload, restart flag, and the drift re-check above).
+    await get().beginInstall(ext.repo, get().updates[extensionId]?.latestTag ?? 'latest')
   },
 
   clearInstall: () => set({ install: null }),
@@ -189,6 +201,12 @@ export const useExtensionsStore = create<ExtensionsState>((set, get) => ({
   uninstall: async (extensionId) => {
     const res = await studio().extensions.uninstall(extensionId)
     if (res.ok && res.value.restartRequired) set({ restartRequired: true })
+    // Drop any drift flag now, so it can't survive an uninstall and reappear on a later reinstall.
+    set((s) => {
+      const next = { ...s.updates }
+      delete next[extensionId]
+      return { updates: next }
+    })
     await get().refresh()
     await useCoreNodesStore.getState().load()
   },

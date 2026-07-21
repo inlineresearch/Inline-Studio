@@ -43,8 +43,8 @@ def _parse_params(raw: str | None) -> dict[str, Any]:
 
 
 def _row_to_frame(row: sqlite3.Row) -> dict[str, Any]:
-    provider = row["provider"]
-    provider = provider if provider in ("fal", "unset", "core") else "comfy"
+    # A legacy 'comfy' row (ComfyUI removed) passes through unchanged; the UI renders it as a plain
+    # viewer. NULL/empty defaults to 'unset'.
     return {
         "id": row["id"],
         "sequenceId": row["sequence_id"],
@@ -53,12 +53,10 @@ def _row_to_frame(row: sqlite3.Row) -> dict[str, Any]:
         "position": row["position"],
         "inputAssetId": row["input_asset_id"],
         "heroTakeId": row["hero_take_id"],
-        "provider": provider,
+        "provider": row["provider"] or "unset",
         "modelId": row["model_id"],
         "params": _parse_params(row["params"]),
         "workflowTemplateId": row["workflow_template_id"],
-        "comfyWorkflowName": row["comfy_workflow_name"],
-        "comfyWorkflowReady": row["comfy_workflow_ready"] == 1,
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
@@ -231,20 +229,9 @@ def set_provider(
         )
     else:
         conn.execute(
-            "UPDATE frames SET provider = 'comfy', model_id = NULL, updated_at = ? WHERE id = ?",
+            "UPDATE frames SET provider = 'unset', model_id = NULL, updated_at = ? WHERE id = ?",
             (now, frame_id),
         )
-    return get_frame(conn, frame_id)
-
-
-def unlink_workflow(conn: sqlite3.Connection, frame_id: str) -> dict[str, Any]:
-    """Detach a frame's ComfyUI workflow link (desktop legacy; a reset on the web path)."""
-    get_frame(conn, frame_id)
-    conn.execute(
-        "UPDATE frames SET comfy_workflow_name = NULL, comfy_workflow_ready = 0, "
-        "updated_at = ? WHERE id = ?",
-        (_now(), frame_id),
-    )
     return get_frame(conn, frame_id)
 
 

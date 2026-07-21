@@ -114,8 +114,8 @@ Recents, settings, and the fal API key are app-global under Core's data dir
 - **Director timelines** - resolved from canvas connectors and rendered with ffmpeg
   (`inline_core/studio/timeline/`), progress over `/events`. Folder export copies hero takes.
 
-The embedded-ComfyUI webview and `comfy.*` channels were desktop-only and are retired; Core returns a
-clear "not available" for them.
+ComfyUI has been fully removed - no embedded webview, `comfy.*` channels, Generate tab, or workflow
+linking. Generation is Core nodes, installed-extension nodes, and fal nodes on the canvas.
 
 ## Code standards (non-negotiable)
 
@@ -140,7 +140,7 @@ clear "not available" for them.
   `stroke="currentColor"`) that inherit color/size via `currentColor` + a size class. Follow the
   existing icon components (`src/renderer/components/icons`, `CanvasToolbar` icons, `DirectorNode`'s
   `VolumeIcon`); reuse or add to those rather than dropping in an emoji.
-- **Tests (Vitest).** Cover the logic that matters: Comfy input/workflow resolution, frame-input and
+- **Tests (Vitest).** Cover the logic that matters: fal node input/request resolution, frame-input and
   hero-take resolution, DB migrations. UI is verified by running the app - don't chase view coverage.
 - **Commits.** Conventional Commits (`feat:`, `fix:`, `chore:`), small and scoped. `lint` +
   `typecheck` run on pre-commit (husky + lint-staged).

@@ -3,7 +3,6 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useFrameStore } from '../../../store/frameStore'
 import { useAssetStore } from '../../../store/assetStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
-import { useUiStore } from '../../../store/uiStore'
 import {
   getAssetDragIds,
   getFrameDragId,
@@ -21,11 +20,10 @@ import {
   pickFilesViaInput,
 } from '../../../lib/importFiles'
 import { useLightboxStore } from '../../../store/lightboxStore'
-import { requireComfyConnected } from '../../../lib/requireComfyConnected'
 import { VideoPreview } from '../../../components/VideoPreview'
 import { Waveform } from '../../../components/Waveform'
 import { NodeFrame } from './NodeFrame'
-import { FilmIcon, LinkIcon, NodeBadge, NodeBadgeRow, StarIcon, UploadIcon } from './NodeBadge'
+import { FilmIcon, NodeBadge, NodeBadgeRow, StarIcon, UploadIcon } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
 import { resolveInputThumbs } from './inputThumbs'
 
@@ -48,9 +46,6 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const { frameId } = data as FrameNodeData
   const frame = useFrameStore((s) => s.frames.find((sh) => sh.id === frameId))
   const inputs = useFrameStore((s) => s.inputsByFrame[frameId]) ?? []
-  const busy = useFrameStore((s) => s.busyId === frameId)
-  const linkFrame = useFrameStore((s) => s.linkFrame)
-  const uploadInputs = useFrameStore((s) => s.uploadInputs)
   const reorderInputs = useFrameStore((s) => s.reorderInputs)
   const addInputs = useFrameStore((s) => s.addInputs)
   const addSourceInput = useFrameStore((s) => s.addSourceInput)
@@ -62,9 +57,6 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const assets = useAssetStore((s) => s.assets)
   const item = useMoodboardStore((s) => s.items.find((it) => it.id === id))
   const updateItem = useMoodboardStore((s) => s.updateItem)
-  const setMode = useUiStore((s) => s.setMode)
-  const setLinkedWorkflow = useUiStore((s) => s.setLinkedWorkflow)
-  const setActiveFrame = useUiStore((s) => s.setActiveFrame)
   const onMediaContextMenu = useMediaContextMenu()
   const openLightbox = useLightboxStore((s) => s.open)
   const [idx, setIdx] = useState(0)
@@ -84,7 +76,6 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const count = thumbs.length
   const safeIdx = count ? Math.min(idx, count - 1) : 0
   const cur = count ? thumbs[safeIdx] : undefined
-  const linked = !!frame?.comfyWorkflowName
   // A "Load Assets" loader: a pure viewer with no generation. It's freely resizable (the aspect
   // auto-fit below is skipped) and passes its loaded asset straight through as its output.
   const isLoader = !!item?.data.loader
@@ -118,20 +109,6 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   useLayoutEffect(() => {
     if (curKind !== 'image' && curKind !== 'video') setAspect(null)
   }, [curKind])
-
-  const onLink = async (): Promise<void> => {
-    if (!frame) return
-    // ComfyUI must be reachable to link/open a workflow - otherwise send the user to the
-    // Generate tab to connect first.
-    if (!(await requireComfyConnected(() => setMode('generate')))) return
-    const result = await linkFrame(frame.id)
-    setLinkedWorkflow(result?.comfyWorkflowName ?? frame.comfyWorkflowName)
-    setActiveFrame(frame.id)
-    setMode('generate')
-    // Push this frame's inputs to ComfyUI so they're available in LoadImage - the
-    // cloud-safe path (no shared local folder needed). Best-effort.
-    void uploadInputs(frame.id)
-  }
 
   // Move the current input to the front. Reordering is keyed by asset id, so it only
   // applies when every input is asset-backed (flow inputs have no asset id).
@@ -196,7 +173,11 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
     if (media) {
       void (async () => {
         const asset = await importMediaUrlToLibrary(resolveMedia(media.filePath), media.name)
-        if (asset) void addInputs(frameId, [asset.id])
+        if (!asset) return
+        // Load the new asset into the store first, else resolveInputThumbs can't find it and the
+        // node falls back to its empty "no media" state despite the input being wired.
+        await useAssetStore.getState().load()
+        void addInputs(frameId, [asset.id])
       })()
       return
     }
@@ -218,8 +199,7 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   return (
     <>
-      {/* Title + workflow-link badges - float above the node, matching the Generate node. A loader
-          is a pure viewer, so it drops the generation (workflow-link) control. */}
+      {/* Title badge - floats above the node, matching the Generate node. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge
           icon={<FilmIcon />}
@@ -227,23 +207,6 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
         >
           {isLoader ? 'Load Assets' : `Frame ${frame?.name ?? '—'}`}
         </NodeBadge>
-        {!isLoader && (
-          <button
-            onClick={() => void onLink()}
-            disabled={busy}
-            title={linked ? 'Open the linked ComfyUI workflow' : 'Link a ComfyUI workflow'}
-            className="nodrag flex h-6 items-center gap-1 rounded-full border border-blue-500/40 bg-blue-500/10 px-2 text-[10px] font-medium text-blue-300 shadow-sm backdrop-blur hover:bg-blue-500/20 disabled:opacity-40"
-          >
-            {busy ? (
-              '…'
-            ) : (
-              <>
-                <LinkIcon className="h-3 w-3" />
-                {linked ? 'Open Workflow' : 'Link Workflow'}
-              </>
-            )}
-          </button>
-        )}
       </NodeBadgeRow>
 
       <NodeFrame

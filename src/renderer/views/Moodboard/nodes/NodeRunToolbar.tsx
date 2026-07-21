@@ -23,7 +23,7 @@ export function NodeRunToolbar({
   disabledReason?: string
 }): React.JSX.Element {
   return (
-    <NodeToolbar isVisible={isTarget} position={Position.Top} align="center" offset={12}>
+    <NodeToolbar isVisible={isTarget} position={Position.Top} align="end" offset={12}>
       {busy ? (
         <button
           onClick={onStop}

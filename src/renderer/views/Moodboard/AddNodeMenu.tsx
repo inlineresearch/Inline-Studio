@@ -1,7 +1,7 @@
 /**
  * The "Add node" popup opened from the toolbar's + button, or by double-clicking empty canvas in
- * Select mode. Lists every node type. The single "Generate" row creates a unified generation frame
- * (a chooser - Link a ComfyUI Workflow or Generate with Fal API - resolved on the node itself).
+ * Select mode. Lists the built-in node types plus the Fal Models, Inline Core, and Extension nodes.
+ * A fal generation node is added directly from the Fal Models list.
  * Positioning mirrors MoodboardPanel's "Connect to…" menu (container-relative left/top).
  */
 
@@ -10,7 +10,7 @@ import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
-export type AddNodeKind = 'load' | 'frame' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
+export type AddNodeKind = 'load' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
 
 interface Entry {
   kind: AddNodeKind
@@ -22,7 +22,6 @@ interface Entry {
 
 const ENTRIES: Entry[] = [
   { kind: 'load', label: 'Load Assets', icon: <ImageIcon /> },
-  { kind: 'frame', label: 'Generate', icon: <SparklesIcon />, accent: true },
   { kind: 'layer', label: 'Layer', icon: <LayerIcon /> },
   { kind: 'preview', label: 'Preview', icon: <ImageIcon /> },
   { kind: 'director', label: 'Video Director', icon: <ClapperboardIcon /> },

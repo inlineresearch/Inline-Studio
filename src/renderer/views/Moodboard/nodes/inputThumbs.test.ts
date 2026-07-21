@@ -34,8 +34,6 @@ const frame = (over: Partial<Frame>): Frame => ({
   modelId: null,
   params: {},
   workflowTemplateId: null,
-  comfyWorkflowName: null,
-  comfyWorkflowReady: false,
   createdAt: 0,
   updatedAt: 0,
   ...over,

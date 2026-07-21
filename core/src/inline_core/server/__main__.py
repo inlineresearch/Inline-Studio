@@ -10,6 +10,12 @@ import os as _os
 # `python -m inline_core.server`. A user-set value always wins.
 _os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
+# XET download acceleration tracks its bytes internally, so a model download reports no per-chunk
+# progress - the popup's bar would sit at 0% then snap to done. The plain HTTP path streams a real
+# fraction (and still resumes). huggingface_hub reads this at import, so it must be set before then.
+# A user-set value always wins.
+_os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
 import uvicorn
 
 from ..config import data_dir, server_host, server_port
@@ -60,7 +66,6 @@ def main() -> None:
     store = StudioStore(
         studio_config.data_dir(),
         studio_config.workspace_dir(),
-        default_comfy_url=studio_config.DEFAULT_COMFY_URL,
         default_core_url=studio_config.DEFAULT_CORE_URL,
     )
     print(f"Studio data: {studio_config.data_dir()}  |  workspace: {studio_config.workspace_dir()}")

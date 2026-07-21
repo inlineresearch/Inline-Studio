@@ -53,14 +53,12 @@ class StudioStore:
         app_data_dir: str | Path,
         workspace_dir: str | Path,
         *,
-        default_comfy_url: str = "http://127.0.0.1:8188",
         default_core_url: str = "http://127.0.0.1:8848",
     ) -> None:
         self._app_data = Path(app_data_dir)
         self._workspace = Path(workspace_dir)
         self._app_data.mkdir(parents=True, exist_ok=True)
         self._workspace.mkdir(parents=True, exist_ok=True)
-        self._default_comfy_url = default_comfy_url
         self._default_core_url = default_core_url
         self._conn: sqlite3.Connection | None = None
         self._folder: Path | None = None
@@ -237,18 +235,12 @@ class StudioStore:
     def get_settings(self) -> dict[str, str]:
         saved = self._read_settings()
         return {
-            "comfyUrl": self._non_empty(saved.get("comfyUrl")) or self._default_comfy_url,
             "coreUrl": self._non_empty(saved.get("coreUrl")) or self._default_core_url,
         }
 
     def _save_settings(self, settings: dict[str, str]) -> dict[str, str]:
         self._settings_file().write_text(json.dumps(settings, indent=2), encoding="utf-8")
         return settings
-
-    def set_comfy_url(self, url: str) -> dict[str, str]:
-        settings = self.get_settings()
-        settings["comfyUrl"] = url.strip() or self._default_comfy_url
-        return self._save_settings(settings)
 
     def set_core_url(self, url: str) -> dict[str, str]:
         settings = self.get_settings()

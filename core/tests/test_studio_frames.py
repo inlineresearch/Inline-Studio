@@ -62,8 +62,9 @@ def test_set_model_and_provider(conn) -> None:
     swapped = fr.set_model(conn, frame["id"], "m/2", "video", {"b": 2})
     assert swapped["modelId"] == "m/2" and swapped["kind"] == "video"
     assert swapped["params"] == {"b": 2}
-    to_comfy = fr.set_provider(conn, frame["id"], "comfy")
-    assert to_comfy["provider"] == "comfy" and to_comfy["modelId"] is None
+    # A non-fal set_provider resets the frame to 'unset' (the neutral, engine-less state).
+    reset = fr.set_provider(conn, frame["id"], "unset")
+    assert reset["provider"] == "unset" and reset["modelId"] is None
 
 
 def test_rename_reorder_delete(conn) -> None:

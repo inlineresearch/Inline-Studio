@@ -35,7 +35,7 @@ def test_build_workflow_graph_prompt_into_zimage(tmp_path) -> None:
 
 def test_build_workflow_graph_frame_output_into_zimage_image(tmp_path) -> None:
     """A rendered frame wired into Z-Image's image port becomes an input/image source node pointing
-    at the frame's hero take - no dangling edge to a non-emitted node (the old "No node with id")."""
+    at the frame's hero take - no dangling edge to a non-emitted node."""
     store = _store(tmp_path)
     conn = store.conn()
     z = mb.add_core_node(conn, "alibaba/z-image-turbo", 400, 200)
@@ -53,6 +53,30 @@ def test_build_workflow_graph_frame_output_into_zimage_image(tmp_path) -> None:
     zi = by_id[z["id"]]
     assert zi["inputs"]["image"] == {"from": frame_item["id"], "output": "image"}
     assert take["id"]  # hero take exists
+
+
+def test_build_workflow_graph_loader_into_zimage_image(tmp_path) -> None:
+    """A standalone Load Assets loader (its hero asset) wired into Z-Image becomes an input/image
+    source node - no frame involved."""
+    store = _store(tmp_path)
+    conn = store.conn()
+    conn.execute(
+        "INSERT INTO assets (id, project_id, name, file_path, kind, created_at) "
+        "VALUES ('a1', ?, 'a', 'assets/a.png', 'image', 0)",
+        (mb._project_id(conn),),
+    )
+    z = mb.add_core_node(conn, "alibaba/z-image-turbo", 400, 200)
+    loader = mb.add_loader(conn, 80, 200)
+    assert loader["type"] == "loader" and loader["data"]["assetIds"] == []
+    mb.update_item(conn, loader["id"], {"data": {"assetIds": ["a1"]}})
+    mb.create_connector(conn, loader["id"], z["id"], "out", "image")
+
+    graph, _ = build_workflow_graph(conn, store.folder(), z["id"])
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    loader_node = by_id[loader["id"]]
+    assert loader_node["type"] == "input/image"
+    assert loader_node["params"]["asset"]["path"] == str(store.folder() / "assets/a.png")
+    assert by_id[z["id"]]["inputs"]["image"] == {"from": loader["id"], "output": "image"}
 
 
 class _Events:

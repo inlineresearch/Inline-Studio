@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -138,45 +137,40 @@ class ModelDownloads:
     ) -> None:
         """Fetch a component's single file from its repo into ``models/<category>/`` (flat, so the
         node's dropdown lists it). Downloads into a ``.part`` staging dir first, then moves the file
-        into place under its basename, so a half-finished download never looks installed."""
-        from huggingface_hub import HfApi, hf_hub_download
+        into place under its basename, so a half-finished download never looks installed.
+
+        Progress comes from huggingface_hub's own download counter via ``tqdm_class`` - real
+        per-chunk motion, and it still resumes a partial file. (XET is disabled at process start so
+        the plain HTTP path is used; XET reports nothing to tqdm.)"""
+        from huggingface_hub import hf_hub_download
+        from huggingface_hub.utils import HfHubHTTPError
 
         category_dir: Path = provider.download_target(comp)
         staging = category_dir / (comp.filename + ".part")
-        shutil.rmtree(staging, ignore_errors=True)
-
-        files = _wanted_files(HfApi(), comp)
-        total = sum(size for _, size in files)
         on_progress(0.0, f"Downloading {comp.label}…")
+        tqdm_class = _progress_tqdm(on_progress, comp.label)
 
-        # ``hf_hub_download`` blocks for the whole (multi-GB) file with no per-byte callback, so a
-        # naive "emit after each file" jumps 0 → 99%. Instead, a watcher thread polls the staging
-        # tree's byte size while the download runs and streams a real fraction. It only reports a
-        # fraction when the repo metadata gave us a real total; otherwise size is unknown and we
-        # leave the 0 → 1 endpoints (the status text still shows activity).
-        stop = threading.Event()
+        def _fetch(token: bool | None) -> str:
+            return hf_hub_download(
+                comp.repo,
+                comp.repo_file,
+                local_dir=str(staging),
+                token=token,
+                tqdm_class=tqdm_class,
+            )
 
-        def _watch() -> None:
-            while not stop.wait(0.5):
-                if total <= 0:
-                    continue
-                got = _dir_size(staging)
-                if got > 0:
-                    on_progress(min(0.98, got / total), f"Downloading {comp.label}…")
-
-        watcher = threading.Thread(target=_watch, name="model-download-progress", daemon=True)
-        watcher.start()
         try:
-            for rfilename, _size in files:
-                hf_hub_download(comp.repo, rfilename, local_dir=str(staging))
-        finally:
-            stop.set()
-            watcher.join(timeout=1.0)
+            path = _fetch(None)  # ambient token, e.g. for a gated repo the user has access to
+        except HfHubHTTPError as error:
+            # A stale/invalid cached HF token 401s even on a public repo (HF masks it as "not
+            # found"). Retry anonymously so a bad token never blocks a public model download.
+            if getattr(getattr(error, "response", None), "status_code", None) not in (401, 403):
+                raise
+            shutil.rmtree(staging, ignore_errors=True)
+            path = _fetch(False)
 
         category_dir.mkdir(parents=True, exist_ok=True)
-        for rfilename, _ in files:
-            dest = category_dir / Path(rfilename).name
-            shutil.move(str(staging / rfilename), str(dest))
+        shutil.move(path, str(category_dir / comp.filename))
         shutil.rmtree(staging, ignore_errors=True)
         on_progress(1.0, f"{comp.label} ready")
 
@@ -210,30 +204,19 @@ def _source_label(component: Any) -> str:
     return component.repo
 
 
-def _dir_size(path: Path) -> int:
-    """Total bytes under ``path`` (recursively), for live download progress. Counts Hugging Face's
-    ``.incomplete`` temp file as it grows, so the fraction advances during the blocking fetch.
-    Best-effort: a file vanishing mid-walk (the final rename) is ignored."""
-    total = 0
-    try:
-        for child in path.rglob("*"):
-            try:
-                if child.is_file():
-                    total += child.stat().st_size
-            except OSError:
-                continue
-    except OSError:
-        return total
-    return total
+def _progress_tqdm(on_progress: Callable[[float, str], None], label: str) -> Any:
+    """A tqdm subclass handed to ``hf_hub_download`` as ``tqdm_class``; it forwards the download
+    counter to ``on_progress``. It sums ``n`` itself because ``tqdm.update`` short-circuits (never
+    touching ``self.n``) when its bar is disabled - which it is on a headless server. The 0.99 cap
+    leaves the final 1.0 for the post-move ``ready``."""
+    from tqdm.auto import tqdm
 
+    class _Tqdm(tqdm):
+        def update(self, n: float | None = 1) -> Any:
+            done = super().update(n)
+            self._forwarded = getattr(self, "_forwarded", 0.0) + (n or 0.0)
+            if self.total:
+                on_progress(min(0.99, self._forwarded / self.total), f"Downloading {label}…")
+            return done
 
-def _wanted_files(api: Any, comp: Any) -> list[tuple[str, int]]:
-    """(rfilename, size) for the single file this component pulls, sized from the repo metadata.
-
-    Falls back to size 0 (progress by count) if the file isn't in the listing - the download still
-    proceeds; ``hf_hub_download`` is the source of truth for whether the path exists."""
-    info = api.model_info(comp.repo, files_metadata=True)
-    for sibling in info.siblings:
-        if sibling.rfilename == comp.repo_file:
-            return [(comp.repo_file, int(sibling.size or 0))]
-    return [(comp.repo_file, 0)]
+    return _Tqdm

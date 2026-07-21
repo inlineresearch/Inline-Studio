@@ -48,9 +48,7 @@ export function ProjectLauncher(): React.JSX.Element {
               <Logo size={44} />
               <h1 className="text-4xl font-semibold tracking-tight text-white">Inline Studio</h1>
             </div>
-            <p className="mt-3 text-sm text-zinc-400">
-              AI filmmaking on a node canvas, powered by your own ComfyUI
-            </p>
+            <p className="mt-3 text-sm text-zinc-400">AI filmmaking on a node canvas</p>
           </header>
 
           <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">

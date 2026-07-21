@@ -50,7 +50,6 @@ import { AudioNode } from './nodes/AudioNode'
 import { TextNode } from './nodes/TextNode'
 import { FrameNode } from './nodes/FrameNode'
 import { GenNode } from './nodes/GenNode'
-import { ChooserNode } from './nodes/ChooserNode'
 import { PromptNode } from './nodes/PromptNode'
 import { GenerateSettingsPanel } from './GenerateSettingsPanel'
 import { CoreSettingsPanel } from './CoreSettingsPanel'
@@ -60,6 +59,7 @@ import { PreviewNode } from './nodes/PreviewNode'
 import { LayerNode } from './nodes/LayerNode'
 import { DirectorNode } from './nodes/DirectorNode'
 import { TrimNode } from './nodes/TrimNode'
+import { LoaderNode } from './nodes/LoaderNode'
 import { GraphNode } from './nodes/GraphNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
@@ -69,18 +69,14 @@ import { FrameInspector } from './FrameInspector'
 import { CheckIcon, CloseIcon, CopyIcon } from '../../components/icons'
 
 /**
- * Every generation node is one `type:'frame'` canvas item (so they share the frame/take/flow-link
- * machinery). Which component renders is decided by the backing frame's provider: `unset` → the
- * ChooserNode (pick an engine); `fal` → the self-contained GenNode; `comfy` (default) → the FrameNode.
- * A `loader` item is a pure "Load Assets" viewer with no generation, so it always renders as the
- * FrameNode (loader mode), never the engine chooser.
+ * A `type:'frame'` canvas item renders as the self-contained fal GenNode when its backing frame is
+ * `provider:'fal'`; anything else (a legacy `unset`/`comfy` frame, or an old loader frame) falls
+ * through to the plain FrameNode viewer. Fal nodes are added directly from the Add-node dropdown.
  */
 function FrameNodeSwitch(props: NodeProps): React.JSX.Element {
   const { frameId, loader } = props.data as { frameId: string; loader?: boolean }
   const provider = useFrameStore((s) => s.frames.find((f) => f.id === frameId)?.provider)
-  if (loader) return <FrameNode {...props} />
-  if (provider === 'fal') return <GenNode {...props} />
-  if (provider === 'unset') return <ChooserNode {...props} />
+  if (!loader && provider === 'fal') return <GenNode {...props} />
   return <FrameNode {...props} />
 }
 
@@ -95,6 +91,7 @@ const nodeTypes: NodeTypes = {
   director: DirectorNode,
   trim: TrimNode,
   prompt: PromptNode,
+  loader: LoaderNode,
   core: GraphNode,
 }
 
@@ -261,6 +258,7 @@ function Board(): React.JSX.Element {
   const addTrim = useMoodboardStore((s) => s.addTrim)
   const addEmptyFrame = useMoodboardStore((s) => s.addEmptyFrame)
   const addLoader = useMoodboardStore((s) => s.addLoader)
+  const addLoaderAssets = useMoodboardStore((s) => s.addLoaderAssets)
   const addPrompt = useMoodboardStore((s) => s.addPrompt)
   const addCoreNode = useMoodboardStore((s) => s.addCoreNode)
   const addGenNode = useMoodboardStore((s) => s.addGenNode)
@@ -282,7 +280,6 @@ function Board(): React.JSX.Element {
   const loadFrames = useFrameStore((s) => s.load)
   const setCanvasSelection = useUiStore((s) => s.setCanvasSelection)
   const setCanvasCenter = useUiStore((s) => s.setCanvasCenter)
-  const mode = useUiStore((s) => s.mode)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const { screenToFlowPosition, getNodes } = useReactFlow()
   const updateNodeInternals = useUpdateNodeInternals()
@@ -395,13 +392,11 @@ function Board(): React.JSX.Element {
   }, [])
 
   // `onlyRenderVisibleElements` culls/sizes nodes from their measured dimensions, which
-  // come from the pane. While this canvas is hidden (Generate tab → display:none) or the
-  // window is minimized/occluded, the pane measures 0×0, so any node re-measured then gets
-  // stuck at zero size and stays invisible after returning - most visibly the preview
-  // nodes (frames self-correct via their aspect-fit re-measure). Force a fresh re-measure
-  // of every node whenever the canvas becomes visible again.
+  // come from the pane. While the window is minimized/occluded, the pane measures 0×0, so any node
+  // re-measured then gets stuck at zero size and stays invisible after returning - most visibly the
+  // preview nodes (frames self-correct via their aspect-fit re-measure). Force a fresh re-measure of
+  // every node whenever the canvas becomes visible again.
   useEffect(() => {
-    if (mode !== 'moodboard') return
     const remeasure = (): void => {
       if (document.visibilityState !== 'visible') return
       const ids = useMoodboardStore.getState().items.map((it) => it.id)
@@ -415,7 +410,7 @@ function Board(): React.JSX.Element {
       document.removeEventListener('visibilitychange', remeasure)
       window.removeEventListener('focus', remeasure)
     }
-  }, [mode, updateNodeInternals])
+  }, [updateNodeInternals])
 
   // Edges are managed by useEdgesState (so selection/hover changes apply via
   // onEdgesChange) but kept in sync with the persisted connectors.
@@ -704,9 +699,6 @@ function Board(): React.JSX.Element {
       case 'load':
         void addLoader(m.flowX, m.flowY)
         break
-      case 'frame':
-        void addEmptyFrame(m.flowX, m.flowY)
-        break
       case 'layer':
         void addLayer(m.flowX, m.flowY)
         break
@@ -802,8 +794,11 @@ function Board(): React.JSX.Element {
       void (async () => {
         const asset = await importMediaUrlToLibrary(resolveMedia(media.filePath), media.name)
         if (!asset) return
+        // Surface the imported asset in the store, or the loader can't resolve its input thumb
+        // (resolveInputThumbs drops any input whose asset isn't loaded) and shows "no media".
+        await loadAssets()
         const loader = await addLoader(drop.x, drop.y)
-        if (loader?.frameId) await useFrameStore.getState().addInputs(loader.frameId, [asset.id])
+        if (loader) await addLoaderAssets(loader.id, [asset.id])
       })()
       return
     }
@@ -1188,6 +1183,9 @@ function itemToNode(
   }
   if (item.type === 'prompt') {
     return { ...common, type: 'prompt', data: {} }
+  }
+  if (item.type === 'loader') {
+    return { ...common, type: 'loader', data: { itemId: item.id } }
   }
   if (item.type === 'core') {
     return { ...common, type: 'core', data: { itemId: item.id } }

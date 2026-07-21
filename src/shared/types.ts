@@ -47,26 +47,18 @@ export interface Frame {
   /** Currently chosen take placed on the timeline, if any. */
   heroTakeId: string | null
   /**
-   * Which generation engine backs this frame. `unset` = a fresh chooser node that hasn't picked an
-   * engine yet (renders the Link-ComfyUI / Generate-with-Fal chooser). `comfy` = the embedded
-   * ComfyUI workflow (every legacy frame). `fal` = a declarative fal.ai node (see `modelId`/`params`).
-   * `core` = an Inline Core node: same `modelId`/`params`, run by the Inline Core engine.
+   * Which generation engine backs this frame. `fal` = a declarative fal.ai node (see
+   * `modelId`/`params`). `core` = an Inline Core node. `unset` = a legacy frame with no engine
+   * (renders as a plain viewer). (Legacy projects may still carry a `'comfy'` string from before
+   * ComfyUI was removed; it renders as a plain viewer too.)
    */
-  provider: 'comfy' | 'fal' | 'core' | 'unset'
-  /** For `provider:'fal'`: the registry model id (e.g. `openai/gpt-image-2`). Null for comfy. */
+  provider: 'fal' | 'core' | 'unset'
+  /** For `provider:'fal'`: the registry model id (e.g. `openai/gpt-image-2`). */
   modelId: string | null
   /** For `provider:'fal'`: the node's editable param values (keyed by the NodeDef param keys). */
   params: Record<string, unknown>
   /** Workflow template this frame generates with, if chosen. */
   workflowTemplateId: string | null
-  /** The ComfyUI workflow (userdata name) this frame is linked to, if any. */
-  comfyWorkflowName: string | null
-  /**
-   * True once a real (non-seed) workflow graph has been captured for this frame - i.e.
-   * the user has actually built something, not just clicked Link (which seeds a Note).
-   * Lets the UI distinguish "linked but empty" from "ready to generate".
-   */
-  comfyWorkflowReady: boolean
   createdAt: number
   updatedAt: number
 }
@@ -142,6 +134,8 @@ export type MoodboardItemType =
   | 'prompt'
   /** A low-level Inline Core graph node (load/sample/encode/vae); ephemeral, not a Frame. */
   | 'core'
+  /** A "Load Assets" node: holds library asset refs in `data.assetIds`, feeds its hero downstream. */
+  | 'loader'
 
 /** Output settings for a video-director node (stored in its moodboard item data). */
 export interface DirectorItemData {
@@ -245,10 +239,11 @@ export interface MoodboardItemData {
   trim?: { inPoint: number; outPoint: number }
   /** Prompt node: the text it feeds into a connected Generate node's prompt input. */
   promptText?: string
-  /** Marks a `frame` item as a pure "Load Assets" loader: no generation, freely resizable (no
-   * aspect-fit snap-back), showing a loaded image/video and passing it straight through as its
-   * output (resolved to its first input asset). */
+  /** `loader` ("Load Assets") node: ordered library asset ids it holds; the first (hero) feeds
+   * downstream. A pure viewer with no generation. (Legacy: also flags an old frame-based loader.) */
   loader?: boolean
+  /** `loader` node: the library asset ids it holds, in order (hero = first). */
+  assetIds?: string[]
   /** Core graph node: the Inline Core node type + its param values (see coreNodes.ts). */
   core?: {
     type: string
@@ -391,8 +386,6 @@ export interface WorkflowParam {
 
 /** App-global settings (stored in Electron userData, not per-project). */
 export interface AppSettings {
-  /** The ComfyUI backend Inline Studio talks to and embeds. */
-  comfyUrl: string
   /** The Inline Core (/v1) engine URL. */
   coreUrl: string
 }
@@ -421,35 +414,13 @@ export interface UpdateDownloadedEvent {
   version: string
 }
 
-/** Result of pinging the configured ComfyUI backend. */
-export interface ComfyStatus {
-  running: boolean
-  url: string
-}
-
 /** Result of pinging the configured Inline Core engine. */
 export interface CoreStatus {
   running: boolean
   url: string
 }
 
-/** A single output file produced by a ComfyUI run. */
-export interface ComfyOutput {
-  filename: string
-  subfolder: string
-  type: string
-  kind: AssetKind
-  /** A `${comfyUrl}/view?...` URL for displaying the output. */
-  url: string
-}
-
-/** The most recent ComfyUI run and its output files. */
-export interface ComfyRun {
-  promptId: string
-  outputs: ComfyOutput[]
-}
-
-/** Absolute media directories of the open project, for sharing with ComfyUI. */
+/** Absolute media directories of the open project. */
 export interface ProjectMediaDirs {
   /** Where Inline Studio keeps imported inputs - point ComfyUI's --input-directory here. */
   inputDir: string

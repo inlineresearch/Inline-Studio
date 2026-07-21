@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-DEFAULT_COMFY_URL = os.environ.get("COMFYUI_URL") or "http://127.0.0.1:8188"
 DEFAULT_CORE_URL = os.environ.get("INLINE_CORE_URL") or "http://127.0.0.1:8848"
 
 

@@ -1,10 +1,10 @@
 /**
  * Frame timeline state: ordered frames, each with multiple inputs (library assets)
  * and multiple outputs (takes). The card shows compact stacks; the Frame Inspector
- * manages the full grids. Work happens in main via studio().frames / .comfy.
+ * manages the full grids. Work happens in main via studio().frames.
  */
 import { create } from 'zustand'
-import type { Frame, Take, FrameInput, ComfyOutput } from '@shared/types'
+import type { Frame, Take, FrameInput } from '@shared/types'
 import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
 
@@ -16,8 +16,6 @@ interface FrameState {
   takesByFrame: Record<string, Take[]>
   selectedId: string | null
   loading: boolean
-  /** Frame id currently mid-action (link/pull), for in-card spinners. */
-  busyId: string | null
   error: string | null
   /** Transient status message (e.g. export summary). */
   notice: string | null
@@ -32,29 +30,15 @@ interface FrameState {
   /** Remove one input by its row id (works for asset AND flow-link inputs). */
   removeInputById: (frameId: string, inputId: string) => Promise<void>
   reorderInputs: (frameId: string, orderedAssetIds: string[]) => Promise<void>
-  /** Resolve an `unset` chooser frame to an engine (comfy | fal); returns the updated frame. */
-  setProvider: (
-    frameId: string,
-    provider: 'comfy' | 'fal',
-    modelId?: string,
-  ) => Promise<Frame | null>
+  /** Resolve a frame to the fal engine; returns the updated frame. */
+  setProvider: (frameId: string, provider: 'fal', modelId?: string) => Promise<Frame | null>
   setHero: (frameId: string, takeId: string | null) => Promise<void>
   deleteTake: (takeId: string) => Promise<void>
   rename: (id: string, name: string) => Promise<void>
   reorder: (orderedIds: string[]) => Promise<void>
   remove: (id: string) => Promise<void>
-  /** Duplicate a frame (inputs + workflow); returns the new frame. */
+  /** Duplicate a frame (inputs); returns the new frame. */
   clone: (id: string) => Promise<Frame | null>
-  /** Detach the frame's ComfyUI workflow link. */
-  unlink: (id: string) => Promise<void>
-  linkFrame: (id: string) => Promise<Frame | null>
-  uploadInputs: (id: string) => Promise<void>
-  /** Pull the frame's workflow from ComfyUI into the durable project copy. */
-  pullWorkflow: (id: string) => Promise<void>
-  /** Persist the live (possibly unsaved) ComfyUI graph for a frame into the project. */
-  saveLiveWorkflow: (id: string, workflow: unknown) => Promise<void>
-  pullResult: (id: string) => Promise<void>
-  captureOutput: (frameId: string, output: ComfyOutput) => Promise<void>
   exportFrames: () => Promise<void>
   select: (id: string | null) => void
   reset: () => void
@@ -72,7 +56,6 @@ export const useFrameStore = create<FrameState>((set, get) => ({
   takesByFrame: {},
   selectedId: null,
   loading: false,
-  busyId: null,
   error: null,
   notice: null,
 
@@ -250,83 +233,6 @@ export const useFrameStore = create<FrameState>((set, get) => ({
     }
   },
 
-  linkFrame: async (id) => {
-    set({ busyId: id, error: null })
-    try {
-      const res = await studio().comfy.linkFrame(id)
-      if (!res.ok) {
-        set({ error: res.error, busyId: null })
-        return null
-      }
-      const frame = res.value
-      set((s) => ({ frames: s.frames.map((sh) => (sh.id === id ? frame : sh)), busyId: null }))
-      return frame
-    } catch (e) {
-      set({ error: ipcErrorMessage(e), busyId: null })
-      return null
-    }
-  },
-
-  uploadInputs: async (id) => {
-    try {
-      const res = await studio().comfy.uploadInputs(id)
-      if (!res.ok) set({ error: res.error })
-    } catch (e) {
-      set({ error: ipcErrorMessage(e) })
-    }
-  },
-
-  pullWorkflow: async (id) => {
-    try {
-      await studio().comfy.pullWorkflow(id)
-    } catch {
-      // best-effort sync - a transient failure shouldn't surface as an error
-    }
-  },
-
-  saveLiveWorkflow: async (id, workflow) => {
-    try {
-      const res = await studio().comfy.saveLiveWorkflow(id, workflow)
-      // Merge the updated frame so the inspector's "ready" state reflects the capture.
-      if (res.ok && res.value) {
-        const frame = res.value
-        set((s) => ({ frames: s.frames.map((sh) => (sh.id === frame.id ? frame : sh)) }))
-      }
-    } catch {
-      // best-effort autosave - a transient failure shouldn't surface as an error
-    }
-  },
-
-  pullResult: async (id) => {
-    set({ busyId: id, error: null })
-    try {
-      const res = await studio().comfy.pullLatest(id)
-      if (!res.ok) return set({ error: res.error, busyId: null })
-      const take = res.value
-      set((s) => ({
-        takesByFrame: { ...s.takesByFrame, [id]: [take, ...(s.takesByFrame[id] ?? [])] },
-        frames: s.frames.map((sh) => (sh.id === id ? { ...sh, heroTakeId: take.id } : sh)),
-        busyId: null,
-      }))
-    } catch (e) {
-      set({ error: ipcErrorMessage(e), busyId: null })
-    }
-  },
-
-  captureOutput: async (frameId, output) => {
-    try {
-      const res = await studio().comfy.captureOutput(frameId, output)
-      if (!res.ok) return set({ error: res.error })
-      const take = res.value
-      set((s) => ({
-        takesByFrame: { ...s.takesByFrame, [frameId]: [take, ...(s.takesByFrame[frameId] ?? [])] },
-        frames: s.frames.map((sh) => (sh.id === frameId ? { ...sh, heroTakeId: take.id } : sh)),
-      }))
-    } catch (e) {
-      set({ error: ipcErrorMessage(e) })
-    }
-  },
-
   rename: async (id, name) => {
     set((s) => ({ frames: s.frames.map((sh) => (sh.id === id ? { ...sh, name } : sh)) }))
     try {
@@ -392,17 +298,6 @@ export const useFrameStore = create<FrameState>((set, get) => ({
     }
   },
 
-  unlink: async (id) => {
-    try {
-      const res = await studio().frames.unlink(id)
-      if (!res.ok) return set({ error: res.error })
-      const frame = res.value
-      set((s) => ({ frames: s.frames.map((sh) => (sh.id === id ? frame : sh)) }))
-    } catch (e) {
-      set({ error: ipcErrorMessage(e) })
-    }
-  },
-
   exportFrames: async () => {
     set({ error: null, notice: null })
     try {
@@ -424,7 +319,6 @@ export const useFrameStore = create<FrameState>((set, get) => ({
       inputsByFrame: {},
       takesByFrame: {},
       selectedId: null,
-      busyId: null,
       error: null,
       notice: null,
     }),

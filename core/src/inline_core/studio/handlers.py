@@ -4,8 +4,7 @@ backend is Core (Python), not the legacy Node server.
 
 Channel args arrive as a positional list (the ``{channel, args}`` wire shape). Each handler unpacks
 them and returns the value to wrap in Ok. Not-yet-ported surfaces (generation, timeline,
-export, embedded ComfyUI) register clear stubs so the UI degrades gracefully instead of a
-"no handler".
+export) register clear stubs so the UI degrades gracefully instead of a "no handler".
 """
 
 from __future__ import annotations
@@ -73,7 +72,6 @@ def register_studio_handlers(
     reg("dialog:pickDirectory", lambda *_: str(cfg.workspace_dir()))
     reg("app:version", lambda: app_version)
     reg("settings:get", store.get_settings)
-    reg("settings:setComfyUrl", store.set_comfy_url)
     reg("settings:setCoreUrl", store.set_core_url)
     reg("core:status", core_status)
     reg("core:models", core_models)
@@ -117,7 +115,6 @@ def register_studio_handlers(
     reg("frames:rename", lambda fid, name: fr.rename_frame(conn(), fid, name))
     reg("frames:reorder", lambda ids: fr.reorder_frames(conn(), ids))
     reg("frames:clone", lambda fid: fr.clone_frame(conn(), fid))
-    reg("frames:unlink", lambda fid: fr.unlink_workflow(conn(), fid))
     reg("frames:setHero", lambda fid, take_id: fr.set_hero(conn(), fid, take_id))
     reg("frames:listTakes", lambda fid: fr.list_takes(conn(), fid))
     reg("frames:heroTakes", lambda: fr.hero_takes(conn()))
@@ -168,6 +165,7 @@ def register_studio_handlers(
     reg("moodboard:addLayer", lambda x, y: mb.add_layer(conn(), x, y))
     reg("moodboard:addDirector", lambda x, y: mb.add_director(conn(), x, y))
     reg("moodboard:addTrim", lambda x, y: mb.add_trim(conn(), x, y))
+    reg("moodboard:addLoader", lambda x, y: mb.add_loader(conn(), x, y))
     reg("moodboard:addPrompt", lambda x, y: mb.add_prompt(conn(), x, y))
     reg("moodboard:addCoreNode", lambda t, x, y: mb.add_core_node(conn(), t, x, y))
     reg(
@@ -213,10 +211,6 @@ def register_studio_handlers(
     reg("falSettings:status", store.fal_status)
     reg("falSettings:setApiKey", store.set_fal_key)
     reg("falSettings:clearApiKey", store.clear_fal_key)
-    reg("comfy:status", lambda: {"reachable": False, "url": ""})
-    for ch in ("linkFrame", "uploadInputs", "pullWorkflow", "saveLiveWorkflow", "pushWorkflow",
-               "pullLatest", "latestRun", "captureOutput"):
-        reg(f"comfy:{ch}", not_wired("Embedded ComfyUI"))
     # --- timeline (director/trim/export via ffmpeg) + folder export -----------------------------
     if timeline is not None:
         from .timeline.render import export_frames

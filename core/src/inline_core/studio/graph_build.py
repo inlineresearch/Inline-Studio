@@ -26,8 +26,8 @@ from . import moodboard as mb
 def _source_output_port(source: dict[str, Any] | None, source_handle: str | None) -> str:
     if source and source["type"] == "prompt":
         return "text"
-    # An asset or a rendered frame both become an ``input/image`` source node (output port "image").
-    if source and source["type"] in ("asset", "frame"):
+    # An asset, a rendered frame, or a Load Assets loader all become an ``input/image`` source node.
+    if source and source["type"] in ("asset", "frame", "loader"):
         return "image"
     return source_handle or "out"  # a 'core' item's handles already are Core port ids
 
@@ -68,6 +68,17 @@ def _item_to_node(
         return {"id": item["id"], "type": "input/text", "params": {"text": text}}
     if item["type"] == "asset" and item.get("assetId"):
         path = resolve_asset_path(item["assetId"])
+        if not path:
+            return None
+        return {
+            "id": item["id"],
+            "type": "input/image",
+            "params": {"asset": {"ref": "path", "path": path}},
+        }
+    # A Load Assets loader feeds its hero (first) asset as a frozen image source.
+    if item["type"] == "loader":
+        asset_ids = data.get("assetIds") or []
+        path = resolve_asset_path(asset_ids[0]) if asset_ids else None
         if not path:
             return None
         return {

@@ -49,12 +49,18 @@ def remote_sha(url: str, ref: str) -> str | None:
     an update check must never fail the dialog."""
     try:
         _validate(url, ref)
-        done = _git("ls-remote", url, ref, check=False)
+        # Also request the peeled ref: an exact-match pattern alone won't return the `^{}` line.
+        done = _git("ls-remote", url, ref, f"{ref}^{{}}", check=False)
     except (FetchError, OSError, subprocess.SubprocessError):
         return None
     if done.returncode != 0:
         return None
-    line = done.stdout.strip().split("\n")[0]
+    lines = [ln for ln in done.stdout.splitlines() if ln.strip()]
+    # An annotated tag lists its own object sha first and the commit it points to on a `^{}` line.
+    # Prefer the peeled commit, since the installed sha is a commit (`_resolve` uses `^{commit}`) -
+    # otherwise every annotated-tag release reads as perpetually "update available".
+    peeled = next((ln for ln in lines if ln.rstrip().endswith("^{}")), None)
+    line = peeled or (lines[0] if lines else "")
     sha = line.split()[0] if line else ""
     return sha or None
 

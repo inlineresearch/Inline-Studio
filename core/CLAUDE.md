@@ -82,8 +82,6 @@ HTTP/WS  →  server/app.py  →  RunManager  →  Executor  →  Registry (desc
 - **`runtime/`** - `context.py` (`ExecutionContext`, `CancelToken`), `run.py` (`RunState`),
   `progress.py` (events + emitters), `store.py` / `file_store.py` (`TakeStore`: owns take bytes/hash/
   uri).
-- **`importer/`** - `comfy.py`: best-effort ComfyUI-workflow → Inline-Core-graph mapping. All ComfyUI
-  format knowledge lives here.
 - **`config.py`** - all env config, small and explicit. **`takes.py`**, **`media.py`**, **`errors.py`**
   - domain primitives (`Take`/`AssetRef`, `MediaKind`, the error hierarchy).
 
@@ -200,13 +198,13 @@ real codec that moves tensors lives with the model runner.
   subpackages import torch/diffusers at module top **on purpose**: an absent extra makes the import
   raise, and `server/bootstrap.py` skips that model best-effort so a core install still boots and
   serves source nodes. Never import a heavy dep at package top level outside a runner subpackage.
-- **Engine isolation.** All ComfyUI-format knowledge lives in `importer/comfy.py`; all xDiT/worker
-  knowledge behind `parallel/` and the sampler seam. Don't scatter it.
+- **Engine isolation.** All xDiT/worker knowledge lives behind `parallel/` and the sampler seam.
+  Don't scatter it.
 - **Bring-your-own models.** Nothing is downloaded by the engine. The catalog scans; the user places
   files. A model picker is a `SELECT` param with `options_from="<category>"`.
 - **Tests (pytest).** Cover the logic that matters: graph validate/topo/executor/cache, the catalog
   scan, the run store + server contract, the device/memory policy, the parallel group + xfuser seam,
-  the comfy importer, and each model runner (import-guarded, no GPU needed). See `tests/`.
+  and each model runner (import-guarded, no GPU needed). See `tests/`.
 - **Commits.** Conventional Commits (`feat:`, `fix:`, `chore:`), small and scoped.
 
 ## Commands
@@ -239,4 +237,3 @@ uv run pytest -q                          # tests (no GPU; model code is import-
   as `{error:{code,message}}` with the right status. Update the API list in `README.md`.
 - **New port/handle type** → `PortKind` in `graph/schema.py` (+ `port_satisfies` if it has coercions).
 - **New device/memory behaviour** → behind `DevicePolicy` in `device/`; never in a component.
-- **New ComfyUI import behaviour** → `importer/comfy.py` only.
