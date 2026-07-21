@@ -1,0 +1,55 @@
+name: ci
+on: [push, pull_request]
+
+env:
+  # Extension support (`inline_core.extensions`) is newer than the last PyPI release, so CI installs
+  # Core from source. Switch to `pip install inline-core` once a release ships with it.
+  CORE_SOURCE: "inline-core @ git+https://github.com/inlineresearch/Inline-Core@main"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Inline Core
+        run: pip install "${{ env.CORE_SOURCE }}"
+
+      - name: Check Core supports extensions
+        # A plain ImportError three steps later reads as a broken extension; it isn't.
+        run: |
+          python - <<'PY'
+          import importlib.util, sys
+          from importlib.metadata import version
+          if importlib.util.find_spec("inline_core.extensions") is None:
+              sys.exit(
+                  f"The installed inline-core ({version('inline-core')}) has no extension support.\n"
+                  "Point CORE_SOURCE at a Core build that ships inline_core.extensions."
+              )
+          print("inline-core", version("inline-core"), "with extension support")
+          PY
+
+      - name: Test
+        run: |
+          pip install pytest
+          PYTHONPATH=python pytest -q
+
+      # The same scan that runs at install time, so a finding is caught before publishing.
+      - name: Security scan
+        run: |
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          from inline_core.extensions.manifest import load_manifest
+          from inline_core.extensions.scanner import scan
+
+          root = Path(".")
+          report = scan(root, load_manifest(root))
+          for f in report.findings:
+              print(f"{f.severity.value:8} {f.rule:28} {f.file}:{f.line} {f.message}")
+          if report.blocked:
+              sys.exit("blocked: this extension cannot be published as-is")
+          PY

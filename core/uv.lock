@@ -510,7 +510,7 @@ wheels = [
 
 [[package]]
 name = "inline-core"
-version = "1.2.0"
+version = "1.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -591,8 +591,8 @@ requires-dist = [
     { name = "torch", marker = "sys_platform != 'win32' and extra == 'runtime'", specifier = ">=2.2" },
     { name = "torchao", marker = "extra == 'all'", specifier = ">=0.14" },
     { name = "torchao", marker = "extra == 'runtime'", specifier = ">=0.14" },
-    { name = "transformers", marker = "extra == 'all'", specifier = ">=4.44" },
-    { name = "transformers", marker = "extra == 'runtime'", specifier = ">=4.44" },
+    { name = "transformers", marker = "extra == 'all'", specifier = ">=5.0" },
+    { name = "transformers", marker = "extra == 'runtime'", specifier = ">=5.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'all'", specifier = ">=0.29" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.29" },
     { name = "xfuser", marker = "extra == 'parallel'", specifier = ">=0.4" },

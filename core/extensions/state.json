@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "extensions": {
+    "demo": {
+      "current": "1.0.1+059e6ea",
+      "enabled": false,
+      "nodes": {
+        "demo/gradient": true,
+        "demo/invert": true,
+        "demo/brightness": true,
+        "demo/upscale": false
+      },
+      "consents": [],
+      "pinned": false
+    }
+  },
+  "importOwners": {}
+}

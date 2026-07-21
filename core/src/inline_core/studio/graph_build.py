@@ -3,10 +3,10 @@
 
 - a ``core`` item   -> its Core node type + params (handles are already Core port ids)
 - a ``prompt`` item -> an ``input/text`` source node
-- an ``asset`` item -> an ``input/image`` source node (local path ref)
-- a ``frame`` item  -> an ``input/image`` source node pointing at the frame's resolved output file
-  (its hero take), so wiring a rendered frame into a Core node feeds that image without recomputing
-  the frame. This is the closure boundary: upstream frames are frozen curated inputs, not re-run.
+- an ``asset`` item -> an ``input/image`` or ``input/video`` source node (local path ref), by kind
+- a ``frame`` item  -> the same, pointing at the frame's resolved output file (its hero take), so
+  wiring a rendered frame into a Core node feeds that media without recomputing the frame. This is
+  the closure boundary: upstream frames are frozen curated inputs, not re-run.
 
 Connectors become typed edges (source output port -> target input port). Node ids are the canvas
 item ids, so a produced take's ``node_id`` maps straight back to the item that made it.
@@ -22,18 +22,14 @@ from typing import Any
 from . import frames as fr
 from . import moodboard as mb
 
-
-def _source_output_port(source: dict[str, Any] | None, source_handle: str | None) -> str:
-    if source and source["type"] == "prompt":
-        return "text"
-    # An asset or a rendered frame both become an ``input/image`` source node (output port "image").
-    if source and source["type"] in ("asset", "frame"):
-        return "image"
-    return source_handle or "out"  # a 'core' item's handles already are Core port ids
+# A media source node is picked by the asset/take kind; anything we don't generate for reads as an
+# image, which is what every Core node consumed before video existed.
+_MEDIA_NODES = {"video": ("input/video", "video")}
+_MEDIA_DEFAULT = ("input/image", "image")
 
 
 def _edges_for(
-    item_id: str, connectors: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]
+    item_id: str, connectors: list[dict[str, Any]], output_port: dict[str, str]
 ) -> dict[str, dict[str, str]]:
     inputs: dict[str, dict[str, str]] = {}
     for c in connectors:
@@ -41,52 +37,42 @@ def _edges_for(
             continue
         data = c.get("data") or {}
         target_handle = data.get("targetHandle") or "in"
+        source = c["fromItemId"]
         inputs[target_handle] = {
-            "from": c["fromItemId"],
-            "output": _source_output_port(by_id.get(c["fromItemId"]), data.get("sourceHandle")),
+            "from": source,
+            # A 'core' item isn't in the map - its handles already are Core port ids.
+            "output": output_port.get(source) or data.get("sourceHandle") or "out",
         }
     return inputs
 
 
-def _item_to_node(
+def _source_node(
     item: dict[str, Any],
-    connectors: list[dict[str, Any]],
-    by_id: dict[str, dict[str, Any]],
-    resolve_asset_path: Callable[[str], str | None],
-    resolve_frame_path: Callable[[str], str | None],
-) -> dict[str, Any] | None:
+    resolve_asset: Callable[[str], tuple[str, str] | None],
+    resolve_frame: Callable[[str], tuple[str, str] | None],
+) -> tuple[dict[str, Any], str] | None:
+    """A non-``core`` item as (node, its output port), or None when it resolves to no file."""
     data = item.get("data") or {}
-    if item["type"] == "core" and data.get("core"):
-        return {
-            "id": item["id"],
-            "type": data["core"]["type"],
-            "params": data["core"].get("params") or {},
-            "inputs": _edges_for(item["id"], connectors, by_id),
-        }
     if item["type"] == "prompt":
         text = data.get("promptText") or ""
-        return {"id": item["id"], "type": "input/text", "params": {"text": text}}
+        return {"id": item["id"], "type": "input/text", "params": {"text": text}}, "text"
+
+    resolved = None
     if item["type"] == "asset" and item.get("assetId"):
-        path = resolve_asset_path(item["assetId"])
-        if not path:
-            return None
-        return {
-            "id": item["id"],
-            "type": "input/image",
-            "params": {"asset": {"ref": "path", "path": path}},
-        }
-    # A rendered frame wired into a Core node feeds its output image as a frozen source (its hero
-    # take), so nothing upstream of the frame is recomputed.
-    if item["type"] == "frame" and item.get("frameId"):
-        path = resolve_frame_path(item["frameId"])
-        if not path:
-            return None
-        return {
-            "id": item["id"],
-            "type": "input/image",
-            "params": {"asset": {"ref": "path", "path": path}},
-        }
-    return None
+        resolved = resolve_asset(item["assetId"])
+    elif item["type"] == "frame" and item.get("frameId"):
+        resolved = resolve_frame(item["frameId"])
+    if resolved is None:
+        return None
+
+    path, kind = resolved
+    node_type, port = _MEDIA_NODES.get(kind, _MEDIA_DEFAULT)
+    node = {
+        "id": item["id"],
+        "type": node_type,
+        "params": {"asset": {"ref": "path", "path": path}},
+    }
+    return node, port
 
 
 def _upstream_closure(target: str, connectors: list[dict[str, Any]]) -> set[str]:
@@ -111,20 +97,42 @@ def build_workflow_graph(
     items, connectors = board["items"], board["connectors"]
     by_id = {i["id"]: i for i in items}
 
-    def resolve_asset_path(asset_id: str) -> str | None:
-        row = conn.execute("SELECT file_path FROM assets WHERE id = ?", (asset_id,)).fetchone()
-        return str(folder / row["file_path"]) if row else None
+    def resolve_asset(asset_id: str) -> tuple[str, str] | None:
+        row = conn.execute(
+            "SELECT file_path, kind FROM assets WHERE id = ?", (asset_id,)
+        ).fetchone()
+        return (str(folder / row["file_path"]), row["kind"]) if row else None
 
-    def resolve_frame_path(frame_id: str) -> str | None:
+    def resolve_frame(frame_id: str) -> tuple[str, str] | None:
         out = fr.resolve_frame_file(conn, frame_id)
-        return str(folder / out["filePath"]) if out else None
+        return (str(folder / out["filePath"]), out["kind"]) if out else None
 
-    nodes: list[dict[str, Any]] = []
-    for node_id in _upstream_closure(target_item_id, connectors):
+    closure = _upstream_closure(target_item_id, connectors)
+    # Source nodes first: a 'core' item's edges need to know which port each source emits on, and
+    # that now depends on the resolved media kind rather than the item type alone.
+    sources: list[dict[str, Any]] = []
+    output_port: dict[str, str] = {}
+    core_items: list[dict[str, Any]] = []
+    for node_id in closure:
         item = by_id.get(node_id)
         if item is None:
             continue
-        node = _item_to_node(item, connectors, by_id, resolve_asset_path, resolve_frame_path)
-        if node is not None:
-            nodes.append(node)
+        if item["type"] == "core" and (item.get("data") or {}).get("core"):
+            core_items.append(item)
+            continue
+        resolved = _source_node(item, resolve_asset, resolve_frame)
+        if resolved is not None:
+            node, port = resolved
+            sources.append(node)
+            output_port[item["id"]] = port
+
+    nodes = sources + [
+        {
+            "id": item["id"],
+            "type": item["data"]["core"]["type"],
+            "params": item["data"]["core"].get("params") or {},
+            "inputs": _edges_for(item["id"], connectors, output_port),
+        }
+        for item in core_items
+    ]
     return {"schemaVersion": 1, "nodes": nodes}, target_item_id

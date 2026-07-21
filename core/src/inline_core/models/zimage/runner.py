@@ -36,7 +36,7 @@ from ...device.policy import (
 from ...device.types import DeviceKind, DType
 from ...errors import CancelledError, ComponentError
 from ...graph.descriptor import NodeDescriptor, ParamField, Port, Widget
-from ...graph.loader_runners import ComponentRef
+from ...graph.loader_runners import ComponentRef, LoraRef
 from ...graph.runners import NodeResult, NodeRunner
 from ...graph.schema import Node, PortKind
 from ...media import MediaKind
@@ -45,6 +45,7 @@ from ...runtime.progress import Phase, ProgressEvent
 from ...runtime.store import TakeStore
 from ...takes import AssetRef
 from .. import loaders
+from ..loaders import lora_cache_key
 from ..sampling import SamplingFamily, apply_sampling, sampling_param_fields
 from . import requirements as reqs
 
@@ -210,6 +211,8 @@ class ZImageRunner(NodeRunner):
         # unused unless explicitly wired.
         vae_file = vae_ref.file if vae_ref else _path_or_none(reqs.resolve_vae(params))
         te_file = te_ref.file if te_ref else _path_or_none(reqs.resolve_text_encoder(params))
+        # Chained load/lora nodes ride on the model handle; empty when none is wired.
+        loras = model_ref.loras if model_ref is not None else ()
 
         # Size-aware placement: hand the policy the model's on-disk sizes so it fits dtype/quant/
         # offload to THIS GPU - int8 auto-engages on a card too small for full precision (a T4),
@@ -242,6 +245,7 @@ class ZImageRunner(NodeRunner):
                 text=te_file,
                 quant=self._policy.quantization(),
                 cancel_check=lambda: _raise_if_cancelled(ctx),
+                loras=loras,
             )
         except CancelledError:
             _free_vram()  # a cancelled load must return whatever VRAM it placed
@@ -361,6 +365,12 @@ class ZImageRunner(NodeRunner):
                 "scheduler": scheduler,
                 "seed": seed,
                 **({"strength": call["strength"]} if img2img else {}),
+                # Provenance: a take made with LoRAs is not reproducible from the other params.
+                **(
+                    {"loras": [{"file": x.file, "strength": x.strength} for x in loras]}
+                    if loras
+                    else {}
+                ),
             },
         )
         return NodeResult(outputs={"image": take}, takes=[take])
@@ -368,11 +378,11 @@ class ZImageRunner(NodeRunner):
 
 # --- pipeline cache -----------------------------------------------------------------------------
 
-# Keyed by (source, vae, text, img2img, quant). Built once; diffusers pipelines are not thread-safe,
-# but the run manager executes one run at a time (workers=1). Switching any file or the quantization
-# rebuilds - but the loader core caches each component, so only the changed one re-reads from disk.
-# The lock guards concurrent first-time builds.
-_PIPELINES: dict[tuple[str, str, str, bool, str], Any] = {}
+# Keyed by (source, vae, text, img2img, quant[, loras]). Built once; diffusers pipelines are not
+# thread-safe, but the run manager executes one run at a time (workers=1). Switching any file, the
+# quantization, or the LoRA stack rebuilds - but the loader core caches each component, so only the
+# changed one re-reads from disk. The lock guards concurrent first-time builds.
+_PIPELINES: dict[tuple[Any, ...], Any] = {}
 _LOCK = Lock()
 
 
@@ -386,8 +396,11 @@ def _load_pipeline(
     text: str,
     quant: Quantization = Quantization.NONE,
     cancel_check: Callable[[], None] | None = None,
+    loras: tuple[LoraRef, ...] = (),
 ) -> Any:
-    key = (source, vae, text, img2img, quant.value)
+    # A LoRA-fused pipeline is a different artifact from the same files unfused, so the stack is
+    # part of the key. Empty stack -> the original 5-tuple, unchanged.
+    key = (source, vae, text, img2img, quant.value, *lora_cache_key(loras))
     with _LOCK:
         cached = _PIPELINES.get(key)
         if cached is not None:
@@ -408,9 +421,9 @@ def _load_pipeline(
         # Free any *other* model still resident before loading this one, so switching checkpoints
         # doesn't stack VRAM/RAM (the caches never evicted before). Keeps the current source's
         # components - including a base pipeline reused below for img2img.
-        _evict_stale(source, vae, text)
+        _evict_stale(source, vae, text, lora_cache_key(loras))
         # An img2img pipe can reuse the base pipe's already-placed weights (no second load).
-        base = _PIPELINES.get((source, vae, text, False, quant.value))
+        base = _PIPELINES.get((source, vae, text, False, quant.value, *lora_cache_key(loras)))
         if img2img and base is not None:
             pipe = ZImageImg2ImgPipeline.from_pipe(base)
             logger.info(
@@ -435,6 +448,7 @@ def _load_pipeline(
                 vae_dtype=vae_dtype,
                 device=load_device,
                 cancel_check=cancel_check,
+                loras=loras,
             )
             logger.info(
                 "Read weights from disk in %.1fs (mode=%s, dtype=%s)",
@@ -487,6 +501,7 @@ def _build_pipeline(
     vae_dtype: Any = None,
     device: str | None = None,
     cancel_check: Callable[[], None] | None = None,
+    loras: tuple[LoraRef, ...] = (),
 ) -> Any:
     """Build a Z-Image pipeline **offline** - never touching the network.
 
@@ -502,6 +517,11 @@ def _build_pipeline(
     precision - quantize by using the single-file layout instead.
     """
     if mode == "pipeline":
+        if loras:
+            raise ComponentError(
+                "LoRAs need the single-file layout (diffusion_models/ + vae/ + text_encoders/); "
+                "a whole-pipeline folder cannot be fused."
+            )
         if quant is not Quantization.NONE:
             logger.warning(
                 "Smart-memory quantization (%s) is not applied to a whole-pipeline folder; use the "
@@ -526,22 +546,26 @@ def _build_pipeline(
         vae_dtype=vae_dtype,
         device=device,
         cancel_check=cancel_check,
+        loras=loras,
     )
 
 
-def _evict_stale(source: str, vae: str, text: str) -> None:
+def _evict_stale(source: str, vae: str, text: str, lora_key: tuple[str, ...] = ()) -> None:
     """Free every *other* model's pipelines + components before loading a new checkpoint, so a
     second distinct model doesn't stack on the first. Entries for the current ``(source, vae,
-    text)`` - e.g. a cached base pipeline reused for img2img - are kept. Called under ``_LOCK``."""
+    text)`` **and the same LoRA stack** - e.g. a cached base pipeline reused for img2img - are kept.
+
+    The stack has to be part of that test: a fused model is the same three files as the unfused one,
+    so matching on files alone kept both resident and OOM'd a 16 GB card. Called under ``_LOCK``."""
     import gc
 
     keep_triple = (source, vae, text)
     for k in list(_PIPELINES):
-        if k[:3] == keep_triple:
+        if k[:3] == keep_triple and tuple(k[5:]) == lora_key:
             continue
         del _PIPELINES[k]
     gc.collect()
-    loaders.unload_components(keep_files={source, vae, text})
+    loaders.unload_components(keep_files={source, vae, text}, keep_loras=lora_key)
     _free_vram()
 
 

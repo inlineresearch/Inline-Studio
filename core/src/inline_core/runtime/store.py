@@ -16,3 +16,15 @@ class TakeStore(ABC):
     @abstractmethod
     def save(self, run_id: str, node_id: str, image: Any, params: dict[str, Any]) -> Take:
         """Persist a decoded image (PIL, numpy, or tensor) as an immutable take."""
+
+    # Concrete, not abstract: an existing store that only knows images stays valid.
+    def save_video(
+        self,
+        run_id: str,
+        node_id: str,
+        frames: Any,
+        params: dict[str, Any],
+        fps: float = 16.0,
+    ) -> Take:
+        """Persist a decoded frame sequence as an immutable video take."""
+        raise NotImplementedError(f"{type(self).__name__} cannot save video takes.")

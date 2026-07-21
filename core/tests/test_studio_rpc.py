@@ -62,6 +62,7 @@ def test_full_project_and_canvas_flow(client) -> None:
     assert visible == {
         "alibaba/z-image-turbo",
         "load/diffusion-model",
+        "load/lora",
         "load/vae",
         "load/text-encoder",
         "encode/text",

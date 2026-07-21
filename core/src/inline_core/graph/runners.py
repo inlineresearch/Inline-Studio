@@ -44,14 +44,21 @@ class ImageInputRunner(NodeRunner):
         return NodeResult(outputs={"image": _asset_ref(node.params.get("asset"))})
 
 
-def _asset_ref(raw: Any) -> AssetRef:
+class VideoInputRunner(NodeRunner):
+    produces_takes = False
+
+    def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
+        return NodeResult(outputs={"video": _asset_ref(node.params.get("asset"), "A video")})
+
+
+def _asset_ref(raw: Any, subject: str = "An image") -> AssetRef:
     if isinstance(raw, dict):
         ref = raw.get("ref")
         if ref == "asset":
             return AssetRef(ref="asset", id=str(raw.get("id", "")))
         if ref == "path":
             return AssetRef(ref="path", path=str(raw.get("path", "")))
-    raise ComponentError("An image input node needs a valid asset reference.")
+    raise ComponentError(f"{subject} input node needs a valid asset reference.")
 
 
 TEXT_INPUT = NodeDescriptor(
@@ -68,5 +75,13 @@ IMAGE_INPUT = NodeDescriptor(
     title="Image",
     category="Input",
     outputs=(Port("image", "Image", PortKind.IMAGE),),
+    icon="image",
+)
+
+VIDEO_INPUT = NodeDescriptor(
+    type="input/video",
+    title="Video",
+    category="Input",
+    outputs=(Port("video", "Video", PortKind.VIDEO),),
     icon="image",
 )

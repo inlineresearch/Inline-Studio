@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "id": "demo",
+  "name": "Inline Demo Extension",
+  "version": "1.0.1",
+  "description": "A reference extension: a generating node plus three image nodes.",
+  "author": "Inline Studio",
+  "homepage": "https://github.com/inlineresearch/Inline-Extension-Reference",
+  "license": "MIT",
+  "coreCompat": ">=1.2,<2.0",
+  "pythonRequires": ">=3.11",
+  "isolation": "shared",
+  "requirements": [],
+  "entry": "inline_ext_demo:register",
+  "nodes": [
+    {
+      "type": "demo/gradient"
+    },
+    {
+      "type": "demo/invert"
+    },
+    {
+      "type": "demo/brightness"
+    },
+    {
+      "type": "demo/upscale",
+      "defaultEnabled": false,
+      "models": [
+        {
+          "id": "realesrgan-x4",
+          "label": "Real-ESRGAN x4",
+          "category": "upscale_models",
+          "repo": "ai-forever/Real-ESRGAN",
+          "repoFile": "RealESRGAN_x4.pth",
+          "filename": "RealESRGAN_x4.pth",
+          "approxBytes": 67040989
+        }
+      ]
+    }
+  ]
+}

@@ -18,7 +18,9 @@ runtime = [
   "torch>=2.2",
   # Z-Image needs diffusers >= 0.36 (ZImagePipeline).
   "diffusers>=0.36",
-  "transformers>=4.44",
+  # >=5.0 for the SAM3 video tracker (Sam3TrackerVideoModel), which extensions cannot declare
+  # themselves - transformers is host-owned (extensions/constraints.py HOST_PROTECTED).
+  "transformers>=5.0",
   "accelerate>=0.30",
   "safetensors>=0.4",
   # int8 weight-only quant for smart memory; best-effort at load, falls back if absent.
@@ -49,7 +51,7 @@ dev = [
 all = [
   "torch>=2.2",
   "diffusers>=0.36",
-  "transformers>=4.44",
+  "transformers>=5.0",
   "accelerate>=0.30",
   "safetensors>=0.4",
   "torchao>=0.14",

@@ -56,11 +56,14 @@ class _FakeStore:
 @pytest.fixture
 def use_fake_pipe(monkeypatch: pytest.MonkeyPatch) -> _FakePipe:
     pipe = _FakePipe()
-    monkeypatch.setattr(
-        rz,
-        "_load_pipeline",
-        lambda policy, *, img2img, source, mode, vae, text, quant=None, cancel_check=None: pipe,
-    )
+    seen: dict[str, object] = {}
+
+    def fake_load(policy, **kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
+        return pipe
+
+    monkeypatch.setattr(rz, "_load_pipeline", fake_load)
+    pipe.load_kwargs = seen  # type: ignore[attr-defined]
     # These tests mock the pipeline, so bypass the "models present on disk" gate.
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
     monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))
@@ -120,11 +123,8 @@ def test_wired_component_handles_override_dropdowns(monkeypatch: pytest.MonkeyPa
 
     captured: dict[str, Any] = {}
 
-    def _fake_load(
-        policy: Any, *, img2img: bool, source: str, mode: str, vae: str, text: str,
-        quant: Any = None, cancel_check: Any = None,
-    ) -> Any:
-        captured.update(source=source, mode=mode, vae=vae, text=text)
+    def _fake_load(policy: Any, **kwargs: Any) -> Any:
+        captured.update({k: kwargs[k] for k in ("source", "mode", "vae", "text")})
         return _FakePipe()
 
     monkeypatch.setattr(rz, "_load_pipeline", _fake_load)
@@ -181,6 +181,48 @@ def test_negative_prompt_passed_when_set(use_fake_pipe: _FakePipe) -> None:
     assert use_fake_pipe.calls[0]["negative_prompt"] == "blurry"
 
 
+def test_loras_ride_the_model_handle_into_the_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A load/lora chain reaches the loader through the model handle, and lands in the take's
+    params - a LoRA'd take isn't reproducible from the other params alone."""
+    from inline_core.graph.loader_runners import ComponentRef, LoraRef
+
+    captured: dict[str, Any] = {}
+
+    def _fake_load(policy: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return _FakePipe()
+
+    monkeypatch.setattr(rz, "_load_pipeline", _fake_load)
+    monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
+    store = _FakeStore()
+    runner = rz.ZImageRunner(store, MemoryPolicy())
+    ctx, _ = _ctx()
+    stack = (LoraRef("/l/style.safetensors", 0.7),)
+    inputs = {
+        "prompt": ["a fox"],
+        "model": [ComponentRef("diffusion", "z-image", "/m/diff.safetensors", loras=stack)],
+        "vae": [ComponentRef("vae", "z-image", "/m/ae.safetensors")],
+        "text_encoder": [ComponentRef("text_encoder", "z-image", "/m/qwen.safetensors")],
+    }
+
+    runner.run(Node(id="f", type="alibaba/z-image-turbo"), inputs, ctx)
+
+    assert captured["loras"] == stack
+    assert store.saved[-1]["params"]["loras"] == [{"file": "/l/style.safetensors", "strength": 0.7}]
+
+
+def test_no_lora_keeps_the_take_params_unchanged(use_fake_pipe: _FakePipe) -> None:
+    """A regression guard for A3b: with nothing wired, the take's params carry no LoRA key at all,
+    so an existing take's provenance is byte-for-byte what it was."""
+    store = _FakeStore()
+    runner = rz.ZImageRunner(store, MemoryPolicy())
+    ctx, _ = _ctx()
+
+    runner.run(Node(id="f", type="alibaba/z-image-turbo"), {"prompt": ["a fox"]}, ctx)
+
+    assert "loras" not in store.saved[-1]["params"]
+
+
 def test_cancel_during_sampling_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     cancel = CancelToken()
 
@@ -192,7 +234,7 @@ def test_cancel_during_sampling_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         rz, "_load_pipeline",
-        lambda policy, *, img2img, source, mode, vae, text, quant=None, cancel_check=None: (
+        lambda policy, **kwargs: (
             _CancellingPipe()
         ),
     )

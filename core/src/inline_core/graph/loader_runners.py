@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import models_dir
 from ..errors import ComponentError
-from .primitives import LOAD_DIFFUSION_MODEL, LOAD_TEXT_ENCODER, LOAD_VAE
+from .primitives import LOAD_DIFFUSION_MODEL, LOAD_LORA, LOAD_TEXT_ENCODER, LOAD_VAE
 from .runners import NodeResult, NodeRunner
 from .schema import Node
 
@@ -35,13 +35,25 @@ _ARCH = "z-image"
 
 
 @dataclass(frozen=True)
+class LoraRef:
+    """One LoRA to apply to the model this ref points at, in stack order."""
+
+    file: str
+    strength: float = 1.0
+
+
+@dataclass(frozen=True)
 class ComponentRef:
     """A resolved reference to one model file: its kind, arch, and absolute path. Emitted by a
-    ``load/*`` node and consumed by a model runner, which does the actual (cached) weight load."""
+    ``load/*`` node and consumed by a model runner, which does the actual (cached) weight load.
+
+    ``loras`` defaults empty, so a ref built before LoRA existed is unchanged - and a consumer that
+    ignores the field behaves exactly as it did."""
 
     kind: str  # "diffusion" | "vae" | "text_encoder"
     arch: str
     file: str
+    loras: tuple[LoraRef, ...] = ()
 
 
 def _resolve_file(category: str, chosen: str) -> Path:
@@ -81,6 +93,22 @@ class LoadComponentRunner(NodeRunner):
         return NodeResult(outputs={self._output: ref})
 
 
+class LoadLoraRunner(NodeRunner):
+    """Append this node's LoRA to the incoming model handle's stack. Torch-free like every other
+    ``load/*`` node - the consuming runner applies the stack, where the component cache lives."""
+
+    produces_takes = False
+
+    def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
+        upstream = (inputs.get("model") or [None])[0]
+        if not isinstance(upstream, ComponentRef) or upstream.kind != "diffusion":
+            raise ComponentError("Load LoRA needs a diffusion model wired into its model input.")
+        file = _resolve_file("loras", str(node.params.get("file", "")))
+        strength = float(node.params.get("strength", LOAD_LORA.defaults()["strength"]))
+        added = LoraRef(file=str(file), strength=strength)
+        return NodeResult(outputs={"model": replace(upstream, loras=(*upstream.loras, added))})
+
+
 def register_loaders(registry: Registry) -> None:
     """Register the ``load/*`` nodes **visible** (unhidden) with their runners, so they appear in
     the add-node menu and can feed a model node's component inputs. Torch-free - always on."""
@@ -88,6 +116,7 @@ def register_loaders(registry: Registry) -> None:
         replace(LOAD_DIFFUSION_MODEL, hidden=False),
         LoadComponentRunner(kind="diffusion", category="diffusion_models", output_port="model"),
     )
+    registry.register(replace(LOAD_LORA, hidden=False), LoadLoraRunner())
     registry.register(
         replace(LOAD_VAE, hidden=False),
         LoadComponentRunner(kind="vae", category="vae", output_port="vae"),

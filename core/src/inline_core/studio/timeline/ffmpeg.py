@@ -1,36 +1,19 @@
-"""ffmpeg/ffprobe for the timeline: locate the binary, probe media, run a render with progress.
+"""ffmpeg/ffprobe for the timeline: probe media and run a render with progress.
 
-Prefers a bundled ``imageio-ffmpeg`` binary, else a system ``ffmpeg`` on PATH. ffprobe comes from
-PATH only (imageio bundles ffmpeg alone); probing degrades gracefully when it's absent.
+Binary lookup moved to ``inline_core.ffmpeg`` (the take store needs it too) and is re-exported here
+so timeline callers keep importing it from this module.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import shutil
 import subprocess
 from collections.abc import Callable
-from functools import lru_cache
 
+from ...ffmpeg import ffmpeg_available, ffmpeg_exe, ffprobe_exe
 
-@lru_cache(maxsize=1)
-def ffmpeg_exe() -> str | None:
-    try:
-        import imageio_ffmpeg
-
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:  # noqa: BLE001
-        return shutil.which("ffmpeg")
-
-
-@lru_cache(maxsize=1)
-def ffprobe_exe() -> str | None:
-    return shutil.which("ffprobe")
-
-
-def ffmpeg_available() -> bool:
-    return ffmpeg_exe() is not None
+__all__ = ["compose_render", "ffmpeg_available", "ffmpeg_exe", "ffprobe_exe", "probe_media"]
 
 
 def probe_media(abs_path: str) -> dict[str, object]:

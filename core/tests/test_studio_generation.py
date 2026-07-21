@@ -55,6 +55,27 @@ def test_build_workflow_graph_frame_output_into_zimage_image(tmp_path) -> None:
     assert take["id"]  # hero take exists
 
 
+def test_build_workflow_graph_video_frame_becomes_an_input_video_node(tmp_path) -> None:
+    """A frame whose hero take is a video emits input/video on a "video" port - the image path is
+    unchanged, so the node type follows the take's kind rather than the item type."""
+    store = _store(tmp_path)
+    conn = store.conn()
+    node = mb.add_core_node(conn, "zai/scail-2", 400, 200)
+    frame_item = mb.add_empty_frame(conn, 80, 200)
+    fr.add_take(conn, frame_item["frameId"], "takes/clip.mp4", "video", {})
+    mb.create_connector(conn, frame_item["id"], node["id"], "out", "driving_video")
+
+    graph, _ = build_workflow_graph(conn, store.folder(), node["id"])
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    video_node = by_id[frame_item["id"]]
+    assert video_node["type"] == "input/video"
+    assert video_node["params"]["asset"]["path"] == str(store.folder() / "takes/clip.mp4")
+    assert by_id[node["id"]]["inputs"]["driving_video"] == {
+        "from": frame_item["id"],
+        "output": "video",
+    }
+
+
 class _Events:
     def __init__(self) -> None:
         self.sent: list[tuple[str, dict]] = []
