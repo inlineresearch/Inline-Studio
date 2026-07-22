@@ -1,21 +1,51 @@
 import type { Project } from '@shared/types'
 import { Logo } from '../../components/Logo'
-import { SettingsIcon } from '../../components/icons'
+import { SettingsIcon, StudioIcon, TrainIcon } from '../../components/icons'
 import { useProjectStore } from '../../store/projectStore'
 import { useAssetStore } from '../../store/assetStore'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useFrameStore } from '../../store/frameStore'
-import { useUiStore } from '../../store/uiStore'
+import { useUiStore, type WorkspaceTab } from '../../store/uiStore'
 import { MoodboardPanel } from '../Moodboard/MoodboardPanel'
 import { SettingsPanel } from '../Settings/SettingsPanel'
 import { ExtensionsDialog } from '../Extensions/ExtensionsDialog'
+import { TrainerPanel } from '../Trainer/TrainerPanel'
 import { ContextMenu } from '../../components/ContextMenu'
 import { MediaLightbox } from '../../components/MediaLightbox'
+
+function TabButton({
+  tab,
+  active,
+  icon,
+  label,
+  onClick,
+}: {
+  tab: WorkspaceTab
+  active: boolean
+  icon: React.ReactNode
+  label: string
+  onClick: (tab: WorkspaceTab) => void
+}): React.JSX.Element {
+  return (
+    <button
+      onClick={() => onClick(tab)}
+      aria-pressed={active}
+      className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors ${
+        active ? 'bg-surface text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
+  )
+}
 
 /** The main shell: the node canvas plus the Settings drawer. */
 export function Workspace({ project }: { project: Project }): React.JSX.Element {
   const settingsOpen = useUiStore((s) => s.settingsOpen)
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen)
+  const activeTab = useUiStore((s) => s.activeTab)
+  const setActiveTab = useUiStore((s) => s.setActiveTab)
   const closeProject = useProjectStore((s) => s.closeProject)
   const resetAssets = useAssetStore((s) => s.reset)
   const resetBoard = useMoodboardStore((s) => s.reset)
@@ -44,6 +74,23 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
           <span className="text-sm text-zinc-300">{project.name}</span>
         </div>
 
+        <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-0.5 rounded-lg bg-panel/60 p-0.5">
+          <TabButton
+            tab="studio"
+            active={activeTab === 'studio'}
+            icon={<StudioIcon className="h-4 w-4" />}
+            label="Studio"
+            onClick={setActiveTab}
+          />
+          <TabButton
+            tab="trainer"
+            active={activeTab === 'trainer'}
+            icon={<TrainIcon className="h-4 w-4" />}
+            label="Trainer"
+            onClick={setActiveTab}
+          />
+        </div>
+
         <div className="flex items-center">
           <button
             onClick={() => setSettingsOpen(!settingsOpen)}
@@ -62,13 +109,20 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
       </header>
 
       <main className="flex min-h-0 flex-1">
-        <div className="relative min-h-0 flex-1">
-          <MoodboardPanel />
-        </div>
-
-        {settingsOpen && (
-          <div className="min-h-0 w-80 shrink-0">
-            <SettingsPanel onClose={() => setSettingsOpen(false)} />
+        {activeTab === 'studio' ? (
+          <>
+            <div className="relative min-h-0 flex-1">
+              <MoodboardPanel />
+            </div>
+            {settingsOpen && (
+              <div className="min-h-0 w-80 shrink-0">
+                <SettingsPanel onClose={() => setSettingsOpen(false)} />
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="min-h-0 flex-1">
+            <TrainerPanel />
           </div>
         )}
       </main>

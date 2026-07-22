@@ -39,6 +39,7 @@ def register_studio_handlers(
     generation: Any = None,
     fal_generation: Any = None,
     timeline: Any = None,
+    training: Any = None,
     model_downloads: Any = None,
     app_version: str = "1.0.0",
 ) -> None:
@@ -206,6 +207,25 @@ def register_studio_handlers(
 
     reg("generation:cancel", cancel_generation)
     reg("generation:resumePending", lambda: None)
+
+    # --- LoRA training (dataset CRUD + the training run subprocess) ------------------------------
+    if training is not None:
+        reg("training:listDatasets", lambda: training.list_datasets())
+        reg("training:createDataset", lambda inp: training.create_dataset(inp))
+        reg("training:listItems", lambda did: training.list_items(did))
+        reg("training:addItems", lambda did, aids: training.add_items(did, aids))
+        reg("training:removeItem", lambda iid: training.remove_item(iid))
+        reg("training:setCaption", lambda iid, cap: training.set_caption(iid, cap))
+        reg("training:autoCaption", lambda did, overwrite: training.auto_caption(did, overwrite))
+        reg("training:listRuns", lambda: training.list_runs())
+        reg("training:start", lambda did, hp: training.start(did, hp))
+        reg("training:resume", lambda rid: training.resume(rid))
+        reg("training:cancel", lambda rid: training.cancel(rid))
+        reg("training:status", lambda rid: training.status(rid))
+    else:
+        for ch in ("listDatasets", "createDataset", "listItems", "addItems", "removeItem",
+                   "setCaption", "autoCaption", "listRuns", "start", "resume", "cancel", "status"):
+            reg(f"training:{ch}", not_wired("LoRA training"))
 
     # --- fal settings (key stored server-side) --------------------------------------------------
     reg("falSettings:status", store.fal_status)

@@ -33,6 +33,15 @@ import type {
   ModelDownloadProgressEvent,
   ModelDownloadDoneEvent,
   ModelDownloadErrorEvent,
+  TrainingDataset,
+  TrainingDatasetItem,
+  TrainingHyperparams,
+  TrainingRun,
+  TrainingProgressEvent,
+  TrainingSampleEvent,
+  TrainingDoneEvent,
+  TrainingErrorEvent,
+  SystemStatsEvent,
   CoreStatus,
   ExportResult,
   ProjectExportResult,
@@ -111,6 +120,20 @@ export const IpcChannels = {
     cancel: 'generation:cancel',
     /** Re-poll + finish any runs that were in flight when the app last closed. */
     resumePending: 'generation:resumePending',
+  },
+  training: {
+    listDatasets: 'training:listDatasets',
+    createDataset: 'training:createDataset',
+    listItems: 'training:listItems',
+    addItems: 'training:addItems',
+    removeItem: 'training:removeItem',
+    setCaption: 'training:setCaption',
+    autoCaption: 'training:autoCaption',
+    listRuns: 'training:listRuns',
+    start: 'training:start',
+    resume: 'training:resume',
+    cancel: 'training:cancel',
+    status: 'training:status',
   },
   falSettings: {
     status: 'falSettings:status',
@@ -214,6 +237,13 @@ export const IpcChannels = {
     modelDownloadProgress: 'events:modelDownloadProgress',
     modelDownloadDone: 'events:modelDownloadDone',
     modelDownloadError: 'events:modelDownloadError',
+    /** Main → renderer: LoRA training lifecycle (per-run progress, sample preview, done, error). */
+    trainingProgress: 'events:trainingProgress',
+    trainingSample: 'events:trainingSample',
+    trainingDone: 'events:trainingDone',
+    trainingError: 'events:trainingError',
+    /** Main → renderer: periodic host + GPU telemetry for the Trainer tab. */
+    systemStats: 'events:systemStats',
     /** Main → renderer: extension install lifecycle (the Extensions dialog). */
     extensionInstallProgress: 'events:extensionInstallProgress',
     extensionInstallDone: 'events:extensionInstallDone',
@@ -242,6 +272,12 @@ export interface CreateFolderInput {
   name: string
   /** Parent folder id, or null for a root-level folder. */
   parentId: string | null
+}
+
+export interface CreateTrainingDatasetInput {
+  name: string
+  /** Optional trigger token injected into every caption. */
+  triggerWord?: string
 }
 
 /** A fal frame's inputs resolved for building its request: media as data URIs + the prompt text. */
@@ -368,6 +404,29 @@ export interface InlineStudioApi {
     cancel(frameId?: string): Promise<Result<void>>
     /** Re-poll + finish any generations that were in flight when the app last closed. */
     resumePending(): Promise<Result<void>>
+  }
+  training: {
+    /** All training datasets in the open project. */
+    listDatasets(): Promise<Result<TrainingDataset[]>>
+    createDataset(input: CreateTrainingDatasetInput): Promise<Result<TrainingDataset>>
+    /** A dataset's items (images + captions), in order. */
+    listItems(datasetId: string): Promise<Result<TrainingDatasetItem[]>>
+    /** Append library assets as dataset items (skips duplicates). */
+    addItems(datasetId: string, assetIds: string[]): Promise<Result<TrainingDatasetItem[]>>
+    removeItem(itemId: string): Promise<Result<void>>
+    setCaption(itemId: string, caption: string): Promise<Result<TrainingDatasetItem>>
+    /** Auto-caption items with the local captioner; `overwrite` re-captions ones that already have one. */
+    autoCaption(datasetId: string, overwrite: boolean): Promise<Result<TrainingDatasetItem[]>>
+    /** All training runs in the open project, newest first. */
+    listRuns(): Promise<Result<TrainingRun[]>>
+    /** Start a run over a dataset. Resolves immediately; progress arrives via `onTraining*`. */
+    start(datasetId: string, hyperparams: TrainingHyperparams): Promise<Result<TrainingRun>>
+    /** Resume an `interrupted` run from its last checkpoint. */
+    resume(runId: string): Promise<Result<TrainingRun>>
+    /** Cancel an in-flight run (saves a final checkpoint before exit). */
+    cancel(runId: string): Promise<Result<void>>
+    /** One run's current durable state. */
+    status(runId: string): Promise<Result<TrainingRun>>
   }
   falSettings: {
     /** Is a fal API key saved, and is it stored encrypted? */
@@ -524,6 +583,13 @@ export interface InlineStudioApi {
     onModelDownloadProgress(callback: (e: ModelDownloadProgressEvent) => void): () => void
     onModelDownloadDone(callback: (e: ModelDownloadDoneEvent) => void): () => void
     onModelDownloadError(callback: (e: ModelDownloadErrorEvent) => void): () => void
+    /** Subscribe to LoRA training lifecycle pushes. Each returns an unsubscribe fn. */
+    onTrainingProgress(callback: (e: TrainingProgressEvent) => void): () => void
+    onTrainingSample(callback: (e: TrainingSampleEvent) => void): () => void
+    onTrainingDone(callback: (e: TrainingDoneEvent) => void): () => void
+    onTrainingError(callback: (e: TrainingErrorEvent) => void): () => void
+    /** Subscribe to periodic host + GPU telemetry (Trainer tab). Returns an unsubscribe fn. */
+    onSystemStats(callback: (e: SystemStatsEvent) => void): () => void
     onExtensionInstallProgress(callback: (e: InstallProgressEvent) => void): () => void
     onExtensionInstallDone(callback: (e: InstallSuccess) => void): () => void
     onExtensionInstallError(callback: (e: InstallFailure) => void): () => void

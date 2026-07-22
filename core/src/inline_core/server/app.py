@@ -29,6 +29,7 @@ from ..graph.schema import SCHEMA_VERSION, parse_graph
 from ..models.catalog import ModelCatalog
 from ..models.requirements import RequirementsRegistry
 from ..runtime.file_store import FileTakeStore
+from ..studio.system_stats import SystemStats
 from .assets import AssetStore
 from .manager import RunConflict, RunManager
 from .rpc import EventBroadcaster, RpcRouter
@@ -139,13 +140,19 @@ def create_app(
     manager = RunManager(registry, cache, policy, store=run_store, takes=FileTakeStore(takes_root))
     rpc = rpc or RpcRouter()
     events = events or EventBroadcaster()
+    # Host/GPU telemetry for the Trainer tab; only meaningful with the SPA (studio) backend wired.
+    stats = SystemStats(events) if studio_store is not None else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # noqa: ANN202
         manager.bind_loop(asyncio.get_running_loop())
         catalog.ensure_dirs()
         catalog.scan()
+        if stats is not None:
+            stats.start()
         yield
+        if stats is not None:
+            stats.stop()
         manager.shutdown()
 
     app = FastAPI(title="Inline Core", version="0.0.0", lifespan=lifespan)
@@ -298,6 +305,7 @@ def create_app(
         from ..studio.handlers import register_studio_handlers
         from ..studio.models import ModelDownloads
         from ..studio.timeline.render import Timeline
+        from ..studio.training import Training
 
         def core_models() -> dict[str, Any]:
             return {
@@ -316,6 +324,7 @@ def create_app(
             generation=CoreGeneration(studio_store, manager, events),
             fal_generation=FalGeneration(studio_store, events),
             timeline=Timeline(studio_store, events),
+            training=Training(studio_store, events),
             # Explicit model downloads write into models/; rescan so new files bump the registry.
             # The policy lets the requirements popup show a memory fit estimate before a load;
             # the requirements registry says which node types have models at all.

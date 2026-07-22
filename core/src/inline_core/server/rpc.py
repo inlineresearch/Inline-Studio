@@ -56,6 +56,11 @@ class EventBroadcaster:
     def __init__(self) -> None:
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
 
+    @property
+    def subscriber_count(self) -> int:
+        """Open ``/events`` sockets - lets pollers (telemetry) skip work when nobody listens."""
+        return len(self._subscribers)
+
     def add(self) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._subscribers.add(queue)

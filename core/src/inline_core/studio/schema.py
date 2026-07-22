@@ -1,16 +1,18 @@
 """SQLite schema for a project's ``project.db`` - a faithful port of the Studio TypeScript
-``electron/main/db/schema.ts`` (SCHEMA_VERSION 14). The DB is the source of truth for a project;
-"save" is implicit. Bumping ``SCHEMA_VERSION`` + adding a migration is how the schema evolves.
+``electron/main/db/schema.ts`` (ported at SCHEMA_VERSION 14). The DB is the source of truth for a
+project; "save" is implicit. Bump ``SCHEMA_VERSION`` + add a migration to evolve the schema.
 
 Kept byte-compatible with the Node schema so Core can open existing ``.inlinestudio`` projects: same
 tables, same column names, same ``user_version`` stamping, and the same additive/rename migrations.
+v15 adds the Core-only LoRA training tables (``training_datasets``/``_dataset_items``/``_runs``);
+they are purely additive, so an older project gains them on next open.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS project (
@@ -137,8 +139,50 @@ CREATE INDEX IF NOT EXISTS idx_frame_inputs_frame ON frame_inputs(frame_id);
 CREATE INDEX IF NOT EXISTS idx_assets_project ON assets(project_id);
 CREATE INDEX IF NOT EXISTS idx_assets_folder ON assets(folder_id);
 CREATE INDEX IF NOT EXISTS idx_asset_folders_parent ON asset_folders(parent_id);
+CREATE TABLE IF NOT EXISTS training_datasets (
+  id           TEXT PRIMARY KEY,
+  project_id   TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  trigger_word TEXT NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS training_dataset_items (
+  id          TEXT PRIMARY KEY,
+  dataset_id  TEXT NOT NULL,
+  asset_id    TEXT NOT NULL,
+  caption     TEXT NOT NULL DEFAULT '',
+  position    INTEGER NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS training_runs (
+  id                TEXT PRIMARY KEY,
+  project_id        TEXT NOT NULL,
+  dataset_id        TEXT NOT NULL,
+  name              TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'queued',
+  base_mode         TEXT NOT NULL DEFAULT 'turbo_adapter',
+  hyperparams       TEXT NOT NULL DEFAULT '{}',
+  output_lora_path  TEXT,
+  progress_fraction REAL NOT NULL DEFAULT 0,
+  progress_status   TEXT,
+  step              INTEGER NOT NULL DEFAULT 0,
+  total_steps       INTEGER NOT NULL DEFAULT 0,
+  checkpoint_path   TEXT,
+  gpu_ids           TEXT NOT NULL DEFAULT '[]',
+  error             TEXT,
+  created_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_moodboard_items_project ON moodboard_items(project_id);
 CREATE INDEX IF NOT EXISTS idx_moodboard_connectors_project ON moodboard_connectors(project_id);
+CREATE INDEX IF NOT EXISTS idx_training_datasets_project ON training_datasets(project_id);
+CREATE INDEX IF NOT EXISTS idx_training_dataset_items_dataset ON training_dataset_items(dataset_id);
+CREATE INDEX IF NOT EXISTS idx_training_runs_project ON training_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_training_runs_dataset ON training_runs(dataset_id);
 """
 
 

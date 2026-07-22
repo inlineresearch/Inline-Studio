@@ -358,6 +358,130 @@ export interface ModelDownloadErrorEvent {
   error: string
 }
 
+// LoRA training ------------------------------------------------------------
+
+/** Turbo needs a training adapter to avoid "turbo drift"; a de-turbo base trains without one. */
+export type TrainingBaseMode = 'turbo_adapter' | 'deturbo'
+
+export type TrainingStatus =
+  | 'queued'
+  | 'training'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+  /** Died to a crash/OOM/restart; resumable from its last checkpoint. */
+  | 'interrupted'
+
+/** A named set of images (+ captions) that trains one LoRA. */
+export interface TrainingDataset {
+  id: string
+  projectId: string
+  name: string
+  /** Token injected into every caption (the character/style trigger); may be empty. */
+  triggerWord: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** One image in a dataset, with its caption. Backed by a library asset. */
+export interface TrainingDatasetItem {
+  id: string
+  datasetId: string
+  assetId: string
+  caption: string
+  position: number
+  createdAt: number
+}
+
+/** LoRA training hyperparameters (persisted as JSON on a run). */
+export interface TrainingHyperparams {
+  baseMode: TrainingBaseMode
+  /** LoRA rank (dim). */
+  rank: number
+  /** LoRA alpha; defaults to `rank`. */
+  alpha: number
+  learningRate: number
+  steps: number
+  batchSize: number
+  /** Square training resolution in px (e.g. 1024). */
+  resolution: number
+  /** Checkpoint every N steps. */
+  saveEvery: number
+  /** GPU indices to train on; `[]` = auto (first available). */
+  gpuIds: number[]
+}
+
+/** A training run over a dataset, producing a LoRA `.safetensors`. */
+export interface TrainingRun {
+  id: string
+  projectId: string
+  datasetId: string
+  name: string
+  status: TrainingStatus
+  hyperparams: TrainingHyperparams
+  /** `models/loras/`-relative path of the produced LoRA, once done. */
+  outputLoraPath: string | null
+  progressFraction: number
+  progressStatus: string | null
+  step: number
+  totalSteps: number
+  error: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+/** Main → renderer: training progress for a run (0..1) + step + latest loss (for the loss curve). */
+export interface TrainingProgressEvent {
+  runId: string
+  fraction: number
+  step: number
+  totalSteps: number
+  loss?: number
+  status?: string
+}
+
+/** Main → renderer: a mid-training sample preview image was written (project-relative path). */
+export interface TrainingSampleEvent {
+  runId: string
+  step: number
+  path: string
+}
+
+/** Main → renderer: a training run finished; `outputLoraPath` is the produced LoRA. */
+export interface TrainingDoneEvent {
+  runId: string
+  outputLoraPath: string
+}
+
+/** Main → renderer: a training run failed. */
+export interface TrainingErrorEvent {
+  runId: string
+  error: string
+}
+
+/** Per-GPU live stats (NVML). */
+export interface GpuStat {
+  index: number
+  name: string
+  /** GPU utilization %, 0..100. */
+  utilization: number
+  /** VRAM used / total, in bytes. */
+  memoryUsed: number
+  memoryTotal: number
+  /** Degrees C, or null if unavailable. */
+  temperature: number | null
+}
+
+/** Main → renderer: periodic host + GPU telemetry (Trainer tab). */
+export interface SystemStatsEvent {
+  /** CPU utilization %, 0..100. */
+  cpu: number
+  /** System RAM used / total, in bytes. */
+  ramUsed: number
+  ramTotal: number
+  gpus: GpuStat[]
+}
+
 /** Main → renderer: extension install progress. Payload shapes live in `extensions.ts`. */
 export type {
   InstallProgressEvent as ExtensionInstallProgressEvent,

@@ -39,6 +39,20 @@ parallel = [
   "xfuser>=0.4",
   "nvidia-ml-py>=12",
 ]
+# LoRA training (the Trainer tab): PEFT adapter training + local auto-caption + host/GPU telemetry.
+# Install alongside `runtime`: `.[runtime,training]`. Reuses runtime's torch/diffusers/accelerate.
+training = [
+  "peft>=0.11",
+  # 8-bit Adam keeps optimizer state small; no macOS wheels, so skip it there (AdamW fallback).
+  "bitsandbytes>=0.43; platform_system != 'Darwin'",
+  "Pillow>=10",
+  # Telemetry (CPU/RAM + per-GPU NVML) for the Trainer tab.
+  "psutil>=5.9",
+  "nvidia-ml-py>=12",
+  # Florence-2 auto-captioner is loaded via trust_remote_code and needs these.
+  "timm>=1.0",
+  "einops>=0.7",
+]
 dev = [
   "pytest>=8",
   "ruff>=0.6",
