@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.3-blue?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.31-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 

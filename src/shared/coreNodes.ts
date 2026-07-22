@@ -18,6 +18,7 @@ export type PortKind =
   | 'model'
   | 'vae'
   | 'text-encoder'
+  | 'lora'
   | 'conditioning'
   | 'latent'
 
@@ -102,14 +103,21 @@ export interface ModelRequirements {
   allPresent: boolean
 }
 
-const ENGINE_KINDS: readonly PortKind[] = ['model', 'vae', 'text-encoder', 'conditioning', 'latent']
+const ENGINE_KINDS: readonly PortKind[] = [
+  'model',
+  'vae',
+  'text-encoder',
+  'lora',
+  'conditioning',
+  'latent',
+]
 
 /** Engine handles are opaque objects passed between low-level nodes; never a take. */
 export function isEngineKind(kind: PortKind): boolean {
   return ENGINE_KINDS.includes(kind)
 }
 
-const MODEL_KINDS: readonly PortKind[] = ['model', 'vae', 'text-encoder']
+const MODEL_KINDS: readonly PortKind[] = ['model', 'vae', 'text-encoder', 'lora']
 
 /**
  * A "model-family" handle - the loader plumbing (diffusion model, VAE, text encoder) that threads a
@@ -142,6 +150,7 @@ const PORT_COLORS: Record<PortKind, string> = {
   model: '#f87171',
   vae: '#fb923c',
   'text-encoder': '#facc15',
+  lora: '#2dd4bf',
   conditioning: '#c084fc',
   latent: '#60a5fa',
 }

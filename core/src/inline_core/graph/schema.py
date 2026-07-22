@@ -23,6 +23,7 @@ class PortKind(str, Enum):
     MODEL = "model"
     VAE = "vae"
     TEXT_ENCODER = "text-encoder"
+    LORA = "lora"
     CONDITIONING = "conditioning"
     LATENT = "latent"
 

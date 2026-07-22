@@ -27,10 +27,11 @@ describe('kind helpers', () => {
     expect(portKindColor('model')).toMatch(/^#/)
     expect(portKindColor('image')).toMatch(/^#/)
   })
-  it('treats only model/vae/text-encoder as model-family ports (bottom-packed dots)', () => {
+  it('treats model/vae/text-encoder/lora as model-family ports (bottom-packed dots)', () => {
     expect(isModelPort('model')).toBe(true)
     expect(isModelPort('vae')).toBe(true)
     expect(isModelPort('text-encoder')).toBe(true)
+    expect(isModelPort('lora')).toBe(true)
     // Signal/content kinds - including the other engine kinds - extension to the top instead.
     expect(isModelPort('conditioning')).toBe(false)
     expect(isModelPort('latent')).toBe(false)

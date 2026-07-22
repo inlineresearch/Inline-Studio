@@ -64,6 +64,7 @@ def test_full_project_and_canvas_flow(client) -> None:
         "load/diffusion-model",
         "load/vae",
         "load/text-encoder",
+        "load/lora",
         "encode/text",
         "latent/empty",
         "sample",

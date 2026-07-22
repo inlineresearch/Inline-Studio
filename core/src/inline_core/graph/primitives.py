@@ -47,6 +47,20 @@ LOAD_TEXT_ENCODER = NodeDescriptor(
     outputs=(Port("text_encoder", "Text encoder", PortKind.TEXT_ENCODER),),
 )
 
+LOAD_LORA = NodeDescriptor(
+    type="load/lora",
+    title="Load LoRA",
+    category="Loaders",
+    icon="box",
+    # Optional upstream lora: chain load/lora -> load/lora to stack several in order.
+    inputs=(Port("lora", "LoRA", PortKind.LORA, required=False),),
+    params=(
+        ParamField("file", "LoRA", Widget.SELECT, "", options_from="loras"),
+        ParamField("strength", "Strength", Widget.NUMBER, 1.0, min=-2.0, max=2.0, step=0.05),
+    ),
+    outputs=(Port("lora", "LoRA", PortKind.LORA),),
+)
+
 ENCODE_TEXT = NodeDescriptor(
     type="encode/text",
     title="Encode Text",
@@ -122,6 +136,7 @@ PRIMITIVES: tuple[NodeDescriptor, ...] = (
     LOAD_DIFFUSION_MODEL,
     LOAD_VAE,
     LOAD_TEXT_ENCODER,
+    LOAD_LORA,
     ENCODE_TEXT,
     EMPTY_LATENT,
     SAMPLE,
@@ -132,7 +147,7 @@ PRIMITIVES: tuple[NodeDescriptor, ...] = (
 
 #: The loader primitives now have runners and are offered in the add-node menu - registered
 #: (unhidden) with their runners by ``graph/loader_runners.py``, so they are skipped here.
-_HAS_RUNNER = {LOAD_DIFFUSION_MODEL.type, LOAD_VAE.type, LOAD_TEXT_ENCODER.type}
+_HAS_RUNNER = {LOAD_DIFFUSION_MODEL.type, LOAD_VAE.type, LOAD_TEXT_ENCODER.type, LOAD_LORA.type}
 
 
 def register_primitives(registry: Registry) -> None:

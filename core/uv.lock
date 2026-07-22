@@ -510,7 +510,7 @@ wheels = [
 
 [[package]]
 name = "inline-core"
-version = "1.2.0"
+version = "1.2.3"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },

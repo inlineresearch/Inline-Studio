@@ -59,7 +59,8 @@ def use_fake_pipe(monkeypatch: pytest.MonkeyPatch) -> _FakePipe:
     monkeypatch.setattr(
         rz,
         "_load_pipeline",
-        lambda policy, *, img2img, source, mode, vae, text, quant=None, cancel_check=None: pipe,
+        lambda policy, *, img2img, source, mode, vae, text, quant=None, loras=(),
+        cancel_check=None: pipe,
     )
     # These tests mock the pipeline, so bypass the "models present on disk" gate.
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
@@ -82,10 +83,12 @@ def test_register_adds_descriptor_and_runner() -> None:
     assert registry.has("alibaba/z-image-turbo")
     descriptor = registry.get("alibaba/z-image-turbo")
     assert descriptor.output_kind is not None
-    assert [p.id for p in descriptor.inputs] == ["prompt", "model", "vae", "text_encoder", "image"]
+    assert [p.id for p in descriptor.inputs] == [
+        "prompt", "model", "vae", "text_encoder", "lora", "image",
+    ]
     assert descriptor.input("prompt").required
-    # The component handles + image are all optional (wire a Load node, or use the dropdowns).
-    for optional in ("model", "vae", "text_encoder", "image"):
+    # The component handles + lora + image are all optional (wire a Load node, or the dropdowns).
+    for optional in ("model", "vae", "text_encoder", "lora", "image"):
         assert not descriptor.input(optional).required
     assert registry.runner("alibaba/z-image-turbo").produces_takes
 
@@ -122,7 +125,7 @@ def test_wired_component_handles_override_dropdowns(monkeypatch: pytest.MonkeyPa
 
     def _fake_load(
         policy: Any, *, img2img: bool, source: str, mode: str, vae: str, text: str,
-        quant: Any = None, cancel_check: Any = None,
+        quant: Any = None, loras: Any = (), cancel_check: Any = None,
     ) -> Any:
         captured.update(source=source, mode=mode, vae=vae, text=text)
         return _FakePipe()
@@ -192,9 +195,8 @@ def test_cancel_during_sampling_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         rz, "_load_pipeline",
-        lambda policy, *, img2img, source, mode, vae, text, quant=None, cancel_check=None: (
-            _CancellingPipe()
-        ),
+        lambda policy, *, img2img, source, mode, vae, text, quant=None, loras=(),
+        cancel_check=None: (_CancellingPipe()),
     )
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
     monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))

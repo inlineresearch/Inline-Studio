@@ -30,11 +30,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import data_dir
 from ..device.policy import Quantization
 from ..errors import ComponentError
+
+if TYPE_CHECKING:
+    from ..graph.loader_runners import LoraRef
 
 
 @dataclass(frozen=True)
@@ -260,13 +263,15 @@ def _quantize_in_place(model: Any, quant: Quantization) -> None:
 # --- component loaders (cached in-process) ------------------------------------------------------
 
 # Keyed by (arch, kind, file, dtype, quant, device) so switching one file (e.g. a different VAE),
-# the quantization, or the load device reuses the other already-loaded components. The run manager
-# executes one run at a time; the lock guards each build.
-_CACHE: dict[tuple[str, str, str, str, str, str], Any] = {}
+# the quantization, or the load device reuses the other already-loaded components. A fused diffusion
+# transformer appends its LoRA stack (see ``lora_cache_key``) to that base key, so the same file
+# with a different stack is a distinct entry. The run manager executes one run at a time; the lock
+# guards each build.
+_CACHE: dict[tuple[str, ...], Any] = {}
 _CACHE_LOCK = Lock()
 
 
-def _cached(key: tuple[str, str, str, str, str, str], build: Callable[[], Any]) -> Any:
+def _cached(key: tuple[str, ...], build: Callable[[], Any]) -> Any:
     with _CACHE_LOCK:
         hit = _CACHE.get(key)
         if hit is not None:
@@ -284,17 +289,36 @@ def _device_key(device: str | None) -> str:
     return device or "cpu"
 
 
-def unload_components(keep_files: set[str] | None = None) -> None:
+def lora_cache_key(loras: tuple[LoraRef, ...]) -> tuple[str, ...]:
+    """The cache-key suffix a LoRA stack contributes to a fused diffusion transformer. Order- and
+    strength-sensitive (fusing is not commutative), keyed by file+strength; an empty stack adds
+    nothing, so an un-LoRA'd load keys exactly as it did before LoRA existed."""
+    return tuple(f"{lora.file}@{lora.strength}" for lora in loras)
+
+
+def unload_components(
+    keep_files: set[str] | None = None, keep_loras: tuple[str, ...] | None = None
+) -> None:
     """Drop cached components whose source file is NOT in ``keep_files``, freeing their VRAM/RAM.
 
     Called when switching checkpoints so a new model doesn't stack on top of the previous one (the
     cache never evicted before, so a second distinct model roughly doubled resident memory). Only
     drops references + empties the CUDA cache - it does not move weights to CPU RAM (that would just
     relocate the pressure on a RAM-tight box). The caller must drop any pipeline holding these
-    components first, or the references keep them alive."""
+    components first, or the references keep them alive.
+
+    ``keep_loras`` (the LoRA-stack suffix being loaded, from ``lora_cache_key``) additionally evicts
+    a kept file's diffusion transformer when it carries a *different* stack: fusing a LoRA into an
+    already-resident checkpoint would otherwise keep the unfused transformer AND the fused one - two
+    full-size models on the card. Left None, eviction is file-only (the pre-LoRA behaviour)."""
     keep = keep_files or set()
     with _CACHE_LOCK:
-        stale = [k for k in _CACHE if k[2] not in keep]  # k = (arch, kind, file, dtype, quant, dev)
+        stale = []
+        for k in _CACHE:  # k = (arch, kind, file, dtype, quant, dev, *lora_suffix)
+            if k[2] not in keep:
+                stale.append(k)
+            elif keep_loras is not None and k[1] == "diffusion" and tuple(k[6:]) != keep_loras:
+                stale.append(k)
         for k in stale:
             comp = _CACHE.pop(k)
             del comp
@@ -307,6 +331,7 @@ def load_diffusion(
     dtype: Any,
     quant: Quantization = Quantization.NONE,
     device: str | None = None,
+    loras: tuple[LoraRef, ...] = (),
 ) -> Any:
     """The diffusion transformer from a single ``.safetensors``. diffusers converts the checkpoint
     keys; the config comes from the bundled assets, so nothing is fetched at load time. ``quant``
@@ -314,7 +339,8 @@ def load_diffusion(
     **straight to the GPU** from an mmap-backed checkpoint - the fp16 weights are never materialized
     as an anonymous CPU copy (the host-RAM spike that OOM-killed the server), and for the int8 path
     torchao quantizes on-device per tensor. ``None`` loads to CPU (the offload path, where
-    accelerate installs its hooks before placing)."""
+    accelerate installs its hooks before placing). ``loras`` are fused into the weights in order
+    (the stack is part of the cache key), so a fused transformer is itself the cached artifact."""
 
     def build() -> Any:
         from diffusers import ZImageTransformer2DModel
@@ -333,12 +359,20 @@ def load_diffusion(
         # ``from_pretrained``), so the transformer would load at full size and the "int8" plan would
         # blow the VRAM budget (a T4 OOMs mid-load). Quantize it explicitly with torchao after the
         # load instead - the weights briefly sit full-size on the device, then halve in place.
+        # Fuse LoRAs BEFORE quantizing: the fuse adds a full-precision delta into each weight, which
+        # int8 can't accept in place, and int8-quantized weights aren't a plain tensor to add into.
+        if loras:
+            from .lora import fuse_loras
+
+            fuse_loras(model, loras)
         _quantize_in_place(model, quant)
         return model
 
-    return _cached(
-        (arch, "diffusion", file, _dtype_key(dtype), quant.value, _device_key(device)), build
+    key = (
+        arch, "diffusion", file, _dtype_key(dtype), quant.value, _device_key(device),
+        *lora_cache_key(loras),
     )
+    return _cached(key, build)
 
 
 def load_vae(arch: str, file: str, dtype: Any, device: str | None = None) -> Any:
@@ -431,6 +465,7 @@ def assemble_zimage_pipeline(
     quant: Quantization = Quantization.NONE,
     vae_dtype: Any = None,
     device: str | None = None,
+    loras: tuple[LoraRef, ...] = (),
     cancel_check: Callable[[], None] | None = None,
 ) -> Any:
     """Build a Z-Image pipeline from three local single files. Components are cached individually,
@@ -448,7 +483,7 @@ def assemble_zimage_pipeline(
     from diffusers import ZImageImg2ImgPipeline, ZImagePipeline
 
     arch = _ZIMAGE.key
-    transformer = load_diffusion(arch, diffusion_file, dtype, quant, device=device)
+    transformer = load_diffusion(arch, diffusion_file, dtype, quant, device=device, loras=loras)
     _release_transient()
     if cancel_check is not None:
         cancel_check()

@@ -1,6 +1,6 @@
 [project]
 name = "inline-studio-frontend"
-version = "1.2.3"
+version = "1.2.31"
 description = "Prebuilt Inline Studio web UI (SPA), served by Inline Core. Mirrors comfyui-frontend-package."
 requires-python = ">=3.9"
 readme = "README.md"

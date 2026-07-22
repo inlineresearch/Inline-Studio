@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import models_dir
 from ..errors import ComponentError
-from .primitives import LOAD_DIFFUSION_MODEL, LOAD_TEXT_ENCODER, LOAD_VAE
+from .primitives import LOAD_DIFFUSION_MODEL, LOAD_LORA, LOAD_TEXT_ENCODER, LOAD_VAE
 from .runners import NodeResult, NodeRunner
 from .schema import Node
 
@@ -42,6 +42,16 @@ class ComponentRef:
     kind: str  # "diffusion" | "vae" | "text_encoder"
     arch: str
     file: str
+
+
+@dataclass(frozen=True)
+class LoraRef:
+    """One LoRA in a stack: its absolute file path and blend strength. A ``load/lora`` node emits a
+    tuple of these (its own ref appended to any upstream stack); the model runner fuses them into
+    the diffusion transformer in order. Frozen + hashable so it can key the loader cache."""
+
+    file: str
+    strength: float
 
 
 def _resolve_file(category: str, chosen: str) -> Path:
@@ -81,6 +91,26 @@ class LoadComponentRunner(NodeRunner):
         return NodeResult(outputs={self._output: ref})
 
 
+class LoadLoraRunner(NodeRunner):
+    """Resolve this node's ``file``/``strength`` into a ``LoraRef`` and append it to any upstream
+    stack on the ``lora`` input - so chaining ``load/lora`` nodes stacks them in wiring order. The
+    stack rides its own ``lora`` edge into the model runner, which fuses it into the transformer."""
+
+    produces_takes = False
+
+    def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
+        upstream = _first(inputs.get("lora")) or ()
+        file = _resolve_file("loras", str(node.params.get("file", "")))
+        strength = float(node.params.get("strength", 1.0))
+        stack = (*upstream, LoraRef(file=str(file), strength=strength))
+        return NodeResult(outputs={"lora": stack})
+
+
+def _first(values: list[Any] | None) -> Any:
+    """The first wired value on a port, or None (an optional input may be absent/unconnected)."""
+    return values[0] if values else None
+
+
 def register_loaders(registry: Registry) -> None:
     """Register the ``load/*`` nodes **visible** (unhidden) with their runners, so they appear in
     the add-node menu and can feed a model node's component inputs. Torch-free - always on."""
@@ -98,3 +128,4 @@ def register_loaders(registry: Registry) -> None:
             kind="text_encoder", category="text_encoders", output_port="text_encoder"
         ),
     )
+    registry.register(replace(LOAD_LORA, hidden=False), LoadLoraRunner())
