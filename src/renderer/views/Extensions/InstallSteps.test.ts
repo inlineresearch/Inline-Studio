@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { InstallPhase } from '@shared/extensions'
-import { stateOf } from './installSteps'
+import { stateOf } from './installStepsModel'
 
 // Index into the STEPS array: 0 fetch, 1 validate, 2 scan, 3 preflight, 4 resolve, 5 lock,
 // 6 register, 7 activate.

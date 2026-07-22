@@ -3,7 +3,7 @@
  * is (dependency resolution can take a while) and that it finished.
  */
 import type { InstallPhase } from '@shared/extensions'
-import { STEPS, stateOf, type StepState } from './installSteps'
+import { STEPS, stateOf, type StepState } from './installStepsModel'
 
 function Marker({ state }: { state: StepState }): React.JSX.Element {
   if (state === 'done') {
