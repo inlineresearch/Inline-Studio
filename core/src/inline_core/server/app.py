@@ -324,7 +324,7 @@ def create_app(
             generation=CoreGeneration(studio_store, manager, events),
             fal_generation=FalGeneration(studio_store, events),
             timeline=Timeline(studio_store, events),
-            training=Training(studio_store, events),
+            training=Training(studio_store, events, on_output=catalog.rescan),
             # Explicit model downloads write into models/; rescan so new files bump the registry.
             # The policy lets the requirements popup show a memory fit estimate before a load;
             # the requirements registry says which node types have models at all.

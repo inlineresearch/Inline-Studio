@@ -29,7 +29,8 @@ function CaptionBox({
 }
 
 export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JSX.Element {
-  const items = useTrainingStore((s) => s.itemsByDataset[datasetId] ?? [])
+  // `?? []` outside the selector: returning a fresh [] from the selector loops the store (Object.is).
+  const items = useTrainingStore((s) => s.itemsByDataset[datasetId]) ?? []
   const captioning = useTrainingStore((s) => s.captioning)
   const addItems = useTrainingStore((s) => s.addItems)
   const removeItem = useTrainingStore((s) => s.removeItem)

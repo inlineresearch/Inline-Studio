@@ -50,7 +50,9 @@ export function HyperparamForm({
 }): React.JSX.Element {
   const [hp, setHp] = useState<TrainingHyperparams>(DEFAULTS)
   const start = useTrainingStore((s) => s.start)
-  const gpus = useTrainingStore((s) => s.systemStats?.gpus ?? [])
+  // `?? []` MUST stay outside the selector: a new [] returned from the selector is a fresh
+  // reference every call, which Zustand's Object.is check reads as a change -> infinite re-render.
+  const gpus = useTrainingStore((s) => s.systemStats?.gpus) ?? []
   const set = <K extends keyof TrainingHyperparams>(key: K, value: TrainingHyperparams[K]): void =>
     setHp((prev) => ({ ...prev, [key]: value }))
 

@@ -46,8 +46,10 @@ function LossCurve({ loss }: { loss: number[] }): React.JSX.Element {
 
 export function TrainingMonitor({ run }: { run: TrainingRun }): React.JSX.Element {
   const progress = useTrainingStore((s) => s.progressByRun[run.id])
-  const loss = useTrainingStore((s) => s.lossByRun[run.id] ?? [])
-  const samples = useTrainingStore((s) => s.samplesByRun[run.id] ?? [])
+  // `?? []` outside the selector: a fresh [] returned from a selector is a new ref every call, which
+  // Zustand's Object.is equality reads as a change -> infinite re-render (React #185).
+  const loss = useTrainingStore((s) => s.lossByRun[run.id]) ?? []
+  const samples = useTrainingStore((s) => s.samplesByRun[run.id]) ?? []
   const cancel = useTrainingStore((s) => s.cancel)
   const resume = useTrainingStore((s) => s.resume)
 

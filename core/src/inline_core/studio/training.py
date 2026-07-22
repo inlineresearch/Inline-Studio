@@ -32,9 +32,12 @@ def _safe(name: str) -> str:
 class Training:
     """Owns the LoRA training lifecycle: dataset CRUD, auto-caption, and one run at a time."""
 
-    def __init__(self, store: Any, events: Any) -> None:
+    def __init__(self, store: Any, events: Any, on_output: Any = None) -> None:
         self._store = store
         self._events = events
+        # Rescans the model catalog when a run's LoRA lands in models/loras/, so it appears in the
+        # loader node's dropdown + bumps the registry version - the same hook model downloads use.
+        self._on_output = on_output
         # One run holds the GPU at a time; the process is kept so cancel can SIGTERM it.
         self._active: dict[str, asyncio.subprocess.Process] = {}
         self._cancelled: set[str] = set()
@@ -204,14 +207,33 @@ class Training:
         conn = self._conn()
         if run_id in self._cancelled:
             self._cancelled.discard(run_id)
-            ts.update_run(conn, run_id, {"status": "cancelled", "progressStatus": "cancelled"})
-            self._events.broadcast("events:trainingError", {"runId": run_id, "error": "Cancelled."})
+            # SIGTERM flushes a final checkpoint (trainer.py: "a resumable cancel"), so a cancel
+            # that got far enough to checkpoint is offered for Resume (the status the UI shows a
+            # Resume on), not a dead-end "cancelled". A cancel before any checkpoint stays terminal.
+            run = ts.get_run(conn, run_id)
+            resumable = bool(run.get("checkpointPath")) or run["step"] > 0
+            if resumable:
+                ts.update_run(
+                    conn, run_id,
+                    {"status": "interrupted", "progressStatus": "cancelled",
+                     "error": "Training was cancelled; you can resume it."},
+                )
+                self._events.broadcast(
+                    "events:trainingError", {"runId": run_id, "error": "Cancelled; resumable."}
+                )
+            else:
+                ts.update_run(conn, run_id, {"status": "cancelled", "progressStatus": "cancelled"})
+                self._events.broadcast(
+                    "events:trainingError", {"runId": run_id, "error": "Cancelled."}
+                )
             return
         if saw_done and code == 0 and (models_dir() / output_rel).is_file():
             ts.update_run(
                 conn, run_id,
                 {"status": "done", "progressFraction": 1.0, "outputLoraPath": output_rel},
             )
+            if self._on_output is not None:
+                self._on_output()  # rescan so the new LoRA shows in the loader dropdown
             self._events.broadcast(
                 "events:trainingDone", {"runId": run_id, "outputLoraPath": output_rel}
             )
