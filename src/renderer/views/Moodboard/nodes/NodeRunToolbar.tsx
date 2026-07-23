@@ -14,6 +14,8 @@ export function NodeRunToolbar({
   onStop,
   disabled = false,
   disabledReason,
+  runLabel = 'Run graph',
+  stopLabel = 'Stop',
 }: {
   isTarget: boolean
   busy: boolean
@@ -21,27 +23,30 @@ export function NodeRunToolbar({
   onStop: () => void
   disabled?: boolean
   disabledReason?: string
+  /** Override the chip labels (the Trainer node runs/stops a training job, not a graph). */
+  runLabel?: string
+  stopLabel?: string
 }): React.JSX.Element {
   return (
     <NodeToolbar isVisible={isTarget} position={Position.Top} align="end" offset={12}>
       {busy ? (
         <button
           onClick={onStop}
-          title="Interrupt generation"
+          title={stopLabel}
           className="nodrag flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-[11px] font-medium text-zinc-200 shadow-lg hover:bg-black/40 hover:text-white"
         >
           <StopIcon className="h-3.5 w-3.5" />
-          Stop
+          {stopLabel}
         </button>
       ) : (
         <button
           onClick={onRun}
           disabled={disabled}
-          title={disabled ? disabledReason : 'Run this graph'}
+          title={disabled ? disabledReason : runLabel}
           className="nodrag flex items-center gap-1.5 rounded-full bg-emerald-500 px-3 py-1 text-[11px] font-semibold text-black shadow-lg hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <PlayIcon className="h-3.5 w-3.5" />
-          Run graph
+          {runLabel}
         </button>
       )}
     </NodeToolbar>

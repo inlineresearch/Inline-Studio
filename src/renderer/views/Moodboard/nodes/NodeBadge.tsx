@@ -1,6 +1,6 @@
 import { useCallback, type ReactNode } from 'react'
 import { useReactFlow } from '@xyflow/react'
-import { useMoodboardStore } from '../../../store/moodboardStore'
+import { useBoardActions } from './boardActions'
 
 /**
  * Shared chrome for the canvas node family, matching the Generate node's look: a floating
@@ -16,7 +16,7 @@ import { useMoodboardStore } from '../../../store/moodboardStore'
  */
 function useChipDrag(id: string): (e: React.PointerEvent) => void {
   const rf = useReactFlow()
-  const updateItem = useMoodboardStore((s) => s.updateItem)
+  const { updateItem } = useBoardActions()
   return useCallback(
     (e: React.PointerEvent) => {
       if (e.button !== 0) return
@@ -379,6 +379,47 @@ export function SquareIcon({ className }: { className?: string }): React.JSX.Ele
   return (
     <Icon className={className}>
       <rect x="3" y="3" width="18" height="18" rx="2" />
+    </Icon>
+  )
+}
+
+/** CPU chip - the Resource (host telemetry) utility node. */
+export function CpuIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2" />
+    </Icon>
+  )
+}
+
+/** Stacked images - the Load Dataset node. */
+export function LayersIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="m12 2 9 5-9 5-9-5 9-5Z" />
+      <path d="m3 12 9 5 9-5M3 17l9 5 9-5" />
+    </Icon>
+  )
+}
+
+/** Speech/tag - the Caption node. */
+export function CaptionGlyph({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" />
+      <path d="M7 9h10M7 13h6" />
+    </Icon>
+  )
+}
+
+/** Rising line chart - the loss Graph node. */
+export function ChartIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M3 3v18h18" />
+      <path d="m7 14 3-4 3 3 5-7" />
     </Icon>
   )
 }

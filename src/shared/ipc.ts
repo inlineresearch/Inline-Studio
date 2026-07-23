@@ -12,6 +12,7 @@ import type {
   Asset,
   AssetFolder,
   MoodboardItem,
+  CanvasSurface,
   MoodboardConnector,
   MoodboardSnapshot,
   MoodboardItemData,
@@ -38,6 +39,8 @@ import type {
   TrainingHyperparams,
   TrainingRun,
   TrainingProgressEvent,
+  CaptionProgressEvent,
+  TrainingLogEvent,
   TrainingSampleEvent,
   TrainingDoneEvent,
   TrainingErrorEvent,
@@ -188,6 +191,11 @@ export const IpcChannels = {
     addGenNode: 'moodboard:addGenNode',
     addPrompt: 'moodboard:addPrompt',
     addCoreNode: 'moodboard:addCoreNode',
+    addTrainDataset: 'moodboard:addTrainDataset',
+    addCaption: 'moodboard:addCaption',
+    addTrainer: 'moodboard:addTrainer',
+    addLossGraph: 'moodboard:addLossGraph',
+    addResource: 'moodboard:addResource',
     updateItem: 'moodboard:updateItem',
     deleteItem: 'moodboard:deleteItem',
     importAndPlace: 'moodboard:importAndPlace',
@@ -240,6 +248,8 @@ export const IpcChannels = {
     /** Main → renderer: LoRA training lifecycle (per-run progress, sample preview, done, error). */
     trainingProgress: 'events:trainingProgress',
     trainingSample: 'events:trainingSample',
+    trainingLog: 'events:trainingLog',
+    captionProgress: 'events:captionProgress',
     trainingDone: 'events:trainingDone',
     trainingError: 'events:trainingError',
     /** Main → renderer: periodic host + GPU telemetry for the Trainer tab. */
@@ -484,7 +494,8 @@ export interface InlineStudioApi {
   }
   moodboard: {
     /** The full board (items + connectors) for the open project. */
-    list(): Promise<Result<MoodboardSnapshot>>
+    /** One canvas's items + connectors (defaults to the Studio moodboard). */
+    list(surface?: CanvasSurface): Promise<Result<MoodboardSnapshot>>
     /** Place an existing library asset on the board at (x, y). */
     addAsset(assetId: string, x: number, y: number): Promise<Result<MoodboardItem>>
     /** Add a new editable text item at (x, y). */
@@ -510,6 +521,16 @@ export interface InlineStudioApi {
     /** Add a text-prompt node (feeds a Generate node's prompt input) at (x, y). */
     addPrompt(x: number, y: number): Promise<Result<MoodboardItem>>
     addCoreNode(coreType: string, x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Trainer-canvas: pick a training dataset and feed it downstream. */
+    addTrainDataset(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Trainer-canvas: auto-caption a dataset's images. */
+    addCaption(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Trainer-canvas: run a LoRA training job (run/stop/resume). */
+    addTrainer(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Trainer-canvas: plot a run's loss curve. */
+    addLossGraph(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Utility: read-only host telemetry node. Lives on whichever canvas adds it. */
+    addResource(x: number, y: number, surface?: CanvasSurface): Promise<Result<MoodboardItem>>
     updateItem(id: string, patch: MoodboardItemPatch): Promise<Result<MoodboardItem>>
     deleteItem(id: string): Promise<Result<void>>
     /** Import media into the shared library AND place it on the board near (x, y). */
@@ -523,8 +544,13 @@ export interface InlineStudioApi {
     deleteConnector(id: string): Promise<Result<void>>
     /** Set a connector's per-input audio volume (0..1) - director L1 inputs. */
     setConnectorVolume(id: string, volume: number): Promise<Result<void>>
-    /** Replace the entire board (used by canvas undo/redo). */
-    replaceBoard(items: MoodboardItem[], connectors: MoodboardConnector[]): Promise<Result<void>>
+    /** Replace ONE surface's board (used by canvas undo/redo); scoped so a Studio undo can't wipe
+     * the Trainer canvas. */
+    replaceBoard(
+      items: MoodboardItem[],
+      connectors: MoodboardConnector[],
+      surface?: CanvasSurface,
+    ): Promise<Result<void>>
   }
   timeline: {
     /** The derived timeline (video + L2 audio + volumes) for a director node. */
@@ -586,6 +612,10 @@ export interface InlineStudioApi {
     /** Subscribe to LoRA training lifecycle pushes. Each returns an unsubscribe fn. */
     onTrainingProgress(callback: (e: TrainingProgressEvent) => void): () => void
     onTrainingSample(callback: (e: TrainingSampleEvent) => void): () => void
+    /** One stdout line from the trainer subprocess. */
+    onTrainingLog(callback: (e: TrainingLogEvent) => void): () => void
+    /** Auto-caption progress for a dataset. */
+    onCaptionProgress(callback: (e: CaptionProgressEvent) => void): () => void
     onTrainingDone(callback: (e: TrainingDoneEvent) => void): () => void
     onTrainingError(callback: (e: TrainingErrorEvent) => void): () => void
     /** Subscribe to periodic host + GPU telemetry (Trainer tab). Returns an unsubscribe fn. */

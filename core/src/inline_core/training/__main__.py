@@ -12,8 +12,23 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import protocol
+
+
+def _message_for(error: Exception, manifest: dict[str, Any]) -> str:
+    """Turn a CUDA OOM into something the user can act on. Training resolution drives peak VRAM far
+    more than rank does, so point at that first - a 16GB card trains Z-Image at 512 but not 768."""
+    if type(error).__name__ != "OutOfMemoryError":
+        return str(error)
+    resolution = int(manifest.get("hyperparams", {}).get("resolution", 0) or 0)
+    lower = " Try 512." if resolution > 512 else ""
+    at = f" at {resolution}px" if resolution else ""
+    return (
+        f"Ran out of GPU memory training{at}. Lower the training resolution in the node's Adjust "
+        f"panel (it drives peak VRAM far more than rank).{lower}"
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -37,7 +52,7 @@ def main(argv: list[str]) -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as exc:  # noqa: BLE001 - surface any training failure as one error line
-        protocol.error(str(exc))
+        protocol.error(_message_for(exc, manifest))
         return 1
 
     if output is None:

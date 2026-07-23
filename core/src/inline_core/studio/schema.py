@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS project (
@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS assets (
 CREATE TABLE IF NOT EXISTS moodboard_items (
   id          TEXT PRIMARY KEY,
   project_id  TEXT NOT NULL,
+  -- Which canvas the item lives on: the Studio moodboard or the Trainer tab's graph. One table,
+  -- two surfaces, so both canvases reuse the same item/connector plumbing.
+  surface     TEXT NOT NULL DEFAULT 'studio',
   type        TEXT NOT NULL DEFAULT 'asset',
   asset_id    TEXT,
   frame_id     TEXT,
@@ -106,6 +109,7 @@ CREATE TABLE IF NOT EXISTS moodboard_items (
 CREATE TABLE IF NOT EXISTS moodboard_connectors (
   id           TEXT PRIMARY KEY,
   project_id   TEXT NOT NULL,
+  surface      TEXT NOT NULL DEFAULT 'studio',
   from_item_id TEXT NOT NULL,
   to_item_id   TEXT NOT NULL,
   label        TEXT,
@@ -231,6 +235,14 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
 
     _add_column_if_missing(conn, "moodboard_items", "frame_id", "TEXT")
     _add_column_if_missing(conn, "moodboard_items", "parent_id", "TEXT")
+
+    # v15 -> v16: the Trainer tab gets its own canvas; existing items stay on the Studio surface.
+    _add_column_if_missing(
+        conn, "moodboard_items", "surface", "TEXT NOT NULL DEFAULT 'studio'"
+    )
+    _add_column_if_missing(
+        conn, "moodboard_connectors", "surface", "TEXT NOT NULL DEFAULT 'studio'"
+    )
     _add_column_if_missing(conn, "frame_inputs", "source_frame_id", "TEXT")
 
     _relax_frame_inputs_asset_id(conn)  # v8 -> v9: asset_id must be nullable

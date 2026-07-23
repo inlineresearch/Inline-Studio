@@ -156,7 +156,9 @@ def register_studio_handlers(
     reg("frames:deleteTake", delete_take)
 
     # --- moodboard ------------------------------------------------------------------------------
-    reg("moodboard:list", lambda: mb.list_board(conn()))
+    # `surface` defaults to the Studio moodboard so existing callers are unchanged; the Trainer tab
+    # passes "trainer" to get its own isolated canvas out of the same tables.
+    reg("moodboard:list", lambda surface=mb.STUDIO_SURFACE: mb.list_board(conn(), surface))
     reg("moodboard:addAsset", lambda aid, x, y: mb.add_asset(conn(), aid, x, y))
     reg("moodboard:addText", lambda x, y: mb.add_text(conn(), x, y))
     reg("moodboard:addFrameFromAsset", lambda aid, x, y: mb.add_frame_from_asset(conn(), aid, x, y))
@@ -184,7 +186,18 @@ def register_studio_handlers(
     reg("moodboard:setConnectorVolume", lambda cid, vol: mb.set_connector_volume(conn(), cid, vol))
     reg(
         "moodboard:replaceBoard",
-        lambda items, connectors: mb.replace_board(conn(), items, connectors),
+        lambda items, connectors, surface=mb.STUDIO_SURFACE: mb.replace_board(
+            conn(), items, connectors, surface
+        ),
+    )
+    # Trainer-canvas nodes (plus the shared read-only resource node, which either canvas can host).
+    reg("moodboard:addTrainDataset", lambda x, y: mb.add_train_dataset(conn(), x, y))
+    reg("moodboard:addCaption", lambda x, y: mb.add_caption(conn(), x, y))
+    reg("moodboard:addTrainer", lambda x, y: mb.add_trainer(conn(), x, y))
+    reg("moodboard:addLossGraph", lambda x, y: mb.add_loss_graph(conn(), x, y))
+    reg(
+        "moodboard:addResource",
+        lambda x, y, surface=mb.STUDIO_SURFACE: mb.add_resource(conn(), x, y, surface),
     )
 
     # --- generation -----------------------------------------------------------------------------

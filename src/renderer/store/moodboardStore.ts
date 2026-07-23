@@ -54,6 +54,8 @@ interface MoodboardState {
   setLoaderHero: (itemId: string, assetId: string) => Promise<void>
   /** Add a Preview node. Returns the new item (for connection-drop suggestions). */
   addPreview: (x: number, y: number) => Promise<MoodboardItem | null>
+  /** Utility: a read-only host-telemetry node (no handles). */
+  addResource: (x: number, y: number) => Promise<MoodboardItem | null>
   addLayer: (x: number, y: number) => Promise<void>
   addDirector: (x: number, y: number) => Promise<MoodboardItem | null>
   addTrim: (x: number, y: number) => Promise<MoodboardItem | null>
@@ -348,6 +350,22 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
       set((s) => ({ items: [...s.items, item] }))
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
+    }
+  },
+
+  addResource: async (x, y) => {
+    try {
+      get().record()
+      const res = await studio().moodboard.addResource(x, y)
+      if (!res.ok) {
+        set({ error: res.error })
+        return null
+      }
+      set((s) => ({ items: [...s.items, res.value] }))
+      return res.value
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+      return null
     }
   },
 

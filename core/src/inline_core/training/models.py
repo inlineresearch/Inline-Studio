@@ -22,9 +22,11 @@ _ARCH = "z-image"
 _WEIGHT_SUFFIXES = (".safetensors", ".ckpt", ".pt", ".pth", ".sft")
 
 
-@dataclass(frozen=True)
-class Components:
-    transformer: Any
+@dataclass
+class Encoders:
+    """The pieces the one-off latent/caption precache needs. Loaded, used, then freed *before* the
+    transformer loads - on a 15GB card the two together (8GB encoder + 12.3GB transformer) OOM."""
+
     vae: Any
     text_encoder: Any
     tokenizer: Any
@@ -76,22 +78,48 @@ def compute_dtype() -> Any:
     return torch.float32
 
 
-def load_components(models_dir: str, base_mode: str, device: str, dtype: Any) -> Components:
-    """Load the base transformer (grad-enabled, unquantized), VAE, text encoder + tokenizer, and the
-    flow-match scheduler. In Turbo mode the training adapter is fused into the transformer first."""
+def load_encoders(models_dir: str, device: str, dtype: Any) -> Encoders:
+    """The VAE + text encoder + tokenizer + flow-match scheduler, for the precache pass."""
+    from ..models import loaders
+
+    root = Path(models_dir)
+    vae_file = _require(root, "vae", "INLINE_ZIMAGE_VAE")
+    encoder_file = _require(root, "text_encoders", "INLINE_ZIMAGE_TEXT_ENCODER")
+
+    vae = loaders.load_vae(_ARCH, vae_file, dtype, device=device)
+    text_encoder, tokenizer = loaders.load_text_encoder(_ARCH, encoder_file, dtype, device=device)
+    return Encoders(vae, text_encoder, tokenizer, loaders.load_scheduler(_ARCH))
+
+
+def free_encoders(encoders: Encoders) -> None:
+    """Return the VAE + text-encoder VRAM once latents/captions are cached.
+
+    They are dead weight for the training loop, and the transformer alone already fills a 15GB card
+    (12.3GB) - holding both is the OOM. Dropped, not moved to CPU: a 15GB-RAM host can't take the
+    8GB encoder either. The scheduler is config-only, so it stays."""
+    import gc
+
+    import torch
+
+    from ..models import loaders
+
+    encoders.vae = None
+    encoders.text_encoder = None
+    encoders.tokenizer = None
+    loaders.unload_components(keep_files=set())  # the transformer isn't loaded yet - drop it all
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def load_transformer(models_dir: str, base_mode: str, device: str, dtype: Any) -> Any:
+    """The base transformer (grad-enabled, unquantized). In Turbo mode the training adapter is
+    fused in first, so the base behaves de-distilled while the trainable LoRA learns on top."""
     from ..graph.loader_runners import LoraRef
     from ..models import loaders
 
     root = Path(models_dir)
     diffusion = _require(root, "diffusion_models", "INLINE_ZIMAGE_MODEL")
-    vae_file = _require(root, "vae", "INLINE_ZIMAGE_VAE")
-    encoder_file = _require(root, "text_encoders", "INLINE_ZIMAGE_TEXT_ENCODER")
-
     adapter = _adapter_path(root, base_mode)
     loras: tuple[LoraRef, ...] = (LoraRef(file=adapter, strength=1.0),) if adapter else ()
-
-    transformer = loaders.load_diffusion(_ARCH, diffusion, dtype, device=device, loras=loras)
-    vae = loaders.load_vae(_ARCH, vae_file, dtype, device=device)
-    text_encoder, tokenizer = loaders.load_text_encoder(_ARCH, encoder_file, dtype, device=device)
-    scheduler = loaders.load_scheduler(_ARCH)
-    return Components(transformer, vae, text_encoder, tokenizer, scheduler)
+    return loaders.load_diffusion(_ARCH, diffusion, dtype, device=device, loras=loras)

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import type { Project } from '@shared/types'
 import { Logo } from '../../components/Logo'
 import { SettingsIcon, StudioIcon, TrainIcon } from '../../components/icons'
@@ -6,6 +7,7 @@ import { useAssetStore } from '../../store/assetStore'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useFrameStore } from '../../store/frameStore'
 import { useUiStore, type WorkspaceTab } from '../../store/uiStore'
+import { subscribeTrainingEvents } from '../../store/trainingStore'
 import { MoodboardPanel } from '../Moodboard/MoodboardPanel'
 import { SettingsPanel } from '../Settings/SettingsPanel'
 import { ExtensionsDialog } from '../Extensions/ExtensionsDialog'
@@ -45,6 +47,10 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
   const settingsOpen = useUiStore((s) => s.settingsOpen)
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen)
   const activeTab = useUiStore((s) => s.activeTab)
+
+  // Subscribed once for the whole workspace (not per tab): host telemetry feeds the Resource node
+  // on either canvas, and a single subscription keeps training logs/loss from being applied twice.
+  useEffect(() => subscribeTrainingEvents(), [])
   const setActiveTab = useUiStore((s) => s.setActiveTab)
   const closeProject = useProjectStore((s) => s.closeProject)
   const resetAssets = useAssetStore((s) => s.reset)

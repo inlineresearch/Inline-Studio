@@ -160,19 +160,20 @@ def train(manifest: dict[str, Any]) -> str | None:
     device = accelerator.device
     dtype = models.compute_dtype()
 
-    protocol.progress(0, steps, status="loading models")
-    comps = models.load_components(manifest["modelsDir"], manifest["baseMode"], str(device), dtype)
+    # Two phases, never overlapping: encoders -> precache -> free, THEN the transformer. Loading all
+    # three at once needs ~20GB and OOMs any 16GB card; apart, peak is just the transformer.
+    protocol.progress(0, steps, status="loading encoders")
+    encoders = models.load_encoders(manifest["modelsDir"], str(device), dtype)
 
     protocol.progress(0, steps, status="caching latents")
-    data = ds.precache(manifest["datasetDir"], comps, str(device), dtype, resolution)
-    # Precache done: the VAE + text encoder are dead weight for the loop - move them off the GPU so
-    # the loop only holds the transformer + LoRA + optimizer (the big low-VRAM win).
-    comps.vae.to("cpu")
-    comps.text_encoder.to("cpu")
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    data = ds.precache(manifest["datasetDir"], encoders, str(device), dtype, resolution)
+    shift = float(encoders.scheduler.config.get("shift", 1.0) or 1.0)
+    models.free_encoders(encoders)
 
-    transformer = comps.transformer
+    protocol.progress(0, steps, status="loading model")
+    transformer = models.load_transformer(
+        manifest["modelsDir"], manifest["baseMode"], str(device), dtype
+    )
     transformer.requires_grad_(False)
     transformer.add_adapter(
         LoraConfig(
@@ -196,7 +197,6 @@ def train(manifest: dict[str, Any]) -> str | None:
     stop = _Stop()
     signal.signal(signal.SIGTERM, stop)
 
-    shift = float(comps.scheduler.config.get("shift", 1.0) or 1.0)
     transformer.train()
     for step in range(start, steps):
         if stop.flagged:

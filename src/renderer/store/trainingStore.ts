@@ -14,6 +14,8 @@ import type {
   TrainingHyperparams,
   TrainingProgressEvent,
   TrainingRun,
+  CaptionProgressEvent,
+  TrainingLogEvent,
   TrainingSampleEvent,
 } from '@shared/types'
 import { studio } from '@/lib/studio'
@@ -37,6 +39,10 @@ interface TrainingState {
 
   progressByRun: Record<string, RunProgress>
   lossByRun: Record<string, number[]>
+  /** The trainer subprocess's streamed stdout, per run - shown in the Trainer node. */
+  logsByRun: Record<string, string[]>
+  /** Live auto-caption progress per dataset, cleared when the captioner exits. */
+  captionProgress: Record<string, { done: number; total: number }>
   samplesByRun: Record<string, string[]>
   systemStats: SystemStatsEvent | null
 
@@ -49,12 +55,15 @@ interface TrainingState {
   setCaption: (datasetId: string, itemId: string, caption: string) => Promise<void>
   autoCaption: (datasetId: string, overwrite: boolean) => Promise<void>
   loadRuns: () => Promise<void>
-  start: (datasetId: string, hyperparams: TrainingHyperparams) => Promise<void>
+  /** Returns the created run so a canvas node can persist its `runId` and rebind after a reload. */
+  start: (datasetId: string, hyperparams: TrainingHyperparams) => Promise<TrainingRun | null>
   resume: (runId: string) => Promise<void>
   cancel: (runId: string) => Promise<void>
 
   applyProgress: (e: TrainingProgressEvent) => void
   applySample: (e: TrainingSampleEvent) => void
+  applyLog: (e: TrainingLogEvent) => void
+  applyCaptionProgress: (e: CaptionProgressEvent) => void
   applyDone: (e: TrainingDoneEvent) => void
   applyError: (e: TrainingErrorEvent) => void
   applyStats: (e: SystemStatsEvent) => void
@@ -71,6 +80,8 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   progressByRun: {},
   lossByRun: {},
   samplesByRun: {},
+  logsByRun: {},
+  captionProgress: {},
   systemStats: null,
 
   loadDatasets: async () => {
@@ -146,8 +157,12 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
 
   start: async (datasetId, hyperparams) => {
     const res = await studio().training.start(datasetId, hyperparams)
-    if (!res.ok) return set({ error: res.error })
+    if (!res.ok) {
+      set({ error: res.error })
+      return null
+    }
     set((s) => ({ runs: [res.value, ...s.runs.filter((r) => r.id !== res.value.id)] }))
+    return res.value
   },
 
   resume: async (runId) => {
@@ -183,6 +198,23 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       samplesByRun: { ...s.samplesByRun, [e.runId]: [...(s.samplesByRun[e.runId] ?? []), e.path] },
     })),
 
+  applyLog: (e) =>
+    set((s) => ({
+      // Capped so a long run can't grow the buffer without bound; the node shows the tail.
+      logsByRun: {
+        ...s.logsByRun,
+        [e.runId]: [...(s.logsByRun[e.runId] ?? []), e.line].slice(-400),
+      },
+    })),
+
+  applyCaptionProgress: (e) =>
+    set((s) => {
+      const next = { ...s.captionProgress }
+      if (e.finished) delete next[e.datasetId]
+      else next[e.datasetId] = { done: e.done, total: e.total }
+      return { captionProgress: next }
+    }),
+
   applyDone: (e) => {
     set((s) => ({
       runs: s.runs.map((r) =>
@@ -194,10 +226,14 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     void get().loadRuns()
   },
 
-  applyError: (e) =>
+  applyError: (e) => {
     set((s) => ({
       runs: s.runs.map((r) => (r.id === e.runId ? { ...r, error: e.error } : r)),
-    })),
+    }))
+    // A run ending (cancel/crash) only broadcasts the error - reload so its new status lands,
+    // otherwise a stopped run still reads as "training" and its Stop control never flips back.
+    void get().loadRuns()
+  },
 
   applyStats: (systemStats) => set({ systemStats }),
   setError: (error) => set({ error }),
@@ -209,6 +245,8 @@ export function subscribeTrainingEvents(): () => void {
   const unsubs = [
     studio().events.onTrainingProgress((e) => s.applyProgress(e)),
     studio().events.onTrainingSample((e) => s.applySample(e)),
+    studio().events.onTrainingLog((e) => s.applyLog(e)),
+    studio().events.onCaptionProgress((e) => s.applyCaptionProgress(e)),
     studio().events.onTrainingDone((e) => s.applyDone(e)),
     studio().events.onTrainingError((e) => s.applyError(e)),
     studio().events.onSystemStats((e) => s.applyStats(e)),

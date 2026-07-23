@@ -1,8 +1,9 @@
 /** The dataset editor: a grid of images with per-image captions, plus add + auto-caption controls. */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { TrainingDatasetItem } from '@shared/types'
 import { resolveMedia } from '@/lib/media'
 import { studio } from '@/lib/studio'
+import { uploadFiles } from '@/lib/importFiles'
 import { useAssetStore } from '../../store/assetStore'
 import { useTrainingStore } from '../../store/trainingStore'
 import { ipcErrorMessage } from '../../lib/ipcError'
@@ -16,6 +17,9 @@ function CaptionBox({
 }): React.JSX.Element {
   const [text, setText] = useState(item.caption)
   const setCaption = useTrainingStore((s) => s.setCaption)
+  // `useState(item.caption)` only seeds the FIRST render, so an externally-changed caption (the
+  // auto-captioner writing one) would never appear. Re-sync whenever the stored caption changes.
+  useEffect(() => setText(item.caption), [item.caption])
   return (
     <textarea
       value={text}
@@ -39,8 +43,48 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
   const loadAssets = useAssetStore((s) => s.load)
   const setError = useTrainingStore((s) => s.setError)
   const [busy, setBusy] = useState(false)
+  // Highlight while OS files are dragged over the grid.
+  const [fileOver, setFileOver] = useState(false)
 
   const byId = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets])
+
+  /** Import dropped/picked files into the Library, then attach them to this dataset. */
+  const attachFiles = async (files: File[]): Promise<void> => {
+    setBusy(true)
+    try {
+      const uploaded = await uploadFiles(files, null)
+      if (uploaded.length) {
+        await addItems(
+          datasetId,
+          uploaded.map((a) => a.id),
+        )
+        await loadAssets() // so thumbnails resolve for the freshly uploaded assets
+      }
+    } catch (e) {
+      setError(ipcErrorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // True when a drag carries OS files (Finder/Explorer), not an internal asset drag.
+  const isFileDrag = (e: React.DragEvent): boolean =>
+    Array.from(e.dataTransfer.types).includes('Files')
+
+  const onDragOver = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    if (!fileOver) setFileOver(true)
+  }
+
+  const onDrop = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
+    e.preventDefault()
+    setFileOver(false)
+    const files = Array.from(e.dataTransfer.files ?? []).filter((f) => f.type.startsWith('image/'))
+    if (files.length > 0) void attachFiles(files)
+  }
 
   const onAdd = async (): Promise<void> => {
     setBusy(true)
@@ -61,7 +105,24 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
+    <div
+      className={`relative flex min-h-0 flex-1 flex-col gap-3 rounded-lg ${
+        fileOver ? 'ring-2 ring-inset ring-accent' : ''
+      }`}
+      onDragOver={onDragOver}
+      onDragLeave={(e) => {
+        // Only clear when the cursor actually leaves the grid, not a child element.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFileOver(false)
+      }}
+      onDrop={onDrop}
+    >
+      {fileOver && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-accent/5">
+          <span className="rounded-md border border-accent bg-panel/90 px-3 py-1.5 text-xs text-accent">
+            Drop images to add to this dataset
+          </span>
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <button
           onClick={() => void onAdd()}
@@ -82,7 +143,7 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
 
       {items.length === 0 ? (
         <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border text-sm text-zinc-500">
-          Add 10–30 images of your character to train a LoRA.
+          Drop images here, or use Add images — 10–30 of your character trains a good LoRA.
         </div>
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">

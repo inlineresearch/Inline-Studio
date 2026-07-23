@@ -1,11 +1,14 @@
-/** The LoRA hyperparameter form + Start control. GPU picker is driven by live telemetry. */
-import { useState } from 'react'
+/**
+ * The Trainer node's Adjust sidebar - hyperparameters live here, never on the node face (the same
+ * split the Generate / Inline Core nodes use). Edits persist into the node's `data.hyperparams`.
+ */
 import type { TrainingBaseMode, TrainingHyperparams } from '@shared/types'
+import { useTrainerBoardStore } from '../../store/trainerBoardStore'
 import { useTrainingStore } from '../../store/trainingStore'
-import { PlayIcon } from '../../components/icons'
+import { XIcon } from '../Moodboard/nodes/NodeBadge'
 
 const DEFAULTS: TrainingHyperparams = {
-  baseMode: 'turbo_adapter',
+  baseMode: 'deturbo',
   rank: 16,
   alpha: 16,
   learningRate: 1e-4,
@@ -41,20 +44,16 @@ function NumberField({
   )
 }
 
-export function HyperparamForm({
-  datasetId,
-  disabled,
-}: {
-  datasetId: string
-  disabled: boolean
-}): React.JSX.Element {
-  const [hp, setHp] = useState<TrainingHyperparams>(DEFAULTS)
-  const start = useTrainingStore((s) => s.start)
-  // `?? []` MUST stay outside the selector: a new [] returned from the selector is a fresh
-  // reference every call, which Zustand's Object.is check reads as a change -> infinite re-render.
+export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.Element | null {
+  const item = useTrainerBoardStore((s) => s.items.find((i) => i.id === itemId))
+  const patchData = useTrainerBoardStore((s) => s.patchData)
+  const toggleSettings = useTrainerBoardStore((s) => s.toggleSettings)
   const gpus = useTrainingStore((s) => s.systemStats?.gpus) ?? []
+  if (!item) return null
+
+  const hp: TrainingHyperparams = { ...DEFAULTS, ...(item.data.hyperparams ?? {}) }
   const set = <K extends keyof TrainingHyperparams>(key: K, value: TrainingHyperparams[K]): void =>
-    setHp((prev) => ({ ...prev, [key]: value }))
+    void patchData(itemId, { hyperparams: { ...hp, [key]: value } })
 
   const toggleGpu = (index: number): void =>
     set(
@@ -63,8 +62,17 @@ export function HyperparamForm({
     )
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface/70 p-4">
-      <span className="text-sm font-medium text-zinc-200">Training settings</span>
+    <div className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l border-border bg-surface/40 p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-zinc-200">Training settings</span>
+        <button
+          onClick={() => toggleSettings(itemId)}
+          className="rounded p-1 text-zinc-400 hover:bg-panel hover:text-zinc-200"
+          title="Close"
+        >
+          <XIcon className="h-3.5 w-3.5" />
+        </button>
+      </div>
 
       <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
         Base
@@ -127,14 +135,6 @@ export function HyperparamForm({
           </div>
         </div>
       )}
-
-      <button
-        disabled={disabled}
-        onClick={() => void start(datasetId, hp)}
-        className="flex items-center justify-center gap-2 rounded-md bg-emerald-600 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40"
-      >
-        <PlayIcon className="h-4 w-4" /> Start training
-      </button>
     </div>
   )
 }

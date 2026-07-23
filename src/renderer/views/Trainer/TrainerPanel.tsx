@@ -1,15 +1,16 @@
 /**
- * The Trainer tab: pick/create a dataset, caption its images, set hyperparameters, and run a LoRA
- * training job with live progress + samples + host telemetry. The produced LoRA lands in
- * models/loras/, so it shows up in the Studio tab's LoRA loader node.
+ * The Trainer tab: a dataset panel on the left, the training node graph in the centre, and a node's
+ * Adjust sidebar on the right. Nodes (Load Dataset → Caption → Train LoRA → Graph, plus the utility
+ * Resource node) live on the `trainer` canvas surface. The produced LoRA lands in models/loras/, so
+ * it shows up in the Studio tab's LoRA loader node.
  */
 import { useEffect, useState } from 'react'
-import { subscribeTrainingEvents, useTrainingStore } from '../../store/trainingStore'
+import { useTrainingStore } from '../../store/trainingStore'
+import { useTrainerBoardStore } from '../../store/trainerBoardStore'
 import { DatasetIcon } from '../../components/icons'
 import { DatasetItemsGrid } from './DatasetItemsGrid'
-import { HyperparamForm } from './HyperparamForm'
-import { TrainingMonitor } from './TrainingMonitor'
-import { SystemStatsBar } from './SystemStatsBar'
+import { TrainerCanvas } from './TrainerCanvas'
+import { TrainerSettingsPanel } from './TrainerSettingsPanel'
 
 function NewDataset(): React.JSX.Element {
   const [name, setName] = useState('')
@@ -48,31 +49,38 @@ function NewDataset(): React.JSX.Element {
 export function TrainerPanel(): React.JSX.Element {
   const datasets = useTrainingStore((s) => s.datasets)
   const activeId = useTrainingStore((s) => s.activeDatasetId)
-  const runs = useTrainingStore((s) => s.runs)
   const error = useTrainingStore((s) => s.error)
   const load = useTrainingStore((s) => s.loadDatasets)
   const loadRuns = useTrainingStore((s) => s.loadRuns)
   const select = useTrainingStore((s) => s.selectDataset)
+  const settingsItemId = useTrainerBoardStore((s) => s.settingsItemId)
+  // The dataset panel collapses so the canvas can take the full width.
+  const [panelOpen, setPanelOpen] = useState(true)
 
   useEffect(() => {
     void load()
     void loadRuns()
-    return subscribeTrainingEvents()
   }, [load, loadRuns])
 
   const active = datasets.find((d) => d.id === activeId) ?? null
-  const activeRunning = runs.some((r) => r.status === 'training' || r.status === 'queued')
-  const datasetRuns = runs.filter((r) => r.datasetId === activeId)
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-0 flex-1">
-        {/* Dataset sidebar */}
-        <div className="flex w-56 shrink-0 flex-col border-r border-border bg-surface/40">
-          <div className="flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            <DatasetIcon className="h-4 w-4" /> Datasets
+    <div className="flex h-full min-h-0">
+      {/* Dataset panel: the list, plus the selected dataset's images + captions. */}
+      {panelOpen && (
+        <div className="flex w-[22rem] shrink-0 flex-col border-r border-border bg-surface/40">
+          <div className="flex items-center justify-between px-3 py-2">
+            <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              <DatasetIcon className="h-4 w-4" /> Datasets
+            </span>
+            <button
+              onClick={() => setPanelOpen(false)}
+              className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-panel hover:text-zinc-300"
+            >
+              Hide
+            </button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="max-h-40 shrink-0 overflow-y-auto border-b border-border">
             {datasets.map((d) => (
               <button
                 key={d.id}
@@ -88,34 +96,37 @@ export function TrainerPanel(): React.JSX.Element {
               </button>
             ))}
           </div>
+          <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+            {error && (
+              <div className="rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</div>
+            )}
+            {active ? (
+              <DatasetItemsGrid datasetId={active.id} />
+            ) : (
+              <div className="flex flex-1 items-center justify-center text-center text-sm text-zinc-500">
+                Select a dataset, or add a Load Dataset node.
+              </div>
+            )}
+          </div>
           <NewDataset />
         </div>
+      )}
 
-        {/* Dataset editor */}
-        <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
-          {error && (
-            <div className="rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</div>
-          )}
-          {active ? (
-            <DatasetItemsGrid datasetId={active.id} />
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">
-              Create or select a dataset to begin.
-            </div>
-          )}
-        </div>
-
-        {/* Settings + runs */}
-        {active && (
-          <div className="flex w-80 shrink-0 flex-col gap-4 overflow-y-auto border-l border-border p-4">
-            <HyperparamForm datasetId={active.id} disabled={activeRunning} />
-            {datasetRuns.map((run) => (
-              <TrainingMonitor key={run.id} run={run} />
-            ))}
-          </div>
+      {/* The training graph. */}
+      <div className="relative min-w-0 flex-1">
+        {!panelOpen && (
+          <button
+            onClick={() => setPanelOpen(true)}
+            className="absolute left-3 top-14 z-10 rounded-md border border-border bg-panel/95 px-2 py-1 text-[11px] text-zinc-300 shadow-sm backdrop-blur hover:bg-panel"
+          >
+            Datasets
+          </button>
         )}
+        <TrainerCanvas />
       </div>
-      <SystemStatsBar />
+
+      {/* A node's Adjust sidebar (params live off the node face). */}
+      {settingsItemId && <TrainerSettingsPanel itemId={settingsItemId} />}
     </div>
   )
 }

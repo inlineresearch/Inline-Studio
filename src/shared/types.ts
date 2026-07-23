@@ -136,6 +136,22 @@ export type MoodboardItemType =
   | 'core'
   /** A "Load Assets" node: holds library asset refs in `data.assetIds`, feeds its hero downstream. */
   | 'loader'
+  /** Trainer-canvas: picks a training dataset and feeds it downstream. */
+  | 'trainDataset'
+  /** Trainer-canvas: auto-captions a dataset's images. */
+  | 'caption'
+  /** Trainer-canvas: runs a LoRA training job (run/stop/resume, live steps + logs). */
+  | 'trainer'
+  /** Trainer-canvas: plots a training run's loss curve. */
+  | 'lossGraph'
+  /** Utility: read-only host telemetry (CPU/RAM/VRAM). No handles; usable on either canvas. */
+  | 'resource'
+
+/**
+ * Which canvas an item lives on. The Studio moodboard and the Trainer tab's graph share the same
+ * item/connector tables, kept apart by this discriminator.
+ */
+export type CanvasSurface = 'studio' | 'trainer'
 
 /** Output settings for a video-director node (stored in its moodboard item data). */
 export interface DirectorItemData {
@@ -244,6 +260,15 @@ export interface MoodboardItemData {
   loader?: boolean
   /** `loader` node: the library asset ids it holds, in order (hero = first). */
   assetIds?: string[]
+  /** `trainDataset` / `caption` / `trainer` nodes: the training dataset they operate on. */
+  datasetId?: string | null
+  /** `caption` node: re-caption images that already have a caption. */
+  overwrite?: boolean
+  /** `trainer` / `lossGraph` nodes: the training run they're bound to. Persisted so the node
+   * rebinds after a reload and can still offer Resume on an interrupted run. */
+  runId?: string | null
+  /** `trainer` node: its hyperparameters (edited in the Adjust sidebar, off the node face). */
+  hyperparams?: Partial<TrainingHyperparams>
   /** Core graph node: the Inline Core node type + its param values (see coreNodes.ts). */
   core?: {
     type: string
@@ -270,6 +295,8 @@ export interface MoodboardItemData {
 export interface MoodboardItem {
   id: string
   projectId: string
+  /** Which canvas this item belongs to (defaults to the Studio moodboard). */
+  surface: CanvasSurface
   type: MoodboardItemType
   /** Set when type === 'asset'. */
   assetId: string | null
@@ -292,6 +319,8 @@ export interface MoodboardItem {
 export interface MoodboardConnector {
   id: string
   projectId: string
+  /** Derived from the nodes it joins - a connector never spans two canvases. */
+  surface: CanvasSurface
   fromItemId: string
   toItemId: string
   label: string | null
@@ -445,6 +474,24 @@ export interface TrainingSampleEvent {
   runId: string
   step: number
   path: string
+}
+
+/** Main → renderer: auto-caption progress for a dataset (one tick per captioned image). */
+export interface CaptionProgressEvent {
+  datasetId: string
+  /** Images captioned so far, of `total` queued this run. */
+  done: number
+  total: number
+  /** The item just captioned, if this tick is for one. */
+  itemId: string | null
+  /** True on the final tick, when the captioner has exited. */
+  finished: boolean
+}
+
+/** Main → renderer: one stdout line from the trainer subprocess (shown in the Trainer node). */
+export interface TrainingLogEvent {
+  runId: string
+  line: string
 }
 
 /** Main → renderer: a training run finished; `outputLoraPath` is the produced LoRA. */

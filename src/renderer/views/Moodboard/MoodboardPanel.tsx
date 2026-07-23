@@ -61,6 +61,7 @@ import { DirectorNode } from './nodes/DirectorNode'
 import { TrimNode } from './nodes/TrimNode'
 import { LoaderNode } from './nodes/LoaderNode'
 import { GraphNode } from './nodes/GraphNode'
+import { ResourceNode } from './nodes/ResourceNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
 import { CanvasToolbar } from './CanvasToolbar'
@@ -93,6 +94,7 @@ const nodeTypes: NodeTypes = {
   prompt: PromptNode,
   loader: LoaderNode,
   core: GraphNode,
+  resource: ResourceNode,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -256,6 +258,7 @@ function Board(): React.JSX.Element {
   const addLayer = useMoodboardStore((s) => s.addLayer)
   const addDirector = useMoodboardStore((s) => s.addDirector)
   const addTrim = useMoodboardStore((s) => s.addTrim)
+  const addResource = useMoodboardStore((s) => s.addResource)
   const addEmptyFrame = useMoodboardStore((s) => s.addEmptyFrame)
   const addLoader = useMoodboardStore((s) => s.addLoader)
   const addLoaderAssets = useMoodboardStore((s) => s.addLoaderAssets)
@@ -713,6 +716,9 @@ function Board(): React.JSX.Element {
         break
       case 'prompt':
         void addPrompt(m.flowX, m.flowY)
+        break
+      case 'resource':
+        void addResource(m.flowX, m.flowY)
         break
     }
   }

@@ -66,7 +66,24 @@ class Training:
         return ts.set_caption(self._conn(), item_id, caption)
 
     def list_runs(self) -> list[dict[str, Any]]:
-        return ts.list_runs(self._conn())
+        conn = self._conn()
+        self._reconcile_orphans(conn)
+        return ts.list_runs(conn)
+
+    def _reconcile_orphans(self, conn: Any) -> None:
+        """Flip runs left mid-flight by a crash/restart to `interrupted`.
+
+        A run row stays `training` if its process died without the orchestrator seeing the exit (a
+        killed subprocess, a server restart). Nothing would ever clear it, and since the UI blocks
+        starting while any run is training, one orphan disables training forever. Checked on the
+        Trainer tab's own load, which is the first thing the UI does."""
+        for run in ts.list_runs(conn):
+            if run["status"] in ("training", "queued") and run["id"] not in self._active:
+                ts.update_run(
+                    conn, run["id"],
+                    {"status": "interrupted",
+                     "error": "Training stopped unexpectedly; you can resume it."},
+                )
 
     def status(self, run_id: str) -> dict[str, Any]:
         return ts.get_run(self._conn(), run_id)
@@ -84,18 +101,52 @@ class Training:
         ]
         if not targets:
             return items
-        manifest = {"items": targets}
+        total = len(targets)
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "inline_core.training.caption",
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        out, _ = await proc.communicate(json.dumps(manifest).encode())
-        for line in out.decode(errors="replace").splitlines():
-            msg = _parse_json_line(line)
+        # Feed the manifest and close stdin, then read stdout LINE BY LINE. `communicate()` would
+        # buffer the whole run, so the captioner's per-image lines (which it already emits) only
+        # landed after it finished - no progress. The manifest is small, so writing before reading
+        # can't deadlock.
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write(json.dumps({"items": targets}).encode())
+        await proc.stdin.drain()
+        proc.stdin.close()
+
+        self._progress_caption(dataset_id, 0, total)
+        done = 0
+        async for raw in proc.stdout:
+            msg = _parse_json_line(raw.decode(errors="replace"))
             if msg and msg.get("id") and isinstance(msg.get("caption"), str):
                 ts.set_caption(conn, msg["id"], msg["caption"])
+                done += 1
+                self._progress_caption(dataset_id, done, total, item_id=msg["id"])
+        await proc.wait()
+        self._progress_caption(dataset_id, done, total, finished=True)
         return ts.list_items(conn, dataset_id)
+
+    def _progress_caption(
+        self,
+        dataset_id: str,
+        done: int,
+        total: int,
+        *,
+        item_id: str | None = None,
+        finished: bool = False,
+    ) -> None:
+        self._events.broadcast(
+            "events:captionProgress",
+            {
+                "datasetId": dataset_id,
+                "done": done,
+                "total": total,
+                "itemId": item_id,
+                "finished": finished,
+            },
+        )
 
     def _relativize(self, path: str) -> str:
         try:
@@ -161,8 +212,13 @@ class Training:
         saw_done = False
         assert proc.stdout is not None
         async for raw in proc.stdout:
-            msg = _parse_json_line(raw.decode(errors="replace"))
+            line = _last_progress_segment(raw.decode(errors="replace"))
+            msg = _parse_json_line(line)
             if msg is None:
+                # Not protocol JSON - the trainer's own stdout/stderr (loader bars, warnings,
+                # tracebacks). Surfaced as log lines so the Trainer node can show them live.
+                if line:
+                    self._events.broadcast("events:trainingLog", {"runId": run_id, "line": line})
                 continue
             kind = msg.get("type")
             if kind == "progress":
@@ -179,6 +235,11 @@ class Training:
                 )
             elif kind == "checkpoint" and msg.get("path"):
                 ts.update_run(self._conn(), run_id, {"checkpointPath": msg["path"]})
+            elif kind == "error" and msg.get("message"):
+                # A trainer-side failure: keep it in the run's log so the node shows why it died.
+                self._events.broadcast(
+                    "events:trainingLog", {"runId": run_id, "line": f"error: {msg['message']}"}
+                )
             elif kind == "done":
                 saw_done = True
         return saw_done
@@ -311,6 +372,15 @@ class Training:
         return await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env,
         )
+
+
+def _last_progress_segment(raw: str) -> str:
+    """One clean log line out of a raw stdout chunk.
+
+    Progress bars (tqdm, the weight loaders) redraw with ``\\r`` and no newline, so a whole bar's
+    worth of redraws arrives as a single chunk. Keeping only the last segment yields the bar's
+    current state instead of every intermediate frame concatenated into one enormous line."""
+    return raw.replace("\r\n", "\n").split("\r")[-1].rstrip()
 
 
 def _parse_json_line(line: str) -> dict[str, Any] | None:

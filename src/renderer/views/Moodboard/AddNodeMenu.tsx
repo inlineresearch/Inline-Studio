@@ -10,7 +10,7 @@ import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
-export type AddNodeKind = 'load' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
+export type AddNodeKind = 'load' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt' | 'resource'
 
 interface Entry {
   kind: AddNodeKind
@@ -18,6 +18,8 @@ interface Entry {
   icon: React.JSX.Element
   /** Accent the row (the generation node is the AI action). */
   accent?: boolean
+  /** Groups the row under a header; ungrouped entries render first, as before. */
+  category?: string
 }
 
 const ENTRIES: Entry[] = [
@@ -27,6 +29,7 @@ const ENTRIES: Entry[] = [
   { kind: 'director', label: 'Video Director', icon: <ClapperboardIcon /> },
   { kind: 'trim', label: 'Edit Video/Audio', icon: <ScissorsIcon /> },
   { kind: 'prompt', label: 'Prompt', icon: <PromptIcon /> },
+  { kind: 'resource', label: 'Resources', icon: <CpuIcon />, category: 'Utility' },
 ]
 
 export function AddNodeMenu({
@@ -73,7 +76,7 @@ export function AddNodeMenu({
         </div>
         {/* One scroll area for the whole list (built-ins + fal + Inline Core), not per-section. */}
         <div className="max-h-[70vh] overflow-y-auto">
-          {ENTRIES.map((e) => (
+          {ENTRIES.filter((e) => !e.category).map((e) => (
             <button
               key={e.kind}
               onClick={() => onPick(e.kind)}
@@ -85,6 +88,27 @@ export function AddNodeMenu({
               {e.label}
             </button>
           ))}
+          {[...new Set(ENTRIES.filter((e) => e.category).map((e) => e.category))].map(
+            (category) => (
+              <div key={category} className="border-t border-border">
+                <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+                  {category}
+                </div>
+                {ENTRIES.filter((e) => e.category === category).map((e) => (
+                  <button
+                    key={e.kind}
+                    onClick={() => onPick(e.kind)}
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+                  >
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                      {e.icon}
+                    </span>
+                    {e.label}
+                  </button>
+                ))}
+              </div>
+            ),
+          )}
           {onPickGen && falGroups.length > 0 && (
             <div className="border-t border-border">
               <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
@@ -208,6 +232,16 @@ function LayerIcon(): React.JSX.Element {
       <polygon points="12 2 2 7 12 12 22 7 12 2" />
       <polyline points="2 17 12 22 22 17" />
       <polyline points="2 12 12 17 22 12" />
+    </Svg>
+  )
+}
+
+function CpuIcon(): React.JSX.Element {
+  return (
+    <Svg>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2" />
     </Svg>
   )
 }
