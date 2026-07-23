@@ -18,6 +18,8 @@ interface Entry {
   icon: React.JSX.Element
   /** Accent the row (the generation node is the AI action). */
   accent?: boolean
+  /** Groups the row under a header; ungrouped entries render first, as before. */
+  category?: string
 }
 
 const ENTRIES: Entry[] = [
@@ -73,7 +75,7 @@ export function AddNodeMenu({
         </div>
         {/* One scroll area for the whole list (built-ins + fal + Inline Core), not per-section. */}
         <div className="max-h-[70vh] overflow-y-auto">
-          {ENTRIES.map((e) => (
+          {ENTRIES.filter((e) => !e.category).map((e) => (
             <button
               key={e.kind}
               onClick={() => onPick(e.kind)}
@@ -85,6 +87,27 @@ export function AddNodeMenu({
               {e.label}
             </button>
           ))}
+          {[...new Set(ENTRIES.filter((e) => e.category).map((e) => e.category))].map(
+            (category) => (
+              <div key={category} className="border-t border-border">
+                <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
+                  {category}
+                </div>
+                {ENTRIES.filter((e) => e.category === category).map((e) => (
+                  <button
+                    key={e.kind}
+                    onClick={() => onPick(e.kind)}
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+                  >
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                      {e.icon}
+                    </span>
+                    {e.label}
+                  </button>
+                ))}
+              </div>
+            ),
+          )}
           {onPickGen && falGroups.length > 0 && (
             <div className="border-t border-border">
               <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">

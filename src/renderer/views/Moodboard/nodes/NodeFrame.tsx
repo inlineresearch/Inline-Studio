@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { NodeResizer } from '@xyflow/react'
-import { useMoodboardStore } from '../../../store/moodboardStore'
+import { useBoardActions } from './boardActions'
 import { XIcon } from './NodeBadge'
 
 /**
@@ -44,8 +44,7 @@ export function NodeFrame({
   onResizeEnd?: (size: ResizeSize) => void
   children: ReactNode
 }): React.JSX.Element {
-  const updateItem = useMoodboardStore((s) => s.updateItem)
-  const deleteItem = useMoodboardStore((s) => s.deleteItem)
+  const { updateItem, deleteItem } = useBoardActions()
 
   const selBorder = subtleSelect ? 'border-zinc-600' : 'border-accent'
   const box = transparent

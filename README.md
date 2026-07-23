@@ -2,12 +2,12 @@
 
 <h3 align="center">AI filmmaking on a node canvas</h3>
 
-<p align="center">Inline Studio is a free, open-source app for AI filmmakers. Build a whole visual pipeline on a free-form node canvas, from moodboard to final cut, with local diffusion models (the built-in Inline Core engine) and hosted fal models. Every render is kept as a versioned, non-destructive take.</p>
+<p align="center">Inline Studio is a free, open-source app for AI filmmakers. Build a whole visual pipeline on a free-form node canvas, from moodboard to final cut, with local diffusion models (the built-in Inline Core engine) and hosted fal models. Train your own LoRAs on the same canvas. Every render is kept as a versioned, non-destructive take.</p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.31-blue?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.41-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -35,6 +35,7 @@ It runs as a **single process on one port**: the Inline Core engine (Python) ser
 - **Chain frames into a generative pipeline** - wire one frame's output into the next frame's input. Refine a shot, feed it forward, regenerate the source, and everything downstream follows.
 - **Video editing on the canvas** - the **Video Director node** is a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export; the **Trim Video/Audio node** lets you drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
 - **Local generation, built in** - the Inline Core engine runs diffusion models on your own GPU. Z-Image Turbo from a single model file, no external server to set up.
+- **Train your own LoRAs** - the Trainer tab is a second canvas where the dataset, captioning, training run, and loss curve are all nodes. The finished LoRA drops into `models/loras/` and shows up in the LoRA loader node, ready to generate with. See [LoRA training](#lora-training).
 - **API Nodes for hosted models** - run closed models right on the canvas with no GPU. Add a Generate node, pick a model, and bring your own provider key. See [API Nodes](#api-nodes).
 - **Community extensions** - install custom nodes from a GitHub repo in one click, security-reviewed and dependency-isolated. Browse the [registry](https://github.com/inlineresearch/Inline-Registry) or [build your own](https://github.com/inlineresearch/Inline-Studio-Extension-Guide).
 - **Free & open source (MIT)** - one process (Python + a browser); runs on macOS, Windows, and Linux.
@@ -228,6 +229,68 @@ The friendly `webui.sh` launcher (in `core/`) maps flags onto the engine's `INLI
 
 `webui.sh` also has `--install` / `--extra NAME` to set up the venv. New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
 
+## LoRA training
+
+Train a LoRA on your own images without leaving the app. The **Trainer** tab is a second canvas: wire up the nodes, press Start, and watch it run. When the run finishes, the `.safetensors` lands in `models/loras/`, where the LoRA loader node picks it up automatically, so you can generate with it over in the Studio tab straight away.
+
+![Inline Studio Trainer tab showing the LoRA training node graph with a dataset, live logs, and a loss curve](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/lora-trainer.png)
+
+### The graph
+
+Five nodes, wired left to right:
+
+- **Load Dataset** picks a training dataset and feeds it downstream. The node face stays a preview (thumbnails, image and caption counts); the images and captions themselves are edited in the side panel.
+- **Caption** runs a local captioner over the images that need one, with per-image progress. Captions stay editable afterwards, and a wired dataset overrides the node's own picker.
+- **Train LoRA** runs the job. Hyperparameters live behind the Adjust button, off the node face, so the node stays a status surface: a live step counter, the trainer's streaming logs, and a progress bar. The run control is a single chip that reads Start, Stop, or Resume depending on where the run is.
+- **Graph** plots the loss curve for whichever run is wired into it, with loss values on the y axis and the step range on the x axis.
+- **Resources** is a read-only readout of CPU, RAM, and VRAM as circular gauges. It takes no connections, and you can drop it on the Studio canvas too.
+
+<details>
+<summary><b>Datasets, resuming, trigger words, and base model modes</b></summary>
+
+### Datasets and outputs
+
+The sidebar has two tabs. **Datasets** is where you create a dataset, give it a trigger word, add images (drag and drop from your file manager works), and edit captions. **Outputs** lists what training has produced: finished LoRAs with their rank, step count, and resolution, plus any run that stopped early, each with a Resume button.
+
+### Stop and resume
+
+Stopping a run flushes a checkpoint before the process exits, so Resume continues from the step it left off instead of starting over. A checkpoint holds the adapter weights, the optimiser state, the RNG state, and the step number, which is what makes a resumed run a continuation rather than a restart. Runs cut short by a crash or a server restart are recovered the same way and show up under Outputs ready to resume.
+
+### Trigger words
+
+A dataset's trigger word is prepended to every caption during training, so the model sees captions in the form `mytoken, a photo of ...`. Put the same token at the front of your prompt to pull the LoRA in. It is worth matching the phrasing of your captions too: if they all say "an oil painting of", a prompt written the same way will hit the trained style far more reliably than the trigger word alone.
+
+### Base model modes
+
+Z-Image Turbo is step-distilled, and training directly on a distilled model breaks the distillation down (turbo drift). There are two ways around it:
+
+- **Turbo + training adapter** fuses a de-distillation adapter into the base for the duration of training and drops it when the LoRA is saved, which preserves the 8-step speed. Put [ostris/zimage_turbo_training_adapter](https://huggingface.co/ostris/zimage_turbo_training_adapter) in `models/loras/`; any filename containing `adapter` is detected automatically, or point `INLINE_ZIMAGE_TRAIN_ADAPTER` at a specific file. Keep runs short, since the adapter slows the breakdown rather than preventing it.
+- **De-Turbo** trains without an adapter and needs no extra download.
+
+</details>
+
+### Install
+
+The trainer's dependencies (PEFT, 8-bit Adam, the captioner) sit behind the `training` extra, so a normal install stays lean:
+
+```bash
+cd core
+./webui.sh --install --extra runtime --extra training
+```
+
+Weights are bring-your-own, the same as generation: nothing is downloaded behind your back. Training reuses the Z-Image files you already have in `models/diffusion_models/`, `models/vae/`, and `models/text_encoders/`. The captioner is the one exception, fetched once into the Hugging Face cache the first time you press Auto-caption.
+
+### Hardware
+
+Training needs a real GPU, and the resolution you train at drives peak VRAM far more than rank or batch size does. Two configurations have been run end to end:
+
+| GPU             | Resolution | Notes                                                                |
+| --------------- | ---------- | -------------------------------------------------------------------- |
+| 16GB (Tesla T4) | 512px      | Peaks around 13GB. 768 and 1024 both run out of memory on this card. |
+| 24GB (L4)       | 1024px     | Run with the Turbo training adapter fused in.                        |
+
+To keep the peak down, the VAE and text encoder are loaded first, used to cache latents and captions, then freed before the transformer loads, so the peak is the transformer on its own rather than all three resident at once. If you do hit an out-of-memory error, lower the training resolution before changing anything else.
+
 ## FAQ
 
 ### Is Inline Studio free?
@@ -242,10 +305,6 @@ Only for **local** generation. The built-in Inline Core engine renders on the GP
 
 See [Two ways to generate](#two-ways-to-generate): local Z-Image on your own GPU, or hosted fal models. Adding a new local model is a Core change (a model runner), no UI release.
 
-### Does it use ComfyUI?
-
-No. Built-in generation is all Inline Core (local, on your own GPU) plus hosted fal models — nothing external to stand up. There's no ComfyUI connection, Generate tab, or workflow linking.
-
 ## Contributing
 
 Inline Studio is early and moving fast, any issues, ideas, and pull requests are all welcome. If you're poking at the code, [CLAUDE.md](CLAUDE.md) is the engineering guide: it explains the architecture, the data model, and the conventions to follow.
@@ -255,6 +314,8 @@ Want to help by using it for real? Try the [creator task](task.md): build a shor
 ## Credits
 
 Inline Core's multi-GPU denoise builds on [**xDiT**](https://github.com/xdit-project/xDiT)'s PipeFusion and Ulysses parallelism.
+
+The LoRA trainer's approach to training on a step-distilled model follows [**ai-toolkit**](https://github.com/ostris/ai-toolkit) by ostris, and Turbo mode uses his [Z-Image Turbo training adapter](https://huggingface.co/ostris/zimage_turbo_training_adapter).
 
 ## Help shape Inline Studio
 

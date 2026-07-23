@@ -136,6 +136,22 @@ export type MoodboardItemType =
   | 'core'
   /** A "Load Assets" node: holds library asset refs in `data.assetIds`, feeds its hero downstream. */
   | 'loader'
+  /** Trainer-canvas: picks a training dataset and feeds it downstream. */
+  | 'trainDataset'
+  /** Trainer-canvas: auto-captions a dataset's images. */
+  | 'caption'
+  /** Trainer-canvas: runs a LoRA training job (run/stop/resume, live steps + logs). */
+  | 'trainer'
+  /** Trainer-canvas: plots a training run's loss curve. */
+  | 'lossGraph'
+  /** Utility: read-only host telemetry (CPU/RAM/VRAM). No handles; usable on either canvas. */
+  | 'resource'
+
+/**
+ * Which canvas an item lives on. The Studio moodboard and the Trainer tab's graph share the same
+ * item/connector tables, kept apart by this discriminator.
+ */
+export type CanvasSurface = 'studio' | 'trainer'
 
 /** Output settings for a video-director node (stored in its moodboard item data). */
 export interface DirectorItemData {
@@ -244,6 +260,15 @@ export interface MoodboardItemData {
   loader?: boolean
   /** `loader` node: the library asset ids it holds, in order (hero = first). */
   assetIds?: string[]
+  /** `trainDataset` / `caption` / `trainer` nodes: the training dataset they operate on. */
+  datasetId?: string | null
+  /** `caption` node: re-caption images that already have a caption. */
+  overwrite?: boolean
+  /** `trainer` / `lossGraph` nodes: the training run they're bound to. Persisted so the node
+   * rebinds after a reload and can still offer Resume on an interrupted run. */
+  runId?: string | null
+  /** `trainer` node: its hyperparameters (edited in the Adjust sidebar, off the node face). */
+  hyperparams?: Partial<TrainingHyperparams>
   /** Core graph node: the Inline Core node type + its param values (see coreNodes.ts). */
   core?: {
     type: string
@@ -270,6 +295,8 @@ export interface MoodboardItemData {
 export interface MoodboardItem {
   id: string
   projectId: string
+  /** Which canvas this item belongs to (defaults to the Studio moodboard). */
+  surface: CanvasSurface
   type: MoodboardItemType
   /** Set when type === 'asset'. */
   assetId: string | null
@@ -292,6 +319,8 @@ export interface MoodboardItem {
 export interface MoodboardConnector {
   id: string
   projectId: string
+  /** Derived from the nodes it joins - a connector never spans two canvases. */
+  surface: CanvasSurface
   fromItemId: string
   toItemId: string
   label: string | null
@@ -356,6 +385,150 @@ export interface ModelDownloadErrorEvent {
   nodeType: string
   componentId: string
   error: string
+}
+
+// LoRA training ------------------------------------------------------------
+
+/** Turbo needs a training adapter to avoid "turbo drift"; a de-turbo base trains without one. */
+export type TrainingBaseMode = 'turbo_adapter' | 'deturbo'
+
+export type TrainingStatus =
+  | 'queued'
+  | 'training'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+  /** Died to a crash/OOM/restart; resumable from its last checkpoint. */
+  | 'interrupted'
+
+/** A named set of images (+ captions) that trains one LoRA. */
+export interface TrainingDataset {
+  id: string
+  projectId: string
+  name: string
+  /** Token injected into every caption (the character/style trigger); may be empty. */
+  triggerWord: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** One image in a dataset, with its caption. Backed by a library asset. */
+export interface TrainingDatasetItem {
+  id: string
+  datasetId: string
+  assetId: string
+  caption: string
+  position: number
+  createdAt: number
+}
+
+/** LoRA training hyperparameters (persisted as JSON on a run). */
+export interface TrainingHyperparams {
+  baseMode: TrainingBaseMode
+  /** LoRA rank (dim). */
+  rank: number
+  /** LoRA alpha; defaults to `rank`. */
+  alpha: number
+  learningRate: number
+  steps: number
+  batchSize: number
+  /** Square training resolution in px (e.g. 1024). */
+  resolution: number
+  /** Checkpoint every N steps. */
+  saveEvery: number
+  /** GPU indices to train on; `[]` = auto (first available). */
+  gpuIds: number[]
+  /** Filename (no extension) for the produced LoRA. Blank = derived from the run name. */
+  outputName?: string
+}
+
+/** A training run over a dataset, producing a LoRA `.safetensors`. */
+export interface TrainingRun {
+  id: string
+  projectId: string
+  datasetId: string
+  name: string
+  status: TrainingStatus
+  hyperparams: TrainingHyperparams
+  /** `models/loras/`-relative path of the produced LoRA, once done. */
+  outputLoraPath: string | null
+  progressFraction: number
+  progressStatus: string | null
+  step: number
+  totalSteps: number
+  error: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+/** Main → renderer: training progress for a run (0..1) + step + latest loss (for the loss curve). */
+export interface TrainingProgressEvent {
+  runId: string
+  fraction: number
+  step: number
+  totalSteps: number
+  loss?: number
+  status?: string
+}
+
+/** Main → renderer: a mid-training sample preview image was written (project-relative path). */
+export interface TrainingSampleEvent {
+  runId: string
+  step: number
+  path: string
+}
+
+/** Main → renderer: auto-caption progress for a dataset (one tick per captioned image). */
+export interface CaptionProgressEvent {
+  datasetId: string
+  /** Images captioned so far, of `total` queued this run. */
+  done: number
+  total: number
+  /** The item just captioned, if this tick is for one. */
+  itemId: string | null
+  /** True on the final tick, when the captioner has exited. */
+  finished: boolean
+}
+
+/** Main → renderer: one stdout line from the trainer subprocess (shown in the Trainer node). */
+export interface TrainingLogEvent {
+  runId: string
+  line: string
+}
+
+/** Main → renderer: a training run finished; `outputLoraPath` is the produced LoRA. */
+export interface TrainingDoneEvent {
+  runId: string
+  outputLoraPath: string
+}
+
+/** Main → renderer: a training run failed. */
+export interface TrainingErrorEvent {
+  runId: string
+  error: string
+}
+
+/** Per-GPU live stats (NVML). */
+export interface GpuStat {
+  index: number
+  name: string
+  /** GPU utilization %, 0..100. */
+  utilization: number
+  /** VRAM used / total, in bytes. */
+  memoryUsed: number
+  memoryTotal: number
+  /** Degrees C, or null if unavailable. */
+  temperature: number | null
+}
+
+/** Main → renderer: periodic host + GPU telemetry (Trainer tab). */
+export interface SystemStatsEvent {
+  /** CPU utilization %, 0..100. */
+  cpu: number
+  /** System RAM used / total, in bytes. */
+  ramUsed: number
+  ramTotal: number
+  gpus: GpuStat[]
 }
 
 /** Main → renderer: extension install progress. Payload shapes live in `extensions.ts`. */

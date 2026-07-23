@@ -12,6 +12,7 @@ import type {
   Asset,
   AssetFolder,
   MoodboardItem,
+  CanvasSurface,
   MoodboardConnector,
   MoodboardSnapshot,
   MoodboardItemData,
@@ -33,6 +34,17 @@ import type {
   ModelDownloadProgressEvent,
   ModelDownloadDoneEvent,
   ModelDownloadErrorEvent,
+  TrainingDataset,
+  TrainingDatasetItem,
+  TrainingHyperparams,
+  TrainingRun,
+  TrainingProgressEvent,
+  CaptionProgressEvent,
+  TrainingLogEvent,
+  TrainingSampleEvent,
+  TrainingDoneEvent,
+  TrainingErrorEvent,
+  SystemStatsEvent,
   CoreStatus,
   ExportResult,
   ProjectExportResult,
@@ -112,6 +124,20 @@ export const IpcChannels = {
     /** Re-poll + finish any runs that were in flight when the app last closed. */
     resumePending: 'generation:resumePending',
   },
+  training: {
+    listDatasets: 'training:listDatasets',
+    createDataset: 'training:createDataset',
+    listItems: 'training:listItems',
+    addItems: 'training:addItems',
+    removeItem: 'training:removeItem',
+    setCaption: 'training:setCaption',
+    autoCaption: 'training:autoCaption',
+    listRuns: 'training:listRuns',
+    start: 'training:start',
+    resume: 'training:resume',
+    cancel: 'training:cancel',
+    status: 'training:status',
+  },
   falSettings: {
     status: 'falSettings:status',
     setApiKey: 'falSettings:setApiKey',
@@ -165,6 +191,11 @@ export const IpcChannels = {
     addGenNode: 'moodboard:addGenNode',
     addPrompt: 'moodboard:addPrompt',
     addCoreNode: 'moodboard:addCoreNode',
+    addTrainDataset: 'moodboard:addTrainDataset',
+    addCaption: 'moodboard:addCaption',
+    addTrainer: 'moodboard:addTrainer',
+    addLossGraph: 'moodboard:addLossGraph',
+    addResource: 'moodboard:addResource',
     updateItem: 'moodboard:updateItem',
     deleteItem: 'moodboard:deleteItem',
     importAndPlace: 'moodboard:importAndPlace',
@@ -214,6 +245,15 @@ export const IpcChannels = {
     modelDownloadProgress: 'events:modelDownloadProgress',
     modelDownloadDone: 'events:modelDownloadDone',
     modelDownloadError: 'events:modelDownloadError',
+    /** Main → renderer: LoRA training lifecycle (per-run progress, sample preview, done, error). */
+    trainingProgress: 'events:trainingProgress',
+    trainingSample: 'events:trainingSample',
+    trainingLog: 'events:trainingLog',
+    captionProgress: 'events:captionProgress',
+    trainingDone: 'events:trainingDone',
+    trainingError: 'events:trainingError',
+    /** Main → renderer: periodic host + GPU telemetry for the Trainer tab. */
+    systemStats: 'events:systemStats',
     /** Main → renderer: extension install lifecycle (the Extensions dialog). */
     extensionInstallProgress: 'events:extensionInstallProgress',
     extensionInstallDone: 'events:extensionInstallDone',
@@ -242,6 +282,12 @@ export interface CreateFolderInput {
   name: string
   /** Parent folder id, or null for a root-level folder. */
   parentId: string | null
+}
+
+export interface CreateTrainingDatasetInput {
+  name: string
+  /** Optional trigger token injected into every caption. */
+  triggerWord?: string
 }
 
 /** A fal frame's inputs resolved for building its request: media as data URIs + the prompt text. */
@@ -369,6 +415,29 @@ export interface InlineStudioApi {
     /** Re-poll + finish any generations that were in flight when the app last closed. */
     resumePending(): Promise<Result<void>>
   }
+  training: {
+    /** All training datasets in the open project. */
+    listDatasets(): Promise<Result<TrainingDataset[]>>
+    createDataset(input: CreateTrainingDatasetInput): Promise<Result<TrainingDataset>>
+    /** A dataset's items (images + captions), in order. */
+    listItems(datasetId: string): Promise<Result<TrainingDatasetItem[]>>
+    /** Append library assets as dataset items (skips duplicates). */
+    addItems(datasetId: string, assetIds: string[]): Promise<Result<TrainingDatasetItem[]>>
+    removeItem(itemId: string): Promise<Result<void>>
+    setCaption(itemId: string, caption: string): Promise<Result<TrainingDatasetItem>>
+    /** Auto-caption items with the local captioner; `overwrite` re-captions ones that already have one. */
+    autoCaption(datasetId: string, overwrite: boolean): Promise<Result<TrainingDatasetItem[]>>
+    /** All training runs in the open project, newest first. */
+    listRuns(): Promise<Result<TrainingRun[]>>
+    /** Start a run over a dataset. Resolves immediately; progress arrives via `onTraining*`. */
+    start(datasetId: string, hyperparams: TrainingHyperparams): Promise<Result<TrainingRun>>
+    /** Resume an `interrupted` run from its last checkpoint. */
+    resume(runId: string): Promise<Result<TrainingRun>>
+    /** Cancel an in-flight run (saves a final checkpoint before exit). */
+    cancel(runId: string): Promise<Result<void>>
+    /** One run's current durable state. */
+    status(runId: string): Promise<Result<TrainingRun>>
+  }
   falSettings: {
     /** Is a fal API key saved, and is it stored encrypted? */
     status(): Promise<Result<ApiKeyStatus>>
@@ -425,7 +494,8 @@ export interface InlineStudioApi {
   }
   moodboard: {
     /** The full board (items + connectors) for the open project. */
-    list(): Promise<Result<MoodboardSnapshot>>
+    /** One canvas's items + connectors (defaults to the Studio moodboard). */
+    list(surface?: CanvasSurface): Promise<Result<MoodboardSnapshot>>
     /** Place an existing library asset on the board at (x, y). */
     addAsset(assetId: string, x: number, y: number): Promise<Result<MoodboardItem>>
     /** Add a new editable text item at (x, y). */
@@ -451,6 +521,16 @@ export interface InlineStudioApi {
     /** Add a text-prompt node (feeds a Generate node's prompt input) at (x, y). */
     addPrompt(x: number, y: number): Promise<Result<MoodboardItem>>
     addCoreNode(coreType: string, x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Trainer-canvas: pick a training dataset and feed it downstream. */
+    addTrainDataset(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Trainer-canvas: auto-caption a dataset's images. */
+    addCaption(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Trainer-canvas: run a LoRA training job (run/stop/resume). */
+    addTrainer(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Trainer-canvas: plot a run's loss curve. */
+    addLossGraph(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Utility: read-only host telemetry node. Lives on whichever canvas adds it. */
+    addResource(x: number, y: number, surface?: CanvasSurface): Promise<Result<MoodboardItem>>
     updateItem(id: string, patch: MoodboardItemPatch): Promise<Result<MoodboardItem>>
     deleteItem(id: string): Promise<Result<void>>
     /** Import media into the shared library AND place it on the board near (x, y). */
@@ -464,8 +544,13 @@ export interface InlineStudioApi {
     deleteConnector(id: string): Promise<Result<void>>
     /** Set a connector's per-input audio volume (0..1) - director L1 inputs. */
     setConnectorVolume(id: string, volume: number): Promise<Result<void>>
-    /** Replace the entire board (used by canvas undo/redo). */
-    replaceBoard(items: MoodboardItem[], connectors: MoodboardConnector[]): Promise<Result<void>>
+    /** Replace ONE surface's board (used by canvas undo/redo); scoped so a Studio undo can't wipe
+     * the Trainer canvas. */
+    replaceBoard(
+      items: MoodboardItem[],
+      connectors: MoodboardConnector[],
+      surface?: CanvasSurface,
+    ): Promise<Result<void>>
   }
   timeline: {
     /** The derived timeline (video + L2 audio + volumes) for a director node. */
@@ -524,6 +609,17 @@ export interface InlineStudioApi {
     onModelDownloadProgress(callback: (e: ModelDownloadProgressEvent) => void): () => void
     onModelDownloadDone(callback: (e: ModelDownloadDoneEvent) => void): () => void
     onModelDownloadError(callback: (e: ModelDownloadErrorEvent) => void): () => void
+    /** Subscribe to LoRA training lifecycle pushes. Each returns an unsubscribe fn. */
+    onTrainingProgress(callback: (e: TrainingProgressEvent) => void): () => void
+    onTrainingSample(callback: (e: TrainingSampleEvent) => void): () => void
+    /** One stdout line from the trainer subprocess. */
+    onTrainingLog(callback: (e: TrainingLogEvent) => void): () => void
+    /** Auto-caption progress for a dataset. */
+    onCaptionProgress(callback: (e: CaptionProgressEvent) => void): () => void
+    onTrainingDone(callback: (e: TrainingDoneEvent) => void): () => void
+    onTrainingError(callback: (e: TrainingErrorEvent) => void): () => void
+    /** Subscribe to periodic host + GPU telemetry (Trainer tab). Returns an unsubscribe fn. */
+    onSystemStats(callback: (e: SystemStatsEvent) => void): () => void
     onExtensionInstallProgress(callback: (e: InstallProgressEvent) => void): () => void
     onExtensionInstallDone(callback: (e: InstallSuccess) => void): () => void
     onExtensionInstallError(callback: (e: InstallFailure) => void): () => void

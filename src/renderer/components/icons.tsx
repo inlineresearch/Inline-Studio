@@ -189,3 +189,48 @@ export function ChevronDownIcon({ className }: { className?: string }): React.JS
     </Svg>
   )
 }
+
+/** `model_training` - the LoRA Trainer tab. */
+export function TrainIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M5 3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4v2H7v2h10v-2h-2v-2h4a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H5zm0 2h14v10H5V5zm7 1.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm0 2a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z" />
+    </Svg>
+  )
+}
+
+/** `dashboard` / grid - a training dataset (a stack of images). */
+export function DatasetIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm8-2h8v8h-8v-8zm2 2v4h4v-4h-4z" />
+    </Svg>
+  )
+}
+
+/** `inventory_2` - the Trainer sidebar's Outputs tab (produced LoRAs + resumable runs). */
+export function LoraOutputIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M20 2H4a2 2 0 0 0-2 2v3h20V4a2 2 0 0 0-2-2zM2 9v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9H2zm7 3h6v2H9v-2z" />
+    </Svg>
+  )
+}
+
+/** `dashboard_customize` - the Studio (node canvas) tab. */
+export function StudioIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M3 3h8v6H3V3zm0 8h8v10H3V11zm10 6h8v4h-8v-4zm0-14h8v10h-8V3z" />
+    </Svg>
+  )
+}
+
+/** `play_arrow` - run / start. */
+export function PlayIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M8 5v14l11-7z" />
+    </Svg>
+  )
+}

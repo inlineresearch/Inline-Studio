@@ -39,6 +39,7 @@ def register_studio_handlers(
     generation: Any = None,
     fal_generation: Any = None,
     timeline: Any = None,
+    training: Any = None,
     model_downloads: Any = None,
     app_version: str = "1.0.0",
 ) -> None:
@@ -155,7 +156,9 @@ def register_studio_handlers(
     reg("frames:deleteTake", delete_take)
 
     # --- moodboard ------------------------------------------------------------------------------
-    reg("moodboard:list", lambda: mb.list_board(conn()))
+    # `surface` defaults to the Studio moodboard so existing callers are unchanged; the Trainer tab
+    # passes "trainer" to get its own isolated canvas out of the same tables.
+    reg("moodboard:list", lambda surface=mb.STUDIO_SURFACE: mb.list_board(conn(), surface))
     reg("moodboard:addAsset", lambda aid, x, y: mb.add_asset(conn(), aid, x, y))
     reg("moodboard:addText", lambda x, y: mb.add_text(conn(), x, y))
     reg("moodboard:addFrameFromAsset", lambda aid, x, y: mb.add_frame_from_asset(conn(), aid, x, y))
@@ -183,7 +186,18 @@ def register_studio_handlers(
     reg("moodboard:setConnectorVolume", lambda cid, vol: mb.set_connector_volume(conn(), cid, vol))
     reg(
         "moodboard:replaceBoard",
-        lambda items, connectors: mb.replace_board(conn(), items, connectors),
+        lambda items, connectors, surface=mb.STUDIO_SURFACE: mb.replace_board(
+            conn(), items, connectors, surface
+        ),
+    )
+    # Trainer-canvas nodes (plus the shared read-only resource node, which either canvas can host).
+    reg("moodboard:addTrainDataset", lambda x, y: mb.add_train_dataset(conn(), x, y))
+    reg("moodboard:addCaption", lambda x, y: mb.add_caption(conn(), x, y))
+    reg("moodboard:addTrainer", lambda x, y: mb.add_trainer(conn(), x, y))
+    reg("moodboard:addLossGraph", lambda x, y: mb.add_loss_graph(conn(), x, y))
+    reg(
+        "moodboard:addResource",
+        lambda x, y, surface=mb.STUDIO_SURFACE: mb.add_resource(conn(), x, y, surface),
     )
 
     # --- generation -----------------------------------------------------------------------------
@@ -206,6 +220,25 @@ def register_studio_handlers(
 
     reg("generation:cancel", cancel_generation)
     reg("generation:resumePending", lambda: None)
+
+    # --- LoRA training (dataset CRUD + the training run subprocess) ------------------------------
+    if training is not None:
+        reg("training:listDatasets", lambda: training.list_datasets())
+        reg("training:createDataset", lambda inp: training.create_dataset(inp))
+        reg("training:listItems", lambda did: training.list_items(did))
+        reg("training:addItems", lambda did, aids: training.add_items(did, aids))
+        reg("training:removeItem", lambda iid: training.remove_item(iid))
+        reg("training:setCaption", lambda iid, cap: training.set_caption(iid, cap))
+        reg("training:autoCaption", lambda did, overwrite: training.auto_caption(did, overwrite))
+        reg("training:listRuns", lambda: training.list_runs())
+        reg("training:start", lambda did, hp: training.start(did, hp))
+        reg("training:resume", lambda rid: training.resume(rid))
+        reg("training:cancel", lambda rid: training.cancel(rid))
+        reg("training:status", lambda rid: training.status(rid))
+    else:
+        for ch in ("listDatasets", "createDataset", "listItems", "addItems", "removeItem",
+                   "setCaption", "autoCaption", "listRuns", "start", "resume", "cancel", "status"):
+            reg(f"training:{ch}", not_wired("LoRA training"))
 
     # --- fal settings (key stored server-side) --------------------------------------------------
     reg("falSettings:status", store.fal_status)

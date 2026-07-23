@@ -61,6 +61,7 @@ import { DirectorNode } from './nodes/DirectorNode'
 import { TrimNode } from './nodes/TrimNode'
 import { LoaderNode } from './nodes/LoaderNode'
 import { GraphNode } from './nodes/GraphNode'
+import { ResourceNode } from './nodes/ResourceNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
 import { CanvasToolbar } from './CanvasToolbar'
@@ -93,6 +94,7 @@ const nodeTypes: NodeTypes = {
   prompt: PromptNode,
   loader: LoaderNode,
   core: GraphNode,
+  resource: ResourceNode,
 }
 
 const edgeTypes: EdgeTypes = {

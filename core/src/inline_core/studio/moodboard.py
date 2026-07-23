@@ -17,9 +17,12 @@ from typing import Any
 from . import frames as fr
 
 _ITEM_COLUMNS = (
-    "id, project_id, type, asset_id, frame_id, parent_id, data, x, y, width, height, rotation, "
-    "z_index, created_at, updated_at"
+    "id, project_id, surface, type, asset_id, frame_id, parent_id, data, x, y, width, height, "
+    "rotation, z_index, created_at, updated_at"
 )
+
+#: The Studio moodboard; the Trainer tab's graph is the other surface (see schema `surface`).
+STUDIO_SURFACE = "studio"
 
 _DEFAULT_SIZE = {"image": (320, 180), "video": (360, 203), "audio": (320, 80)}
 
@@ -63,6 +66,7 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": row["id"],
         "projectId": row["project_id"],
+        "surface": row["surface"],
         "type": row["type"],
         "assetId": row["asset_id"],
         "frameId": row["frame_id"],
@@ -83,6 +87,7 @@ def _row_to_connector(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": row["id"],
         "projectId": row["project_id"],
+        "surface": row["surface"],
         "fromItemId": row["from_item_id"],
         "toItemId": row["to_item_id"],
         "label": row["label"],
@@ -103,16 +108,28 @@ def list_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [_row_to_item(r) for r in rows]
 
 
-def list_board(conn: sqlite3.Connection) -> dict[str, Any]:
-    items = [_row_to_item(r) for r in conn.execute("SELECT * FROM moodboard_items").fetchall()]
+def list_board(conn: sqlite3.Connection, surface: str = STUDIO_SURFACE) -> dict[str, Any]:
+    """One canvas's items + connectors. Surfaces are isolated: the Trainer graph never leaks into
+    the Studio moodboard (and vice versa)."""
+    items = [
+        _row_to_item(r)
+        for r in conn.execute(
+            "SELECT * FROM moodboard_items WHERE surface = ?", (surface,)
+        ).fetchall()
+    ]
     connectors = [
-        _row_to_connector(r) for r in conn.execute("SELECT * FROM moodboard_connectors").fetchall()
+        _row_to_connector(r)
+        for r in conn.execute(
+            "SELECT * FROM moodboard_connectors WHERE surface = ?", (surface,)
+        ).fetchall()
     ]
     return {"items": items, "connectors": connectors}
 
 
-def _next_z(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT MAX(z_index) AS z FROM moodboard_items").fetchone()
+def _next_z(conn: sqlite3.Connection, surface: str = STUDIO_SURFACE) -> int:
+    row = conn.execute(
+        "SELECT MAX(z_index) AS z FROM moodboard_items WHERE surface = ?", (surface,)
+    ).fetchone()
     return (row["z"] or 0) + 1
 
 
@@ -128,11 +145,13 @@ def _insert_item(
     asset_id: str | None = None,
     frame_id: str | None = None,
     z_index: int | None = None,
+    surface: str = STUDIO_SURFACE,
 ) -> dict[str, Any]:
     now = _now()
     item = {
         "id": _uuid(),
         "project_id": _project_id(conn),
+        "surface": surface,
         "type": item_type,
         "asset_id": asset_id,
         "frame_id": frame_id,
@@ -143,14 +162,14 @@ def _insert_item(
         "width": width,
         "height": height,
         "rotation": 0,
-        "z_index": z_index if z_index is not None else _next_z(conn),
+        "z_index": z_index if z_index is not None else _next_z(conn, surface),
         "created_at": now,
         "updated_at": now,
     }
     conn.execute(
         f"INSERT INTO moodboard_items ({_ITEM_COLUMNS}) VALUES "
-        "(:id, :project_id, :type, :asset_id, :frame_id, :parent_id, :data, :x, :y, :width, "
-        ":height, :rotation, :z_index, :created_at, :updated_at)",
+        "(:id, :project_id, :surface, :type, :asset_id, :frame_id, :parent_id, :data, :x, :y, "
+        ":width, :height, :rotation, :z_index, :created_at, :updated_at)",
         item,
     )
     return get_item(conn, item["id"])
@@ -206,6 +225,57 @@ def add_gen_node(
     frame = fr.create_fal_frame(conn, model_id, kind, params, title)
     return _insert_item(
         conn, item_type="frame", x=x, y=y, width=240, height=380, frame_id=frame["id"]
+    )
+
+
+#: Trainer-canvas nodes. They only ever exist on the `trainer` surface (the Trainer tab's graph);
+#: `resource` is the exception - a read-only telemetry node usable on either canvas.
+TRAINER_SURFACE = "trainer"
+
+
+def add_train_dataset(
+    conn: sqlite3.Connection, x: float, y: float, surface: str = TRAINER_SURFACE
+) -> dict[str, Any]:
+    return _insert_item(
+        conn, item_type="trainDataset", x=x, y=y, width=280, height=240,
+        data={"datasetId": None}, surface=surface,
+    )
+
+
+def add_caption(
+    conn: sqlite3.Connection, x: float, y: float, surface: str = TRAINER_SURFACE
+) -> dict[str, Any]:
+    return _insert_item(
+        conn, item_type="caption", x=x, y=y, width=280, height=200,
+        data={"datasetId": None, "overwrite": False}, surface=surface,
+    )
+
+
+def add_trainer(
+    conn: sqlite3.Connection, x: float, y: float, surface: str = TRAINER_SURFACE
+) -> dict[str, Any]:
+    return _insert_item(
+        # Roomier than the other nodes on purpose: the body is a live log tail.
+        conn, item_type="trainer", x=x, y=y, width=420, height=340,
+        # `runId` is persisted so the node rebinds to its run after a reload and can still Resume.
+        data={"datasetId": None, "runId": None, "hyperparams": {}}, surface=surface,
+    )
+
+
+def add_loss_graph(
+    conn: sqlite3.Connection, x: float, y: float, surface: str = TRAINER_SURFACE
+) -> dict[str, Any]:
+    return _insert_item(
+        conn, item_type="lossGraph", x=x, y=y, width=320, height=220,
+        data={"runId": None}, surface=surface,
+    )
+
+
+def add_resource(
+    conn: sqlite3.Connection, x: float, y: float, surface: str = STUDIO_SURFACE
+) -> dict[str, Any]:
+    return _insert_item(
+        conn, item_type="resource", x=x, y=y, width=280, height=170, data={}, surface=surface
     )
 
 
@@ -306,20 +376,29 @@ def delete_item(conn: sqlite3.Connection, item_id: str) -> None:
 
 
 def replace_board(
-    conn: sqlite3.Connection, items: list[dict[str, Any]], connectors: list[dict[str, Any]]
+    conn: sqlite3.Connection,
+    items: list[dict[str, Any]],
+    connectors: list[dict[str, Any]],
+    surface: str = STUDIO_SURFACE,
 ) -> None:
-    """Replace the whole board (undo/redo restore), preserving ids, in one transaction."""
+    """Replace ONE surface's board (undo/redo restore), preserving ids, in one transaction. Scoped
+    by surface so a Studio undo never wipes the Trainer canvas (they share the table)."""
     pid = _project_id(conn)
-    conn.execute("DELETE FROM moodboard_connectors WHERE project_id = ?", (pid,))
-    conn.execute("DELETE FROM moodboard_items WHERE project_id = ?", (pid,))
+    conn.execute(
+        "DELETE FROM moodboard_connectors WHERE project_id = ? AND surface = ?", (pid, surface)
+    )
+    conn.execute(
+        "DELETE FROM moodboard_items WHERE project_id = ? AND surface = ?", (pid, surface)
+    )
     for it in items:
         conn.execute(
             f"INSERT INTO moodboard_items ({_ITEM_COLUMNS}) VALUES "
-            "(:id, :project_id, :type, :asset_id, :frame_id, :parent_id, :data, :x, :y, :width, "
-            ":height, :rotation, :z_index, :created_at, :updated_at)",
+            "(:id, :project_id, :surface, :type, :asset_id, :frame_id, :parent_id, :data, :x, :y, "
+            ":width, :height, :rotation, :z_index, :created_at, :updated_at)",
             {
                 "id": it["id"],
                 "project_id": pid,
+                "surface": surface,
                 "type": it["type"],
                 "asset_id": it.get("assetId"),
                 "frame_id": it.get("frameId"),
@@ -338,11 +417,12 @@ def replace_board(
     for c in connectors:
         conn.execute(
             "INSERT INTO moodboard_connectors "
-            "(id, project_id, from_item_id, to_item_id, label, data, created_at) "
-            "VALUES (:id, :project_id, :from_item_id, :to_item_id, :label, :data, :created_at)",
+            "(id, project_id, surface, from_item_id, to_item_id, label, data, created_at) VALUES "
+            "(:id, :project_id, :surface, :from_item_id, :to_item_id, :label, :data, :created_at)",
             {
                 "id": c["id"],
                 "project_id": pid,
+                "surface": surface,
                 "from_item_id": c["fromItemId"],
                 "to_item_id": c["toItemId"],
                 "label": c.get("label"),
@@ -359,11 +439,14 @@ def create_connector(
     source_handle: str | None = None,
     target_handle: str | None = None,
 ) -> dict[str, Any]:
-    get_item(conn, from_item_id)
+    source = get_item(conn, from_item_id)
     get_item(conn, to_item_id)
     connector = {
         "id": _uuid(),
         "projectId": _project_id(conn),
+        # A connector lives on the same canvas as the nodes it joins, so it's derived rather than
+        # passed in - the caller never has to know which surface it's drawing on.
+        "surface": source["surface"],
         "fromItemId": from_item_id,
         "toItemId": to_item_id,
         "label": None,
@@ -372,11 +455,11 @@ def create_connector(
     }
     conn.execute(
         "INSERT INTO moodboard_connectors "
-        "(id, project_id, from_item_id, to_item_id, label, data, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "(id, project_id, surface, from_item_id, to_item_id, label, data, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            connector["id"], connector["projectId"], from_item_id, to_item_id, None,
-            json.dumps(connector["data"]), connector["createdAt"],
+            connector["id"], connector["projectId"], connector["surface"], from_item_id,
+            to_item_id, None, json.dumps(connector["data"]), connector["createdAt"],
         ),
     )
     return connector

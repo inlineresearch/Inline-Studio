@@ -54,7 +54,7 @@ Paths
 
 Setup
   --install              create ./.venv (via uv) and install, then exit
-  --extra NAME           add an install extra (repeatable): runtime, parallel, server
+  --extra NAME           add an install extra (repeatable): runtime, parallel, server, training
   -h, --help             show this help
 
 Development
