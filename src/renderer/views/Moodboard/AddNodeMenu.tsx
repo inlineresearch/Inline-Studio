@@ -10,7 +10,7 @@ import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
-export type AddNodeKind = 'load' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt' | 'resource'
+export type AddNodeKind = 'load' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
 
 interface Entry {
   kind: AddNodeKind
@@ -29,7 +29,6 @@ const ENTRIES: Entry[] = [
   { kind: 'director', label: 'Video Director', icon: <ClapperboardIcon /> },
   { kind: 'trim', label: 'Edit Video/Audio', icon: <ScissorsIcon /> },
   { kind: 'prompt', label: 'Prompt', icon: <PromptIcon /> },
-  { kind: 'resource', label: 'Resources', icon: <CpuIcon />, category: 'Utility' },
 ]
 
 export function AddNodeMenu({
@@ -232,16 +231,6 @@ function LayerIcon(): React.JSX.Element {
       <polygon points="12 2 2 7 12 12 22 7 12 2" />
       <polyline points="2 17 12 22 22 17" />
       <polyline points="2 12 12 17 22 12" />
-    </Svg>
-  )
-}
-
-function CpuIcon(): React.JSX.Element {
-  return (
-    <Svg>
-      <rect x="4" y="4" width="16" height="16" rx="2" />
-      <rect x="9" y="9" width="6" height="6" />
-      <path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2" />
     </Svg>
   )
 }

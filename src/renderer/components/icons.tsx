@@ -208,6 +208,15 @@ export function DatasetIcon({ className }: { className?: string }): React.JSX.El
   )
 }
 
+/** `inventory_2` - the Trainer sidebar's Outputs tab (produced LoRAs + resumable runs). */
+export function LoraOutputIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M20 2H4a2 2 0 0 0-2 2v3h20V4a2 2 0 0 0-2-2zM2 9v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9H2zm7 3h6v2H9v-2z" />
+    </Svg>
+  )
+}
+
 /** `dashboard_customize` - the Studio (node canvas) tab. */
 export function StudioIcon({ className }: { className?: string }): React.JSX.Element {
   return (

@@ -66,11 +66,13 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
     void loadRuns()
   }, [loadRuns])
 
-  // Follow the tail: a training run streams continuously, so keep the newest line in view.
+  // Follow the tail, but only while the user is already at the bottom - otherwise scrolling back
+  // through the log would be yanked to the end every time a new line streams in.
   const logRef = useRef<HTMLDivElement>(null)
+  const stickToBottom = useRef(true)
   useEffect(() => {
     const el = logRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight
   }, [logs.length])
 
   // Another node holding the GPU blocks this one (the backend allows one run at a time).
@@ -128,9 +130,15 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
             {/* Logs: the trainer's streamed stdout, newest last. Strictly ONE entry per line - no
                 wrapping, so a line never reflows into several as the node is resized. Overflow
                 scrolls horizontally; widening the node just reveals more of each line. */}
+            {/* `nowheel` stops React Flow swallowing the wheel to zoom the canvas, so the log
+                actually scrolls; `nodrag` keeps a drag-select inside the log from moving the node. */}
             <div
               ref={logRef}
-              className={`h-full overflow-auto px-2 pb-2 font-mono text-[10px] leading-snug text-zinc-300 ${
+              onScroll={(e) => {
+                const el = e.currentTarget
+                stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+              }}
+              className={`nowheel nodrag h-full overflow-auto px-2 pb-2 font-mono text-[10px] leading-snug text-zinc-300 ${
                 busy ? 'pt-8' : 'pt-2'
               }`}
             >

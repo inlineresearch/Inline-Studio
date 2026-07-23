@@ -8,7 +8,6 @@ import {
   Background,
   BackgroundVariant,
   ConnectionMode,
-  Controls,
   ReactFlow,
   ReactFlowProvider,
   applyNodeChanges,
@@ -209,7 +208,6 @@ function Canvas(): React.JSX.Element {
           fitView
         >
           <Background variant={BackgroundVariant.Dots} gap={16} size={1} className="opacity-40" />
-          <Controls showInteractive={false} className="!bottom-3 !left-3" />
         </ReactFlow>
       </BoardActionsContext.Provider>
     </div>

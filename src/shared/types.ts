@@ -438,6 +438,8 @@ export interface TrainingHyperparams {
   saveEvery: number
   /** GPU indices to train on; `[]` = auto (first available). */
   gpuIds: number[]
+  /** Filename (no extension) for the produced LoRA. Blank = derived from the run name. */
+  outputName?: string
 }
 
 /** A training run over a dataset, producing a LoRA `.safetensors`. */

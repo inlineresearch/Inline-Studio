@@ -17,6 +17,7 @@ const DEFAULTS: TrainingHyperparams = {
   resolution: 1024,
   saveEvery: 250,
   gpuIds: [],
+  outputName: '',
 }
 
 function NumberField({
@@ -73,6 +74,19 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
           <XIcon className="h-3.5 w-3.5" />
         </button>
       </div>
+
+      <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
+        Output LoRA name
+        <input
+          value={hp.outputName ?? ''}
+          placeholder="auto (from the run name)"
+          onChange={(e) => set('outputName', e.target.value)}
+          className="rounded-md border border-border bg-black/30 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-zinc-500"
+        />
+        <span className="text-[10px] text-zinc-600">
+          Saved as models/loras/&lt;name&gt;.safetensors
+        </span>
+      </label>
 
       <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
         Base

@@ -16,6 +16,7 @@ import json
 import re
 import shutil
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,17 @@ _CAPTION_EXT = ".txt"
 
 def _safe(name: str) -> str:
     return re.sub(r"[^\w.-]+", "_", name).strip("_") or "lora"
+
+
+def _unique_lora_name(loras: Path, stem: str) -> str:
+    """`loras/<stem>.safetensors`, suffixed -2, -3… if that file already exists. Retraining under
+    the same name shouldn't silently overwrite a LoRA the user may already be generating with."""
+    if not (loras / f"{stem}.safetensors").exists():
+        return f"loras/{stem}.safetensors"
+    for n in range(2, 1000):
+        if not (loras / f"{stem}-{n}.safetensors").exists():
+            return f"loras/{stem}-{n}.safetensors"
+    return f"loras/{stem}-{uuid.uuid4().hex[:6]}.safetensors"
 
 
 class Training:
@@ -87,6 +99,25 @@ class Training:
 
     def status(self, run_id: str) -> dict[str, Any]:
         return ts.get_run(self._conn(), run_id)
+
+    def _persist(self, run_id: str, patch: dict[str, Any]) -> bool:
+        """Write a run patch, tolerating the row having gone away. False when it has.
+
+        `_conn()` resolves the *currently open* project, but a run belongs to the project it was
+        started in - switching projects mid-run makes its row unreachable. That used to raise
+        inside the training task ("Training run not found", an unretrieved task exception) and
+        left the run stuck as `training` forever."""
+        try:
+            ts.update_run(self._conn(), run_id, patch)
+            return True
+        except ValueError:
+            return False
+
+    def _lookup(self, run_id: str) -> dict[str, Any] | None:
+        try:
+            return ts.get_run(self._conn(), run_id)
+        except ValueError:
+            return None
 
     # --- auto-caption ---------------------------------------------------------------------------
 
@@ -188,15 +219,14 @@ class Training:
             proc.terminate()  # SIGTERM -> the trainer flushes a final checkpoint before exit
 
     async def _run(self, run_id: str, *, resume: bool) -> None:
-        conn = self._conn()
         try:
             manifest_path, output_rel = self._prepare(run_id, resume=resume)
         except Exception as error:  # noqa: BLE001 - surface prep failures as a run error
-            ts.update_run(conn, run_id, {"status": "failed", "error": str(error)})
+            self._persist(run_id, {"status": "failed", "error": str(error)})
             self._events.broadcast("events:trainingError", {"runId": run_id, "error": str(error)})
             return
 
-        ts.update_run(conn, run_id, {"status": "training", "progressStatus": "starting"})
+        self._persist(run_id, {"status": "training", "progressStatus": "starting"})
         proc = await self._spawn(run_id, manifest_path)
         self._active[run_id] = proc
         saw_done = False
@@ -210,6 +240,7 @@ class Training:
     async def _drain(self, run_id: str, proc: asyncio.subprocess.Process, output_rel: str) -> bool:
         """Read the trainer's JSON-line stdout, mirroring progress into the row + events."""
         saw_done = False
+        last_status = ""
         assert proc.stdout is not None
         async for raw in proc.stdout:
             line = _last_progress_segment(raw.decode(errors="replace"))
@@ -223,6 +254,15 @@ class Training:
             kind = msg.get("type")
             if kind == "progress":
                 self._on_progress(run_id, msg)
+                # Progress arrives as protocol JSON, so it never reached the log pane - the node
+                # showed loader noise but no training steps. Mirror it as a log line: every step
+                # once a loss exists, and each phase change (loading/caching) once.
+                entry = _progress_log_line(msg, last_status)
+                if entry is not None:
+                    last_status = str(msg.get("status") or "")
+                    self._events.broadcast(
+                        "events:trainingLog", {"runId": run_id, "line": entry}
+                    )
             elif kind == "sample" and msg.get("path"):
                 # /media serves project-relative paths, so relativize the trainer's absolute one.
                 self._events.broadcast(
@@ -234,7 +274,7 @@ class Training:
                     },
                 )
             elif kind == "checkpoint" and msg.get("path"):
-                ts.update_run(self._conn(), run_id, {"checkpointPath": msg["path"]})
+                self._persist(run_id, {"checkpointPath": msg["path"]})
             elif kind == "error" and msg.get("message"):
                 # A trainer-side failure: keep it in the run's log so the node shows why it died.
                 self._events.broadcast(
@@ -254,7 +294,7 @@ class Training:
             patch["totalSteps"] = total
         if status:
             patch["progressStatus"] = status
-        ts.update_run(self._conn(), run_id, patch)
+        self._persist(run_id, patch)
         event: dict[str, Any] = {
             "runId": run_id, "fraction": fraction, "step": step, "totalSteps": total or 0,
         }
@@ -265,17 +305,18 @@ class Training:
         self._events.broadcast("events:trainingProgress", event)
 
     def _finish(self, run_id: str, code: int, saw_done: bool, output_rel: str) -> None:
-        conn = self._conn()
         if run_id in self._cancelled:
             self._cancelled.discard(run_id)
             # SIGTERM flushes a final checkpoint (trainer.py: "a resumable cancel"), so a cancel
             # that got far enough to checkpoint is offered for Resume (the status the UI shows a
             # Resume on), not a dead-end "cancelled". A cancel before any checkpoint stays terminal.
-            run = ts.get_run(conn, run_id)
+            run = self._lookup(run_id)
+            if run is None:
+                return  # its project was closed/switched mid-run; nothing left to record
             resumable = bool(run.get("checkpointPath")) or run["step"] > 0
             if resumable:
-                ts.update_run(
-                    conn, run_id,
+                self._persist(
+                    run_id,
                     {"status": "interrupted", "progressStatus": "cancelled",
                      "error": "Training was cancelled; you can resume it."},
                 )
@@ -283,15 +324,14 @@ class Training:
                     "events:trainingError", {"runId": run_id, "error": "Cancelled; resumable."}
                 )
             else:
-                ts.update_run(conn, run_id, {"status": "cancelled", "progressStatus": "cancelled"})
+                self._persist(run_id, {"status": "cancelled", "progressStatus": "cancelled"})
                 self._events.broadcast(
                     "events:trainingError", {"runId": run_id, "error": "Cancelled."}
                 )
             return
         if saw_done and code == 0 and (models_dir() / output_rel).is_file():
-            ts.update_run(
-                conn, run_id,
-                {"status": "done", "progressFraction": 1.0, "outputLoraPath": output_rel},
+            self._persist(
+                run_id, {"status": "done", "progressFraction": 1.0, "outputLoraPath": output_rel}
             )
             if self._on_output is not None:
                 self._on_output()  # rescan so the new LoRA shows in the loader dropdown
@@ -300,11 +340,13 @@ class Training:
             )
             return
         # Non-zero exit with a checkpoint is resumable; otherwise it failed outright.
-        run = ts.get_run(conn, run_id)
+        run = self._lookup(run_id)
+        if run is None:
+            return
         resumable = bool(run.get("checkpointPath")) or run["step"] > 0
         status = "interrupted" if resumable else "failed"
         error = "Training was interrupted; you can resume it." if resumable else "Training failed."
-        ts.update_run(conn, run_id, {"status": status, "error": error})
+        self._persist(run_id, {"status": status, "error": error})
         self._events.broadcast("events:trainingError", {"runId": run_id, "error": error})
 
     # --- subprocess plumbing --------------------------------------------------------------------
@@ -334,7 +376,14 @@ class Training:
 
         loras = models_dir() / "loras"
         loras.mkdir(parents=True, exist_ok=True)
-        output_rel = f"loras/{_safe(run['name'])}-{run_id[:8]}.safetensors"
+        # A user-chosen name wins; otherwise fall back to "<run name>-<short id>". The run id keeps
+        # the fallback unique, but a chosen name is used verbatim so the file is findable in the
+        # loader dropdown - de-duplicated only if it would clobber an existing LoRA.
+        chosen = _safe(str(run["hyperparams"].get("outputName") or "").strip())
+        if chosen and chosen != "lora":
+            output_rel = _unique_lora_name(loras, chosen)
+        else:
+            output_rel = f"loras/{_safe(run['name'])}-{run_id[:8]}.safetensors"
         resume_from = str(checkpoint_dir) if resume else None
         manifest = {
             "runId": run_id,
@@ -381,6 +430,21 @@ def _last_progress_segment(raw: str) -> str:
     worth of redraws arrives as a single chunk. Keeping only the last segment yields the bar's
     current state instead of every intermediate frame concatenated into one enormous line."""
     return raw.replace("\r\n", "\n").split("\r")[-1].rstrip()
+
+
+def _progress_log_line(msg: dict[str, Any], last_status: str) -> str | None:
+    """A log line for a progress tick, or None when there's nothing new to say.
+
+    Once the loop is running every step carries a loss, so each one is worth a line. Before that
+    the trainer only reports phases (loading encoders, caching latents), which repeat - those are
+    logged once, when the phase changes."""
+    status = str(msg.get("status") or "")
+    loss = msg.get("loss")
+    if isinstance(loss, (int, float)):
+        total = int(msg.get("total", 0))
+        step = int(msg.get("step", 0))
+        return f"step {step}/{total} · loss {float(loss):.4f}"
+    return status if status and status != last_status else None
 
 
 def _parse_json_line(line: str) -> dict[str, Any] | None:

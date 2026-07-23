@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import type { Project } from '@shared/types'
 import { Logo } from '../../components/Logo'
-import { SettingsIcon, StudioIcon, TrainIcon } from '../../components/icons'
+import { SettingsIcon } from '../../components/icons'
 import { useProjectStore } from '../../store/projectStore'
 import { useAssetStore } from '../../store/assetStore'
 import { useMoodboardStore } from '../../store/moodboardStore'
@@ -18,13 +18,11 @@ import { MediaLightbox } from '../../components/MediaLightbox'
 function TabButton({
   tab,
   active,
-  icon,
   label,
   onClick,
 }: {
   tab: WorkspaceTab
   active: boolean
-  icon: React.ReactNode
   label: string
   onClick: (tab: WorkspaceTab) => void
 }): React.JSX.Element {
@@ -32,11 +30,10 @@ function TabButton({
     <button
       onClick={() => onClick(tab)}
       aria-pressed={active}
-      className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors ${
-        active ? 'bg-surface text-white shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
+      className={`rounded-md px-4 py-1 text-sm font-medium transition-colors ${
+        active ? 'bg-accent text-panel shadow-sm' : 'text-zinc-400 hover:text-zinc-200'
       }`}
     >
-      {icon}
       {label}
     </button>
   )
@@ -84,14 +81,12 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
           <TabButton
             tab="studio"
             active={activeTab === 'studio'}
-            icon={<StudioIcon className="h-4 w-4" />}
             label="Studio"
             onClick={setActiveTab}
           />
           <TabButton
             tab="trainer"
             active={activeTab === 'trainer'}
-            icon={<TrainIcon className="h-4 w-4" />}
             label="Trainer"
             onClick={setActiveTab}
           />
