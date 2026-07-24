@@ -12,6 +12,7 @@ lines (``protocol.py``). A SIGTERM flushes a checkpoint and returns ``None`` (a 
 from __future__ import annotations
 
 import json
+import random
 import signal
 from pathlib import Path
 from typing import Any
@@ -152,8 +153,12 @@ def train(manifest: dict[str, Any]) -> str | None:
 
     protocol.progress(0, steps, status="caching latents")
     data = ds.precache(
-        manifest["datasetDir"], encoders, arch.key, str(device), dtype, resolution
+        manifest["datasetDir"], encoders, arch.key, str(device), dtype, resolution,
+        flip=bool(hp.get("flipAugment")),
     )
+    # Encoded while the text encoder is still loaded; caption dropout swaps it in per step.
+    dropout = max(0.0, min(1.0, float(hp.get("captionDropout") or 0.0)))
+    unconditional = ds.precache_empty(encoders, arch.key, str(device)) if dropout > 0 else None
     shift = float(encoders.scheduler.config.get("shift", 1.0) or 1.0)
     models.free_encoders(encoders)
 
@@ -174,7 +179,7 @@ def train(manifest: dict[str, Any]) -> str | None:
             r=int(hp["rank"]),
             lora_alpha=int(hp.get("alpha") or hp["rank"]),
             lora_dropout=0.0,
-            target_modules=arch.target_modules,
+            target_modules=archs.target_modules(arch, str(hp.get("loraScope") or "full")),
         )
     )
     if hasattr(transformer, "enable_gradient_checkpointing"):
@@ -195,7 +200,10 @@ def train(manifest: dict[str, Any]) -> str | None:
     for step in range(start, steps):
         if stop.flagged:
             break
-        item = _to_device(data[step % len(data)], device, dtype)
+        source = data[step % len(data)]
+        if unconditional is not None and random.random() < dropout:
+            source = {**source, **unconditional}
+        item = _to_device(source, device, dtype)
         clean = item["latent"]  # (C, H, W)
         noise = torch.randn_like(clean)
         sigma = arch.sigma(device, shift)  # scalar noise fraction in (0, 1)

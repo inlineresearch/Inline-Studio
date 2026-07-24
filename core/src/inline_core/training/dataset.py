@@ -29,7 +29,7 @@ def _pairs(dataset_dir: Path) -> list[tuple[Path, str]]:
     return out
 
 
-def _to_tensor(image: Any, resolution: int) -> Any:
+def _to_tensor(image: Any, resolution: int, flip: bool = False) -> Any:
     import numpy as np
     import torch
     from PIL import Image
@@ -42,6 +42,8 @@ def _to_tensor(image: Any, resolution: int) -> Any:
     img = img.crop((left, top, left + short, top + short)).resize(
         (resolution, resolution), Image.LANCZOS
     )
+    if flip:
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
     arr = np.asarray(img, dtype="float32") / 127.5 - 1.0
     return torch.from_numpy(arr).permute(2, 0, 1)  # CHW
 
@@ -53,8 +55,13 @@ def precache(
     device: str,
     dtype: Any,
     resolution: int,
+    flip: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return one cached item per image/caption pair, as CPU tensors."""
+    """Return one cached item per image/caption pair, as CPU tensors.
+
+    ``flip`` adds a mirrored copy of every image. The mirror is encoded from the flipped pixels
+    rather than by flipping the cached latent: a latent flip is only approximately the same tensor,
+    and a subtly wrong latent degrades a LoRA without ever raising."""
     import torch
     from PIL import Image
 
@@ -66,13 +73,31 @@ def precache(
     encode_caption = _krea2_caption if arch == archs.KREA2 else _zimage_caption
     cached: list[dict[str, Any]] = []
     for img_path, caption in pairs:
-        pixels = _to_tensor(Image.open(img_path), resolution).to(device, dtype).unsqueeze(0)
-        with torch.no_grad():
-            latent = encode_latent(components.vae, pixels)
-            item = encode_caption(components, caption, device)
-        item["latent"] = latent.squeeze(0).cpu()
-        cached.append({k: v.cpu() for k, v in item.items()})
+        for mirrored in (False, True) if flip else (False,):
+            pixels = (
+                _to_tensor(Image.open(img_path), resolution, mirrored)
+                .to(device, dtype)
+                .unsqueeze(0)
+            )
+            with torch.no_grad():
+                latent = encode_latent(components.vae, pixels)
+                item = encode_caption(components, caption, device)
+            item["latent"] = latent.squeeze(0).cpu()
+            cached.append({k: v.cpu() for k, v in item.items()})
     return cached
+
+
+def precache_empty(components: Any, arch: str, device: str) -> dict[str, Any]:
+    """The unconditional (empty-caption) conditioning, cached alongside the dataset.
+
+    Caption dropout swaps this in for a step. It has to be encoded here, while the text encoder is
+    still loaded - by training time the encoder has been freed to make room for the transformer."""
+    import torch
+
+    encode_caption = _krea2_caption if arch == archs.KREA2 else _zimage_caption
+    with torch.no_grad():
+        item = encode_caption(components, "", device)
+    return {k: v.cpu() for k, v in item.items()}
 
 
 # --- Z-Image ------------------------------------------------------------------------------------

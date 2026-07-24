@@ -407,6 +407,13 @@ export type TrainingBaseMode = 'turbo_adapter' | 'deturbo' | 'raw'
  */
 export type TrainingBaseQuant = 'auto' | 'none' | 'nf4'
 
+/**
+ * Which Linears the adapter attaches to. `full` adapts the feed-forward and projection layers as
+ * well, which is stronger on short style runs; `attention` is the Krea 2 authors' advice for long
+ * runs, where adapting everything starts to cost prompt adherence.
+ */
+export type TrainingLoraScope = 'full' | 'attention'
+
 export type TrainingStatus =
   | 'queued'
   | 'training'
@@ -444,6 +451,12 @@ export interface TrainingHyperparams {
   baseMode: TrainingBaseMode
   /** Defaults to `auto`. Only Krea 2 has a 4-bit path; Z-Image always trains in bf16. */
   baseQuant?: TrainingBaseQuant
+  /** Defaults to `full`. */
+  loraScope?: TrainingLoraScope
+  /** 0 to 1: how often a step trains on an empty caption, so the LoRA holds without the trigger. */
+  captionDropout?: number
+  /** Mirror every image, doubling the dataset. Wrong for text or anything asymmetric. */
+  flipAugment?: boolean
   /** LoRA rank (dim). */
   rank: number
   /** LoRA alpha; defaults to `rank`. */

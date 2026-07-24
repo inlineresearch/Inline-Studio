@@ -106,11 +106,22 @@ def _adapter_path(root: Path, arch: str, base_mode: str) -> str | None:
                 candidates = [p for p in candidates if "krea" not in p.name.lower()]
             picked = str(candidates[0]) if candidates else None
     if not picked:
+        # Named explicitly: the adapter is the one component no model popup offers, so an error
+        # that only says "add an adapter" leaves the user with nowhere to go.
         raise RuntimeError(
-            "Turbo mode needs a training adapter to avoid turbo drift. Add the training adapter to "
-            f"models/loras/ (or set {_ENV[arch]['adapter']}), or train on the undistilled base."
+            f"Turbo mode needs a training adapter to avoid turbo drift. Download "
+            f"{_ADAPTER_SOURCE[arch]} into models/loras/ (or set {_ENV[arch]['adapter']}), or "
+            f"train on the undistilled base instead."
         )
     return picked
+
+
+#: Where each arch's de-distillation adapter comes from. Not served by the model popup, which only
+#: covers the diffusion model, VAE and text encoder.
+_ADAPTER_SOURCE = {
+    archs.Z_IMAGE: "ostris/zimage_turbo_training_adapter",
+    archs.KREA2: "ostris/krea2_turbo_training_adapter",
+}
 
 
 def compute_dtype() -> Any:

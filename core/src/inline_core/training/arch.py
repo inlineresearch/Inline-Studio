@@ -45,6 +45,12 @@ _KREA2_TARGETS = [
 ]
 
 
+#: The attention projections shared by both architectures. Narrowing to these is the Krea 2
+#: authors' advice for long runs: adapting the feed-forward and projection layers too is stronger
+#: on short style runs but costs prompt adherence as the run goes on.
+_ATTENTION = ("to_q", "to_k", "to_v", "to_out.0", "to_gate")
+
+
 @dataclass(frozen=True)
 class TrainingArch:
     """One architecture's training behaviour."""
@@ -163,3 +169,16 @@ def get(key: str | None) -> TrainingArch:
     if arch is None:
         raise RuntimeError(f"Unknown training architecture {key!r}.")
     return arch
+
+
+def target_modules(arch: TrainingArch, scope: str | None) -> list[str]:
+    """The Linears the adapter attaches to. ``attention`` keeps only the attention projections the
+    arch actually has, so the same scope means the same thing across architectures."""
+    if (scope or "full") == "full":
+        return arch.target_modules
+    if scope != "attention":
+        raise RuntimeError(f"Unknown LoRA scope {scope!r}.")
+    narrowed = [m for m in arch.target_modules if m in _ATTENTION]
+    if not narrowed:  # defensive: an arch with no matching attention names would train nothing
+        raise RuntimeError(f"{arch.key} has no attention modules to narrow to.")
+    return narrowed

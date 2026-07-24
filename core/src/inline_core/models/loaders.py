@@ -543,14 +543,17 @@ def load_krea2_transformer(
     diffusers naming (``krea2/convert.py``) and streamed in, **one block at a time**: each block is
     materialized, filled, LoRA-fused and quantized before the next one starts. That bound is what
     lets a 26GB checkpoint load as a 7GB NF4 model on a 16GB card - quantizing the whole model
-    afterwards would need the full-precision weights resident first."""
+    afterwards would need the full-precision weights resident first.
+
+    Tensors are read by byte range (``checkpoint.py``) rather than through safetensors' whole-file
+    mmap, which Linux refuses outright when the file is larger than RAM."""
 
     def build() -> Any:
         import torch
         from diffusers import Krea2Transformer2DModel
-        from safetensors import safe_open
 
         from . import lora as lora_module
+        from .checkpoint import CheckpointReader
         from .krea2 import convert
 
         with torch.device("meta"):
@@ -575,14 +578,14 @@ def load_krea2_transformer(
         expected = {name for name, _ in model.named_parameters()}
         expected |= {name for name, _ in model.named_buffers()}
 
-        with safe_open(file, framework="pt", device=staging) as handle:
-            keys = list(handle.keys())
+        with CheckpointReader(file) as handle:
+            keys = handle.keys()
             convert.check_loadable(keys, expected)
             sources = {convert.convert_key(key): key for key in keys}
             for prefix, chunk in _krea2_chunks(model):
                 chunk.to_empty(device=staging)
                 for name, target in _named_tensors(chunk, prefix):
-                    source = handle.get_tensor(sources[name])
+                    source = handle.get_tensor(sources[name], device=staging)
                     target.data.copy_(source.reshape(target.shape).to(target.dtype))
                 # Fuse before quantizing: the fuse adds a full-precision delta that quantized
                 # weights cannot accept in place.

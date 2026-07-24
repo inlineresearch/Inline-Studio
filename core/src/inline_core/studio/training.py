@@ -212,6 +212,21 @@ class Training:
         asyncio.create_task(self._run(run_id, resume=True))
         return ts.update_run(self._conn(), run_id, {"status": "queued", "error": None})
 
+    def discard(self, run_id: str) -> dict[str, Any]:
+        """Delete a run's working dir and make it unresumable.
+
+        Its checkpoint encodes the rank, target modules and base it was built with, so once the
+        node's hyperparameters change the checkpoint cannot be continued - keeping it around only
+        offers a Resume that would train something other than what the panel now says."""
+        if run_id in self._active:
+            raise RuntimeError("Stop the run before discarding it.")
+        run = ts.get_run(self._conn(), run_id)
+        shutil.rmtree(self._store.folder() / "training_runs" / run_id, ignore_errors=True)
+        patch: dict[str, Any] = {"checkpointPath": None}
+        if run["status"] in ("interrupted", "failed"):
+            patch |= {"status": "cancelled", "error": "Checkpoints discarded; settings changed."}
+        return ts.update_run(self._conn(), run_id, patch)
+
     def cancel(self, run_id: str) -> None:
         proc = self._active.get(run_id)
         if proc is not None:

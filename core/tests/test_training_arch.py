@@ -87,3 +87,27 @@ def test_krea2_forward_packs_and_unpacks_back_to_the_latent_grid() -> None:
     assert tuple(transformer.seen["hidden_states"].shape) == (1, 16, 64)
     assert tuple(transformer.seen["position_ids"].shape) == (7 + 16, 3)
     assert transformer.seen["encoder_attention_mask"].dtype is torch.bool
+
+
+def test_attention_scope_narrows_to_the_projections_each_arch_has() -> None:
+    krea2 = archs.get(archs.KREA2)
+    zimage = archs.get(archs.Z_IMAGE)
+
+    assert archs.target_modules(krea2, "attention") == [
+        "to_q", "to_k", "to_v", "to_out.0", "to_gate",
+    ]
+    # Z-Image has no gate projection, so the same scope resolves to what it actually has.
+    assert archs.target_modules(zimage, "attention") == ["to_q", "to_k", "to_v", "to_out.0"]
+
+
+def test_full_scope_is_the_default_and_unchanged() -> None:
+    krea2 = archs.get(archs.KREA2)
+
+    assert archs.target_modules(krea2, "full") == krea2.target_modules
+    assert archs.target_modules(krea2, None) == krea2.target_modules
+    assert archs.target_modules(krea2, "") == krea2.target_modules
+
+
+def test_an_unknown_scope_is_refused_rather_than_silently_training_everything() -> None:
+    with pytest.raises(RuntimeError, match="Unknown LoRA scope"):
+        archs.target_modules(archs.get(archs.KREA2), "attn")

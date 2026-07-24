@@ -277,6 +277,8 @@ The sidebar has two tabs. **Datasets** is where you create a dataset, give it a 
 
 ### Stop and resume
 
+Changing a setting in the Adjust panel stages it behind an **Update** button rather than applying as you type. A checkpoint encodes the rank, LoRA targets and base it was built with, so if the node has a run you could resume, applying asks first and then discards that run's checkpoints. Finished runs' LoRA files are never touched.
+
 Stopping a run flushes a checkpoint before the process exits, so Resume continues from the step it left off instead of starting over. A checkpoint holds the adapter weights, the optimiser state, the RNG state, and the step number, which is what makes a resumed run a continuation rather than a restart. Runs cut short by a crash or a server restart are recovered the same way and show up under Outputs ready to resume.
 
 ### Trigger words
@@ -308,37 +310,66 @@ cd core
 ./webui.sh --install --extra runtime --extra training
 ```
 
-Weights are bring-your-own, the same as generation: nothing is downloaded behind your back. Training reuses the files you already have in `models/diffusion_models/`, `models/vae/`, and `models/text_encoders/` for whichever architecture you pick. The captioner is the one exception, fetched once into the Hugging Face cache the first time you press Auto-caption.
+Nothing is downloaded behind your back. Training has no downloader of its own: it reuses whatever is already in `models/diffusion_models/`, `models/vae/` and `models/text_encoders/` for the architecture you pick, which is normally what a generate node's model popup fetched for you. If a file is missing, the run stops and names it.
+
+Two things the model popup does not cover, so you fetch them yourself:
+
+- **Training adapters** for the Turbo base modes: [Z-Image](https://huggingface.co/ostris/zimage_turbo_training_adapter) or [Krea 2](https://huggingface.co/ostris/krea2_turbo_training_adapter), dropped in `models/loras/`.
+- **The captioner**, fetched once into the Hugging Face cache the first time you press Auto-caption.
 
 The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader node straight away, so you can wire it into a generate node and try it without leaving the app.
 
-### Hardware
+### Benchmark results
 
-Training needs a real GPU, and the resolution you train at drives peak VRAM far more than rank or batch size does. These configurations have been run end to end:
+12 steps at rank 16, batch 1, gradient checkpointing on. The number is `torch.cuda.max_memory_allocated`, so leave headroom for the CUDA context and allocator slack.
 
-| GPU             | Model   | Resolution | Notes                                                                |
-| --------------- | ------- | ---------- | -------------------------------------------------------------------- |
-| 16GB (Tesla T4) | Z-Image | 512px      | Peaks around 13GB. 768 and 1024 both run out of memory on this card. |
-| 24GB (L4)       | Z-Image | 1024px     | Run with the Turbo training adapter fused in.                        |
-| 48GB (L40S)     | Krea 2  | 512 + 1024 | See the measured table below; 1024 needs the 4-bit base.             |
+| Model   | Base mode       | Res  | Base precision | L40S (46GB)   | T4 (15GB)     |
+| ------- | --------------- | ---- | -------------- | ------------- | ------------- |
+| Z-Image | De-Turbo        | 512  | bf16           | 13.1GB        | 13.4GB        |
+| Z-Image | De-Turbo        | 1024 | bf16           | 14.9GB        | out of memory |
+| Z-Image | Turbo + adapter | 512  | bf16           | 13.1GB        | 13.4GB        |
+| Z-Image | Turbo + adapter | 1024 | bf16           | 14.9GB        | out of memory |
+| Krea 2  | RAW             | 512  | bf16           | 30.4GB        | out of memory |
+| Krea 2  | RAW             | 512  | **4-bit**      | 11.7GB        | **11.9GB**    |
+| Krea 2  | RAW             | 1024 | bf16           | out of memory | out of memory |
+| Krea 2  | RAW             | 1024 | **4-bit**      | **27.8GB**    | out of memory |
+| Krea 2  | Turbo + adapter | 512  | bf16           | 30.4GB        | out of memory |
+| Krea 2  | Turbo + adapter | 512  | **4-bit**      | 11.7GB        | **11.9GB**    |
+| Krea 2  | Turbo + adapter | 1024 | bf16           | out of memory | out of memory |
+| Krea 2  | Turbo + adapter | 1024 | **4-bit**      | **27.8GB**    | out of memory |
 
-#### Measured peaks
+A training adapter is free: it is fused into the base before training starts, so Turbo-plus-adapter and the undistilled base peak identically.
 
-Every combination below was run for 12 steps at rank 16, batch 1, gradient checkpointing on, and the number is `torch.cuda.max_memory_allocated` on an L40S. A card needs headroom on top of these for its CUDA context and allocator slack, so treat them as a floor rather than a target.
+Which card fits what (24GB and 32GB are interpolated, not measured):
 
-| Model                                | 512px      | 1024px                                  |
-| ------------------------------------ | ---------- | --------------------------------------- |
-| Z-Image (either mode)                | 13.1GB     | 14.9GB                                  |
-| Krea 2 (either mode), bf16 base      | 30.4GB     | 46.5GB - **out of memory even on 48GB** |
-| Krea 2 (either mode), **4-bit base** | **11.7GB** | **27.8GB**                              |
+| Card | Z-Image 512 | Z-Image 1024 | Krea 2 512 | Krea 2 1024 |
+| ---- | ----------- | ------------ | ---------- | ----------- |
+| 16GB | yes         | no           | yes, 4-bit | no          |
+| 24GB | yes         | yes          | yes        | no          |
+| 32GB | yes         | yes          | yes        | yes, 4-bit  |
+| 48GB | yes         | yes          | yes        | 4-bit only  |
 
-A training adapter costs nothing extra: it is fused into the base before training starts, so Turbo-plus-adapter and the undistilled base peak identically.
+Fitting and being usable are different questions. Turing has no native bf16, so a T4 runs the same work about 4x slower:
 
-What that means in practice:
+| Configuration                     | L40S | T4   |
+| --------------------------------- | ---- | ---- |
+| Krea 2 RAW 512, 4-bit             | 192s | 824s |
+| Krea 2 Turbo + adapter 512, 4-bit | 219s | 872s |
+| Z-Image 512                       | 85s  | 285s |
 
-- **Z-Image trains anywhere**, at either resolution.
-- **Krea 2 at 512 fits a 16GB card** with the 4-bit base, which is the configuration to reach for.
-- **Krea 2 at 1024 needs about 32GB.** It is not reachable on 16GB by tuning: activations scale linearly with image tokens (4x the tokens, 4.4x the memory), attention is already memory-efficient, and gradient checkpointing is on. At 1024 you are simply paying for 4,096 image tokens through a 12.9B model. Train at 512 instead - a LoRA trained at 512 applies at any generation resolution.
+A 1500-step Krea 2 run is roughly 40 minutes on an L40S and 3 hours on a T4.
+
+**Krea 2 at 512 with the 4-bit base is the configuration to reach for on a small card.** 1024 needs about 32GB and no setting closes that gap: activations scale with image tokens, and gradient checkpointing and memory-efficient attention are already on. Train at 512 instead, since a LoRA trained at 512 applies at any generation resolution.
+
+System RAM matters as well. Checkpoints are read tensor by tensor rather than mapped whole, so Krea 2 trains in about 3GB of host RAM. Without that, Linux refuses to map a file larger than physical RAM when there is no swap, and a 26GB checkpoint cannot be opened on a 16GB machine at all.
+
+### Dataset and adapter options
+
+Three settings shape what the adapter learns rather than what it costs:
+
+- **LoRA scope.** _Full_ adapts the attention and feed-forward layers, which is stronger on short style runs. _Attention only_ is the Krea 2 authors' advice for long runs, where adapting everything starts to cost prompt adherence.
+- **Caption dropout** (default 0.05) trains a fraction of steps against an empty caption, so the LoRA still holds when a prompt does not repeat the trigger word verbatim.
+- **Flip images** mirrors every image, doubling a small dataset. Both orientations are encoded from pixels rather than by flipping cached latents, so the mirrored copy is exact. Leave it off for anything with text or a deliberate asymmetry.
 
 ### Base precision
 
