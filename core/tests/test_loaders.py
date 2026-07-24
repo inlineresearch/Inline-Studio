@@ -14,10 +14,22 @@ from inline_core.models import loaders
 def test_zimage_spec_is_registered():
     spec = loaders._spec("z-image")
     assert spec.assets_repo == "Tongyi-MAI/Z-Image-Turbo"
+    paths = [asset.path for asset in spec.asset_files]
     # The bundled assets are configs + tokenizer only - never the multi-GB weights.
-    assert "transformer/config.json" in spec.asset_files
-    assert "tokenizer/tokenizer.json" in spec.asset_files
-    assert not any(name.endswith(".safetensors") for name in spec.asset_files)
+    assert "transformer/config.json" in paths
+    assert "tokenizer/tokenizer.json" in paths
+    assert not any(name.endswith(".safetensors") for name in paths)
+
+
+def test_krea2_spec_sources_its_assets_from_the_ungated_qwen_repos():
+    spec = loaders._spec("krea2")
+    targets = [asset.target(spec) for asset in spec.asset_files]
+
+    # Krea 2's own repos are gated, so nothing here may point at them.
+    assert not any(repo.startswith("krea/") for repo, _ in targets)
+    assert ("Qwen/Qwen-Image", "vae/config.json") in targets
+    assert ("Qwen/Qwen3-VL-4B-Instruct", "text_encoder/config.json") in targets
+    assert not any(local.endswith(".safetensors") for _, local in targets)
 
 
 def test_unknown_arch_raises():

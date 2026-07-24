@@ -1,9 +1,16 @@
 /**
  * The "Add node" popup opened from the toolbar's + button, or by double-clicking empty canvas in
- * Select mode. Lists the built-in node types plus the Fal Models, Inline Core, and Extension nodes.
- * A fal generation node is added directly from the Fal Models list.
+ * Select mode.
+ *
+ * Two tabs, because one flat list outgrew the popup: **Core** is everything that runs locally (the
+ * canvas built-ins, the Inline Core engine nodes, and extension nodes), **API** is the hosted fal
+ * models. Loaders come first in Core - they are the plumbing you reach for while wiring a graph, so
+ * they should not sit at the bottom past every model.
+ *
  * Positioning mirrors MoodboardPanel's "Connect to…" menu (container-relative left/top).
  */
+
+import { useState } from 'react'
 
 import { addableCoreNodes, type NodeDescriptor } from '@shared/coreNodes'
 import { isExtensionNode, extensionOf } from '@shared/extensions'
@@ -12,23 +19,33 @@ import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
 export type AddNodeKind = 'load' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
 
+type Tab = 'core' | 'api'
+
+/** The category Core uses for its `load/*` nodes; Load Assets joins them under one header. */
+const LOADERS = 'Loaders'
+const CANVAS = 'Canvas'
+
+/**
+ * Section order in the Core tab. Core serves its categories in registration order, which puts
+ * Generate last behind the decomposed primitives - the opposite of how often each is reached for.
+ * Anything not listed keeps its served order, after these.
+ */
+const CORE_ORDER = [LOADERS, 'Generate', CANVAS]
+
 interface Entry {
   kind: AddNodeKind
   label: string
   icon: React.JSX.Element
-  /** Accent the row (the generation node is the AI action). */
-  accent?: boolean
-  /** Groups the row under a header; ungrouped entries render first, as before. */
-  category?: string
+  category: string
 }
 
 const ENTRIES: Entry[] = [
-  { kind: 'load', label: 'Load Assets', icon: <ImageIcon /> },
-  { kind: 'layer', label: 'Layer', icon: <LayerIcon /> },
-  { kind: 'preview', label: 'Preview', icon: <ImageIcon /> },
-  { kind: 'director', label: 'Video Director', icon: <ClapperboardIcon /> },
-  { kind: 'trim', label: 'Edit Video/Audio', icon: <ScissorsIcon /> },
-  { kind: 'prompt', label: 'Prompt', icon: <PromptIcon /> },
+  { kind: 'load', label: 'Load Assets', icon: <ImageIcon />, category: LOADERS },
+  { kind: 'layer', label: 'Layer', icon: <LayerIcon />, category: CANVAS },
+  { kind: 'preview', label: 'Preview', icon: <ImageIcon />, category: CANVAS },
+  { kind: 'director', label: 'Video Director', icon: <ClapperboardIcon />, category: CANVAS },
+  { kind: 'trim', label: 'Edit Video/Audio', icon: <ScissorsIcon />, category: CANVAS },
+  { kind: 'prompt', label: 'Prompt', icon: <PromptIcon />, category: CANVAS },
 ]
 
 export function AddNodeMenu({
@@ -54,13 +71,24 @@ export function AddNodeMenu({
   onPickGen?: (modelId: string) => void
   onClose: () => void
 }): React.JSX.Element {
-  // Only high-level model nodes are offered; loaders/samplers/inputs are hidden plumbing.
+  const [tab, setTab] = useState<Tab>('core')
+
+  // Only high-level model nodes are offered; samplers/inputs are hidden plumbing.
   const all = addableCoreNodes(coreNodes)
+  const builtIn = all.filter((n) => !isExtensionNode(n.source))
   // Extension nodes get their own section so it's clear which are community-provided.
-  const addable = all.filter((n) => !isExtensionNode(n.source))
   const extensionGroups = groupByExtension(all.filter((n) => isExtensionNode(n.source)))
-  // Fal models, grouped by owner (OpenAI, ByteDance, …) - listed like the Inline Core section.
-  const falGroups = groupByOwner(listNodeDefs())
+  // Canvas built-ins first within a section, then Core's own nodes - so Loaders reads
+  // "Load Assets, Load Diffusion Model, Load VAE, …" under one header.
+  const sections = orderSections([
+    ...groupEntries().map(([category, entries]): Section => [category, entryRows(entries, onPick)]),
+    ...groupByCategory(builtIn).map(
+      ([category, nodes]): Section => [category, coreRows(nodes, onPickCore)],
+    ),
+  ])
+  // Fal models, grouped by owner (OpenAI, ByteDance, …).
+  const falGroups = onPickGen ? groupByOwner(listNodeDefs()) : []
+
   return (
     <>
       <div className="absolute inset-0 z-20" onClick={onClose} />
@@ -70,125 +98,181 @@ export function AddNodeMenu({
         }`}
         style={{ left: x, top: y }}
       >
-        <div className="border-b border-border px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-          Add node
+        <div className="flex border-b border-border">
+          <TabButton active={tab === 'core'} onClick={() => setTab('core')}>
+            Core
+          </TabButton>
+          <TabButton active={tab === 'api'} onClick={() => setTab('api')}>
+            API
+          </TabButton>
         </div>
-        {/* One scroll area for the whole list (built-ins + fal + Inline Core), not per-section. */}
+
+        {/* One scroll area for the active tab, not per-section. */}
         <div className="max-h-[70vh] overflow-y-auto">
-          {ENTRIES.filter((e) => !e.category).map((e) => (
-            <button
-              key={e.kind}
-              onClick={() => onPick(e.kind)}
-              className={`flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-surface ${
-                e.accent ? 'text-emerald-300' : 'text-zinc-200'
-              }`}
-            >
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center">{e.icon}</span>
-              {e.label}
-            </button>
-          ))}
-          {[...new Set(ENTRIES.filter((e) => e.category).map((e) => e.category))].map(
-            (category) => (
-              <div key={category} className="border-t border-border">
-                <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-                  {category}
-                </div>
-                {ENTRIES.filter((e) => e.category === category).map((e) => (
-                  <button
-                    key={e.kind}
-                    onClick={() => onPick(e.kind)}
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+          {tab === 'core' ? (
+            <>
+              {sections.map(([category, rows]) => (
+                <Group key={category} label={category}>
+                  {rows}
+                </Group>
+              ))}
+
+              {extensionGroups.length > 0 && (
+                <Group label="Extensions">
+                  {extensionGroups.map(([extension, nodes]) => (
+                    <div key={extension}>
+                      <SubHeader>{extension}</SubHeader>
+                      {nodes.map((n) => (
+                        <Row key={n.type} icon={<NodeGlyph />} onClick={() => onPickCore?.(n.type)}>
+                          {n.title}
+                        </Row>
+                      ))}
+                    </div>
+                  ))}
+                </Group>
+              )}
+            </>
+          ) : falGroups.length > 0 ? (
+            falGroups.map((group) => (
+              <Group key={group.owner} label={group.label}>
+                {group.defs.map((def) => (
+                  <Row
+                    key={def.id}
+                    icon={<SparklesIcon />}
+                    accent
+                    onClick={() => onPickGen?.(def.id)}
                   >
-                    <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                      {e.icon}
-                    </span>
-                    {e.label}
-                  </button>
+                    {def.title}
+                  </Row>
                 ))}
-              </div>
-            ),
-          )}
-          {onPickGen && falGroups.length > 0 && (
-            <div className="border-t border-border">
-              <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-                Fal Models
-              </div>
-              {falGroups.map((group) => (
-                <div key={group.owner}>
-                  <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
-                    {group.label}
-                  </div>
-                  {group.defs.map((def) => (
-                    <button
-                      key={def.id}
-                      onClick={() => onPickGen(def.id)}
-                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
-                    >
-                      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-emerald-300">
-                        <SparklesIcon />
-                      </span>
-                      {def.title}
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-          {addable.length > 0 && (
-            <div className="border-t border-border">
-              <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-                Inline Core
-              </div>
-              {groupByCategory(addable).map(([category, nodes]) => (
-                <div key={category}>
-                  <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
-                    {category}
-                  </div>
-                  {nodes.map((n) => (
-                    <button
-                      key={n.type}
-                      onClick={() => onPickCore?.(n.type)}
-                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
-                    >
-                      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                        <NodeGlyph />
-                      </span>
-                      {n.title}
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-          {extensionGroups.length > 0 && (
-            <div className="border-t border-border">
-              <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">
-                Extensions
-              </div>
-              {extensionGroups.map(([extension, nodes]) => (
-                <div key={extension}>
-                  <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">
-                    {extension}
-                  </div>
-                  {nodes.map((n) => (
-                    <button
-                      key={n.type}
-                      onClick={() => onPickCore?.(n.type)}
-                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
-                    >
-                      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                        <NodeGlyph />
-                      </span>
-                      {n.title}
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
+              </Group>
+            ))
+          ) : (
+            <div className="px-2.5 py-3 text-[11px] text-zinc-500">No hosted models available.</div>
           )}
         </div>
       </div>
     </>
+  )
+}
+
+/** A Core tab section: its header and its rows. */
+type Section = [string, React.JSX.Element[]]
+
+function groupEntries(): Array<[string, Entry[]]> {
+  const groups = new Map<string, Entry[]>()
+  for (const entry of ENTRIES) {
+    const list = groups.get(entry.category) ?? []
+    list.push(entry)
+    groups.set(entry.category, list)
+  }
+  return [...groups.entries()]
+}
+
+function entryRows(entries: Entry[], onPick: (kind: AddNodeKind) => void): React.JSX.Element[] {
+  return entries.map((e) => (
+    <Row key={e.kind} icon={e.icon} onClick={() => onPick(e.kind)}>
+      {e.label}
+    </Row>
+  ))
+}
+
+function coreRows(
+  nodes: NodeDescriptor[],
+  onPickCore?: (coreType: string) => void,
+): React.JSX.Element[] {
+  return nodes.map((n) => (
+    <Row key={n.type} icon={<NodeGlyph />} onClick={() => onPickCore?.(n.type)}>
+      {n.title}
+    </Row>
+  ))
+}
+
+/** Merge same-named sections, then sort by CORE_ORDER; unlisted keep their served order. */
+function orderSections(sections: Section[]): Section[] {
+  const merged = new Map<string, React.JSX.Element[]>()
+  for (const [category, rows] of sections) {
+    merged.set(category, [...(merged.get(category) ?? []), ...rows])
+  }
+  const rank = (category: string): number => {
+    const index = CORE_ORDER.indexOf(category)
+    return index === -1 ? CORE_ORDER.length : index
+  }
+  return [...merged.entries()]
+    .filter(([, rows]) => rows.length > 0)
+    .sort(([a], [b]) => rank(a) - rank(b))
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex-1 px-2.5 py-1.5 text-[11px] font-medium ${
+        active
+          ? 'border-b border-zinc-300 text-zinc-100'
+          : 'border-b border-transparent text-zinc-500 hover:text-zinc-300'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function Group({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <div className="border-t border-border first:border-t-0">
+      <div className="px-2.5 py-1 text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
+      {children}
+    </div>
+  )
+}
+
+function SubHeader({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <div className="px-2.5 pt-1 text-[9px] uppercase tracking-wide text-zinc-600">{children}</div>
+  )
+}
+
+function Row({
+  icon,
+  accent,
+  onClick,
+  children,
+}: {
+  icon: React.JSX.Element
+  /** Accent the glyph (a hosted model is the AI action). */
+  accent?: boolean
+  onClick: () => void
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-zinc-200 hover:bg-surface"
+    >
+      <span
+        className={`flex h-4 w-4 shrink-0 items-center justify-center ${
+          accent ? 'text-emerald-300' : ''
+        }`}
+      >
+        {icon}
+      </span>
+      {children}
+    </button>
   )
 }
 

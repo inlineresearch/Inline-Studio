@@ -13,6 +13,7 @@ from inline_core.device.types import Device, DeviceKind
 from inline_core.errors import CancelledError, ComponentError
 from inline_core.graph.registry import build_default_registry
 from inline_core.graph.schema import Node
+from inline_core.models import pipeline_runtime as rt
 from inline_core.models.zimage import runner as rz
 from inline_core.runtime.context import CancelToken, ExecutionContext
 from inline_core.runtime.progress import CollectingEmitter, Phase, ProgressEvent
@@ -245,10 +246,10 @@ def test_cancel_during_load_raises_via_cancel_check(monkeypatch: pytest.MonkeyPa
 
 
 def test_resolve_seed() -> None:
-    assert rz._resolve_seed(42) == 42
-    assert rz._resolve_seed(0) == 0
-    assert 0 <= rz._resolve_seed(-1) <= rz._SEED_MAX  # random, non-negative
-    assert 0 <= rz._resolve_seed("not-a-number") <= rz._SEED_MAX
+    assert rt.resolve_seed(42) == 42
+    assert rt.resolve_seed(0) == 0
+    assert 0 <= rt.resolve_seed(-1) <= rt._SEED_MAX  # random, non-negative
+    assert 0 <= rt.resolve_seed("not-a-number") <= rt._SEED_MAX
 
 
 def test_missing_models_fail_fast(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
@@ -409,13 +410,13 @@ def test_prompt_kwargs_falls_back_when_encode_fails() -> None:
 def test_oom_message_flags_cfg_when_guidance_on() -> None:
     """The 1024² OOM on a T4 is CFG doubling the denoise batch - the message must say so and point
     at guidance=0 (turbo runs CFG-free), not just resolution."""
-    with_cfg = rz._oom_message(1024, 1024, guidance=1.0)
+    with_cfg = rz._oom(1024, 1024, guidance=1.0)
     assert "Guidance" in with_cfg and "CFG-free" in with_cfg
-    without_cfg = rz._oom_message(1024, 1024, guidance=0.0)
+    without_cfg = rz._oom(1024, 1024, guidance=0.0)
     assert "Guidance (CFG)" not in without_cfg  # no CFG hint when guidance is already off
     assert "Lower the resolution" in without_cfg
     # Host-RAM OOM is a load-time failure, unrelated to CFG.
-    assert "Guidance" not in rz._oom_message(1024, 1024, host=True, guidance=1.0)
+    assert "Guidance" not in rz._oom(1024, 1024, host=True, guidance=1.0)
 
 
 def test_text_encoder_detached_restores() -> None:
@@ -424,11 +425,11 @@ def test_text_encoder_detached_restores() -> None:
     pipe = _FakeEmbedPipe()
     original = pipe.text_encoder
 
-    with rz._text_encoder_detached(pipe, True):
+    with rt.text_encoder_detached(pipe, True):
         assert pipe.text_encoder is None  # detached for the denoise call
     assert pipe.text_encoder is original  # restored for the next run's encode
 
-    with rz._text_encoder_detached(pipe, False):
+    with rt.text_encoder_detached(pipe, False):
         assert pipe.text_encoder is original  # raw-prompt path: untouched
     assert pipe.text_encoder is original
 
@@ -439,7 +440,7 @@ def test_text_encoder_detached_restores_on_error() -> None:
     pipe = _FakeEmbedPipe()
     original = pipe.text_encoder
     with pytest.raises(RuntimeError):
-        with rz._text_encoder_detached(pipe, True):
+        with rt.text_encoder_detached(pipe, True):
             raise RuntimeError("denoise boom")
     assert pipe.text_encoder is original
 
@@ -457,7 +458,7 @@ def test_shrink_vae_tiles_forces_tiling_at_1024() -> None:
     tiles → full-frame OOM. Shrinking to a 512-px tile drops the latent threshold below 128 so 1024
     (and larger) actually tiles, while preserving the VAE's 8× sample:latent scale."""
     vae = _FakeVae()
-    rz._shrink_vae_tiles(vae)
+    rt.shrink_vae_tiles(vae)
     assert vae.tile_sample_min_size == 512
     assert vae.tile_latent_min_size == 64  # 512 / 8; now 128 (a 1024² latent) > 64 → tiles engage
 
@@ -467,17 +468,17 @@ def test_shrink_vae_tiles_noop_when_already_small() -> None:
     vae = _FakeVae()
     vae.tile_sample_min_size = 256
     vae.tile_latent_min_size = 32
-    rz._shrink_vae_tiles(vae)
+    rt.shrink_vae_tiles(vae)
     assert vae.tile_sample_min_size == 256
     assert vae.tile_latent_min_size == 32
 
 
 def test_smaller_resolutions_only_suggests_smaller() -> None:
     """The OOM hint must never suggest a size >= the current one (the reported 512->768/512 bug)."""
-    assert rz._smaller_resolutions(1024, 1024) == ["768x768", "512x512"]
-    assert rz._smaller_resolutions(512, 512) == ["384x384", "256x256"]
-    assert rz._smaller_resolutions(256, 256) == ["128x128"]  # past the ladder -> halve
+    assert rt.smaller_resolutions(1024, 1024) == ["768x768", "512x512"]
+    assert rt.smaller_resolutions(512, 512) == ["384x384", "256x256"]
+    assert rt.smaller_resolutions(256, 256) == ["128x128"]  # past the ladder -> halve
     # never suggests the current size or larger
     for size in (2048, 1024, 768, 512, 384, 256, 200, 128):
-        for s in rz._smaller_resolutions(size, size):
+        for s in rt.smaller_resolutions(size, size):
             assert int(s.split("x")[0]) < size

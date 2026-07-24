@@ -18,7 +18,12 @@ def emit(message: dict[str, Any]) -> None:
 
 
 def progress(
-    step: int, total: int, *, loss: float | None = None, status: str | None = None
+    step: int,
+    total: int,
+    *,
+    loss: float | None = None,
+    status: str | None = None,
+    vram: float | None = None,
 ) -> None:
     message: dict[str, Any] = {
         "type": "progress",
@@ -30,6 +35,8 @@ def progress(
         message["loss"] = loss
     if status is not None:
         message["status"] = status
+    if vram is not None:
+        message["vram"] = vram
     emit(message)
 
 

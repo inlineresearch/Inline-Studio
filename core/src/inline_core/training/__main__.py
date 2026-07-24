@@ -25,9 +25,16 @@ def _message_for(error: Exception, manifest: dict[str, Any]) -> str:
     resolution = int(manifest.get("hyperparams", {}).get("resolution", 0) or 0)
     lower = " Try 512." if resolution > 512 else ""
     at = f" at {resolution}px" if resolution else ""
+    # Krea 2 is 12.9B against Z-Image's 6B, so the honest advice is different: no resolution saves a
+    # card that cannot hold the base at all.
+    floor = (
+        " Krea 2 is a 12.9B model - training it needs roughly 40GB of VRAM."
+        if manifest.get("arch") == "krea2"
+        else ""
+    )
     return (
         f"Ran out of GPU memory training{at}. Lower the training resolution in the node's Adjust "
-        f"panel (it drives peak VRAM far more than rank).{lower}"
+        f"panel (it drives peak VRAM far more than rank).{lower}{floor}"
     )
 
 

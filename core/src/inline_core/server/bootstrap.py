@@ -58,6 +58,16 @@ def _register_builtins(
     except ImportError:
         pass
     try:
+        from ..models.krea2.provider import Krea2Provider
+        from ..models.krea2.runner import DESCRIPTORS, register_krea2
+
+        register_krea2(registry, store, policy)
+        for variant, descriptor in DESCRIPTORS.items():
+            requirements.register(descriptor.type, Krea2Provider(variant))
+            registered.append(descriptor.type)
+    except ImportError:
+        pass
+    try:
         from ..models.zimage.primitives import register_zimage_primitives
 
         register_zimage_primitives(registry, store, policy)

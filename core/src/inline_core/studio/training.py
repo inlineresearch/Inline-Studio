@@ -393,6 +393,8 @@ class Training:
             "outputPath": str(models_dir() / output_rel),
             "resumeFrom": resume_from,
             "modelsDir": str(models_dir()),
+            # Defaulted so a run started before Krea 2 existed still resumes as Z-Image.
+            "arch": run["hyperparams"].get("arch") or "z-image",
             "baseMode": run["hyperparams"]["baseMode"],
             "triggerWord": trigger,
             "hyperparams": run["hyperparams"],
@@ -443,7 +445,9 @@ def _progress_log_line(msg: dict[str, Any], last_status: str) -> str | None:
     if isinstance(loss, (int, float)):
         total = int(msg.get("total", 0))
         step = int(msg.get("step", 0))
-        return f"step {step}/{total} · loss {float(loss):.4f}"
+        vram = msg.get("vram")
+        peak = f" · peak VRAM {float(vram):.1f}GB" if isinstance(vram, (int, float)) else ""
+        return f"step {step}/{total} · loss {float(loss):.4f}{peak}"
     return status if status and status != last_status else None
 
 

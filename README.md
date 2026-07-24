@@ -20,7 +20,7 @@
 Inline Studio is a free, open-source app for **AI filmmaking on a node canvas**, powered by the built-in **Inline Core** engine (local diffusion models) and hosted [fal](https://fal.ai) models. It gives AI filmmakers a free-form canvas to build a whole visual pipeline, from moodboard to final cut.
 
 - **Non-destructive by default** - every render is kept as a versioned take; generating again adds one, nothing is overwritten.
-- **Local diffusion generation engine** - the built-in Inline Core engine runs popular diffusion models on your own GPU from a single model file, no external server. Currently supported: **Z-Image Turbo**.
+- **Local diffusion generation engine** - the built-in Inline Core engine runs popular diffusion models on your own GPU from a single model file, no external server. Currently supported: **Z-Image Turbo** and **Krea 2** (RAW + Turbo).
 - **Hosted models via API Nodes** - reach for closed models with no GPU and no setup for instant creative range; see [API Nodes](#api-nodes).
 - **Mix both in the same film** - Inline Studio handles everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
 
@@ -34,7 +34,7 @@ It runs as a **single process on one port**: the Inline Core engine (Python) ser
 - **Versioned, non-destructive takes** - every render is kept. Generating again adds a new take; nothing is overwritten. Star the keeper and it flows downstream.
 - **Chain frames into a generative pipeline** - wire one frame's output into the next frame's input. Refine a shot, feed it forward, regenerate the source, and everything downstream follows.
 - **Video editing on the canvas** - the **Video Director node** is a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export; the **Trim Video/Audio node** lets you drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
-- **Local generation, built in** - the Inline Core engine runs diffusion models on your own GPU. Z-Image Turbo from a single model file, no external server to set up.
+- **Local generation, built in** - the Inline Core engine runs diffusion models on your own GPU. Z-Image Turbo and Krea 2 from single model files, no external server to set up.
 - **Train your own LoRAs** - the Trainer tab is a second canvas where the dataset, captioning, training run, and loss curve are all nodes. The finished LoRA drops into `models/loras/` and shows up in the LoRA loader node, ready to generate with. See [LoRA training](#lora-training).
 - **API Nodes for hosted models** - run closed models right on the canvas with no GPU. Add a Generate node, pick a model, and bring your own provider key. See [API Nodes](#api-nodes).
 - **Community extensions** - install custom nodes from a GitHub repo in one click, security-reviewed and dependency-isolated. Browse the [registry](https://github.com/inlineresearch/Inline-Registry) or [build your own](https://github.com/inlineresearch/Inline-Studio-Extension-Guide).
@@ -54,12 +54,12 @@ From the home screen, **Export** zips a project into one archive. Import it on t
 
 Pick whatever fits the shot, and mix both in one film. However you render, the frame keeps its full take history, so you never lose a good version.
 
-| How you render                          | What it's like                                                                                                                                                                                                                                                                                    | What you need                                                                                                                                                                                    |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Local GPU: Inline Core** _(built in)_ | Drop a **Z-Image Turbo** node, wire a prompt, hit Run: one node, no loader/sampler wiring. A single `.safetensors` is all you bring; the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Your own GPU. No account, no external server. Low-VRAM friendly: it auto-fits the model to your card (streaming weights + int8) so a model too big for full precision still runs, with no flags. |
-| **Hosted: API Nodes**                   | Add a Generate node and pick a model: hosted, closed models across image, video, and audio. No GPU, instant range. See [API Nodes](#api-nodes) for the model list and providers.                                                                                                                  | A provider key (currently [fal](https://fal.ai/dashboard/keys)); it stays on your machine, and you pay per render (each node estimates the price first).                                         |
+| How you render                          | What it's like                                                                                                                                                                                                                                                                                                  | What you need                                                                                                                                                                                    |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Local GPU: Inline Core** _(built in)_ | Drop a **Z-Image Turbo** or **Krea 2** node, wire a prompt, hit Run: one node, no loader/sampler wiring. A single `.safetensors` is all you bring; the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Your own GPU. No account, no external server. Low-VRAM friendly: it auto-fits the model to your card (streaming weights + int8) so a model too big for full precision still runs, with no flags. |
+| **Hosted: API Nodes**                   | Add a Generate node and pick a model: hosted, closed models across image, video, and audio. No GPU, instant range. See [API Nodes](#api-nodes) for the model list and providers.                                                                                                                                | A provider key (currently [fal](https://fal.ai/dashboard/keys)); it stays on your machine, and you pay per render (each node estimates the price first).                                         |
 
-For local generation, either drop a Z-Image `.safetensors` into `core/models/diffusion_models/`, or add a Z-Image node and use its **model popup** (a blinking hint shows up when something's missing) to download the diffusion model, VAE, and text-encoder into `core/models/`, with visible progress. The canvas and planning work with no models at all.
+For local generation, either drop a `.safetensors` into `core/models/diffusion_models/`, or add a model node and use its **model popup** (a blinking hint shows up when something's missing) to download the diffusion model, VAE, and text-encoder into `core/models/`, with visible progress. The canvas and planning work with no models at all. See [Krea 2](#krea-2) for that model's files and VRAM.
 
 ## Inline Core generation engine
 
@@ -75,6 +75,28 @@ Inline Core is a from-scratch generation engine for local rendering. It keeps th
 - **Graph decoupled from GPU work** - the graph is the unit of caching; a batched sampler is the unit of batching, grouping compatible jobs across requests.
 - **A single device policy owns all placement** - device, dtype, offload, and attention, so the same graph runs on a 4090, a 6 GB laptop, pure CPU, or split across several GPUs without touching the graph.
 - **Bring your own models, no hidden downloads** - a drop-in `models/` layout feeds a typed catalog and versioned node descriptors; nothing is fetched behind your back.
+
+### Krea 2
+
+[Krea 2](https://www.krea.ai/) is a 12.9B single-stream MMDiT, released as two checkpoints that work together: **RAW** is the undistilled base you fine-tune, **Turbo** is an 8-step distilled checkpoint you generate with. A LoRA trained on RAW applies to Turbo unchanged, which is the workflow both nodes are built around.
+
+Both nodes read the ComfyUI-style files from [`Comfy-Org/Krea-2`](https://huggingface.co/Comfy-Org/Krea-2):
+
+```
+core/models/
+  diffusion_models/  krea2_turbo_bf16.safetensors   <- for the Krea 2 Turbo node
+                     krea2_raw_bf16.safetensors     <- for the Krea 2 RAW node (and training)
+  text_encoders/     qwen3vl_4b_bf16.safetensors
+  vae/               qwen_image_vae_diffusers.safetensors
+  loras/             krea2_retroanime.safetensors   <- the official style LoRAs, optional
+```
+
+Two things are worth knowing before you download 26 GB twice:
+
+- **Only the `bf16` builds load.** The `fp8_scaled`, `int8_convrot`, `mxfp8` and `nvfp4` files in that repo carry ComfyUI-specific scale tensors that only ComfyUI can read, and the node says so rather than failing deep in a load. Memory saving is the device policy's job instead.
+- **The VAE is the diffusers-format one**, fetched from [`Qwen/Qwen-Image`](https://huggingface.co/Qwen/Qwen-Image). ComfyUI's `qwen_image_vae.safetensors` holds the same weights in a different module layout that diffusers cannot read. The node's model popup downloads the right file for you.
+
+Nothing here needs a Hugging Face token: every repo involved is public, and Krea's own gated repos are never touched.
 
 ### Community extensions
 
@@ -138,13 +160,13 @@ Prefer pip? `pip install -r requirements.txt` (from the repo root) pulls the eng
 
 Honest status - what's actually been run, versus what has a code path but no one has verified:
 
-| Hardware                | Status                                           | Extra steps                                                                                                                                                                                                                                |
-| ----------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **NVIDIA, Linux**       | **Tested** - Z-Image Turbo 1024² on a T4 (16 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                             |
-| **NVIDIA, Windows**     | Supported, needs one step                        | PyPI's default `torch` is **CPU-only on Windows**. Use `webui.sh --install` (it detects the GPU), or install torch from `https://download.pytorch.org/whl/cu124`. Core warns at startup if it finds an NVIDIA GPU behind a CPU-only torch. |
-| **Apple Silicon (MPS)** | Code path exists, **untested**                   | None. int8 quantisation doesn't apply on MPS, so a model too big for unified memory won't fit.                                                                                                                                             |
-| **AMD (ROCm), Linux**   | **Untested** - reports welcome                   | Needs a ROCm build of PyTorch - see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                             |
-| **CPU only**            | Works, very slow                                 | `./webui.sh --cpu`                                                                                                                                                                                                                         |
+| Hardware                | Status                                                                                              | Extra steps                                                                                                                                                                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **NVIDIA, Linux**       | **Tested** - Z-Image Turbo 1024² on a T4 (16 GB); Krea 2 1024² and LoRA training on an L40S (48 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                             |
+| **NVIDIA, Windows**     | Supported, needs one step                                                                           | PyPI's default `torch` is **CPU-only on Windows**. Use `webui.sh --install` (it detects the GPU), or install torch from `https://download.pytorch.org/whl/cu124`. Core warns at startup if it finds an NVIDIA GPU behind a CPU-only torch. |
+| **Apple Silicon (MPS)** | Code path exists, **untested**                                                                      | None. int8 quantisation doesn't apply on MPS, so a model too big for unified memory won't fit.                                                                                                                                             |
+| **AMD (ROCm), Linux**   | **Untested** - reports welcome                                                                      | Needs a ROCm build of PyTorch - see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                             |
+| **CPU only**            | Works, very slow                                                                                    | `./webui.sh --cpu`                                                                                                                                                                                                                         |
 
 #### AMD (ROCm) setup
 
@@ -172,7 +194,8 @@ Two gotchas:
 
 **Known limits, so you can judge before installing:**
 
-- **Local model coverage is Z-Image Turbo only** today. Flux, SDXL and others are planned; hosted models via [API Nodes](#api-nodes) need no GPU at all.
+- **Local model coverage is Z-Image Turbo and Krea 2** today. Flux, SDXL and others are planned; hosted models via [API Nodes](#api-nodes) need no GPU at all.
+- **Krea 2 is a 12.9B model and needs a big card to generate.** The bf16 checkpoint is 26 GB on disk, and generation peaks around 36 GB at 1024 with guidance on, so a 40 GB+ GPU is the practical floor for inference. **Training is cheaper than generating**, because the 4-bit base path puts Krea 2 LoRA training at 512 inside 12 GB - see [Hardware](#hardware). Z-Image remains the low-VRAM path for generation.
 - **1024² with Guidance (CFG) above 0 needs more than 16 GB.** CFG runs the prompt and negative prompt together, doubling the denoise. Z-Image Turbo is distilled to run CFG-free - at Guidance 0, 1024² fits in ~11.5 GB.
 
 </details>
@@ -260,9 +283,16 @@ Stopping a run flushes a checkpoint before the process exits, so Resume continue
 
 A dataset's trigger word is prepended to every caption during training, so the model sees captions in the form `mytoken, a photo of ...`. Put the same token at the front of your prompt to pull the LoRA in. It is worth matching the phrasing of your captions too: if they all say "an oil painting of", a prompt written the same way will hit the trained style far more reliably than the trigger word alone.
 
-### Base model modes
+### Architecture and base model modes
 
-Z-Image Turbo is step-distilled, and training directly on a distilled model breaks the distillation down (turbo drift). There are two ways around it:
+The Trainer's Adjust panel picks the **architecture** first (Z-Image or Krea 2), then a base within it. Training directly on a step-distilled checkpoint breaks the distillation down (turbo drift), so each architecture offers a way around that.
+
+**Krea 2** avoids the problem outright, which is why it is the recommended path:
+
+- **Krea 2 RAW** trains on the undistilled base. Nothing to fuse, nothing to drift. Put `krea2_raw_bf16.safetensors` in `models/diffusion_models/`, train, then generate with the **Krea 2 Turbo** node - the LoRA carries over unchanged.
+- **Krea 2 Turbo + training adapter** exists for people who only hold Turbo. Put [ostris/krea2_turbo_training_adapter](https://huggingface.co/ostris/krea2_turbo_training_adapter) in `models/loras/`, or point `INLINE_KREA2_TRAIN_ADAPTER` at it.
+
+**Z-Image** is distilled either way:
 
 - **Turbo + training adapter** fuses a de-distillation adapter into the base for the duration of training and drops it when the LoRA is saved, which preserves the 8-step speed. Put [ostris/zimage_turbo_training_adapter](https://huggingface.co/ostris/zimage_turbo_training_adapter) in `models/loras/`; any filename containing `adapter` is detected automatically, or point `INLINE_ZIMAGE_TRAIN_ADAPTER` at a specific file. Keep runs short, since the adapter slows the breakdown rather than preventing it.
 - **De-Turbo** trains without an adapter and needs no extra download.
@@ -278,16 +308,47 @@ cd core
 ./webui.sh --install --extra runtime --extra training
 ```
 
-Weights are bring-your-own, the same as generation: nothing is downloaded behind your back. Training reuses the Z-Image files you already have in `models/diffusion_models/`, `models/vae/`, and `models/text_encoders/`. The captioner is the one exception, fetched once into the Hugging Face cache the first time you press Auto-caption.
+Weights are bring-your-own, the same as generation: nothing is downloaded behind your back. Training reuses the files you already have in `models/diffusion_models/`, `models/vae/`, and `models/text_encoders/` for whichever architecture you pick. The captioner is the one exception, fetched once into the Hugging Face cache the first time you press Auto-caption.
+
+The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader node straight away, so you can wire it into a generate node and try it without leaving the app.
 
 ### Hardware
 
-Training needs a real GPU, and the resolution you train at drives peak VRAM far more than rank or batch size does. Two configurations have been run end to end:
+Training needs a real GPU, and the resolution you train at drives peak VRAM far more than rank or batch size does. These configurations have been run end to end:
 
-| GPU             | Resolution | Notes                                                                |
-| --------------- | ---------- | -------------------------------------------------------------------- |
-| 16GB (Tesla T4) | 512px      | Peaks around 13GB. 768 and 1024 both run out of memory on this card. |
-| 24GB (L4)       | 1024px     | Run with the Turbo training adapter fused in.                        |
+| GPU             | Model   | Resolution | Notes                                                                |
+| --------------- | ------- | ---------- | -------------------------------------------------------------------- |
+| 16GB (Tesla T4) | Z-Image | 512px      | Peaks around 13GB. 768 and 1024 both run out of memory on this card. |
+| 24GB (L4)       | Z-Image | 1024px     | Run with the Turbo training adapter fused in.                        |
+| 48GB (L40S)     | Krea 2  | 512 + 1024 | See the measured table below; 1024 needs the 4-bit base.             |
+
+#### Measured peaks
+
+Every combination below was run for 12 steps at rank 16, batch 1, gradient checkpointing on, and the number is `torch.cuda.max_memory_allocated` on an L40S. A card needs headroom on top of these for its CUDA context and allocator slack, so treat them as a floor rather than a target.
+
+| Model                                | 512px      | 1024px                                  |
+| ------------------------------------ | ---------- | --------------------------------------- |
+| Z-Image (either mode)                | 13.1GB     | 14.9GB                                  |
+| Krea 2 (either mode), bf16 base      | 30.4GB     | 46.5GB - **out of memory even on 48GB** |
+| Krea 2 (either mode), **4-bit base** | **11.7GB** | **27.8GB**                              |
+
+A training adapter costs nothing extra: it is fused into the base before training starts, so Turbo-plus-adapter and the undistilled base peak identically.
+
+What that means in practice:
+
+- **Z-Image trains anywhere**, at either resolution.
+- **Krea 2 at 512 fits a 16GB card** with the 4-bit base, which is the configuration to reach for.
+- **Krea 2 at 1024 needs about 32GB.** It is not reachable on 16GB by tuning: activations scale linearly with image tokens (4x the tokens, 4.4x the memory), attention is already memory-efficient, and gradient checkpointing is on. At 1024 you are simply paying for 4,096 image tokens through a 12.9B model. Train at 512 instead - a LoRA trained at 512 applies at any generation resolution.
+
+### Base precision
+
+Krea 2's base is 26GB at bf16, which is what makes it expensive to fine-tune. The Trainer's **Base precision** setting freezes that base at 4-bit (NF4) while the LoRA itself stays full precision - the QLoRA arrangement - so only the frozen base loses fidelity:
+
+- **Auto** (default) sizes the base _plus its activations at your chosen resolution_ against your GPU and picks for you. Weights alone are not enough to decide: a 48GB card holds Krea 2's 26GB base comfortably and then runs out at 1024.
+- **Full precision (bf16)** forces the unquantized base.
+- **4-bit (NF4)** forces the quantized base.
+
+Z-Image has no 4-bit path and does not need one, so the setting only appears for Krea 2.
 
 To keep the peak down, the VAE and text encoder are loaded first, used to cache latents and captions, then freed before the transformer loads, so the peak is the transformer on its own rather than all three resident at once. If you do hit an out-of-memory error, lower the training resolution before changing anything else.
 
@@ -303,7 +364,7 @@ Only for **local** generation. The built-in Inline Core engine renders on the GP
 
 ### What models can I run?
 
-See [Two ways to generate](#two-ways-to-generate): local Z-Image on your own GPU, or hosted fal models. Adding a new local model is a Core change (a model runner), no UI release.
+See [Two ways to generate](#two-ways-to-generate): local Z-Image or [Krea 2](#krea-2) on your own GPU, or hosted fal models. Adding a new local model is a Core change (a model runner), no UI release.
 
 ## Contributing
 
@@ -315,7 +376,9 @@ Want to help by using it for real? Try the [creator task](task.md): build a shor
 
 Inline Core's multi-GPU denoise builds on [**xDiT**](https://github.com/xdit-project/xDiT)'s PipeFusion and Ulysses parallelism.
 
-The LoRA trainer's approach to training on a step-distilled model follows [**ai-toolkit**](https://github.com/ostris/ai-toolkit) by ostris, and Turbo mode uses his [Z-Image Turbo training adapter](https://huggingface.co/ostris/zimage_turbo_training_adapter).
+The LoRA trainer's approach to training on a step-distilled model follows [**ai-toolkit**](https://github.com/ostris/ai-toolkit) by ostris, and the Turbo modes use his training adapters for [Z-Image](https://huggingface.co/ostris/zimage_turbo_training_adapter) and [Krea 2](https://huggingface.co/ostris/krea2_turbo_training_adapter).
+
+Krea 2 support follows the reference implementations in [**diffusers**](https://github.com/huggingface/diffusers) (`Krea2Pipeline` and the Krea 2 DreamBooth LoRA example). Krea 2 is released by [Krea AI](https://www.krea.ai/) under the [Krea AI Community License](https://www.krea.ai/krea-2-licensing); the weights are the user's to obtain and use under that license.
 
 ## Help shape Inline Studio
 
