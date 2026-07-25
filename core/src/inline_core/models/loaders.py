@@ -279,13 +279,13 @@ def _quant_config(quant: Quantization, *, framework: str) -> Any | None:
 
 def _quantize_in_place(model: Any, quant: Quantization) -> None:
     """Apply torchao weight-only quantization to an already-built model, in place. Used for the
-    diffusion transformer, whose ``from_single_file`` loader silently ignores a ``quantization_config``
-    (so the config-based path leaves it full-size). torchao's ``quantize_`` swaps each ``nn.Linear``
-    weight for an int8 tensor subclass on whatever device the module already sits on.
+    diffusion transformer, whose ``from_single_file`` loader silently ignores a
+    ``quantization_config`` (so the config-based path leaves it full-size). torchao's ``quantize_``
+    swaps each ``nn.Linear`` weight for an int8 tensor subclass on the device it already sits on.
 
-    Best-effort: a missing/incompatible torchao is logged and left full precision rather than crashing
-    the load - the fit estimate that chose int8 will then be optimistic, but that surfaces as a normal
-    OOM node error, not a hard import failure. Only INT8 is handled here; NF4 stays config-driven."""
+    Best-effort: a missing/incompatible torchao is logged and left full precision rather than
+    crashing the load - the fit estimate that chose int8 is then optimistic, but that surfaces as a
+    normal OOM node error, not a hard import failure. Only INT8 here; NF4 stays config-driven."""
     if quant is not Quantization.INT8:
         return
     try:
