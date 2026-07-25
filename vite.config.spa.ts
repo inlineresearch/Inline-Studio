@@ -35,6 +35,7 @@ export default defineConfig({
       '/rpc': CORE,
       '/upload': CORE,
       '/media': CORE,
+      '/download': CORE,
       '/v1': CORE,
       '/studio': CORE,
       '/events': { target: CORE_WS, ws: true },

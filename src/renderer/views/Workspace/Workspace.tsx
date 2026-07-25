@@ -110,20 +110,13 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
       </header>
 
       <main className="flex min-h-0 flex-1">
-        {activeTab === 'studio' ? (
-          <>
-            <div className="relative min-h-0 flex-1">
-              <MoodboardPanel />
-            </div>
-            {settingsOpen && (
-              <div className="min-h-0 w-80 shrink-0">
-                <SettingsPanel onClose={() => setSettingsOpen(false)} />
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="min-h-0 flex-1">
-            <TrainerPanel />
+        <div className="relative min-h-0 flex-1">
+          {activeTab === 'studio' ? <MoodboardPanel /> : <TrainerPanel />}
+        </div>
+        {/* App settings are global, so the drawer is shared by every tab, not just Studio. */}
+        {settingsOpen && (
+          <div className="min-h-0 w-80 shrink-0">
+            <SettingsPanel onClose={() => setSettingsOpen(false)} />
           </div>
         )}
       </main>

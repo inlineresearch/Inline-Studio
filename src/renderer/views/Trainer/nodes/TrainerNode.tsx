@@ -11,10 +11,26 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { TrainingRun } from '@shared/types'
 import { useTrainingStore } from '../../../store/trainingStore'
 import { useTrainerBoardStore } from '../../../store/trainerBoardStore'
+import { useCoreNodesStore } from '../../../store/coreNodesStore'
+import { activeDownload, useModelRequirementsStore } from '../../../store/modelRequirementsStore'
 import { NodeFrame } from '../../Moodboard/nodes/NodeFrame'
-import { AdjustIcon, NodeBadge, NodeBadgeRow, WandIcon } from '../../Moodboard/nodes/NodeBadge'
+import {
+  AdjustIcon,
+  AlertIcon,
+  NodeBadge,
+  NodeBadgeRow,
+  WandIcon,
+} from '../../Moodboard/nodes/NodeBadge'
 import { NodeRunToolbar } from '../../Moodboard/nodes/NodeRunToolbar'
 import { DATASET_HANDLE, RUN_HANDLE, wiredDatasetId } from './handles'
+
+/** The training arch + base maps to the generation node type whose weights it trains on, so the
+ * Trainer node can reuse that node's requirements check + download flow. */
+function requirementType(arch: string, baseMode: string): string {
+  if (arch === 'krea2')
+    return baseMode === 'turbo_adapter' ? 'krea/krea-2-turbo' : 'krea/krea-2-raw'
+  return 'alibaba/z-image-turbo'
+}
 
 const DEFAULT_HP = {
   baseMode: 'deturbo' as const,
@@ -81,6 +97,22 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
   )
   const control = controlFor(run)
   const hp = { ...DEFAULT_HP, ...(item?.data.hyperparams ?? {}) }
+
+  // Same "missing models" hint the Generate / Core nodes show: resolve the base this run needs to
+  // its generation node type, check its requirements, and blink a chip that opens the download popup.
+  const arch = (item?.data.hyperparams as { arch?: string } | undefined)?.arch ?? 'z-image'
+  const reqType = requirementType(arch, hp.baseMode)
+  const registryVersion = useCoreNodesStore((s) => s.registryVersion)
+  const loadReqs = useModelRequirementsStore((s) => s.load)
+  const openReqs = useModelRequirementsStore((s) => s.open)
+  const reqs = useModelRequirementsStore((s) => s.byType[reqType])
+  const downloadsForType = useModelRequirementsStore((s) => s.downloads[reqType])
+  useEffect(() => {
+    void loadReqs(reqType)
+  }, [reqType, registryVersion, loadReqs])
+  const modelsMissing = reqs ? !reqs.allPresent : false
+  const download = downloadsForType ? activeDownload(downloadsForType, reqs) : null
+
   const fraction = progress?.fraction ?? run?.progressFraction ?? 0
   const step = progress?.step ?? run?.step ?? 0
   const totalSteps = progress?.totalSteps || run?.totalSteps || hp.steps
@@ -118,6 +150,20 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
         <NodeBadge tone="info" accent={busy ? 'text-emerald-400' : undefined}>
           rank {hp.rank}
         </NodeBadge>
+        {(modelsMissing || download) && (
+          <button
+            onClick={() => openReqs(reqType)}
+            title={download ? 'Downloading base model…' : 'Base model missing - click to download'}
+            className={`nodrag flex h-6 items-center gap-1 rounded-full border px-2 text-[10px] font-medium shadow-sm backdrop-blur ${
+              download
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                : 'animate-pulse border-amber-500/40 bg-amber-500/10 text-amber-300 hover:animate-none hover:bg-amber-500/20'
+            }`}
+          >
+            <AlertIcon className="h-3.5 w-3.5" />
+            {download ? `${Math.round(download.fraction * 100)}%` : 'Base model'}
+          </button>
+        )}
       </NodeBadgeRow>
       <NodeFrame id={id} selected={!!selected} padded={false} subtleSelect minWidth={260}>
         <div className="flex h-full flex-col">

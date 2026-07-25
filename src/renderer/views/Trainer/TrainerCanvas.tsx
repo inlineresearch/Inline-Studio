@@ -19,8 +19,11 @@ import {
   type OnConnect,
 } from '@xyflow/react'
 import type { MoodboardItem } from '@shared/types'
+import { studio } from '@/lib/studio'
 import { useTrainerBoardStore, type TrainerNodeKind } from '../../store/trainerBoardStore'
+import { useModelRequirementsStore } from '../../store/modelRequirementsStore'
 import { BoardActionsContext } from '../Moodboard/nodes/boardActions'
+import { ModelRequirementsModal } from '../Moodboard/nodes/ModelRequirementsModal'
 import { ResourceNode } from '../Moodboard/nodes/ResourceNode'
 import {
   CaptionGlyph,
@@ -129,6 +132,18 @@ function Canvas(): React.JSX.Element {
     void load()
   }, [load])
 
+  // Model-download progress for the Trainer node's "missing base model" popup. Wired here (not only
+  // in MoodboardPanel) because that panel is unmounted while the Trainer tab is showing.
+  useEffect(() => {
+    const req = useModelRequirementsStore.getState()
+    const unsubs = [
+      studio().events.onModelDownloadProgress((e) => req.onProgress(e)),
+      studio().events.onModelDownloadDone((e) => req.onDone(e)),
+      studio().events.onModelDownloadError((e) => req.onError(e)),
+    ]
+    return () => unsubs.forEach((u) => u())
+  }, [])
+
   /** Drop a new node into the visible area, laid out on a grid so repeated adds never land on top
    * of each other (nodes are ~300px wide, so the step has to clear a whole card). */
   const addAtViewport = (kind: TrainerNodeKind): void => {
@@ -210,6 +225,7 @@ function Canvas(): React.JSX.Element {
           <Background variant={BackgroundVariant.Dots} gap={16} size={1} className="opacity-40" />
         </ReactFlow>
       </BoardActionsContext.Provider>
+      <ModelRequirementsModal />
     </div>
   )
 }

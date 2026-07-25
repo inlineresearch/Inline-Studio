@@ -6,9 +6,8 @@
  * the LoRA loader node's dropdown already covers that.)
  */
 import type { TrainingRun } from '@shared/types'
-import { studio } from '@/lib/studio'
 import { useTrainingStore } from '../../store/trainingStore'
-import { PlayIcon } from '../../components/icons'
+import { DownloadIcon, PlayIcon } from '../../components/icons'
 
 function when(ms: number): string {
   const d = new Date(ms)
@@ -31,12 +30,13 @@ function DoneRow({ run }: { run: TrainingRun }): React.JSX.Element {
         rank {hp.rank} · {run.totalSteps} steps · {hp.resolution}px · {when(run.updatedAt)}
       </span>
       <div className="flex gap-2 pt-0.5">
-        <button
-          onClick={() => void studio().clipboard.writeText(run.outputLoraPath ?? '')}
-          className="rounded border border-border px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-panel"
+        <a
+          href={`${window.location.origin}/download/lora/${run.id}`}
+          download={loraName(run)}
+          className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[10px] text-emerald-300 hover:bg-panel"
         >
-          Copy path
-        </button>
+          <DownloadIcon className="h-3 w-3" /> Download .safetensors
+        </a>
       </div>
     </div>
   )

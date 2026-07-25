@@ -11,6 +11,7 @@ import type { MoodboardConnector, MoodboardItem } from '@shared/types'
 import type { MoodboardItemPatch } from '@shared/ipc'
 import { studio } from '@/lib/studio'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { DATASET_HANDLE, RUN_HANDLE } from '../views/Trainer/nodes/handles'
 
 const SURFACE = 'trainer' as const
 
@@ -22,7 +23,11 @@ interface TrainerBoardState {
   connectors: MoodboardConnector[]
   loading: boolean
   error: string | null
+  /** Guards the one-time default-graph seed so a re-load (or StrictMode double-mount) can't re-seed. */
+  seeded: boolean
   load: () => Promise<void>
+  /** Create the default Load Dataset -> Train LoRA -> Graph pipeline, wired up. */
+  seedDefaultGraph: () => Promise<void>
   addNode: (kind: TrainerNodeKind, x: number, y: number) => Promise<MoodboardItem | null>
   updateItem: (id: string, patch: MoodboardItemPatch) => Promise<void>
   /** Merge into an item's `data` (dataset/run/hyperparam selections live there). */
@@ -62,6 +67,7 @@ export const useTrainerBoardStore = create<TrainerBoardState>((set, get) => ({
   connectors: [],
   loading: false,
   error: null,
+  seeded: false,
 
   load: async () => {
     set({ loading: true })
@@ -69,9 +75,25 @@ export const useTrainerBoardStore = create<TrainerBoardState>((set, get) => ({
       const res = await studio().moodboard.list(SURFACE)
       if (!res.ok) return set({ error: res.error, loading: false })
       set({ items: res.value.items, connectors: res.value.connectors, loading: false })
+      // A new/empty project gets a ready-to-use pipeline: Load Dataset -> Train LoRA -> Graph.
+      // Set the guard before awaiting so a concurrent load can't seed a second time.
+      if (!get().seeded && res.value.items.length === 0 && res.value.connectors.length === 0) {
+        set({ seeded: true })
+        await get().seedDefaultGraph()
+      }
     } catch (e) {
       set({ error: ipcErrorMessage(e), loading: false })
     }
+  },
+
+  seedDefaultGraph: async () => {
+    const dataset = await addFor('trainDataset', 60, 150)
+    const trainer = await addFor('trainer', 440, 150)
+    const graph = await addFor('lossGraph', 820, 150)
+    if (!dataset.ok || !trainer.ok || !graph.ok) return
+    set((s) => ({ items: [...s.items, dataset.value, trainer.value, graph.value] }))
+    await get().connect(dataset.value.id, trainer.value.id, DATASET_HANDLE, DATASET_HANDLE)
+    await get().connect(trainer.value.id, graph.value.id, RUN_HANDLE, RUN_HANDLE)
   },
 
   addNode: async (kind, x, y) => {
