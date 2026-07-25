@@ -28,6 +28,131 @@ It runs as a **single process on one port**: the Inline Core engine (Python) ser
 
 **Who it's for:** AI filmmakers, motion artists, and generative creators who want to make AI short films and longer cuts without losing every good version along the way.
 
+## Get Started
+
+The built web UI ships as a Python package, so all you need is [Python 3.11+](https://python.org), no Node. **`--install --extra all` is the single command that installs everything** - the engine, the local model runtime, the LoRA trainer, and the UI. On an NVIDIA machine it detects the GPU and pulls the CUDA build of PyTorch for you.
+
+**macOS / Linux:**
+
+```bash
+git clone https://github.com/inlineresearch/Inline-Studio.git
+cd Inline-Studio/core
+./webui.sh --install --extra all   # one command: installs everything
+./webui.sh                         # then run, on http://127.0.0.1:8848
+```
+
+**Windows** (use `webui.bat` - `webui.sh` is a bash script and won't run in PowerShell; you can also double-click it):
+
+```powershell
+git clone https://github.com/inlineresearch/Inline-Studio.git
+cd Inline-Studio\core
+.\webui.bat --install --extra all
+.\webui.bat
+```
+
+That's it: `--install` sets up the environment and installs everything once, then `webui.sh` / `webui.bat` runs the app on one port. See **[Command-line options](#command-line-options)** for every flag (`--listen`, `--port`, `--lowvram`, `--multi-gpu`, …).
+
+Prefer pip over the launcher? `pip install -r requirements.txt` (from the repo root) installs the whole app - engine, UI, model runtime, and trainer - from PyPI; then run `inline-studio`.
+
+### Hardware support
+
+<details>
+<summary><b>GPU, CPU, Apple Silicon, and ROCm setup</b></summary>
+
+Honest status - what's actually been run, versus what has a code path but no one has verified:
+
+| Hardware                | Status                                                                                              | Extra steps                                                                                                                                                                                                                                                                                                      |
+| ----------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **NVIDIA, Linux**       | **Tested** - Z-Image Turbo 1024² on a T4 (16 GB); Krea 2 1024² and LoRA training on an L40S (48 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                                                                                                   |
+| **NVIDIA, Windows**     | Supported, needs one step                                                                           | Run `.\webui.bat --install` (the Windows launcher; it detects the GPU). PyPI's default `torch` is **CPU-only on Windows**, so `--install` pulls the CUDA build for you, or install torch from `https://download.pytorch.org/whl/cu124`. Core warns at startup if it finds an NVIDIA GPU behind a CPU-only torch. |
+| **Apple Silicon (MPS)** | Code path exists, **untested**                                                                      | None. int8 quantisation doesn't apply on MPS, so a model too big for unified memory won't fit.                                                                                                                                                                                                                   |
+| **AMD (ROCm), Linux**   | **Untested** - reports welcome                                                                      | Needs a ROCm build of PyTorch - see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                                                                                                   |
+| **CPU only**            | Works, very slow                                                                                    | `./webui.sh --cpu` (Windows: `.\webui.bat --cpu`)                                                                                                                                                                                                                                                                |
+
+#### AMD (ROCm) setup
+
+Nobody has verified Inline Studio on AMD yet, so treat this as a starting point rather than a supported path. Install everything normally **first**, then replace PyTorch with the ROCm build - doing it in this order means nothing can quietly overwrite your ROCm torch afterwards:
+
+```bash
+cd core
+uv venv
+uv pip install -e ".[runtime,server]"        # engine + runtime (pulls the default PyPI torch)
+
+# Replace torch with the ROCm build. Pick the index that matches YOUR ROCm version -
+# check https://pytorch.org/get-started/locally/ (rocm6.2 shown here as an example).
+uv pip install --force-reinstall --index-url https://download.pytorch.org/whl/rocm6.2 torch
+
+# Verify you actually got a ROCm build (hip should print a version, not None):
+uv run python -c "import torch; print(torch.cuda.is_available(), torch.version.hip)"
+```
+
+Then run `./webui.sh` as usual.
+
+Two gotchas:
+
+- **Don't run `uv sync` afterwards** - it re-resolves the environment against the lockfile and will pull the PyPI torch back over your ROCm build. Use `uv pip install` for follow-up installs.
+- ROCm presents itself through `torch.cuda`, so the engine will treat it as a CUDA device and may largely work. But the dtype heuristics key off **NVIDIA** compute capability (`< 8.0` → fp16), which is meaningless on RDNA/CDNA, and the int8 (torchao) path is unverified on ROCm. If it works - or doesn't - [open an issue](https://github.com/inlineresearch/Inline-Studio/issues); that's the fastest way to get AMD properly supported.
+
+**Known limits, so you can judge before installing:**
+
+- **Local model coverage is Z-Image Turbo and Krea 2** today. Flux, SDXL and others are planned; hosted models via [API Nodes](#api-nodes) need no GPU at all.
+- **Krea 2 is a 12.9B model and needs a big card to generate.** The bf16 checkpoint is 26 GB on disk, and generation peaks around 36 GB at 1024 with guidance on, so a 40 GB+ GPU is the practical floor for inference. **Training is cheaper than generating**, because the 4-bit base path puts Krea 2 LoRA training at 512 inside 12 GB - see [Benchmark results](#benchmark-results). Z-Image remains the low-VRAM path for generation.
+- **1024² with Guidance (CFG) above 0 needs more than 16 GB.** CFG runs the prompt and negative prompt together, doubling the denoise. Z-Image Turbo is distilled to run CFG-free - at Guidance 0, 1024² fits in ~11.5 GB.
+
+</details>
+
+### From source (for UI development)
+
+<details>
+<summary><b>Build the UI and run the engine locally</b></summary>
+
+To hack on the web UI you need [Node.js](https://nodejs.org) 20.11+ as well, and you serve a local SPA build:
+
+```bash
+git clone https://github.com/inlineresearch/Inline-Studio.git && cd Inline-Studio
+
+# 1. Build the web UI
+npm install
+npm run build:spa                        # -> dist-web/
+
+# 2. Set up + run the engine, serving your local build
+cd core
+uv sync --extra server --extra runtime   # server + the local model runtime (torch/diffusers)
+uv run python main.py --front-end-root ../dist-web
+```
+
+Then open **http://127.0.0.1:8848**. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings for hosted models, and set up local generation as in [Two ways to generate](#two-ways-to-generate). The canvas and planning work without any models.
+
+**Hot-reload:** run the engine as above, then in another terminal `npm run dev:web` (Vite serves the UI with HMR and proxies API calls to Core).
+
+</details>
+
+### Command-line options
+
+The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` environment knobs: `webui.sh` on macOS/Linux, `webui.bat` on Windows. `core/main.py` takes the same flags when you run the engine directly. `./webui.sh --help` (or `.\webui.bat --help`) lists them all.
+
+<details>
+<summary><strong>Show all command-line flags</strong></summary>
+
+| `webui.sh` / `main.py` flag        | Env var                  | What it does                                                                                                                                                              |
+| ---------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--listen`                         | `INLINE_HOST=0.0.0.0`    | Bind all interfaces so other machines can reach it                                                                                                                        |
+| `--host ADDR`                      | `INLINE_HOST`            | Bind a specific address (default `127.0.0.1`)                                                                                                                             |
+| `--port N`                         | `INLINE_PORT`            | Port to serve on (default `8848`)                                                                                                                                         |
+| `--models-dir PATH`                | `INLINE_MODELS_DIR`      | Where model weights are scanned from (default `./models`)                                                                                                                 |
+| `--data-dir PATH`                  | `INLINE_DATA_DIR`        | Where runs + takes are written (default `./.inline`)                                                                                                                      |
+| `--lowvram`                        | `INLINE_PROFILE=lowvram` | Tight-VRAM profile (VAE tiling/slicing, attention slicing)                                                                                                                |
+| `--cpu`                            | `INLINE_PROFILE=cpu`     | Force CPU generation                                                                                                                                                      |
+| `--profile NAME`                   | `INLINE_PROFILE`         | Set the profile explicitly: `gpu-max` \| `lowvram` \| `cpu`                                                                                                               |
+| `--vram-budget GB`                 | `INLINE_VRAM_BUDGET_GB`  | Treat the GPU as having GB of usable VRAM                                                                                                                                 |
+| `--multi-gpu [SPEC]`               | `INLINE_PARALLEL`        | Split one image's denoise across GPUs (e.g. `pipefusion=2`); auto with 2+ GPUs                                                                                            |
+| `--front-end-root DIR` _(main.py)_ | `INLINE_FRONTEND_ROOT`   | Serve a local SPA build instead of the installed UI package (dev)                                                                                                         |
+| `--rebuild` _(webui.sh)_           | n/a                      | Force a fresh SPA build (`npm run build:spa`) from source and serve it on the one port; use after UI changes when not running `--dev`. Needs the repo checkout + Node/npm |
+
+</details>
+
+`webui.sh` also has `--install` / `--extra NAME` to set up the venv. New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
+
 ## Features
 
 - **Free-form node canvas** - lay out your whole AI film like a mood board that can actually generate. Marquee-select, copy/paste, undo/redo, layers, and text notes all work the way your hands expect.
@@ -134,134 +259,6 @@ However you render, the frame keeps its full, non-destructive take history, so y
 
 ![Inline Studio dashboard with recent AI film projects](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/screenshot-dashboard.png)
 
-## Install & run
-
-Inline Studio runs as **one process**: the Inline Core engine serves the web UI _and_ does the generation, on a single port.
-
-### The easy way (no Node build)
-
-The built web UI ships as a Python package, so you only need [Python 3.11+](https://python.org), no Node. With [uv](https://docs.astral.sh/uv/) (or plain `pip`):
-
-**macOS / Linux:**
-
-```bash
-git clone https://github.com/inlineresearch/Inline-Studio.git && cd Inline-Studio
-cd core
-./webui.sh --install --extra runtime --extra training   # venv + engine, model runtime, LoRA trainer, UI
-./webui.sh                                               # serve the UI + API on http://127.0.0.1:8848
-```
-
-**Windows** (use `webui.bat`, the Windows twin - `webui.sh` is a bash script and won't run in PowerShell):
-
-```powershell
-git clone https://github.com/inlineresearch/Inline-Studio.git; cd Inline-Studio\core
-.\webui.bat --install --extra runtime --extra training   # venv + engine, model runtime, LoRA trainer, UI
-.\webui.bat                                               # serve the UI + API on http://127.0.0.1:8848
-```
-
-`webui.sh` (macOS/Linux) and `webui.bat` (Windows) are the one command you need: they install dependencies, make sure the web UI is present (the prebuilt `inline-studio-frontend` package, or a local build), then serve everything. You can also double-click `webui.bat` on Windows. See **[Command-line options](#command-line-options)** for every flag (`--listen`, `--port`, `--lowvram`, `--multi-gpu`, …).
-
-Prefer pip? `pip install -r requirements.txt` (from the repo root) pulls the engine, the prebuilt UI, and the local model runtime from PyPI; then run `inline-studio`.
-
-### Hardware support
-
-<details>
-<summary><b>GPU, CPU, Apple Silicon, and ROCm setup</b></summary>
-
-Honest status - what's actually been run, versus what has a code path but no one has verified:
-
-| Hardware                | Status                                                                                              | Extra steps                                                                                                                                                                                                                                                                                                      |
-| ----------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **NVIDIA, Linux**       | **Tested** - Z-Image Turbo 1024² on a T4 (16 GB); Krea 2 1024² and LoRA training on an L40S (48 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                                                                                                   |
-| **NVIDIA, Windows**     | Supported, needs one step                                                                           | Run `.\webui.bat --install` (the Windows launcher; it detects the GPU). PyPI's default `torch` is **CPU-only on Windows**, so `--install` pulls the CUDA build for you, or install torch from `https://download.pytorch.org/whl/cu124`. Core warns at startup if it finds an NVIDIA GPU behind a CPU-only torch. |
-| **Apple Silicon (MPS)** | Code path exists, **untested**                                                                      | None. int8 quantisation doesn't apply on MPS, so a model too big for unified memory won't fit.                                                                                                                                                                                                                   |
-| **AMD (ROCm), Linux**   | **Untested** - reports welcome                                                                      | Needs a ROCm build of PyTorch - see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                                                                                                   |
-| **CPU only**            | Works, very slow                                                                                    | `./webui.sh --cpu` (Windows: `.\webui.bat --cpu`)                                                                                                                                                                                                                                                                |
-
-#### AMD (ROCm) setup
-
-Nobody has verified Inline Studio on AMD yet, so treat this as a starting point rather than a supported path. Install everything normally **first**, then replace PyTorch with the ROCm build - doing it in this order means nothing can quietly overwrite your ROCm torch afterwards:
-
-```bash
-cd core
-uv venv
-uv pip install -e ".[runtime,server]"        # engine + runtime (pulls the default PyPI torch)
-
-# Replace torch with the ROCm build. Pick the index that matches YOUR ROCm version -
-# check https://pytorch.org/get-started/locally/ (rocm6.2 shown here as an example).
-uv pip install --force-reinstall --index-url https://download.pytorch.org/whl/rocm6.2 torch
-
-# Verify you actually got a ROCm build (hip should print a version, not None):
-uv run python -c "import torch; print(torch.cuda.is_available(), torch.version.hip)"
-```
-
-Then run `./webui.sh` as usual.
-
-Two gotchas:
-
-- **Don't run `uv sync` afterwards** - it re-resolves the environment against the lockfile and will pull the PyPI torch back over your ROCm build. Use `uv pip install` for follow-up installs.
-- ROCm presents itself through `torch.cuda`, so the engine will treat it as a CUDA device and may largely work. But the dtype heuristics key off **NVIDIA** compute capability (`< 8.0` → fp16), which is meaningless on RDNA/CDNA, and the int8 (torchao) path is unverified on ROCm. If it works - or doesn't - [open an issue](https://github.com/inlineresearch/Inline-Studio/issues); that's the fastest way to get AMD properly supported.
-
-**Known limits, so you can judge before installing:**
-
-- **Local model coverage is Z-Image Turbo and Krea 2** today. Flux, SDXL and others are planned; hosted models via [API Nodes](#api-nodes) need no GPU at all.
-- **Krea 2 is a 12.9B model and needs a big card to generate.** The bf16 checkpoint is 26 GB on disk, and generation peaks around 36 GB at 1024 with guidance on, so a 40 GB+ GPU is the practical floor for inference. **Training is cheaper than generating**, because the 4-bit base path puts Krea 2 LoRA training at 512 inside 12 GB - see [Hardware](#hardware). Z-Image remains the low-VRAM path for generation.
-- **1024² with Guidance (CFG) above 0 needs more than 16 GB.** CFG runs the prompt and negative prompt together, doubling the denoise. Z-Image Turbo is distilled to run CFG-free - at Guidance 0, 1024² fits in ~11.5 GB.
-
-</details>
-
-### From source (for UI development)
-
-<details>
-<summary><b>Build the UI and run the engine locally</b></summary>
-
-To hack on the web UI you need [Node.js](https://nodejs.org) 20.11+ as well, and you serve a local SPA build:
-
-```bash
-git clone https://github.com/inlineresearch/Inline-Studio.git && cd Inline-Studio
-
-# 1. Build the web UI
-npm install
-npm run build:spa                        # -> dist-web/
-
-# 2. Set up + run the engine, serving your local build
-cd core
-uv sync --extra server --extra runtime   # server + the local model runtime (torch/diffusers)
-uv run python main.py --front-end-root ../dist-web
-```
-
-Then open **http://127.0.0.1:8848**. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings for hosted models, and set up local generation as in [Three ways to generate](#three-ways-to-generate). The canvas and planning work without any models.
-
-**Hot-reload:** run the engine as above, then in another terminal `npm run dev:web` (Vite serves the UI with HMR and proxies API calls to Core).
-
-</details>
-
-### Command-line options
-
-The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` environment knobs: `webui.sh` on macOS/Linux, `webui.bat` on Windows. `core/main.py` takes the same flags when you run the engine directly. `./webui.sh --help` (or `.\webui.bat --help`) lists them all.
-
-<details>
-<summary><strong>Show all command-line flags</strong></summary>
-
-| `webui.sh` / `main.py` flag        | Env var                  | What it does                                                                                                                                                              |
-| ---------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--listen`                         | `INLINE_HOST=0.0.0.0`    | Bind all interfaces so other machines can reach it                                                                                                                        |
-| `--host ADDR`                      | `INLINE_HOST`            | Bind a specific address (default `127.0.0.1`)                                                                                                                             |
-| `--port N`                         | `INLINE_PORT`            | Port to serve on (default `8848`)                                                                                                                                         |
-| `--models-dir PATH`                | `INLINE_MODELS_DIR`      | Where model weights are scanned from (default `./models`)                                                                                                                 |
-| `--data-dir PATH`                  | `INLINE_DATA_DIR`        | Where runs + takes are written (default `./.inline`)                                                                                                                      |
-| `--lowvram`                        | `INLINE_PROFILE=lowvram` | Tight-VRAM profile (VAE tiling/slicing, attention slicing)                                                                                                                |
-| `--cpu`                            | `INLINE_PROFILE=cpu`     | Force CPU generation                                                                                                                                                      |
-| `--profile NAME`                   | `INLINE_PROFILE`         | Set the profile explicitly: `gpu-max` \| `lowvram` \| `cpu`                                                                                                               |
-| `--vram-budget GB`                 | `INLINE_VRAM_BUDGET_GB`  | Treat the GPU as having GB of usable VRAM                                                                                                                                 |
-| `--multi-gpu [SPEC]`               | `INLINE_PARALLEL`        | Split one image's denoise across GPUs (e.g. `pipefusion=2`); auto with 2+ GPUs                                                                                            |
-| `--front-end-root DIR` _(main.py)_ | `INLINE_FRONTEND_ROOT`   | Serve a local SPA build instead of the installed UI package (dev)                                                                                                         |
-| `--rebuild` _(webui.sh)_           | n/a                      | Force a fresh SPA build (`npm run build:spa`) from source and serve it on the one port; use after UI changes when not running `--dev`. Needs the repo checkout + Node/npm |
-
-</details>
-
-`webui.sh` also has `--install` / `--extra NAME` to set up the venv. New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
-
 ## LoRA training
 
 Train a LoRA on your own images without leaving the app. The **Trainer** tab is a second canvas: wire up the nodes, press Start, and watch it run. When the run finishes, the `.safetensors` lands in `models/loras/`, where the LoRA loader node picks it up automatically, so you can generate with it over in the Studio tab straight away.
@@ -313,11 +310,11 @@ The Trainer's Adjust panel picks the **architecture** first (Z-Image or Krea 2),
 
 ### Install
 
-The trainer's dependencies (PEFT, 8-bit Adam, the captioner) sit behind the `training` extra, so a normal install stays lean:
+If you installed with `--extra all` from [Get Started](#get-started), the trainer is already set up - nothing more to do. To add it to a leaner install, its dependencies (PEFT, 8-bit Adam, the captioner) sit behind the `training` extra:
 
 ```bash
 cd core
-./webui.sh --install --extra runtime --extra training
+./webui.sh --install --extra training   # Windows: .\webui.bat --install --extra training
 ```
 
 Nothing is downloaded behind your back. Training has no downloader of its own: it reuses whatever is already in `models/diffusion_models/`, `models/vae/` and `models/text_encoders/` for the architecture you pick, which is normally what a generate node's model popup fetched for you. If a file is missing, the run stops and names it.

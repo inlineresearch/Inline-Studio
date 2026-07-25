@@ -15,7 +15,8 @@
 #
 # --extra-index-url https://download.pytorch.org/whl/cu124
 #
-# Drop the `runtime` extra if you only want hosted (fal) models and no local GPU generation - that
+# `[all]` is the whole app in one line: engine + local model runtime + LoRA trainer + server. For a
+# hosted-only (fal) setup with no local GPU generation, use `inline-core[server]` instead - that
 # skips the ~2.5GB torch download entirely.
-inline-core[server,runtime]
+inline-core[all]
 inline-studio-frontend
