@@ -4,6 +4,7 @@ name = "inline-core"
 version = "1.2.41"
 description = "The generation engine behind Inline Studio."
 readme = "README.md"
+license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
 # Deliberately torch-free so the engine boots and serves source nodes with no ML stack installed.
 dependencies = [

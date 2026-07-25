@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://discord.gg/cSUS88VdY9
+    about: For usage questions and general chat, come to our Discord. Please keep the issue tracker for bugs and feature requests.

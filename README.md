@@ -5,7 +5,7 @@
 <p align="center">Inline Studio is a free, open-source app for AI filmmakers. Build a whole visual pipeline on a free-form node canvas, from moodboard to final cut, with local diffusion models (the built-in Inline Core engine) and hosted fal models. Train your own LoRAs on the same canvas. Every render is kept as a versioned, non-destructive take.</p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge"></a>
+  <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
   <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.41-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
@@ -38,7 +38,7 @@ It runs as a **single process on one port**: the Inline Core engine (Python) ser
 - **Train your own LoRAs** - the Trainer tab is a second canvas where the dataset, captioning, training run, and loss curve are all nodes. The finished LoRA drops into `models/loras/` and shows up in the LoRA loader node, ready to generate with. See [LoRA training](#lora-training).
 - **API Nodes for hosted models** - run closed models right on the canvas with no GPU. Add a Generate node, pick a model, and bring your own provider key. See [API Nodes](#api-nodes).
 - **Community extensions** - install custom nodes from a GitHub repo in one click, security-reviewed and dependency-isolated. Browse the [registry](https://github.com/inlineresearch/Inline-Registry) or [build your own](https://github.com/inlineresearch/Inline-Studio-Extension-Guide).
-- **Free & open source (MIT)** - one process (Python + a browser); runs on macOS, Windows, and Linux.
+- **Free & open source (GPL-3.0)** - one process (Python + a browser); runs on macOS, Windows, and Linux.
 
 [**Follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
 
@@ -387,7 +387,7 @@ To keep the peak down, the VAE and text encoder are loaded first, used to cache 
 
 ### Is Inline Studio free?
 
-Yes. Inline Studio is free and open source under the [MIT license](LICENSE). There's no paid tier to use the app.
+Yes. Inline Studio is free and open source under the [GPL-3.0 license](LICENSE). There's no paid tier to use the app.
 
 ### Do I need a GPU?
 
@@ -399,7 +399,7 @@ See [Two ways to generate](#two-ways-to-generate): local Z-Image or [Krea 2](#kr
 
 ## Contributing
 
-Inline Studio is early and moving fast, any issues, ideas, and pull requests are all welcome. If you're poking at the code, [CLAUDE.md](CLAUDE.md) is the engineering guide: it explains the architecture, the data model, and the conventions to follow.
+Inline Studio is early and moving fast, any issues, ideas, and pull requests are all welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks to run, and how to open a PR. [CLAUDE.md](CLAUDE.md) is the deeper engineering guide: the architecture, the data model, and the conventions to follow. By taking part you agree to our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 Want to help by using it for real? Try the [creator task](task.md): build a short 20-second AI film in Inline Studio and send us your feedback.
 
@@ -421,4 +421,6 @@ Come say hi on our [Discord](https://discord.gg/cSUS88VdY9) and reach out, we'll
 
 ## License
 
-MIT.
+Copyright (C) 2026 Inline Studio. Licensed under the [GNU General Public License v3.0](LICENSE): you may use, study, share and modify it, and any work you distribute that builds on it must also be GPL-3.0.
+
+The models you run carry their own licenses, which the GPL does not change: Krea 2 is under the [Krea AI Community License](https://www.krea.ai/krea-2-licensing) and Z-Image under Tongyi's terms. You bring your own weights and use them under those.
