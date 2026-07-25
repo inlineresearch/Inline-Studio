@@ -121,7 +121,15 @@ class Training:
 
     # --- auto-caption ---------------------------------------------------------------------------
 
-    async def auto_caption(self, dataset_id: str, overwrite: bool) -> list[dict[str, Any]]:
+    def captioners(self) -> list[dict[str, str]]:
+        """The caption models the UI can offer. Torch-free import (see caption.py)."""
+        from ..training.caption import available_captioners
+
+        return available_captioners()
+
+    async def auto_caption(
+        self, dataset_id: str, overwrite: bool, model: str | None = None
+    ) -> list[dict[str, Any]]:
         """Caption items with the local VLM (a subprocess, so torch never imports server-side)."""
         conn, folder = self._conn(), self._store.folder()
         items = ts.list_items(conn, dataset_id)
@@ -143,7 +151,7 @@ class Training:
         # landed after it finished - no progress. The manifest is small, so writing before reading
         # can't deadlock.
         assert proc.stdin is not None and proc.stdout is not None
-        proc.stdin.write(json.dumps({"items": targets}).encode())
+        proc.stdin.write(json.dumps({"items": targets, "model": model}).encode())
         await proc.stdin.drain()
         proc.stdin.close()
 

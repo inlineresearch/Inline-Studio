@@ -407,6 +407,9 @@ export type TrainingBaseMode = 'turbo_adapter' | 'deturbo' | 'raw'
  */
 export type TrainingBaseQuant = 'auto' | 'none' | 'nf4'
 
+/** Stream saved activations to host RAM so a bf16 base fits a smaller card. */
+export type TrainingOffload = 'auto' | 'on' | 'off'
+
 /**
  * Which Linears the adapter attaches to. `full` adapts the feed-forward and projection layers as
  * well, which is stronger on short style runs; `attention` is the Krea 2 authors' advice for long
@@ -444,6 +447,13 @@ export interface TrainingDatasetItem {
   createdAt: number
 }
 
+/** A local auto-caption model the Trainer can offer. Defined in Core's `training/caption.py`. */
+export interface CaptionerModel {
+  id: string
+  label: string
+  repo: string
+}
+
 /** LoRA training hyperparameters (persisted as JSON on a run). */
 export interface TrainingHyperparams {
   /** Defaults to `z-image` when absent, so runs saved before Krea 2 keep working. */
@@ -451,6 +461,12 @@ export interface TrainingHyperparams {
   baseMode: TrainingBaseMode
   /** Defaults to `auto`. Only Krea 2 has a 4-bit path; Z-Image always trains in bf16. */
   baseQuant?: TrainingBaseQuant
+  /**
+   * Defaults to `auto`. Offloads saved activations to host RAM during the step so a full-precision
+   * base fits a card that could not otherwise hold base + activations. `auto` turns it on only when
+   * the bf16 plan would not fit resident. Trades some speed for the VRAM.
+   */
+  offload?: TrainingOffload
   /** Defaults to `full`. */
   loraScope?: TrainingLoraScope
   /** 0 to 1: how often a step trains on an empty caption, so the LoRA holds without the trigger. */

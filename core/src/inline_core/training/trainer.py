@@ -120,6 +120,19 @@ def _peak_vram_gb() -> float | None:
     return round(torch.cuda.max_memory_allocated() / 1e9, 2)
 
 
+def _activation_offload(enabled: bool) -> Any:
+    """A context that streams saved activations to host RAM (pinned) for the forward, pulling them
+    back on backward. Keeps a full-precision base resident on a card that could not otherwise hold
+    base + activations. A fresh context per step is fine - it just toggles saved-tensor hooks."""
+    import contextlib
+
+    if not enabled:
+        return contextlib.nullcontext()
+    import torch
+
+    return torch.autograd.graph.save_on_cpu(pin_memory=True)
+
+
 def _to_device(item: dict[str, Any], device: Any, dtype: Any) -> dict[str, Any]:
     """A cached item on the training device. The attention mask stays boolean - casting it to the
     compute dtype would turn a mask into weights."""
@@ -169,7 +182,16 @@ def train(manifest: dict[str, Any]) -> str | None:
         manifest["baseMode"],
         resolution,
     )
-    protocol.progress(0, steps, status=f"loading model ({quant.value})")
+    offload = models.resolve_offload(
+        str(hp.get("offload") or "auto"),
+        quant,
+        manifest["modelsDir"],
+        arch.key,
+        manifest["baseMode"],
+        resolution,
+    )
+    plan = quant.value + (" + cpu offload" if offload else "")
+    protocol.progress(0, steps, status=f"loading model ({plan})")
     transformer = models.load_transformer(
         manifest["modelsDir"], arch.key, manifest["baseMode"], str(device), dtype, quant
     )
@@ -211,8 +233,11 @@ def train(manifest: dict[str, Any]) -> str | None:
         target = arch.target(clean, noise)
 
         with accelerator.accumulate(transformer):
-            pred = arch.forward(transformer, noisy, arch.timestep(sigma), item)
-            loss = torch.nn.functional.mse_loss(pred.float(), target.float())
+            # save_on_cpu wraps only the forward: its unpack hooks travel with the saved tensors
+            # into backward and pull them back to the GPU there.
+            with _activation_offload(offload):
+                pred = arch.forward(transformer, noisy, arch.timestep(sigma), item)
+                loss = torch.nn.functional.mse_loss(pred.float(), target.float())
             accelerator.backward(loss)
             optimizer.step()
             optimizer.zero_grad()

@@ -180,17 +180,18 @@ offload machinery, `--vram-budget GB` / `INLINE_VRAM_BUDGET_GB` to cap the assum
 
 ## Run
 
-The easy path is `webui.sh`, which maps friendly flags onto the engine's `INLINE_*` env knobs:
+The easy path is `webui.sh` (macOS/Linux) or `webui.bat` (Windows), which maps friendly flags onto the
+engine's `INLINE_*` env knobs. Windows must use `webui.bat` - `webui.sh` is a bash script:
 
 ```
-./webui.sh                            # loopback, port 8848
+./webui.sh                            # loopback, port 8848            (Windows: .\webui.bat)
 ./webui.sh --listen --port 9000       # bind all interfaces on 9000
 ./webui.sh --multi-gpu                # split one image across GPUs (auto with 2+ GPUs)
 ./webui.sh --lowvram                  # tight-VRAM profile
 ./webui.sh --install --extra runtime  # set up ./.venv with the model runtime, then exit
 ```
 
-`./webui.sh --help` lists every flag (networking, multi-GPU, device/memory profile, paths). The same
+`./webui.sh --help` (or `.\webui.bat --help`) lists every flag (networking, multi-GPU, device/memory profile, paths). The same
 flags are available on the Python entrypoint - `python main.py --help` - which is the dev path (it also
 takes `--front-end-root DIR` to serve a local SPA build). Or run the server module directly:
 

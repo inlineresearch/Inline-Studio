@@ -229,7 +229,9 @@ def register_studio_handlers(
         reg("training:addItems", lambda did, aids: training.add_items(did, aids))
         reg("training:removeItem", lambda iid: training.remove_item(iid))
         reg("training:setCaption", lambda iid, cap: training.set_caption(iid, cap))
-        reg("training:autoCaption", lambda did, overwrite: training.auto_caption(did, overwrite))
+        reg("training:autoCaption",
+            lambda did, overwrite, model=None: training.auto_caption(did, overwrite, model))
+        reg("training:captioners", lambda: training.captioners())
         reg("training:listRuns", lambda: training.list_runs())
         reg("training:start", lambda did, hp: training.start(did, hp))
         reg("training:resume", lambda rid: training.resume(rid))
@@ -238,8 +240,8 @@ def register_studio_handlers(
         reg("training:status", lambda rid: training.status(rid))
     else:
         for ch in ("listDatasets", "createDataset", "listItems", "addItems", "removeItem",
-                   "setCaption", "autoCaption", "listRuns", "start", "resume", "cancel",
-                   "discard", "status"):
+                   "setCaption", "autoCaption", "captioners", "listRuns", "start", "resume",
+                   "cancel", "discard", "status"):
             reg(f"training:{ch}", not_wired("LoRA training"))
 
     # --- fal settings (key stored server-side) --------------------------------------------------

@@ -13,3 +13,6 @@ node_modules/.tmp
 
 docs/
 .claude
+
+nohup.out
+Inline-Studio.code-workspace

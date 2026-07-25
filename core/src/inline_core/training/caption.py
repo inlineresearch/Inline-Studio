@@ -16,12 +16,45 @@ from typing import Any
 
 from . import protocol
 
-#: BLIP ships *inside* transformers (no `trust_remote_code`), so it survives runtime upgrades.
-#: Florence-2 was the original default but its remote code breaks on current transformers
-#: (`Florence2LanguageConfig has no attribute forced_bos_token_id`); it still works through
-#: ``INLINE_CAPTIONER_MODEL`` if you pin a compatible transformers - see `_caption_one`.
-_DEFAULT_MODEL = "Salesforce/blip-image-captioning-large"
+#: The captioners the UI offers, first is the default. **Add a new caption model here**: give it a
+#: stable ``id``, a human ``label``, and its Hugging Face ``repo``. BLIP ships inside transformers
+#: (no ``trust_remote_code``) so it is the safe default and survives runtime upgrades. Anything on
+#: the Hub that ``AutoProcessor`` + an image-text-to-text (or remote-code causal-LM) class can load
+#: works too; weights download once into the HF cache on first use. Florence-2 is reachable but its
+#: remote code needs a pinned transformers (see the ``_load`` fallback), so it is not listed here by
+#: default - add it if you have pinned a compatible transformers.
+CAPTIONERS: list[dict[str, str]] = [
+    {
+        "id": "blip-large",
+        "label": "BLIP large (default)",
+        "repo": "Salesforce/blip-image-captioning-large",
+    },
+    {
+        "id": "blip-base",
+        "label": "BLIP base (faster, lighter)",
+        "repo": "Salesforce/blip-image-captioning-base",
+    },
+]
+_DEFAULT_MODEL = CAPTIONERS[0]["repo"]
 _TASK = "<DETAILED_CAPTION>"
+
+
+def available_captioners() -> list[dict[str, str]]:
+    """The captioner list for the UI. Torch-free, so ``studio`` can serve it without importing the
+    ML stack."""
+    return [dict(c) for c in CAPTIONERS]
+
+
+def _resolve_model(manifest: dict[str, Any]) -> str:
+    """Which captioner to run: the UI's choice (a curated id or a raw HF repo) wins, then the
+    ``INLINE_CAPTIONER_MODEL`` override, then the default."""
+    chosen = str(manifest.get("model") or "").strip()
+    if chosen:
+        for c in CAPTIONERS:
+            if c["id"] == chosen:
+                return c["repo"]
+        return chosen  # a raw HF repo id passed straight through
+    return os.environ.get("INLINE_CAPTIONER_MODEL") or _DEFAULT_MODEL
 
 
 def _load(model_id: str, token: Any = None) -> tuple[Any, Any, Any]:
@@ -106,7 +139,7 @@ def main() -> int:
     if not items:
         return 0
 
-    model_id = os.environ.get("INLINE_CAPTIONER_MODEL") or _DEFAULT_MODEL
+    model_id = _resolve_model(manifest)
     try:
         model, processor, device = _load_with_fallback(model_id)
     except Exception as exc:  # noqa: BLE001 - a missing captioner degrades to no captions

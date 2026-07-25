@@ -15,6 +15,7 @@ import type {
   TrainingBaseQuant,
   TrainingHyperparams,
   TrainingLoraScope,
+  TrainingOffload,
 } from '@shared/types'
 import { Modal } from '../../components/Modal'
 import { useTrainerBoardStore } from '../../store/trainerBoardStore'
@@ -25,6 +26,7 @@ const DEFAULTS: TrainingHyperparams = {
   arch: 'z-image',
   baseMode: 'deturbo',
   baseQuant: 'auto',
+  offload: 'auto',
   rank: 16,
   alpha: 16,
   learningRate: 1e-4,
@@ -56,6 +58,13 @@ const QUANTS: { value: TrainingBaseQuant; label: string }[] = [
   { value: 'auto', label: 'Auto (fit to this GPU)' },
   { value: 'none', label: 'Full precision (bf16)' },
   { value: 'nf4', label: '4-bit (NF4)' },
+]
+
+/** Activation offload to host RAM, the way to fit a bf16 base on a card that is a few GB short. */
+const OFFLOADS: { value: TrainingOffload; label: string }[] = [
+  { value: 'auto', label: 'Auto (only if bf16 will not fit)' },
+  { value: 'on', label: 'On (stream to RAM)' },
+  { value: 'off', label: 'Off' },
 ]
 
 const SCOPES: { value: TrainingLoraScope; label: string }[] = [
@@ -258,6 +267,27 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
           <span className="text-[10px] text-zinc-600">
             4-bit freezes the base at NF4 and trains the LoRA full precision: ~12GB at 512px instead
             of ~30GB.
+          </span>
+        </label>
+      )}
+
+      {arch === 'krea2' && (hp.baseQuant ?? 'auto') !== 'nf4' && (
+        <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
+          CPU offload
+          <select
+            value={hp.offload ?? 'auto'}
+            onChange={(e) => set('offload', e.target.value as TrainingOffload)}
+            className="rounded-md border border-border bg-black/30 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-zinc-500"
+          >
+            {OFFLOADS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <span className="text-[10px] text-zinc-600">
+            Streams activations to system RAM so a bf16 base fits a smaller card. Needed for bf16
+            1024 on ~45GB cards; slower, but keeps full precision.
           </span>
         </label>
       )}

@@ -7,6 +7,7 @@
 import { create } from 'zustand'
 import type {
   SystemStatsEvent,
+  CaptionerModel,
   TrainingDataset,
   TrainingDatasetItem,
   TrainingDoneEvent,
@@ -35,6 +36,7 @@ interface TrainingState {
   runs: TrainingRun[]
   activeDatasetId: string | null
   captioning: boolean
+  captioners: CaptionerModel[]
   error: string | null
 
   progressByRun: Record<string, RunProgress>
@@ -50,10 +52,15 @@ interface TrainingState {
   createDataset: (name: string, triggerWord: string) => Promise<TrainingDataset | null>
   selectDataset: (datasetId: string | null) => void
   loadItems: (datasetId: string) => Promise<void>
-  addItems: (datasetId: string, assetIds: string[]) => Promise<void>
+  /** Returns the created items, so a caller can pair captions to the assets it just added. */
+  addItems: (datasetId: string, assetIds: string[]) => Promise<TrainingDatasetItem[]>
   removeItem: (datasetId: string, itemId: string) => Promise<void>
+  /** Remove every image from a dataset in one go, refetching once when done. */
+  removeAll: (datasetId: string) => Promise<void>
   setCaption: (datasetId: string, itemId: string, caption: string) => Promise<void>
-  autoCaption: (datasetId: string, overwrite: boolean) => Promise<void>
+  autoCaption: (datasetId: string, overwrite: boolean, model?: string) => Promise<void>
+  /** The caption models Core offers; loaded once, lazily. */
+  loadCaptioners: () => Promise<void>
   loadRuns: () => Promise<void>
   /** Returns the created run so a canvas node can persist its `runId` and rebind after a reload. */
   start: (datasetId: string, hyperparams: TrainingHyperparams) => Promise<TrainingRun | null>
@@ -78,6 +85,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   runs: [],
   activeDatasetId: null,
   captioning: false,
+  captioners: [],
   error: null,
   progressByRun: {},
   lossByRun: {},
@@ -115,13 +123,25 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
 
   addItems: async (datasetId, assetIds) => {
     const res = await studio().training.addItems(datasetId, assetIds)
-    if (!res.ok) return set({ error: res.error })
+    if (!res.ok) {
+      set({ error: res.error })
+      return []
+    }
     await get().loadItems(datasetId)
+    return res.value
   },
 
   removeItem: async (datasetId, itemId) => {
     const res = await studio().training.removeItem(itemId)
     if (!res.ok) return set({ error: res.error })
+    await get().loadItems(datasetId)
+  },
+
+  removeAll: async (datasetId) => {
+    const ids = (get().itemsByDataset[datasetId] ?? []).map((it) => it.id)
+    const results = await Promise.all(ids.map((id) => studio().training.removeItem(id)))
+    const failed = results.find((r) => !r.ok)
+    if (failed && !failed.ok) set({ error: failed.error })
     await get().loadItems(datasetId)
   },
 
@@ -138,10 +158,10 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     }))
   },
 
-  autoCaption: async (datasetId, overwrite) => {
+  autoCaption: async (datasetId, overwrite, model) => {
     set({ captioning: true, error: null })
     try {
-      const res = await studio().training.autoCaption(datasetId, overwrite)
+      const res = await studio().training.autoCaption(datasetId, overwrite, model)
       if (res.ok) set((s) => ({ itemsByDataset: { ...s.itemsByDataset, [datasetId]: res.value } }))
       else set({ error: res.error })
     } catch (e) {
@@ -149,6 +169,12 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     } finally {
       set({ captioning: false })
     }
+  },
+
+  loadCaptioners: async () => {
+    if (get().captioners.length) return
+    const res = await studio().training.captioners()
+    if (res.ok) set({ captioners: res.value })
   },
 
   loadRuns: async () => {

@@ -142,14 +142,24 @@ Inline Studio runs as **one process**: the Inline Core engine serves the web UI 
 
 The built web UI ships as a Python package, so you only need [Python 3.11+](https://python.org), no Node. With [uv](https://docs.astral.sh/uv/) (or plain `pip`):
 
+**macOS / Linux:**
+
 ```bash
 git clone https://github.com/inlineresearch/Inline-Studio.git && cd Inline-Studio
 cd core
-./webui.sh --install --extra runtime     # create the venv, install the engine + model runtime + UI
-./webui.sh                               # serve the UI + API on http://127.0.0.1:8848
+./webui.sh --install --extra runtime --extra training   # venv + engine, model runtime, LoRA trainer, UI
+./webui.sh                                               # serve the UI + API on http://127.0.0.1:8848
 ```
 
-`webui.sh` is the one command you need: it installs dependencies, makes sure the web UI is present (the prebuilt `inline-studio-frontend` package, or a local build), then serves everything. See **[Command-line options](#command-line-options)** for every flag (`--listen`, `--port`, `--lowvram`, `--multi-gpu`, …).
+**Windows** (use `webui.bat`, the Windows twin - `webui.sh` is a bash script and won't run in PowerShell):
+
+```powershell
+git clone https://github.com/inlineresearch/Inline-Studio.git; cd Inline-Studio\core
+.\webui.bat --install --extra runtime --extra training   # venv + engine, model runtime, LoRA trainer, UI
+.\webui.bat                                               # serve the UI + API on http://127.0.0.1:8848
+```
+
+`webui.sh` (macOS/Linux) and `webui.bat` (Windows) are the one command you need: they install dependencies, make sure the web UI is present (the prebuilt `inline-studio-frontend` package, or a local build), then serve everything. You can also double-click `webui.bat` on Windows. See **[Command-line options](#command-line-options)** for every flag (`--listen`, `--port`, `--lowvram`, `--multi-gpu`, …).
 
 Prefer pip? `pip install -r requirements.txt` (from the repo root) pulls the engine, the prebuilt UI, and the local model runtime from PyPI; then run `inline-studio`.
 
@@ -160,13 +170,13 @@ Prefer pip? `pip install -r requirements.txt` (from the repo root) pulls the eng
 
 Honest status - what's actually been run, versus what has a code path but no one has verified:
 
-| Hardware                | Status                                                                                              | Extra steps                                                                                                                                                                                                                                |
-| ----------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **NVIDIA, Linux**       | **Tested** - Z-Image Turbo 1024² on a T4 (16 GB); Krea 2 1024² and LoRA training on an L40S (48 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                             |
-| **NVIDIA, Windows**     | Supported, needs one step                                                                           | PyPI's default `torch` is **CPU-only on Windows**. Use `webui.sh --install` (it detects the GPU), or install torch from `https://download.pytorch.org/whl/cu124`. Core warns at startup if it finds an NVIDIA GPU behind a CPU-only torch. |
-| **Apple Silicon (MPS)** | Code path exists, **untested**                                                                      | None. int8 quantisation doesn't apply on MPS, so a model too big for unified memory won't fit.                                                                                                                                             |
-| **AMD (ROCm), Linux**   | **Untested** - reports welcome                                                                      | Needs a ROCm build of PyTorch - see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                             |
-| **CPU only**            | Works, very slow                                                                                    | `./webui.sh --cpu`                                                                                                                                                                                                                         |
+| Hardware                | Status                                                                                              | Extra steps                                                                                                                                                                                                                                                                                                      |
+| ----------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **NVIDIA, Linux**       | **Tested** - Z-Image Turbo 1024² on a T4 (16 GB); Krea 2 1024² and LoRA training on an L40S (48 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                                                                                                   |
+| **NVIDIA, Windows**     | Supported, needs one step                                                                           | Run `.\webui.bat --install` (the Windows launcher; it detects the GPU). PyPI's default `torch` is **CPU-only on Windows**, so `--install` pulls the CUDA build for you, or install torch from `https://download.pytorch.org/whl/cu124`. Core warns at startup if it finds an NVIDIA GPU behind a CPU-only torch. |
+| **Apple Silicon (MPS)** | Code path exists, **untested**                                                                      | None. int8 quantisation doesn't apply on MPS, so a model too big for unified memory won't fit.                                                                                                                                                                                                                   |
+| **AMD (ROCm), Linux**   | **Untested** - reports welcome                                                                      | Needs a ROCm build of PyTorch - see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                                                                                                   |
+| **CPU only**            | Works, very slow                                                                                    | `./webui.sh --cpu` (Windows: `.\webui.bat --cpu`)                                                                                                                                                                                                                                                                |
 
 #### AMD (ROCm) setup
 
@@ -228,7 +238,7 @@ Then open **http://127.0.0.1:8848**. Add your [fal.ai API key](https://fal.ai/da
 
 ### Command-line options
 
-The friendly `webui.sh` launcher (in `core/`) maps flags onto the engine's `INLINE_*` environment knobs; `core/main.py` takes the same flags when you run the engine directly. `./webui.sh --help` lists them all.
+The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` environment knobs: `webui.sh` on macOS/Linux, `webui.bat` on Windows. `core/main.py` takes the same flags when you run the engine directly. `./webui.sh --help` (or `.\webui.bat --help`) lists them all.
 
 <details>
 <summary><strong>Show all command-line flags</strong></summary>

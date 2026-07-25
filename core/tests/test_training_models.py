@@ -95,6 +95,35 @@ def test_auto_quantization_accounts_for_resolution(monkeypatch, tmp_path) -> Non
     assert resolve("auto", str(root), archs.KREA2, "raw", 1024) is Quantization.NF4
 
 
+def test_offload_fits_a_bf16_base_that_would_not_otherwise(monkeypatch, tmp_path) -> None:
+    """bf16 1024 on a 45GB card: base (26GB) + activations (~21GB) overflow, so auto-offload turns
+    on to keep the base full precision rather than dropping it to NF4. A quantized base already
+    fits, so offload stays off there no matter the preference."""
+    root = tmp_path / "models"
+    (root / "diffusion_models").mkdir(parents=True)
+    (root / "diffusion_models" / "krea2_raw_bf16.safetensors").write_bytes(b"")
+    monkeypatch.setenv("INLINE_MODELS_DIR", str(root))
+    monkeypatch.setattr(models, "_base_size", lambda *a: 26 * 1024**3)
+
+    torch = pytest.importorskip("torch")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        torch.cuda, "get_device_properties",
+        lambda _i: type("P", (), {"total_memory": 45 * 1024**3})(),
+    )
+
+    from inline_core.device.policy import Quantization
+
+    off = models.resolve_offload
+    # bf16 base: auto offloads at 1024 (won't fit), leaves it resident at 512 (fits).
+    assert off("auto", Quantization.NONE, str(root), archs.KREA2, "raw", 1024) is True
+    assert off("auto", Quantization.NONE, str(root), archs.KREA2, "raw", 512) is False
+    assert off("on", Quantization.NONE, str(root), archs.KREA2, "raw", 512) is True
+    assert off("off", Quantization.NONE, str(root), archs.KREA2, "raw", 1024) is False
+    # A quantized base already fits, so offload would only add PCIe traffic - never on.
+    assert off("on", Quantization.NF4, str(root), archs.KREA2, "raw", 1024) is False
+
+
 def test_zimage_has_no_four_bit_path_and_says_so(tmp_path) -> None:
     from inline_core.device.policy import Quantization
 

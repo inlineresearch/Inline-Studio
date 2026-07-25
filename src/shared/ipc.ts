@@ -36,6 +36,7 @@ import type {
   ModelDownloadErrorEvent,
   TrainingDataset,
   TrainingDatasetItem,
+  CaptionerModel,
   TrainingHyperparams,
   TrainingRun,
   TrainingProgressEvent,
@@ -132,6 +133,7 @@ export const IpcChannels = {
     removeItem: 'training:removeItem',
     setCaption: 'training:setCaption',
     autoCaption: 'training:autoCaption',
+    captioners: 'training:captioners',
     listRuns: 'training:listRuns',
     start: 'training:start',
     resume: 'training:resume',
@@ -426,8 +428,17 @@ export interface InlineStudioApi {
     addItems(datasetId: string, assetIds: string[]): Promise<Result<TrainingDatasetItem[]>>
     removeItem(itemId: string): Promise<Result<void>>
     setCaption(itemId: string, caption: string): Promise<Result<TrainingDatasetItem>>
-    /** Auto-caption items with the local captioner; `overwrite` re-captions ones that already have one. */
-    autoCaption(datasetId: string, overwrite: boolean): Promise<Result<TrainingDatasetItem[]>>
+    /**
+     * Auto-caption items with the local captioner; `overwrite` re-captions ones that already have
+     * one. `model` picks a captioner (a `CaptionerModel.id` or a raw HF repo); omit for the default.
+     */
+    autoCaption(
+      datasetId: string,
+      overwrite: boolean,
+      model?: string,
+    ): Promise<Result<TrainingDatasetItem[]>>
+    /** The caption models the UI can offer, first is the default. */
+    captioners(): Promise<Result<CaptionerModel[]>>
     /** All training runs in the open project, newest first. */
     listRuns(): Promise<Result<TrainingRun[]>>
     /** Start a run over a dataset. Resolves immediately; progress arrives via `onTraining*`. */

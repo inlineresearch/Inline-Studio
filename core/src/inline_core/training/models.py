@@ -232,6 +232,37 @@ def resolve_quant(
     return Quantization.NONE if fits else Quantization.NF4
 
 
+def resolve_offload(
+    pref: str, quant: Any, models_dir: str, arch: str, base_mode: str, resolution: int
+) -> bool:
+    """Whether to stream saved activations to host RAM this run.
+
+    Only meaningful for a full-precision (bf16) base: the point is to keep the 26GB Krea 2 base
+    resident and fit the ~21GB of 1024 activations elsewhere, rather than dropping the frozen base
+    to NF4. A quantized base already fits, so offload just adds PCIe traffic for nothing. ``auto``
+    turns it on exactly when the bf16 plan would otherwise not fit VRAM; ``on``/``off`` force it."""
+    from ..device.policy import Quantization
+
+    if pref == "off":
+        return False
+    if quant is not Quantization.NONE:
+        return False  # a quantized base already fits; offload would only slow it down
+    if pref == "on":
+        return True
+    if pref not in ("auto", ""):
+        raise RuntimeError(f"Unknown offload preference {pref!r}.")
+
+    import torch
+
+    if not torch.cuda.is_available():
+        return False
+    base = _base_size(models_dir, arch, base_mode)
+    if not base:
+        return False  # unmeasurable, so do not pay the offload cost on a guess
+    needed = base + _activation_bytes(arch, resolution) + _MARGIN_BYTES
+    return torch.cuda.get_device_properties(0).total_memory < needed
+
+
 def _activation_bytes(arch: str, resolution: int) -> int:
     """Estimated peak activation memory. Image tokens are the VAE's 8x downscale then 2x2
     patching, and cost is linear in them - attention is memory-efficient, so there is no square."""
