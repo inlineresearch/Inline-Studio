@@ -212,6 +212,21 @@ class Training:
         asyncio.create_task(self._run(run_id, resume=True))
         return ts.update_run(self._conn(), run_id, {"status": "queued", "error": None})
 
+    def discard(self, run_id: str) -> dict[str, Any]:
+        """Delete a run's working dir and make it unresumable.
+
+        Its checkpoint encodes the rank, target modules and base it was built with, so once the
+        node's hyperparameters change the checkpoint cannot be continued - keeping it around only
+        offers a Resume that would train something other than what the panel now says."""
+        if run_id in self._active:
+            raise RuntimeError("Stop the run before discarding it.")
+        run = ts.get_run(self._conn(), run_id)
+        shutil.rmtree(self._store.folder() / "training_runs" / run_id, ignore_errors=True)
+        patch: dict[str, Any] = {"checkpointPath": None}
+        if run["status"] in ("interrupted", "failed"):
+            patch |= {"status": "cancelled", "error": "Checkpoints discarded; settings changed."}
+        return ts.update_run(self._conn(), run_id, patch)
+
     def cancel(self, run_id: str) -> None:
         proc = self._active.get(run_id)
         if proc is not None:
@@ -393,6 +408,8 @@ class Training:
             "outputPath": str(models_dir() / output_rel),
             "resumeFrom": resume_from,
             "modelsDir": str(models_dir()),
+            # Defaulted so a run started before Krea 2 existed still resumes as Z-Image.
+            "arch": run["hyperparams"].get("arch") or "z-image",
             "baseMode": run["hyperparams"]["baseMode"],
             "triggerWord": trigger,
             "hyperparams": run["hyperparams"],
@@ -443,7 +460,9 @@ def _progress_log_line(msg: dict[str, Any], last_status: str) -> str | None:
     if isinstance(loss, (int, float)):
         total = int(msg.get("total", 0))
         step = int(msg.get("step", 0))
-        return f"step {step}/{total} · loss {float(loss):.4f}"
+        vram = msg.get("vram")
+        peak = f" · peak VRAM {float(vram):.1f}GB" if isinstance(vram, (int, float)) else ""
+        return f"step {step}/{total} · loss {float(loss):.4f}{peak}"
     return status if status and status != last_status else None
 
 

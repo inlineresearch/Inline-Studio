@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { InlineStudioApi } from '@shared/ipc'
+import { ok } from '@shared/result'
 import type { TrainingHyperparams, TrainingRun } from '@shared/types'
+import { setStudioClient } from '../lib/studio'
 import { useTrainingStore } from './trainingStore'
 
 const HP: TrainingHyperparams = {
@@ -33,7 +36,19 @@ function run(id: string): TrainingRun {
   }
 }
 
+let listRunsCalls = 0
+
 beforeEach(() => {
+  // applyDone/applyError fire off a reload, so the reducers need the backend seam injected.
+  listRunsCalls = 0
+  setStudioClient({
+    training: {
+      listRuns: async () => {
+        listRunsCalls += 1
+        return ok([])
+      },
+    },
+  } as unknown as InlineStudioApi)
   useTrainingStore.setState({
     progressByRun: {},
     lossByRun: {},
@@ -81,9 +96,21 @@ describe('trainingStore reducers', () => {
     expect(useTrainingStore.getState().systemStats).toEqual(stats)
   })
 
-  it('patches a run error in place', () => {
+  it('patches a run error in place and reloads so the run status lands', async () => {
     useTrainingStore.setState({ runs: [run('r')] })
     useTrainingStore.getState().applyError({ runId: 'r', error: 'boom' })
     expect(useTrainingStore.getState().runs[0]!.error).toBe('boom')
+    await Promise.resolve()
+    expect(listRunsCalls).toBe(1)
+  })
+
+  it('reloads runs when one finishes', async () => {
+    useTrainingStore.setState({ runs: [run('r')] })
+    useTrainingStore.getState().applyDone({ runId: 'r', outputLoraPath: 'loras/r.safetensors' })
+    const done = useTrainingStore.getState().runs[0]!
+    expect(done.status).toBe('done')
+    expect(done.outputLoraPath).toBe('loras/r.safetensors')
+    await Promise.resolve()
+    expect(listRunsCalls).toBe(1)
   })
 })

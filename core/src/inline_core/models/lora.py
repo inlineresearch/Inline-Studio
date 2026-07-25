@@ -16,6 +16,7 @@ ambiguous - the reverse mapping cannot tell a path separator from an underscore 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ..errors import ComponentError
@@ -23,20 +24,58 @@ from ..errors import ComponentError
 if TYPE_CHECKING:
     from ..graph.loader_runners import LoraRef
 
+#: Maps a checkpoint's module path onto the model's own naming, or None to leave it alone. Krea 2
+#: needs one because its two LoRA conventions disagree: the official style LoRAs are diffusers-named
+#: while ostris' training adapter uses the reference names.
+Alias = Callable[[str], str | None]
+
 _DOWN = ("lora_down.weight", "lora_A.weight", "lora_A.default.weight")
 _UP = ("lora_up.weight", "lora_B.weight", "lora_B.default.weight")
 # Prefixes checkpoints put in front of the module path; stripped when matching against the model.
 _PREFIXES = ("diffusion_model.", "transformer.", "lora_unet_", "lora_te_", "base_model.model.")
 
 
-def fuse_loras(model: Any, loras: tuple[LoraRef, ...]) -> None:
+#: model module path -> the (down, up, scale) deltas to add there, in fuse order.
+LoraPlan = dict[str, list[tuple[Any, Any, float]]]
+
+
+def fuse_loras(model: Any, loras: tuple[LoraRef, ...], alias: Alias | None = None) -> None:
     """Merge each LoRA into ``model``'s weights in order. No-op for an empty stack."""
+    apply_plan(model, plan_loras(model, loras, alias))
+
+
+def plan_loras(model: Any, loras: tuple[LoraRef, ...], alias: Alias | None = None) -> LoraPlan:
+    """Resolve every LoRA against ``model``'s module names, without touching any weights.
+
+    Split from the fusing so a streaming loader can validate the whole stack **before** reading a
+    26GB checkpoint, then apply each block's share as that block materializes - which is what keeps
+    a quantized load from ever holding the full-precision model."""
+    plan: LoraPlan = {}
+    names = _linear_module_names(model)
     for lora in loras:
-        _fuse_one(model, lora.file, lora.strength)
+        _plan_one(plan, names, lora.file, lora.strength, alias)
+    return plan
 
 
-def _fuse_one(model: Any, path: str, strength: float) -> None:
+def apply_plan(module: Any, plan: LoraPlan, prefix: str = "") -> None:
+    """Fuse the plan's deltas into the modules under ``module``. ``prefix`` is that module's path in
+    the model the plan was built against, so a subtree can be fused on its own."""
     import torch
+
+    if not plan:
+        return
+    for name, child in module.named_modules():
+        deltas = plan.get(f"{prefix}{name}" if prefix else name)
+        if not deltas:
+            continue
+        with torch.no_grad():
+            for down, up, scale in deltas:
+                _add_delta(child.weight, up, down, scale)
+
+
+def _plan_one(
+    plan: LoraPlan, names: dict[str, None], path: str, strength: float, alias: Alias | None
+) -> None:
     from safetensors.torch import load_file
 
     try:
@@ -44,24 +83,18 @@ def _fuse_one(model: Any, path: str, strength: float) -> None:
     except Exception as exc:  # noqa: BLE001
         raise ComponentError(f"Could not read LoRA {path!r}: {exc}") from exc
 
-    modules = _linear_modules(model)
     pairs, alphas = _group(state)
     if not pairs:
         raise ComponentError(f"LoRA {path!r} contains no recognisable lora_down/lora_up pairs.")
 
     unmatched: list[str] = []
-    fused = 0
     for stem, (down, up) in sorted(pairs.items()):
-        target = _match(stem, modules)
+        target = _match_name(stem, names, alias)
         if target is None:
             unmatched.append(stem)
             continue
-        with torch.no_grad():
-            weight = target.weight
-            delta = _delta(up, down, weight)
-            scale = strength * _alpha_scale(alphas.get(stem), down.shape[0])
-            weight.add_((delta * scale).to(device=weight.device, dtype=weight.dtype))
-        fused += 1
+        scale = strength * _alpha_scale(alphas.get(stem), down.shape[0])
+        plan.setdefault(target, []).append((down, up, scale))
 
     if unmatched:
         sample = ", ".join(unmatched[:3])
@@ -69,15 +102,29 @@ def _fuse_one(model: Any, path: str, strength: float) -> None:
             f"LoRA {path!r} does not match this model: {len(unmatched)} of {len(pairs)} layers "
             f"have no target (e.g. {sample}). It was probably trained for a different architecture."
         )
-    if fused == 0:
-        raise ComponentError(f"LoRA {path!r} matched no layers in this model.")
 
 
-def _delta(up: Any, down: Any, weight: Any) -> Any:
-    """``up @ down``, shaped to the target weight. Conv LoRAs flatten the spatial dims."""
+def _add_delta(weight: Any, up: Any, down: Any, scale: float) -> None:
+    """Fuse ``scale * (up @ down)`` into ``weight`` in place.
+
+    Computed on the weight's own device: a big LoRA (Krea 2's are ~260 modules on a 12.9B model)
+    materializes tens of GB of fp32 deltas, and doing that on the CPU costs ~20s of maths plus the
+    transfer where the GPU takes ~2s. Falls back to the CPU if the device runs out of memory, so a
+    tight card still fuses, just slowly."""
+    import torch
+
+    try:
+        weight.add_(_delta(up, down, weight, weight.device) * scale)
+    except torch.cuda.OutOfMemoryError:
+        weight.add_((_delta(up, down, weight, "cpu") * scale).to(weight.device, weight.dtype))
+
+
+def _delta(up: Any, down: Any, weight: Any, device: Any) -> Any:
+    """``up @ down`` on ``device``, shaped and typed for the target weight. Conv LoRAs flatten the
+    spatial dims."""
     dtype = _fuse_dtype(up)
-    delta = up.to("cpu", dtype=dtype).flatten(1) @ down.to("cpu", dtype=dtype).flatten(1)
-    return delta.reshape(weight.shape)
+    delta = up.to(device, dtype=dtype).flatten(1) @ down.to(device, dtype=dtype).flatten(1)
+    return delta.reshape(weight.shape).to(weight.dtype)
 
 
 def _fuse_dtype(tensor: Any) -> Any:
@@ -110,31 +157,34 @@ def _group(state: dict[str, Any]) -> tuple[dict[str, tuple[Any, Any]], dict[str,
     return {k: (downs[k], ups[k]) for k in downs if k in ups}, alphas
 
 
-def _linear_modules(model: Any) -> dict[str, Any]:
+def _linear_module_names(model: Any) -> dict[str, None]:
+    """The fusable module paths, insertion-ordered. Names only, so this works on a meta-device
+    model - the loader resolves the plan before any weight exists."""
     import torch
 
     return {
-        name: module
+        name: None
         for name, module in model.named_modules()
         if isinstance(module, torch.nn.Linear | torch.nn.Conv2d | torch.nn.Conv3d)
     }
 
 
-def _match(stem: str, modules: dict[str, Any]) -> Any:
-    """Resolve a checkpoint's module path to a module, tolerating the usual prefixes and the
-    underscore-flattened paths kohya emits."""
-    for candidate in _candidates(stem):
-        hit = modules.get(candidate)
-        if hit is not None:
-            return hit
+def _match_name(stem: str, names: dict[str, None], alias: Alias | None = None) -> str | None:
+    """Resolve a checkpoint's module path to a model module path, tolerating the usual prefixes, the
+    underscore-flattened paths kohya emits, and an arch's own naming (``alias``)."""
+    for candidate in _candidates(stem, alias):
+        if candidate in names:
+            return candidate
     return None
 
 
-def _candidates(stem: str) -> list[str]:
+def _candidates(stem: str, alias: Alias | None = None) -> list[str]:
     out = [stem]
     for prefix in _PREFIXES:
         if stem.startswith(prefix):
             out.append(stem[len(prefix) :])
     # kohya flattens the whole path with underscores; the dotted form is the model's own naming.
     out.extend([c.replace("_", ".") for c in list(out) if "." not in c])
+    if alias is not None:
+        out.extend([renamed for c in list(out) if (renamed := alias(c)) is not None])
     return out

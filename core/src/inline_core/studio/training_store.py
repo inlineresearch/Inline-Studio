@@ -16,7 +16,13 @@ from typing import Any
 
 # The hyperparam fields that also get their own columns for querying/display.
 _DEFAULT_HYPERPARAMS: dict[str, Any] = {
+    # Defaulted so a run row written before Krea 2 existed still resumes as Z-Image.
+    "arch": "z-image",
     "baseMode": "turbo_adapter",
+    "baseQuant": "auto",
+    "loraScope": "full",
+    "captionDropout": 0.05,
+    "flipAugment": False,
     "rank": 16,
     "alpha": 16,
     "learningRate": 1e-4,

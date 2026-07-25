@@ -390,7 +390,29 @@ export interface ModelDownloadErrorEvent {
 // LoRA training ------------------------------------------------------------
 
 /** Turbo needs a training adapter to avoid "turbo drift"; a de-turbo base trains without one. */
-export type TrainingBaseMode = 'turbo_adapter' | 'deturbo'
+/** The model family a LoRA is trained for. */
+export type TrainingArch = 'z-image' | 'krea2'
+
+/**
+ * Which base checkpoint a run trains against. `raw` is Krea 2's undistilled base (the recommended
+ * path - the LoRA then applies to Turbo at generation time); the turbo modes train against a
+ * distilled checkpoint and need a training adapter to avoid turbo drift.
+ */
+export type TrainingBaseMode = 'turbo_adapter' | 'deturbo' | 'raw'
+
+/**
+ * Precision of the frozen base during training. The LoRA itself is always full precision, so `nf4`
+ * only costs base fidelity - and it is what puts Krea 2 (a 26GB base) on a 16GB card. `auto` sizes
+ * the base plus its activations against your GPU and picks for you.
+ */
+export type TrainingBaseQuant = 'auto' | 'none' | 'nf4'
+
+/**
+ * Which Linears the adapter attaches to. `full` adapts the feed-forward and projection layers as
+ * well, which is stronger on short style runs; `attention` is the Krea 2 authors' advice for long
+ * runs, where adapting everything starts to cost prompt adherence.
+ */
+export type TrainingLoraScope = 'full' | 'attention'
 
 export type TrainingStatus =
   | 'queued'
@@ -424,7 +446,17 @@ export interface TrainingDatasetItem {
 
 /** LoRA training hyperparameters (persisted as JSON on a run). */
 export interface TrainingHyperparams {
+  /** Defaults to `z-image` when absent, so runs saved before Krea 2 keep working. */
+  arch?: TrainingArch
   baseMode: TrainingBaseMode
+  /** Defaults to `auto`. Only Krea 2 has a 4-bit path; Z-Image always trains in bf16. */
+  baseQuant?: TrainingBaseQuant
+  /** Defaults to `full`. */
+  loraScope?: TrainingLoraScope
+  /** 0 to 1: how often a step trains on an empty caption, so the LoRA holds without the trigger. */
+  captionDropout?: number
+  /** Mirror every image, doubling the dataset. Wrong for text or anything asymmetric. */
+  flipAugment?: boolean
   /** LoRA rank (dim). */
   rank: number
   /** LoRA alpha; defaults to `rank`. */

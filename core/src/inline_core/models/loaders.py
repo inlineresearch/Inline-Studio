@@ -41,17 +41,31 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class AssetFile:
+    """One small offline asset. ``repo`` overrides the spec's default (Krea 2 takes its tokenizer
+    from Qwen3-VL and its VAE config from Qwen-Image); ``local`` overrides where it lands when the
+    source repo's layout differs from the subfolder a component loads its config from."""
+
+    path: str
+    repo: str | None = None
+    local: str | None = None
+
+    def target(self, spec: ArchSpec) -> tuple[str, str]:
+        return (self.repo or spec.assets_repo, self.local or self.path)
+
+
+@dataclass(frozen=True)
 class ArchSpec:
     """How to source the small offline assets (configs + tokenizer) for one model family.
 
-    ``asset_files`` are repo-relative paths under ``assets_repo`` - the tiny config/tokenizer files
-    (never the multi-GB weights) fetched once into ``data_dir()/assets/<key>``. The subfolder layout
-    is preserved, so a component loads its config with ``config=<assets_root>, subfolder="<name>"``.
+    The tiny config/tokenizer files (never the multi-GB weights) are fetched once into
+    ``data_dir()/assets/<key>``. The subfolder layout is preserved, so a component loads its config
+    with ``config=<assets_root>, subfolder="<name>"``.
     """
 
     key: str
     assets_repo: str
-    asset_files: tuple[str, ...]
+    asset_files: tuple[AssetFile, ...]
 
 
 #: The reference repo carries the small diffusers configs + the Qwen3 tokenizer. Weights are never
@@ -59,20 +73,39 @@ class ArchSpec:
 _ZIMAGE = ArchSpec(
     key="z-image",
     assets_repo="Tongyi-MAI/Z-Image-Turbo",
-    asset_files=(
-        "transformer/config.json",
-        "vae/config.json",
-        "text_encoder/config.json",
-        "text_encoder/generation_config.json",
-        "scheduler/scheduler_config.json",
-        "tokenizer/tokenizer.json",
-        "tokenizer/tokenizer_config.json",
-        "tokenizer/merges.txt",
-        "tokenizer/vocab.json",
+    asset_files=tuple(
+        AssetFile(path)
+        for path in (
+            "transformer/config.json",
+            "vae/config.json",
+            "text_encoder/config.json",
+            "text_encoder/generation_config.json",
+            "scheduler/scheduler_config.json",
+            "tokenizer/tokenizer.json",
+            "tokenizer/tokenizer_config.json",
+            "tokenizer/merges.txt",
+            "tokenizer/vocab.json",
+        )
     ),
 )
 
-SPECS: dict[str, ArchSpec] = {_ZIMAGE.key: _ZIMAGE}
+#: Krea 2's own repos are gated, so the assets come from the two ungated Qwen repos its components
+#: are built from. The transformer + scheduler configs are code constants (see `krea2/config.py`),
+#: so nothing here needs the Krea 2 repo at all.
+_KREA2 = ArchSpec(
+    key="krea2",
+    assets_repo="Qwen/Qwen3-VL-4B-Instruct",
+    asset_files=(
+        AssetFile("config.json", local="text_encoder/config.json"),
+        AssetFile("tokenizer.json", local="tokenizer/tokenizer.json"),
+        AssetFile("tokenizer_config.json", local="tokenizer/tokenizer_config.json"),
+        AssetFile("vocab.json", local="tokenizer/vocab.json"),
+        AssetFile("merges.txt", local="tokenizer/merges.txt"),
+        AssetFile("vae/config.json", repo="Qwen/Qwen-Image"),
+    ),
+)
+
+SPECS: dict[str, ArchSpec] = {_ZIMAGE.key: _ZIMAGE, _KREA2.key: _KREA2}
 
 
 def _spec(arch: str) -> ArchSpec:
@@ -109,10 +142,18 @@ def ensure_assets(arch: str) -> Path:
         if marker.is_file():
             return root
         try:
+            import shutil
+
             from huggingface_hub import hf_hub_download
 
-            for rel in spec.asset_files:
-                hf_hub_download(spec.assets_repo, rel, local_dir=str(root))
+            for asset in spec.asset_files:
+                repo, local = asset.target(spec)
+                # token=False: these repos are public, and a stale ambient token 401s even on those.
+                fetched = hf_hub_download(repo, asset.path, local_dir=str(root), token=False)
+                if local != asset.path:
+                    destination = root / local
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(fetched, destination)
         except Exception as error:  # noqa: BLE001 - re-raised as a clear component error
             raise ComponentError(
                 f"Could not fetch the one-time {arch} config/tokenizer assets from "
@@ -238,13 +279,13 @@ def _quant_config(quant: Quantization, *, framework: str) -> Any | None:
 
 def _quantize_in_place(model: Any, quant: Quantization) -> None:
     """Apply torchao weight-only quantization to an already-built model, in place. Used for the
-    diffusion transformer, whose ``from_single_file`` loader silently ignores a ``quantization_config``
-    (so the config-based path leaves it full-size). torchao's ``quantize_`` swaps each ``nn.Linear``
-    weight for an int8 tensor subclass on whatever device the module already sits on.
+    diffusion transformer, whose ``from_single_file`` loader silently ignores a
+    ``quantization_config`` (so the config-based path leaves it full-size). torchao's ``quantize_``
+    swaps each ``nn.Linear`` weight for an int8 tensor subclass on the device it already sits on.
 
-    Best-effort: a missing/incompatible torchao is logged and left full precision rather than crashing
-    the load - the fit estimate that chose int8 will then be optimistic, but that surfaces as a normal
-    OOM node error, not a hard import failure. Only INT8 is handled here; NF4 stays config-driven."""
+    Best-effort: a missing/incompatible torchao is logged and left full precision rather than
+    crashing the load - the fit estimate that chose int8 is then optimistic, but that surfaces as a
+    normal OOM node error, not a hard import failure. Only INT8 here; NF4 stays config-driven."""
     if quant is not Quantization.INT8:
         return
     try:
@@ -453,6 +494,277 @@ def load_scheduler(arch: str) -> Any:
         )
     except (OSError, ValueError):
         return FlowMatchEulerDiscreteScheduler()
+
+
+# --- Krea 2 ------------------------------------------------------------------------------------
+
+#: The reference "single_mmdit_large_wide" geometry, shared by RAW and Turbo. These are also
+#: ``Krea2Transformer2DModel``'s defaults, kept explicit so a diffusers default change is caught.
+KREA2_TRANSFORMER_CONFIG = {
+    "in_channels": 64,
+    "num_layers": 28,
+    "attention_head_dim": 128,
+    "num_attention_heads": 48,
+    "num_key_value_heads": 12,
+    "intermediate_size": 16384,
+    "timestep_embed_dim": 256,
+    "text_hidden_dim": 2560,
+    "num_text_layers": 12,
+    "text_num_attention_heads": 20,
+    "text_num_key_value_heads": 20,
+    "text_intermediate_size": 6912,
+    "num_layerwise_text_blocks": 2,
+    "num_refiner_text_blocks": 2,
+}
+
+#: Resolution-aware exponential time shift; the Turbo checkpoint pins mu=1.15 in the pipeline.
+KREA2_SCHEDULER_CONFIG = {
+    "base_image_seq_len": 256,
+    "max_image_seq_len": 6400,
+    "base_shift": 0.5,
+    "max_shift": 1.15,
+    "num_train_timesteps": 1000,
+    "shift": 1.0,
+    "use_dynamic_shifting": True,
+    "time_shift_type": "exponential",
+}
+
+
+def load_krea2_transformer(
+    file: str,
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    device: str | None = None,
+    loras: tuple[LoraRef, ...] = (),
+) -> Any:
+    """The Krea 2 transformer from a single ComfyUI ``.safetensors``.
+
+    ``Krea2Transformer2DModel`` has no ``from_single_file``, so the checkpoint is renamed into
+    diffusers naming (``krea2/convert.py``) and streamed in, **one block at a time**: each block is
+    materialized, filled, LoRA-fused and quantized before the next one starts. That bound is what
+    lets a 26GB checkpoint load as a 7GB NF4 model on a 16GB card - quantizing the whole model
+    afterwards would need the full-precision weights resident first.
+
+    Tensors are read by byte range (``checkpoint.py``) rather than through safetensors' whole-file
+    mmap, which Linux refuses outright when the file is larger than RAM."""
+
+    def build() -> Any:
+        import torch
+        from diffusers import Krea2Transformer2DModel
+
+        from . import lora as lora_module
+        from .checkpoint import CheckpointReader
+        from .krea2 import convert
+
+        with torch.device("meta"):
+            model = Krea2Transformer2DModel(**KREA2_TRANSFORMER_CONFIG)
+        # Cast on meta (free) before allocating: to_empty keeps the dtype, and allocating this 12.9B
+        # model at the fp32 default would want ~52GB before the cast ever ran. The norms stay fp32
+        # (diffusers' own `_keep_in_fp32_modules`) - casting them costs the fused rms_norm kernel.
+        keep_fp32 = tuple(getattr(Krea2Transformer2DModel, "_keep_in_fp32_modules", None) or ())
+        model = model.to(dtype)
+        for name, param in model.named_parameters():
+            if _keeps_fp32(name, keep_fp32):
+                param.data = param.data.to(torch.float32)
+
+        # Resolved against module names on the meta model, so a mismatched LoRA is refused before
+        # the 26GB read rather than a block into it.
+        plan = lora_module.plan_loras(model, loras, alias=convert.module_alias)
+
+        target_device = device or "cpu"
+        # NF4 quantizes as bitsandbytes moves a block to the GPU, so those stage on the CPU first.
+        # Every other plan streams each tensor straight to its final device.
+        staging = "cpu" if quant is Quantization.NF4 else target_device
+        expected = {name for name, _ in model.named_parameters()}
+        expected |= {name for name, _ in model.named_buffers()}
+
+        with CheckpointReader(file) as handle:
+            keys = handle.keys()
+            convert.check_loadable(keys, expected)
+            sources = {convert.convert_key(key): key for key in keys}
+            for prefix, chunk in _krea2_chunks(model):
+                chunk.to_empty(device=staging)
+                for name, target in _named_tensors(chunk, prefix):
+                    source = handle.get_tensor(sources[name], device=staging)
+                    target.data.copy_(source.reshape(target.shape).to(target.dtype))
+                # Fuse before quantizing: the fuse adds a full-precision delta that quantized
+                # weights cannot accept in place.
+                lora_module.apply_plan(chunk, plan, f"{prefix}.")
+                _quantize_chunk(chunk, quant, target_device)
+        return model
+
+    key = (
+        "krea2", "diffusion", file, _dtype_key(dtype), quant.value, _device_key(device),
+        *lora_cache_key(loras),
+    )
+    return _cached(key, build)
+
+
+def _krea2_chunks(model: Any) -> Any:
+    """The model in load-sized pieces: each transformer block, then the smaller top-level modules.
+    A block is ~0.9GB at bf16, so this is the granularity that bounds peak memory."""
+    for index, block in enumerate(model.transformer_blocks):
+        yield f"transformer_blocks.{index}", block
+    for name, child in model.named_children():
+        if name != "transformer_blocks":
+            yield name, child
+
+
+def _named_tensors(module: Any, prefix: str) -> Any:
+    """The module's parameters and buffers under their full path in the parent model."""
+    for name, tensor in module.named_parameters():
+        yield f"{prefix}.{name}", tensor
+    for name, tensor in module.named_buffers():
+        yield f"{prefix}.{name}", tensor
+
+
+def _quantize_chunk(chunk: Any, quant: Quantization, device: str) -> None:
+    """Shrink one materialized chunk and put it on its final device."""
+    if quant is Quantization.NF4:
+        _swap_to_4bit(chunk)
+        chunk.to(device)  # bitsandbytes quantizes each weight during this move
+    else:
+        _quantize_in_place(chunk, quant)
+
+
+def _swap_to_4bit(module: Any) -> None:
+    """Replace every ``nn.Linear`` with a bitsandbytes NF4 layer carrying the same weights.
+
+    The QLoRA arrangement: the base is frozen and 4-bit, gradients still flow through it to the
+    LoRA adapter on top. Quantization itself happens when the layer moves to CUDA."""
+    import bitsandbytes as bnb
+    import torch
+
+    for name, child in list(module.named_children()):
+        if isinstance(child, torch.nn.Linear):
+            layer = bnb.nn.Linear4bit(
+                child.in_features,
+                child.out_features,
+                bias=child.bias is not None,
+                compute_dtype=child.weight.dtype,
+                quant_type="nf4",
+            )
+            layer.weight = bnb.nn.Params4bit(
+                child.weight.data, requires_grad=False, quant_type="nf4"
+            )
+            if child.bias is not None:
+                layer.bias = torch.nn.Parameter(child.bias.data, requires_grad=False)
+            setattr(module, name, layer)
+        else:
+            _swap_to_4bit(child)
+
+
+def _keeps_fp32(name: str, keep: tuple[str, ...]) -> bool:
+    """Whether a parameter belongs to one of diffusers' keep-in-fp32 modules. Matched per path
+    segment so ``norm`` does not also catch ``norm_out`` or ``txt_in.norm_x``."""
+    segments = set(name.split("."))
+    return any(k in segments for k in keep)
+
+
+def load_qwen_image_vae(file: str, dtype: Any, device: str | None = None) -> Any:
+    """The Qwen-Image VAE from a diffusers-format ``.safetensors`` + the bundled config.
+
+    ComfyUI's ``qwen_image_vae.safetensors`` is a **different layout** (flat
+    ``upsamples.N.residual`` sequentials where diffusers has named ``up_blocks.N.resnets.N``
+    modules) and diffusers ships no converter, so that file is refused with a pointer at the popup.
+    """
+
+    def build() -> Any:
+        import torch
+        from diffusers import AutoencoderKLQwenImage
+        from safetensors.torch import load_file
+
+        root = ensure_assets("krea2")
+        config = AutoencoderKLQwenImage.load_config(str(root), subfolder="vae")
+        with torch.device("meta"):
+            model = AutoencoderKLQwenImage.from_config(config)
+        expected = set(model.state_dict())
+        state = load_file(file, device=device or "cpu")
+        if not expected.issubset(state):
+            raise ComponentError(
+                "This VAE is the ComfyUI-layout Qwen-Image VAE, which diffusers cannot read. "
+                "Download the Krea 2 VAE from the node's model popup (it fetches the "
+                "diffusers-format file from Qwen/Qwen-Image)."
+            )
+        model = model.to_empty(device=device or "cpu")
+        model.load_state_dict({k: v.to(dtype) for k, v in state.items()}, strict=True, assign=True)
+        return model.to(dtype)
+
+    return _cached(
+        ("krea2", "vae", file, _dtype_key(dtype), Quantization.NONE.value, _device_key(device)),
+        build,
+    )
+
+
+def load_qwen3vl_text_encoder(
+    file: str,
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    device: str | None = None,
+) -> tuple[Any, Any]:
+    """The Qwen3-VL text encoder + tokenizer, staged like Z-Image's so transformers streams tensors
+    to the GPU instead of materializing the whole 8.9GB encoder in host RAM."""
+
+    def build() -> tuple[Any, Any]:
+        from transformers import AutoTokenizer, Qwen3VLModel
+
+        root = ensure_assets("krea2")
+        weights_dir = _staged_encoder_dir("krea2", file)
+        text_encoder = Qwen3VLModel.from_pretrained(
+            str(weights_dir),
+            dtype=dtype,
+            low_cpu_mem_usage=True,
+            device_map={"": device} if device else None,
+            local_files_only=True,
+            quantization_config=_quant_config(quant, framework="transformers"),
+        )
+        tokenizer = AutoTokenizer.from_pretrained(str(root / "tokenizer"), local_files_only=True)
+        return text_encoder, tokenizer
+
+    return _cached(
+        ("krea2", "text_encoder", file, _dtype_key(dtype), quant.value, _device_key(device)), build
+    )
+
+
+def assemble_krea2_pipeline(
+    *,
+    diffusion_file: str,
+    vae_file: str,
+    text_encoder_file: str,
+    dtype: Any,
+    distilled: bool,
+    quant: Quantization = Quantization.NONE,
+    vae_dtype: Any = None,
+    device: str | None = None,
+    loras: tuple[LoraRef, ...] = (),
+    cancel_check: Callable[[], None] | None = None,
+) -> Any:
+    """Build a ``Krea2Pipeline`` from three local files. Unplaced - the runner owns placement.
+    ``distilled`` is the Turbo checkpoint's fixed ``mu=1.15`` schedule; RAW computes mu from the
+    resolution. Buffers are released between the big loads so peak memory tracks one component."""
+    from diffusers import FlowMatchEulerDiscreteScheduler, Krea2Pipeline
+
+    transformer = load_krea2_transformer(diffusion_file, dtype, quant, device=device, loras=loras)
+    _release_transient()
+    if cancel_check is not None:
+        cancel_check()
+    vae = load_qwen_image_vae(vae_file, dtype if vae_dtype is None else vae_dtype, device=device)
+    _release_transient()
+    if cancel_check is not None:
+        cancel_check()
+    text_encoder, tokenizer = load_qwen3vl_text_encoder(
+        text_encoder_file, dtype, quant, device=device
+    )
+    _release_transient()
+    scheduler = FlowMatchEulerDiscreteScheduler.from_config(KREA2_SCHEDULER_CONFIG)
+    return Krea2Pipeline(
+        scheduler=scheduler,
+        vae=vae,
+        text_encoder=text_encoder,
+        tokenizer=tokenizer,
+        transformer=transformer,
+        is_distilled=distilled,
+    )
 
 
 def assemble_zimage_pipeline(

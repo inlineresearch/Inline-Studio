@@ -136,6 +136,7 @@ export const IpcChannels = {
     start: 'training:start',
     resume: 'training:resume',
     cancel: 'training:cancel',
+    discard: 'training:discard',
     status: 'training:status',
   },
   falSettings: {
@@ -435,6 +436,12 @@ export interface InlineStudioApi {
     resume(runId: string): Promise<Result<TrainingRun>>
     /** Cancel an in-flight run (saves a final checkpoint before exit). */
     cancel(runId: string): Promise<Result<void>>
+    /**
+     * Delete a run's checkpoints and working dir, making it unresumable. Used when the node's
+     * hyperparameters change: a checkpoint encodes the rank, targets and base it was built with,
+     * so resuming it would train something other than what the panel now says.
+     */
+    discard(runId: string): Promise<Result<TrainingRun>>
     /** One run's current durable state. */
     status(runId: string): Promise<Result<TrainingRun>>
   }

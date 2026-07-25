@@ -1,32 +1,25 @@
-"""The LoRA training loop: PEFT adapter on the Z-Image transformer, rectified-flow loss, checkpoint/
-resume, and a loader-compatible ``.safetensors`` at the end.
+"""The LoRA training loop: a PEFT adapter on a diffusion transformer, rectified-flow loss,
+checkpoint/resume, and a loader-compatible ``.safetensors`` at the end.
+
+One loop for every supported architecture: what differs (LoRA targets, timestep convention, the
+prediction target, the shape of a forward call) lives in ``arch.py``.
 
 Uses ``accelerate`` so the same code runs single-GPU or, under ``accelerate launch --multi_gpu``,
 DDP (only the small LoRA grads all-reduce). Progress + samples + checkpoints are reported as JSON
 lines (``protocol.py``). A SIGTERM flushes a checkpoint and returns ``None`` (a resumable cancel).
-
-The three Z-Image specifics were validated against the real ``ZImageTransformer2DModel`` +
-``ZImagePipeline`` on a GPU (see ``_forward``, ``_TARGET_MODULES``, ``_timesteps`` / the loss):
-  1. ``forward`` takes per-image lists + a normalized timestep and returns ``.sample`` (a list),
-  2. the LoRA targets are the attention + w1/w2/w3 feed-forward Linears,
-  3. the flow-match target is (clean - noise) at timestep (1 - sigma).
 """
 
 from __future__ import annotations
 
 import json
+import random
 import signal
 from pathlib import Path
 from typing import Any
 
+from . import arch as archs
 from . import dataset as ds
 from . import models, protocol
-
-# Every ZImageTransformerBlock's attention (q/k/v/out) + SwiGLU feed-forward (w1/w2/w3) Linears -
-# confirmed against ZImageTransformer2DModel.named_modules() (34 blocks, 238 Linears). Z-Image's
-# FeedForward is w1/w2/w3, NOT the diffusers-generic ff.net.*, and `to_out.0` matches only the
-# attention output (not the adaLN Linear that also ends in `.0`).
-_TARGET_MODULES = ["to_q", "to_k", "to_v", "to_out.0", "w1", "w2", "w3"]
 
 
 class _Stop:
@@ -47,16 +40,6 @@ def _optimizer(params: list[Any], lr: float) -> Any:
         import torch
 
         return torch.optim.AdamW(params, lr=lr)
-
-
-def _timesteps(device: Any, shift: float) -> Any:
-    import torch
-
-    # Logit-normal sampling of the noise fraction in (0, 1) - denser near the middle, as flow-match
-    # trainers favor - then Z-Image's static resolution shift (scheduler `shift`,
-    # use_dynamic_shifting=False) so the training noise levels match the schedule inference visits.
-    u = torch.sigmoid(torch.randn((), device=device))
-    return shift * u / (1.0 + (shift - 1.0) * u)
 
 
 def _save_checkpoint(
@@ -127,21 +110,23 @@ def _save_lora(transformer: Any, output_path: str) -> None:
     save_file(state, output_path)
 
 
-def _forward(transformer: Any, noisy: Any, t_norm: Any, embed: Any) -> Any:
-    """One prediction from the real ZImageTransformer2DModel, mirroring ZImagePipeline's call.
+def _peak_vram_gb() -> float | None:
+    """Peak VRAM this run has touched, in GB. Reported per step so the Trainer log shows what a
+    resolution actually costs - the number people need before renting a bigger card."""
+    import torch
 
-    The model takes per-image LISTS - latents as (C, F, H, W) with a temporal axis, captions as
-    (seq, dim) - a NORMALIZED timestep (1=clean, 0=noise; the model multiplies by t_scale=1000
-    itself, so we must not pre-scale), and returns per-image latents in ``.sample`` (a list).
-    Returns this single image's (C, H, W) prediction."""
-    out = transformer(
-        [noisy.unsqueeze(1)],  # (C, H, W) -> [(C, 1, H, W)]
-        t_norm.reshape(1),  # (1,) per-image timestep
-        [embed],  # [(seq, dim)]
-        return_dict=True,
-    )
-    sample = out.sample if hasattr(out, "sample") else out[0]
-    return sample[0].squeeze(1)  # (C, 1, H, W) -> (C, H, W)
+    if not torch.cuda.is_available():
+        return None
+    return round(torch.cuda.max_memory_allocated() / 1e9, 2)
+
+
+def _to_device(item: dict[str, Any], device: Any, dtype: Any) -> dict[str, Any]:
+    """A cached item on the training device. The attention mask stays boolean - casting it to the
+    compute dtype would turn a mask into weights."""
+    out: dict[str, Any] = {}
+    for key, value in item.items():
+        out[key] = value.to(device) if key == "mask" else value.to(device, dtype)
+    return out
 
 
 def train(manifest: dict[str, Any]) -> str | None:
@@ -149,6 +134,7 @@ def train(manifest: dict[str, Any]) -> str | None:
     from accelerate import Accelerator
     from peft import LoraConfig
 
+    arch = archs.get(manifest.get("arch"))
     hp = manifest["hyperparams"]
     steps = int(hp["steps"])
     save_every = max(1, int(hp.get("saveEvery", 250)))
@@ -160,19 +146,32 @@ def train(manifest: dict[str, Any]) -> str | None:
     device = accelerator.device
     dtype = models.compute_dtype()
 
-    # Two phases, never overlapping: encoders -> precache -> free, THEN the transformer. Loading all
-    # three at once needs ~20GB and OOMs any 16GB card; apart, peak is just the transformer.
+    # Two phases, never overlapping: encoders -> precache -> free, THEN the transformer. Held
+    # together they add the text encoder's several GB to the base; apart, peak is just the base.
     protocol.progress(0, steps, status="loading encoders")
-    encoders = models.load_encoders(manifest["modelsDir"], str(device), dtype)
+    encoders = models.load_encoders(manifest["modelsDir"], arch.key, str(device), dtype)
 
     protocol.progress(0, steps, status="caching latents")
-    data = ds.precache(manifest["datasetDir"], encoders, str(device), dtype, resolution)
+    data = ds.precache(
+        manifest["datasetDir"], encoders, arch.key, str(device), dtype, resolution,
+        flip=bool(hp.get("flipAugment")),
+    )
+    # Encoded while the text encoder is still loaded; caption dropout swaps it in per step.
+    dropout = max(0.0, min(1.0, float(hp.get("captionDropout") or 0.0)))
+    unconditional = ds.precache_empty(encoders, arch.key, str(device)) if dropout > 0 else None
     shift = float(encoders.scheduler.config.get("shift", 1.0) or 1.0)
     models.free_encoders(encoders)
 
-    protocol.progress(0, steps, status="loading model")
+    quant = models.resolve_quant(
+        str(hp.get("baseQuant") or "auto"),
+        manifest["modelsDir"],
+        arch.key,
+        manifest["baseMode"],
+        resolution,
+    )
+    protocol.progress(0, steps, status=f"loading model ({quant.value})")
     transformer = models.load_transformer(
-        manifest["modelsDir"], manifest["baseMode"], str(device), dtype
+        manifest["modelsDir"], arch.key, manifest["baseMode"], str(device), dtype, quant
     )
     transformer.requires_grad_(False)
     transformer.add_adapter(
@@ -180,7 +179,7 @@ def train(manifest: dict[str, Any]) -> str | None:
             r=int(hp["rank"]),
             lora_alpha=int(hp.get("alpha") or hp["rank"]),
             lora_dropout=0.0,
-            target_modules=_TARGET_MODULES,
+            target_modules=archs.target_modules(arch, str(hp.get("loraScope") or "full")),
         )
     )
     if hasattr(transformer, "enable_gradient_checkpointing"):
@@ -201,26 +200,27 @@ def train(manifest: dict[str, Any]) -> str | None:
     for step in range(start, steps):
         if stop.flagged:
             break
-        item = data[step % len(data)]
-        clean = item["latent"].to(device, dtype)  # (C, H, W)
-        embed = item["embed"].to(device, dtype)  # (seq, dim)
+        source = data[step % len(data)]
+        if unconditional is not None and random.random() < dropout:
+            source = {**source, **unconditional}
+        item = _to_device(source, device, dtype)
+        clean = item["latent"]  # (C, H, W)
         noise = torch.randn_like(clean)
-        sigma = _timesteps(device, shift)  # scalar noise fraction in (0, 1)
+        sigma = arch.sigma(device, shift)  # scalar noise fraction in (0, 1)
         noisy = (1 - sigma) * clean + sigma * noise
-        # Z-Image's transformer is trained to predict (clean - noise): the pipeline NEGATES its
-        # output before handing it to FlowMatchEuler as the (noise - clean) velocity, so the raw
-        # output target is the negation of that. Timestep is 1 - sigma (1=clean, 0=noise).
-        target = clean - noise
+        target = arch.target(clean, noise)
 
         with accelerator.accumulate(transformer):
-            pred = _forward(transformer, noisy, 1.0 - sigma, embed)
+            pred = arch.forward(transformer, noisy, arch.timestep(sigma), item)
             loss = torch.nn.functional.mse_loss(pred.float(), target.float())
             accelerator.backward(loss)
             optimizer.step()
             optimizer.zero_grad()
 
         done = step + 1
-        protocol.progress(done, steps, loss=float(loss.detach().item()), status="training")
+        protocol.progress(
+            done, steps, loss=float(loss.detach().item()), status="training", vram=_peak_vram_gb()
+        )
         if done % save_every == 0 or done == steps:
             _save_checkpoint(accelerator, transformer, optimizer, ckpt_dir, done)
             if accelerator.is_main_process:

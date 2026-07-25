@@ -59,6 +59,8 @@ interface TrainingState {
   start: (datasetId: string, hyperparams: TrainingHyperparams) => Promise<TrainingRun | null>
   resume: (runId: string) => Promise<void>
   cancel: (runId: string) => Promise<void>
+  /** Drop a run's checkpoints so a changed configuration starts clean. */
+  discard: (runId: string) => Promise<void>
 
   applyProgress: (e: TrainingProgressEvent) => void
   applySample: (e: TrainingSampleEvent) => void
@@ -171,6 +173,11 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     set((s) => ({ runs: s.runs.map((r) => (r.id === runId ? res.value : r)) }))
   },
 
+  discard: async (runId) => {
+    const res = await studio().training.discard(runId)
+    if (!res.ok) return
+    set((s) => ({ runs: s.runs.map((r) => (r.id === runId ? res.value : r)) }))
+  },
   cancel: async (runId) => {
     const res = await studio().training.cancel(runId)
     if (!res.ok) set({ error: res.error })

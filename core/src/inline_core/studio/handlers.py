@@ -234,10 +234,12 @@ def register_studio_handlers(
         reg("training:start", lambda did, hp: training.start(did, hp))
         reg("training:resume", lambda rid: training.resume(rid))
         reg("training:cancel", lambda rid: training.cancel(rid))
+        reg("training:discard", lambda rid: training.discard(rid))
         reg("training:status", lambda rid: training.status(rid))
     else:
         for ch in ("listDatasets", "createDataset", "listItems", "addItems", "removeItem",
-                   "setCaption", "autoCaption", "listRuns", "start", "resume", "cancel", "status"):
+                   "setCaption", "autoCaption", "listRuns", "start", "resume", "cancel",
+                   "discard", "status"):
             reg(f"training:{ch}", not_wired("LoRA training"))
 
     # --- fal settings (key stored server-side) --------------------------------------------------

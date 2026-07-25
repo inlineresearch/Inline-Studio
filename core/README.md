@@ -5,8 +5,9 @@ The generation engine behind Inline. It takes a typed node graph (JSON) and retu
 low-VRAM laptops up to multi-GPU machines that split a single image's sampling across GPUs (via
 xDiT). It is Inline Studio's built-in render backend.
 
-First model: Z-Image (Alibaba Tongyi), a 6B rectified-flow diffusion transformer (and a model xDiT
-already supports, so the multi-GPU split works on it from the start).
+Models today: **Z-Image** (Alibaba Tongyi), a 6B rectified-flow diffusion transformer and the model
+xDiT already supports, so the multi-GPU split works on it from the start; and **Krea 2** (Krea AI),
+a 12.9B single-stream MMDiT released as an undistilled RAW base plus an 8-step distilled Turbo.
 
 > Status: early, and running end to end against a stub engine. In place and tested: the graph engine,
 > the typed `/v1` HTTP + websocket API (durable runs, streamed progress, coalescing), the model-dir
@@ -52,9 +53,13 @@ by category:
 
 ```
 models/
-  diffusion_models/   z_image_turbo_bf16.safetensors   <- the one file you need for Z-Image
-  vae/                ae.safetensors                   <- optional (see below)
-  text_encoders/      qwen/   (an HF-format folder: config + tokenizer + weights)  <- optional
+  diffusion_models/   z_image_turbo_bf16.safetensors        <- Z-Image
+                      krea2_turbo_bf16.safetensors          <- Krea 2 Turbo (generate)
+                      krea2_raw_bf16.safetensors            <- Krea 2 RAW (fine-tune)
+  vae/                ae.safetensors                        <- Z-Image
+                      qwen_image_vae_diffusers.safetensors  <- Krea 2
+  text_encoders/      qwen_3_4b.safetensors                 <- Z-Image
+                      qwen3vl_4b_bf16.safetensors           <- Krea 2
   loras/  controlnet/  checkpoints/  ...
 ```
 
@@ -73,8 +78,17 @@ paths:
    `models/`** (never the hidden HF cache) with visible progress.
 
 Override the diffusion source with `INLINE_ZIMAGE_MODEL` (a file or a diffusers dir), and the supporting
-components with `INLINE_ZIMAGE_VAE` / `INLINE_ZIMAGE_TEXT_ENCODER`. The engine scans the models dir on
-start; a node's model pickers list what is present.
+components with `INLINE_ZIMAGE_VAE` / `INLINE_ZIMAGE_TEXT_ENCODER`; Krea 2 has the same three under
+`INLINE_KREA2_*`. The engine scans the models dir on start; a node's model pickers list what is present.
+
+**Krea 2 loads from the same ComfyUI single files**, with two constraints worth knowing. Only the
+**bf16** builds in [`Comfy-Org/Krea-2`](https://huggingface.co/Comfy-Org/Krea-2) are loadable: the
+fp8/int8/nvfp4 variants carry ComfyUI-specific scale tensors, and the loader refuses them by name
+rather than failing mid-load. And the **VAE must be the diffusers-format** Qwen-Image file (the
+node's popup fetches it from `Qwen/Qwen-Image`), because ComfyUI's copy of the same weights uses a
+module layout diffusers has no converter for. `Krea2Transformer2DModel` has no `from_single_file`, so
+the transformer checkpoint is renamed into diffusers naming on load (`models/krea2/convert.py`) and
+streamed tensor by tensor onto the GPU.
 
 ## Nodes
 
@@ -82,8 +96,9 @@ start; a node's model pickers list what is present.
 renders any node generically - adding a node type needs no UI release.
 
 **High-level model nodes are what the user sees.** Generation is one-click: you drop a single
-**Z-Image Turbo** node, wire a Prompt into it, and hit Run. The node hooks up the diffusion model, VAE,
-and text-encoder behind the scenes - no loader/sampler wiring.
+**Z-Image Turbo**, **Krea 2 Turbo** or **Krea 2 RAW** node, wire a Prompt into it, and hit Run. The
+node hooks up the diffusion model, VAE, and text-encoder behind the scenes - no loader/sampler
+wiring.
 
 Underneath, a **low-level primitive vocabulary** exists (`load/diffusion-model`, `load/vae`,
 `load/text-encoder`, `encode/text`, `latent/empty`, `sample`, `vae/decode`, `vae/encode`) - the
@@ -172,7 +187,7 @@ The easy path is `webui.sh`, which maps friendly flags onto the engine's `INLINE
 ./webui.sh --listen --port 9000       # bind all interfaces on 9000
 ./webui.sh --multi-gpu                # split one image across GPUs (auto with 2+ GPUs)
 ./webui.sh --lowvram                  # tight-VRAM profile
-./webui.sh --install --extra zimage   # set up ./.venv with the Z-Image runtime, then exit
+./webui.sh --install --extra runtime  # set up ./.venv with the model runtime, then exit
 ```
 
 `./webui.sh --help` lists every flag (networking, multi-GPU, device/memory profile, paths). The same

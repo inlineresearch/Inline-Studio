@@ -1,9 +1,10 @@
 [project]
 # PyPI name; the import package is `inline_core` (src/inline_core).
 name = "inline-core"
-version = "1.2.41"
+version = "1.2.5"
 description = "The generation engine behind Inline Studio."
 readme = "README.md"
+license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
 # Deliberately torch-free so the engine boots and serves source nodes with no ML stack installed.
 dependencies = [
@@ -16,8 +17,8 @@ dependencies = [
 runtime = [
   # A bare `torch` is CPU-only on Windows; see [tool.uv] below and requirements.txt.
   "torch>=2.2",
-  # Z-Image needs diffusers >= 0.36 (ZImagePipeline).
-  "diffusers>=0.36",
+  # Krea 2 needs diffusers >= 0.39 (Krea2Pipeline); Z-Image needs >= 0.36 (ZImagePipeline).
+  "diffusers>=0.39",
   "transformers>=4.44",
   "accelerate>=0.30",
   "safetensors>=0.4",
@@ -62,7 +63,7 @@ dev = [
 # Everything needed to run locally. Lists concrete packages, never `inline-core[...]` self-refs.
 all = [
   "torch>=2.2",
-  "diffusers>=0.36",
+  "diffusers>=0.39",
   "transformers>=4.44",
   "accelerate>=0.30",
   "safetensors>=0.4",
