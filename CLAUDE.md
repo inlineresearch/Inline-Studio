@@ -24,6 +24,15 @@ plus closed models via fal.ai.
 > | [`inlineresearch/Inline-Core`](https://github.com/inlineresearch/Inline-Core)                                     | The engine's own repo (subtree source for `core/`)    |
 > | [`inlineresearch/Inline-Registry`](https://github.com/inlineresearch/Inline-Registry)                             | The published extension index the Available tab reads |
 > | [`inlineresearch/Inline-Studio-Extension-Guide`](https://github.com/inlineresearch/Inline-Studio-Extension-Guide) | The reference extension authors copy                  |
+>
+> **Hugging Face org: [`inlineresearch`](https://huggingface.co/inlineresearch)** - published models and datasets trained with the app.
+>
+> | Hugging Face repo                                                                                   | What it is                                                   |
+> | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+> | [`inlineresearch/skin-lora-krea-2-raw`](https://huggingface.co/inlineresearch/skin-lora-krea-2-raw) | Skin-texture LoRA for Krea 2 RAW, trained in the Trainer tab |
+> | [`inlineresearch/krea2-skin-lora`](https://huggingface.co/datasets/inlineresearch/krea2-skin-lora)  | The 26 image + caption pairs that LoRA trained on            |
+>
+> Website: [inlinestudio.art](https://inlinestudio.art).
 
 > Read this file before changing code. It defines the architecture and the non-negotiable rules.
 
