@@ -367,6 +367,35 @@ def set_core_node_output(conn: sqlite3.Connection, item_id: str, output: dict[st
     )
 
 
+def remove_core_node_output(
+    conn: sqlite3.Connection, item_id: str, take_id: str
+) -> str | None:
+    """Remove one render from a Core node's output history. If it was the active ``output``, promote
+    the newest remaining take (or clear it). Returns the removed take's ``filePath`` so the caller
+    can unlink the file, or None when nothing matched."""
+    try:
+        item = get_item(conn, item_id)
+    except ValueError:
+        return None
+    core = (item.get("data") or {}).get("core")
+    if item["type"] != "core" or not core:
+        return None
+    outputs = core.get("outputs") or []
+    match = next((o for o in outputs if o.get("takeId") == take_id), None)
+    if match is None:
+        return None
+    remaining = [o for o in outputs if o.get("takeId") != take_id]
+    active = core.get("output")
+    if (active or {}).get("takeId") == take_id:
+        active = remaining[0] if remaining else None
+    update_item(
+        conn,
+        item_id,
+        {"data": {**item["data"], "core": {**core, "output": active, "outputs": remaining}}},
+    )
+    return match.get("filePath")
+
+
 def delete_item(conn: sqlite3.Connection, item_id: str) -> None:
     conn.execute(
         "DELETE FROM moodboard_connectors WHERE from_item_id = ? OR to_item_id = ?",

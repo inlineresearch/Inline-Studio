@@ -186,6 +186,7 @@ function OutputsTab(): React.JSX.Element {
   const frameOutputs = frames.flatMap((f) =>
     (takesByFrame[f.id] ?? []).map((take) => ({
       createdAt: take.createdAt,
+      onDelete: () => void useFrameStore.getState().deleteTake(take.id),
       tile: {
         id: take.id,
         filePath: take.filePath,
@@ -205,6 +206,7 @@ function OutputsTab(): React.JSX.Element {
     const history = core.outputs ?? (core.output ? [core.output] : [])
     return history.map((o) => ({
       createdAt: o.createdAt ?? 0,
+      onDelete: () => void useMoodboardStore.getState().removeCoreOutput(it.id, o.takeId),
       tile: {
         id: o.takeId,
         filePath: o.filePath,
@@ -236,8 +238,8 @@ function OutputsTab(): React.JSX.Element {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         <div className="grid grid-cols-2 gap-2">
-          {outputs.map(({ tile }) => (
-            <OutputThumb key={tile.id} tile={tile} />
+          {outputs.map(({ tile, onDelete }) => (
+            <OutputThumb key={tile.id} tile={tile} onDelete={onDelete} />
           ))}
         </div>
       </div>

@@ -28,7 +28,14 @@ export interface OutputTile {
  * canvas to make a new frame. Frame takes carry their frame/output payload; Core-node outputs (no
  * frame) carry a media-file payload - the drop target imports the file into the Library first.
  */
-export function OutputThumb({ tile }: { tile: OutputTile }): React.JSX.Element {
+export function OutputThumb({
+  tile,
+  onDelete,
+}: {
+  tile: OutputTile
+  /** When provided, a delete (X) button is shown on hover; removes this output. */
+  onDelete?: () => void
+}): React.JSX.Element {
   const { id, filePath, kind, label, frameId } = tile
   const src = resolveMedia(filePath)
   const onContextMenu = useMediaContextMenu()
@@ -49,8 +56,32 @@ export function OutputThumb({ tile }: { tile: OutputTile }): React.JSX.Element {
       onDragStart={onDragStart}
       onContextMenu={(e) => onContextMenu(e, { src, name: label, kind })}
       title={`${label} - drag onto a node to use as input, or onto the canvas to make a frame`}
-      className="flex w-full cursor-grab flex-col overflow-hidden rounded-md border border-border hover:border-zinc-600"
+      className="group relative flex w-full cursor-grab flex-col overflow-hidden rounded-md border border-border hover:border-zinc-600"
     >
+      {onDelete && (
+        <button
+          type="button"
+          draggable={false}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+          onDragStart={(e) => e.preventDefault()}
+          title="Delete this output"
+          aria-label="Delete this output"
+          className="absolute right-1 top-1 z-10 hidden rounded bg-black/70 p-0.5 text-zinc-300 hover:bg-black/90 hover:text-white group-hover:block"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="h-3.5 w-3.5"
+          >
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      )}
       <div className="flex aspect-video items-center justify-center bg-black/40">
         {kind === 'image' && <img src={src} alt={label} className="h-full w-full object-cover" />}
         {kind === 'video' && <VideoPreview src={src} className="h-full w-full object-cover" />}

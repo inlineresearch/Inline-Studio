@@ -201,6 +201,7 @@ export const IpcChannels = {
     addResource: 'moodboard:addResource',
     updateItem: 'moodboard:updateItem',
     deleteItem: 'moodboard:deleteItem',
+    removeCoreOutput: 'moodboard:removeCoreOutput',
     importAndPlace: 'moodboard:importAndPlace',
     createConnector: 'moodboard:createConnector',
     deleteConnector: 'moodboard:deleteConnector',
@@ -551,6 +552,8 @@ export interface InlineStudioApi {
     addResource(x: number, y: number, surface?: CanvasSurface): Promise<Result<MoodboardItem>>
     updateItem(id: string, patch: MoodboardItemPatch): Promise<Result<MoodboardItem>>
     deleteItem(id: string): Promise<Result<void>>
+    /** Remove one render from a Core node's output history and unlink its file. */
+    removeCoreOutput(itemId: string, takeId: string): Promise<Result<void>>
     /** Import media into the shared library AND place it on the board near (x, y). */
     importAndPlace(x: number, y: number): Promise<Result<MoodboardItem[]>>
     createConnector(

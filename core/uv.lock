@@ -527,7 +527,7 @@ wheels = [
 
 [[package]]
 name = "inline-core"
-version = "1.2.5"
+version = "1.2.52"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -538,13 +538,20 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "accelerate" },
+    { name = "bitsandbytes", marker = "sys_platform != 'darwin'" },
     { name = "diffusers" },
+    { name = "einops" },
     { name = "fastapi" },
     { name = "huggingface-hub" },
     { name = "imageio-ffmpeg" },
+    { name = "nvidia-ml-py" },
+    { name = "peft" },
+    { name = "pillow" },
+    { name = "psutil" },
     { name = "safetensors" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "timm" },
     { name = "torch", version = "2.6.0+cu124", source = { registry = "https://download.pytorch.org/whl/cu124" }, marker = "sys_platform == 'win32'" },
     { name = "torch", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
     { name = "torchao" },
@@ -592,9 +599,11 @@ training = [
 requires-dist = [
     { name = "accelerate", marker = "extra == 'all'", specifier = ">=0.30" },
     { name = "accelerate", marker = "extra == 'runtime'", specifier = ">=0.30" },
+    { name = "bitsandbytes", marker = "sys_platform != 'darwin' and extra == 'all'", specifier = ">=0.43" },
     { name = "bitsandbytes", marker = "sys_platform != 'darwin' and extra == 'training'", specifier = ">=0.43" },
     { name = "diffusers", marker = "extra == 'all'", specifier = ">=0.39" },
     { name = "diffusers", marker = "extra == 'runtime'", specifier = ">=0.39" },
+    { name = "einops", marker = "extra == 'all'", specifier = ">=0.7" },
     { name = "einops", marker = "extra == 'training'", specifier = ">=0.7" },
     { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.110" },
@@ -604,11 +613,15 @@ requires-dist = [
     { name = "imageio-ffmpeg", marker = "extra == 'all'", specifier = ">=0.4" },
     { name = "imageio-ffmpeg", marker = "extra == 'server'", specifier = ">=0.4" },
     { name = "numpy", specifier = ">=1.26" },
+    { name = "nvidia-ml-py", marker = "extra == 'all'", specifier = ">=12" },
     { name = "nvidia-ml-py", marker = "extra == 'parallel'", specifier = ">=12" },
     { name = "nvidia-ml-py", marker = "extra == 'training'", specifier = ">=12" },
+    { name = "peft", marker = "extra == 'all'", specifier = ">=0.11" },
     { name = "peft", marker = "extra == 'training'", specifier = ">=0.11" },
+    { name = "pillow", marker = "extra == 'all'", specifier = ">=10" },
     { name = "pillow", marker = "extra == 'training'", specifier = ">=10" },
     { name = "psutil", specifier = ">=5.9" },
+    { name = "psutil", marker = "extra == 'all'", specifier = ">=5.9" },
     { name = "psutil", marker = "extra == 'training'", specifier = ">=5.9" },
     { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -617,6 +630,7 @@ requires-dist = [
     { name = "safetensors", marker = "extra == 'runtime'", specifier = ">=0.4" },
     { name = "scipy", marker = "extra == 'all'", specifier = ">=1.11" },
     { name = "scipy", marker = "extra == 'runtime'", specifier = ">=1.11" },
+    { name = "timm", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "timm", marker = "extra == 'training'", specifier = ">=1.0" },
     { name = "torch", marker = "sys_platform == 'win32' and extra == 'all'", specifier = ">=2.2", index = "https://download.pytorch.org/whl/cu124" },
     { name = "torch", marker = "sys_platform == 'win32' and extra == 'runtime'", specifier = ">=2.2", index = "https://download.pytorch.org/whl/cu124" },

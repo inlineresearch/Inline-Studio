@@ -84,6 +84,8 @@ interface MoodboardState {
   /** `recordHistory: false` skips the undo snapshot - used by programmatic layout fits. */
   updateItem: (id: string, patch: MoodboardItemPatch, recordHistory?: boolean) => Promise<void>
   deleteItem: (id: string) => Promise<void>
+  /** Delete one render from a Core node's output history (and its file). */
+  removeCoreOutput: (itemId: string, takeId: string) => Promise<void>
   connect: (
     fromItemId: string,
     toItemId: string,
@@ -328,6 +330,26 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     if (!item) return
     const next = (item.data.assetIds ?? []).filter((id) => id !== assetId)
     await get().updateItem(itemId, { data: { ...item.data, assetIds: next } })
+  },
+
+  removeCoreOutput: async (itemId, takeId) => {
+    const item = get().items.find((i) => i.id === itemId)
+    const core = item?.data.core
+    if (!core) return
+    // Optimistic: drop it from the history, promoting the newest remaining as active if needed.
+    const outputs = (core.outputs ?? []).filter((o) => o.takeId !== takeId)
+    const output = core.output?.takeId === takeId ? (outputs[0] ?? undefined) : core.output
+    set((s) => ({
+      items: s.items.map((it) =>
+        it.id === itemId ? { ...it, data: { ...it.data, core: { ...core, output, outputs } } } : it,
+      ),
+    }))
+    try {
+      const res = await studio().moodboard.removeCoreOutput(itemId, takeId)
+      if (!res.ok) set({ error: res.error })
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+    }
   },
 
   setLoaderHero: async (itemId, assetId) => {

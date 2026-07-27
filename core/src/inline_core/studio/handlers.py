@@ -177,6 +177,13 @@ def register_studio_handlers(
     )
     reg("moodboard:updateItem", lambda iid, patch: mb.update_item(conn(), iid, patch))
     reg("moodboard:deleteItem", lambda iid: mb.delete_item(conn(), iid))
+
+    def remove_core_output(item_id: str, take_id: str) -> None:
+        path = mb.remove_core_node_output(conn(), item_id, take_id)
+        if path:
+            _unlink(store.folder(), [path])
+
+    reg("moodboard:removeCoreOutput", lambda iid, tid: remove_core_output(iid, tid))
     reg("moodboard:importAndPlace", lambda _x, _y: [])  # browser uses /upload
     reg(
         "moodboard:createConnector",
