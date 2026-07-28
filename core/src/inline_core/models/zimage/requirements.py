@@ -73,6 +73,19 @@ def diffusion_root() -> Path:
     return models_dir() / "diffusion_models"
 
 
+def foreign_model_message(path: str) -> str | None:
+    """A clear error when a diffusion file plainly belongs to another architecture (a Krea file
+    picked for a Z-Image node) - name-based, best-effort. Loading the wrong transformer through
+    Z-Image's VAE/text-encoder/ControlNet silently produces distorted output, so fail loudly."""
+    name = Path(path).name.lower()
+    if "krea" in name and "image" not in name:
+        return (
+            f"'{Path(path).name}' is a Krea model, but this is a Z-Image node. Pick a "
+            "z_image_*.safetensors in the Diffusion file dropdown (or clear it to auto-select)."
+        )
+    return None
+
+
 def find_weight_file(root: Path) -> Path | None:
     """The single diffusion weight file to load: prefer a z-image-named file, else the first one."""
     if not root.is_dir():

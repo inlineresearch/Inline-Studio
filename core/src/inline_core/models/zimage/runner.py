@@ -163,6 +163,10 @@ class ZImageRunner(NodeRunner):
             if resolved is None:  # defensive: the missing-check above already covers this
                 raise ComponentError("Z-Image diffusion model not found in diffusion_models/.")
             mode, source = resolved
+        if mode == "single_file":
+            foreign = reqs.foreign_model_message(source)
+            if foreign:
+                raise ComponentError(foreign)
         # In single-file mode the VAE + text-encoder are their own files; a whole-pipeline folder
         # carries them, so these go unused unless explicitly wired.
         vae_file = vae_ref.file if vae_ref else rt.path_or_none(reqs.resolve_vae(params))

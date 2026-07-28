@@ -44,7 +44,7 @@ export function OutputThumb({
       // Frame payload → drop on a node feeds it as input; output payload → drop on canvas creates a
       // new frame fed by this output. The take id pins the exact image dragged.
       setFrameDragPayload(e.dataTransfer, frameId)
-      setOutputDragPayload(e.dataTransfer, frameId, id)
+      setOutputDragPayload(e.dataTransfer, frameId, id, filePath)
     } else {
       // Core-node output: no frame, so carry the raw file for the drop target to import.
       setMediaFileDragPayload(e.dataTransfer, { filePath, kind, name: `${label}.${extFor(kind)}` })

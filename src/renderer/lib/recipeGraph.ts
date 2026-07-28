@@ -9,6 +9,7 @@
  */
 import type { MoodboardItem } from '@shared/types'
 import { useMoodboardStore } from '../store/moodboardStore'
+import { useGenerationStore } from '../store/generationStore'
 import type { Recipe } from './pngRecipe'
 
 interface Point {
@@ -64,8 +65,17 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
       if (created && assetIds.length) {
         await store.updateItem(created.id, { data: { ...created.data, assetIds } }, false)
       }
+    } else if (it.type === 'frame') {
+      // A fal gen node (Core authored it with the model + params); rendered-frame image sources
+      // have no `fal` block and are skipped (their media doesn't transfer across a rebuild).
+      const fal = data.fal as { modelId?: string; params?: Record<string, unknown> } | undefined
+      if (!fal?.modelId) continue
+      created = await store.addGenNode(fal.modelId, x, y)
+      if (created?.frameId && fal.params) {
+        await useGenerationStore.getState().setParams(created.frameId, fal.params)
+      }
     } else {
-      continue // asset/frame/text/etc. need existing project media - skipped in v1
+      continue // asset/text/etc. need existing project media - skipped in v1
     }
 
     if (created) idMap.set(it.id, created.id)

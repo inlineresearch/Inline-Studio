@@ -153,6 +153,9 @@ class Krea2Runner(NodeRunner):
         source = model_ref.file if model_ref else _require(
             reqs.resolve_diffusion(self._variant, params), "diffusion model"
         )
+        foreign = reqs.foreign_model_message(source)
+        if foreign:
+            raise ComponentError(foreign)
         vae_file = vae_ref.file if vae_ref else _require(reqs.resolve_vae(params), "VAE")
         te_file = te_ref.file if te_ref else _require(
             reqs.resolve_text_encoder(params), "text encoder"

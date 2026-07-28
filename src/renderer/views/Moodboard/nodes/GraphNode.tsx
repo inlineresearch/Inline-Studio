@@ -139,7 +139,14 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   if (!item || item.type !== 'core' || !item.data.core || !descriptor) {
     return (
-      <NodeFrame id={id} selected={!!selected} minWidth={200} minHeight={92} subtleSelect>
+      <NodeFrame
+        id={id}
+        selected={!!selected}
+        minWidth={200}
+        minHeight={92}
+        subtleSelect
+        running={busy}
+      >
         <div className="flex h-full flex-col items-center justify-center gap-1 p-3 text-center">
           {coreType && disabledPack ? (
             // The extension is installed but off, so this is a toggle away from working.
@@ -182,13 +189,17 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const activeTakeId = core.output?.takeId
   // Switching a take restores that image's recipe non-destructively: its settings onto this node's
   // params, and its prompt onto the wired prompt node (if one still exists). No nodes are created.
+  // The take's *seed* is deliberately NOT restored - keep the node's current seed so browsing history
+  // never pins a fixed seed (which would make every re-generation identical and turn on the node
+  // cache, so connection/control changes would stop taking effect until the seed was reset).
   const setActiveOutput = (o: NonNullable<typeof core.output>): void => {
-    const nextCore = {
-      ...core,
-      output: o,
-      params: o.params ? { ...core.params, ...o.params } : core.params,
+    let params = core.params
+    if (o.params) {
+      const restored: Record<string, unknown> = { ...o.params }
+      delete restored.seed
+      params = { ...core.params, ...restored }
     }
-    void updateItem(itemId, { data: { ...item.data, core: nextCore } })
+    void updateItem(itemId, { data: { ...item.data, core: { ...core, output: o, params } } })
     if (typeof o.prompt === 'string') void setConnectedPromptText(itemId, o.prompt)
   }
 
@@ -284,6 +295,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           minHeight={44}
           padded={false}
           subtleSelect
+          running={busy}
         >
           <div className="flex h-full w-full flex-col gap-1 px-2 py-1.5">
             {selectParams.length > 0 ? (
@@ -385,6 +397,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         minHeight={200}
         padded={false}
         subtleSelect
+        running={busy}
       >
         <div className="relative flex h-full w-full flex-col">
           {/* Edge-to-edge output preview. */}

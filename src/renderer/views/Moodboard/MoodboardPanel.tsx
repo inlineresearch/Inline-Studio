@@ -42,6 +42,7 @@ import {
   getFrameDragId,
   getMediaFileDrag,
   getOutputDragId,
+  getOutputFilePath,
   getOutputTakeId,
 } from '../../lib/dnd'
 import { ImageNode } from './nodes/ImageNode'
@@ -808,25 +809,16 @@ function Board(): React.JSX.Element {
     // into the Library, then drop a Load Assets loader fed by it at the drop point.
     const media = getMediaFileDrag(e.dataTransfer)
     if (media) {
-      const loadAsAsset = async (): Promise<void> => {
-        const asset = await importMediaUrlToLibrary(resolveMedia(media.filePath), media.name)
-        if (!asset) return
-        // Surface the imported asset in the store, or the loader can't resolve its input thumb
-        // (resolveInputThumbs drops any input whose asset isn't loaded) and shows "no media".
-        await loadAssets()
-        const loader = await addLoader(drop.x, drop.y)
-        if (loader) await addLoaderAssets(loader.id, [asset.id])
-      }
       // A generated PNG carries the recipe that made it → offer to rebuild the graph instead.
       if (media.kind === 'image') {
         void (async () => {
           const blob = await fetch(resolveMedia(media.filePath))
             .then((r) => r.blob())
             .catch(() => null)
-          await offerRecipeOrRun(blob, drop, () => void loadAsAsset())
+          await offerRecipeOrRun(blob, drop, () => void loadImageAsAsset(media.filePath, drop))
         })()
       } else {
-        void loadAsAsset()
+        void loadImageAsAsset(media.filePath, drop)
       }
       return
     }
@@ -836,11 +828,28 @@ function Board(): React.JSX.Element {
     const outputFrameId = getOutputDragId(e.dataTransfer)
     if (outputFrameId) {
       const takeId = getOutputTakeId(e.dataTransfer)
-      void (async () => {
+      const outPath = getOutputFilePath(e.dataTransfer)
+      const newFrameFromOutput = async (): Promise<void> => {
         if (takeId) await setHero(outputFrameId, takeId)
         const item = await addEmptyFrame(drop.x, drop.y)
         if (item?.frameId) await addSourceInput(item.frameId, outputFrameId)
-      })()
+      }
+      // A fal PNG output carries its recipe → offer to rebuild the graph; else the default flow.
+      if (outPath && outPath.toLowerCase().endsWith('.png')) {
+        void (async () => {
+          const blob = await fetch(resolveMedia(outPath))
+            .then((r) => r.blob())
+            .catch(() => null)
+          const recipe = blob ? await readRecipeFromBlob(blob) : null
+          if (recipe?.graph?.items?.length) {
+            setRecipeChoice({ recipe, drop, onAsset: () => void loadImageAsAsset(outPath, drop) })
+          } else {
+            void newFrameFromOutput()
+          }
+        })()
+      } else {
+        void newFrameFromOutput()
+      }
       return
     }
 
@@ -871,6 +880,21 @@ function Board(): React.JSX.Element {
       return
     }
     placeAssetsAt(ids, drop)
+  }
+
+  /** Import an image at a project-relative path into the Library, then drop a Load Assets loader fed
+   * by it (the "Load as asset" action for a dropped generation). */
+  const loadImageAsAsset = async (
+    filePath: string,
+    drop: { x: number; y: number },
+  ): Promise<void> => {
+    const name = filePath.split('/').pop() || 'image.png'
+    const asset = await importMediaUrlToLibrary(resolveMedia(filePath), name)
+    if (!asset) return
+    // Surface the imported asset in the store, or the loader can't resolve its input thumb.
+    await loadAssets()
+    const loader = await addLoader(drop.x, drop.y)
+    if (loader) await addLoaderAssets(loader.id, [asset.id])
   }
 
   /** Read a recipe from the dropped image; if present, prompt Load-graph vs Load-as-asset, else run

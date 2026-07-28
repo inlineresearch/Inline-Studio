@@ -14,7 +14,7 @@ from ..errors import CancelledError, GraphValidationError, InlineCoreError
 from ..runtime.context import ExecutionContext
 from ..runtime.progress import CancelledEvent, ErrorEvent, NodeDoneEvent, RunDoneEvent
 from ..runtime.run import NodeRuntimeState, RunState, RunStatus, StateTrackingEmitter
-from .cache import NodeCache, is_cache_eligible, node_cache_key
+from .cache import NodeCache, asset_content_hashes, is_cache_eligible, node_cache_key
 from .registry import Registry
 from .schema import Graph, Node
 from .topo import topo_sort, upstream_closure
@@ -36,10 +36,13 @@ class Executor:
             order = self._plan(graph, target, state)
             state.status = RunStatus.RUNNING
             outputs: dict[str, dict[str, Any]] = {}
+            # Hash the input files once so the node cache is content-addressed: a re-rendered
+            # control map (or any replaced input) invalidates even when its path is unchanged.
+            asset_hashes = asset_content_hashes(graph)
             for node_id in order:
                 if ctx.cancel.cancelled:
                     raise CancelledError("Run cancelled.")
-                self._run_node(graph, node_id, outputs, run_ctx)
+                self._run_node(graph, node_id, outputs, run_ctx, asset_hashes)
             emitter.emit(RunDoneEvent(run_id=ctx.run_id))
         except CancelledError:
             emitter.emit(CancelledEvent(run_id=ctx.run_id))
@@ -68,6 +71,7 @@ class Executor:
         node_id: str,
         outputs: dict[str, dict[str, Any]],
         ctx: ExecutionContext,
+        asset_hashes: dict[str, str],
     ) -> None:
         node = graph.node(node_id)
         runner = self._registry.runner(node.type)
@@ -75,8 +79,7 @@ class Executor:
 
         key: str | None = None
         if runner.produces_takes and is_cache_eligible(node, self._registry):
-            # TODO(phase1): pass real asset content hashes so identity is content-addressed.
-            key = node_cache_key(graph, node_id, self._registry, asset_hashes={})
+            key = node_cache_key(graph, node_id, self._registry, asset_hashes=asset_hashes)
             cached = self._cache.get(key)
             if cached is not None:
                 ctx.emitter.emit(

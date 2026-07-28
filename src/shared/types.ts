@@ -277,6 +277,9 @@ export interface MoodboardItemData {
     camera?: { position: [number, number, number]; target: [number, number, number] }
     /** Which control map the node last rendered: an OpenPose skeleton or a depth map. */
     output?: 'pose' | 'depth'
+    /** Output aspect (w/h) of the rendered map; must match the gen node's resolution or the pose
+     * comes out stretched. Defaults to 1 (square). */
+    aspect?: number
   }
   /** `trainDataset` / `caption` / `trainer` nodes: the training dataset they operate on. */
   datasetId?: string | null

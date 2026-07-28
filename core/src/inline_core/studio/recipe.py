@@ -13,10 +13,22 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from . import frames as fr
 from . import moodboard as mb
 from .graph_build import _upstream_closure
 
 RECIPE_VERSION = 1
+
+
+def _item_data(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, Any]:
+    """The rebuild-relevant data for a recipe item. A fal gen node is a `frame` whose model + params
+    live in the frames table, so it's looked up; everything else trims its own `data`."""
+    if item["type"] == "frame" and item.get("frameId"):
+        frame = fr.get_frame(conn, item["frameId"])
+        if frame.get("provider") == "fal" and frame.get("modelId"):
+            return {"fal": {"modelId": frame["modelId"], "params": frame.get("params") or {}}}
+        return {}  # a rendered-frame image source - rebuilt structurally (media doesn't transfer)
+    return _clean_data(item)
 
 
 def _clean_data(item: dict[str, Any]) -> dict[str, Any]:
@@ -63,7 +75,7 @@ def build_recipe(conn: sqlite3.Connection, target_item_id: str) -> dict[str, Any
         {
             "id": item["id"],
             "type": item["type"],
-            "data": _clean_data(item),
+            "data": _item_data(conn, item),
             "x": item["x"],
             "y": item["y"],
             "width": item["width"],

@@ -60,33 +60,50 @@ function CameraRig({ fov }: { fov: number }): null {
 
 /** Project every character's 3D joints with the live camera and draw them onto one OpenPose control
  * image (a black canvas), then hand back a PNG blob. Fires when `nonce` changes. */
+/** Output size for a control map at aspect (w/h), long edge 768. */
+function outputSize(aspect: number): { w: number; h: number } {
+  return aspect >= 1
+    ? { w: 768, h: Math.max(1, Math.round(768 / aspect)) }
+    : { w: Math.max(1, Math.round(768 * aspect)), h: 768 }
+}
+
+/** A copy of the live camera reprojected at the OUTPUT aspect, so the control map isn't stretched
+ * when the generator resizes it to its own (e.g. square) resolution - the pose-distortion fix. */
+function outputCamera(camera: THREE.Camera, aspect: number): THREE.PerspectiveCamera {
+  const cam = (camera as THREE.PerspectiveCamera).clone()
+  cam.aspect = aspect
+  cam.updateProjectionMatrix()
+  return cam
+}
+
 function PoseRenderer({
   characters,
   nonce,
   enabled,
+  aspect,
   onRendered,
 }: {
   characters: Vec3[][]
   nonce: number
   enabled: boolean
+  aspect: number
   onRendered: (blob: Blob) => void
 }): null {
   const camera = useThree((s) => s.camera)
-  const size = useThree((s) => s.size)
 
   useEffect(() => {
     if (nonce === 0 || !enabled) return
-    const w = 768
-    const h = Math.max(1, Math.round((768 * size.height) / size.width))
+    const { w, h } = outputSize(aspect)
     const canvas = document.createElement('canvas')
     canvas.width = w
     canvas.height = h
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+    const cam = outputCamera(camera, aspect)
     const v = new THREE.Vector3()
     const project = (joints: Vec3[]): Point2D[] =>
       joints.map(([x, y, z]) => {
-        v.set(x, y, z).project(camera)
+        v.set(x, y, z).project(cam)
         return { x: (v.x * 0.5 + 0.5) * w, y: (1 - (v.y * 0.5 + 0.5)) * h, visible: v.z < 1 }
       })
     // First character clears to black; the rest overlay onto the same map.
@@ -101,6 +118,14 @@ function PoseRenderer({
 
 const btn =
   'rounded-md border border-border px-2 py-1 text-xs text-zinc-200 hover:bg-panel disabled:opacity-50'
+
+// Output aspect presets (w/h). Match the pick to the gen node's width/height.
+const ASPECTS: { label: string; value: number }[] = [
+  { label: '1:1', value: 1 },
+  { label: '3:4', value: 3 / 4 },
+  { label: '4:3', value: 4 / 3 },
+  { label: '16:9', value: 16 / 9 },
+]
 
 function RotateIcon({ cw = false }: { cw?: boolean }): React.JSX.Element {
   return (
@@ -129,6 +154,9 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
   const [selJoint, setSelJoint] = useState<number | null>(null)
   const [fov, setFov] = useState(45)
   const [mapKind, setMapKind] = useState<'pose' | 'depth'>('pose')
+  // Output aspect (w/h) of the control map. It must match the gen node's resolution or the generator
+  // stretches the map and the pose comes out distorted; default square = Z-Image's 1024x1024 default.
+  const [aspect, setAspect] = useState(1)
   const [orbit, setOrbit] = useState(true)
   const [nonce, setNonce] = useState(0)
   const [preview, setPreview] = useState<string | null>(null)
@@ -161,6 +189,7 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
     )
     setFov(scene?.fov ?? 45)
     setMapKind(scene?.output ?? 'pose')
+    setAspect(scene?.aspect ?? 1)
     setActive(0)
     setSelJoint(null)
     setPreview((prev) => {
@@ -274,6 +303,7 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
         fov,
         camera: cameraPose.current,
         output: mapKind,
+        aspect,
       }
       await useMoodboardStore.getState().updateItem(editingItemId, {
         data: { ...(item?.data ?? {}), controlAssetId: asset.id, controlScene: scene },
@@ -380,6 +410,26 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
             ))}
           </div>
 
+          <div
+            className="flex items-center overflow-hidden rounded-md border border-border"
+            title="Output aspect - match it to the gen node's width/height so the pose isn't stretched"
+          >
+            {ASPECTS.map((a) => (
+              <button
+                key={a.label}
+                onClick={() => setAspect(a.value)}
+                disabled={busy}
+                className={`px-2 py-1 text-xs disabled:opacity-50 ${
+                  Math.abs(aspect - a.value) < 0.001
+                    ? 'bg-panel text-white'
+                    : 'text-zinc-300 hover:bg-panel/60'
+                }`}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+
           <label className="flex items-center gap-1.5 text-xs text-zinc-400">
             FOV
             <input
@@ -443,15 +493,26 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
               characters={characters.map((c) => c.joints)}
               nonce={nonce}
               enabled={mapKind === 'pose'}
+              aspect={aspect}
               onRendered={handleRendered}
             />
             <DepthRenderer
               characters={characters.map((c) => c.joints)}
               nonce={nonce}
               enabled={mapKind === 'depth'}
+              aspect={aspect}
               onRendered={handleRendered}
             />
           </Canvas>
+
+          {/* Safe-frame guide: the region captured at the chosen output aspect (shares the camera's
+              vertical view). Pose only what's inside it. */}
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <div
+              className="h-full border border-dashed border-white/25 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
+              style={{ aspectRatio: String(aspect) }}
+            />
+          </div>
 
           {preview && (
             <div className="absolute bottom-3 right-3 w-40 overflow-hidden rounded-md border border-border bg-black shadow-lg">

@@ -50,6 +50,26 @@ def test_recipe_omits_disconnected_nodes(tmp_path) -> None:
     assert [i["id"] for i in recipe["graph"]["items"]] == [z["id"]]
 
 
+def test_build_recipe_captures_a_fal_gen_node(tmp_path) -> None:
+    """A fal gen node is a frame; its model + params live in the frames table, so the recipe must
+    look them up (not read the item's empty data) - that is what lets a shared fal PNG rebuild."""
+    store = _store(tmp_path)
+    conn = store.conn()
+    gen = mb.add_gen_node(
+        conn, "fal-ai/flux/dev", 400, 200, kind="image", params={"num_images": 2}, title="Flux"
+    )
+    prompt = mb.add_prompt(conn, 80, 200)
+    mb.update_item(conn, prompt["id"], {"data": {"promptText": "a fox"}})
+    mb.create_connector(conn, prompt["id"], gen["id"], "out", "prompt")
+
+    recipe = build_recipe(conn, gen["id"])
+    assert recipe["prompt"] == "a fox"
+    ids = {i["id"]: i for i in recipe["graph"]["items"]}
+    fal = ids[gen["id"]]["data"]["fal"]
+    assert fal["modelId"] == "fal-ai/flux/dev"
+    assert fal["params"] == {"num_images": 2}
+
+
 def test_png_recipe_round_trip(tmp_path) -> None:
     pytest.importorskip("PIL")
     from PIL import Image

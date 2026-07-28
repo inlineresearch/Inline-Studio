@@ -38,21 +38,26 @@ export function DepthRenderer({
   characters,
   nonce,
   enabled,
+  aspect,
   onRendered,
 }: {
   characters: Vec3[][]
   nonce: number
   enabled: boolean
+  aspect: number
   onRendered: (blob: Blob) => void
 }): null {
   const gl = useThree((s) => s.gl)
   const camera = useThree((s) => s.camera)
-  const size = useThree((s) => s.size)
 
   useEffect(() => {
     if (nonce === 0 || !enabled) return
-    const w = 768
-    const h = Math.max(1, Math.round((768 * size.height) / size.width))
+    // Render at the OUTPUT aspect (not the wide viewport) so depth isn't stretched at gen time.
+    const w = aspect >= 1 ? 768 : Math.max(1, Math.round(768 * aspect))
+    const h = aspect >= 1 ? Math.max(1, Math.round(768 / aspect)) : 768
+    const renderCam = (camera as THREE.PerspectiveCamera).clone()
+    renderCam.aspect = aspect
+    renderCam.updateProjectionMatrix()
 
     // Distance range from the camera to every joint -> adaptive near/far for contrast.
     let dmin = Infinity
@@ -101,7 +106,7 @@ export function DepthRenderer({
     gl.setRenderTarget(target)
     gl.setClearColor(0x000000, 1) // background = far = black
     gl.clear()
-    gl.render(scene, camera)
+    gl.render(scene, renderCam)
     const buf = new Uint8Array(w * h * 4)
     gl.readRenderTargetPixels(target, 0, 0, w, h, buf)
     gl.setRenderTarget(prevTarget)

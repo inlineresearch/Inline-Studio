@@ -61,6 +61,18 @@ def _env_path(kind: str) -> Path | None:
     return path if path.exists() else None
 
 
+def foreign_model_message(path: str) -> str | None:
+    """A clear error when a diffusion file plainly belongs to another architecture (a Z-Image file
+    picked for a Krea 2 node) - name-based, best-effort, to avoid silently distorted output."""
+    name = Path(path).name.lower()
+    if ("z_image" in name or "z-image" in name) and "krea" not in name:
+        return (
+            f"'{Path(path).name}' is a Z-Image model, but this is a Krea 2 node. Pick a "
+            "krea2_*.safetensors in the Diffusion file dropdown (or clear it to auto-select)."
+        )
+    return None
+
+
 def resolve_diffusion(variant: str, params: dict[str, object] | None = None) -> Path | None:
     """The Krea 2 transformer file for this node: the dropdown pick, the env override, the exact
     recommended file, else any krea2 file matching the variant. A user holding both RAW and Turbo

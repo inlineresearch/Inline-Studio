@@ -118,6 +118,19 @@ function NumberField({
     }
   }, [external])
 
+  // Emit while typing so the value registers immediately (not only on blur). A finite entry commits
+  // live (unclamped, so mid-typing "5" toward "512" isn't yanked to the min); an empty/partial box is
+  // left alone until blur resolves it to the clamped value or the default.
+  const emit = (raw: string): void => {
+    setDraft(raw)
+    if (raw.trim() === '') return
+    const parsed = Number(raw)
+    if (Number.isFinite(parsed)) {
+      lastExternal.current = parsed
+      onCommit(parsed)
+    }
+  }
+
   const commit = (): void => {
     const parsed = draft.trim() === '' ? Number(field.default) : Number(draft)
     const resolved = Number.isFinite(parsed)
@@ -137,7 +150,7 @@ function NumberField({
         min={field.min}
         max={field.max}
         step={field.step}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => emit(e.target.value)}
         onBlur={commit}
         className={inputCls}
       />
