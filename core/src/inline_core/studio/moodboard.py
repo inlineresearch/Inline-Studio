@@ -311,6 +311,14 @@ def add_loader(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     )
 
 
+def add_control_space(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
+    # A "Control Space" node holds a rendered OpenPose control map (data.controlAssetId, set on
+    # save) and a serialized 3D scene (data.controlScene); graph_build feeds the map downstream.
+    return _insert_item(
+        conn, item_type="controlSpace", x=x, y=y, width=240, height=240, data={}
+    )
+
+
 def add_prompt(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     return _insert_item(
         conn, item_type="prompt", x=x, y=y, width=240, height=120, data={"promptText": ""}

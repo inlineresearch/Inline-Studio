@@ -202,9 +202,10 @@ class MemoryPolicy(DevicePolicy):
             return None
         cap = max(0.0, budget - _ACTIVATION_HEADROOM_GB)
         big = (fp.diffusion_bytes + fp.text_encoder_bytes) / 1e9
-        vae = fp.vae_bytes / 1e9
-        full = big + vae
-        int8 = big * _INT8_FACTOR + vae
+        # The VAE and a ControlNet are never quantized, so they cost the same under every plan.
+        fixed = (fp.vae_bytes + fp.controlnet_bytes) / 1e9
+        full = big + fixed
+        int8 = big * _INT8_FACTOR + fixed
         forced = _env_profile() is not None  # explicit --profile pins the profile; fit picks quant
 
         def prof(auto: Profile) -> Profile:

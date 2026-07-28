@@ -6,6 +6,7 @@ It orchestrates cheap work inline. A model node's runner submits the denoise to 
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -18,6 +19,8 @@ from .registry import Registry
 from .schema import Graph, Node
 from .topo import topo_sort, upstream_closure
 from .validate import validate
+
+logger = logging.getLogger(__name__)
 
 
 class Executor:
@@ -44,6 +47,12 @@ class Executor:
             emitter.emit(ErrorEvent(run_id=ctx.run_id, message=str(error), node_id=error.node_id))
         except InlineCoreError as error:
             emitter.emit(ErrorEvent(run_id=ctx.run_id, message=str(error)))
+        except Exception as error:  # noqa: BLE001
+            # A runner that raises a non-InlineCoreError (e.g. a diffusers/HF load error) must still
+            # terminate the run: otherwise it escapes to the worker thread, the terminal event is
+            # never sent, and the run wedges in "queued" while the UI hangs on "loading model".
+            logger.exception("Run %s failed with an unhandled error", ctx.run_id)
+            emitter.emit(ErrorEvent(run_id=ctx.run_id, message=str(error) or type(error).__name__))
 
     def _plan(self, graph: Graph, target: str, state: RunState) -> list[str]:
         validate(graph, target, self._registry)

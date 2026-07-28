@@ -37,6 +37,31 @@ def _component(present: bool = False) -> ModelComponent:
     )
 
 
+def test_optional_component_is_a_suggestion_not_a_missing_requirement() -> None:
+    """A suggested (optional) component that isn't on disk must not flip ``allPresent`` to False,
+    and "Download all" must skip it - control is opt-in, so it never blocks a plain run."""
+    optional = ModelComponent(
+        id="controlnet", label="ControlNet", category="controlnet", present=False,
+        filename="cn.safetensors", repo="acme/cn", repo_file="cn.safetensors", optional=True,
+    )
+    registry = RequirementsRegistry()
+    registry.register("acme/thing", _StubProvider([_component(present=True), optional]))
+    downloads = ModelDownloads(events=None, requirements=registry)
+
+    payload = downloads.requirements("acme/thing")
+    assert payload["allPresent"] is True  # required present; the optional one is ignored
+    cn = next(c for c in payload["components"] if c["id"] == "controlnet")
+    assert cn["optional"] is True and cn["present"] is False
+
+
+def test_control_space_provider_offers_the_controlnet_suggestion() -> None:
+    from inline_core.models.controlspace import ControlSpaceProvider
+
+    components = ControlSpaceProvider().components()
+    assert [c.id for c in components] == ["controlnet"]
+    assert components[0].optional is True
+
+
 def test_unregistered_node_type_reports_no_requirements() -> None:
     """The pre-refactor behaviour for any non-Z-Image node, now the general case."""
     downloads = ModelDownloads(events=None, requirements=RequirementsRegistry())

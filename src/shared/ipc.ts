@@ -191,6 +191,7 @@ export const IpcChannels = {
     addDirector: 'moodboard:addDirector',
     addTrim: 'moodboard:addTrim',
     addLoader: 'moodboard:addLoader',
+    addControlSpace: 'moodboard:addControlSpace',
     addGenNode: 'moodboard:addGenNode',
     addPrompt: 'moodboard:addPrompt',
     addCoreNode: 'moodboard:addCoreNode',
@@ -535,6 +536,8 @@ export interface InlineStudioApi {
     addTrim(x: number, y: number): Promise<Result<MoodboardItem>>
     /** Create a standalone "Load Assets" node (holds library asset refs in its data). */
     addLoader(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** Create a "Control Space" 3D pose-editor node (renders an OpenPose control map). */
+    addControlSpace(x: number, y: number): Promise<Result<MoodboardItem>>
     /** Create a fal generation frame for `modelId` AND place its node on the canvas at (x, y). */
     addGenNode(modelId: string, x: number, y: number): Promise<Result<MoodboardItem>>
     /** Add a text-prompt node (feeds a Generate node's prompt input) at (x, y). */

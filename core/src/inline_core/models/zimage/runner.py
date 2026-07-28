@@ -57,6 +57,9 @@ ZIMAGE = NodeDescriptor(
         Port("text_encoder", "Text encoder", PortKind.TEXT_ENCODER, required=False),
         Port("lora", "LoRA", PortKind.LORA, required=False),
         Port("image", "Image (img2img)", PortKind.IMAGE, required=False),
+        # A control map (pose/depth/canny) from Apply ControlNet or Control Space. Needs a
+        # ControlNet model picked below; runs the ControlNet pipeline (text-to-image + control).
+        Port("control_image", "Control", PortKind.CONTROL, required=False),
     ),
     outputs=(Port("image", "Image", PortKind.IMAGE),),
     params=(
@@ -72,6 +75,15 @@ ZIMAGE = NodeDescriptor(
         ParamField(
             "strength", "Denoise strength", Widget.NUMBER, 0.6, min=0.0, max=1.0, step=0.05,
             advanced=True,
+        ),
+        # ControlNet: pick a model from models/controlnet/ and wire a control map into the Control
+        # input. "" = off (plain generation). The Union model gives pose/depth/canny in one file.
+        ParamField(
+            "controlnet", "ControlNet", Widget.SELECT, "", options_from="controlnet",
+        ),
+        ParamField(
+            "controlnet_conditioning_scale", "Control strength", Widget.NUMBER, 0.75,
+            min=0.0, max=1.0, step=0.05,
         ),
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
         # Advanced: pick a specific file per component. "" = auto (the single file in that folder).
@@ -116,7 +128,15 @@ class ZImageRunner(NodeRunner):
         sampler = str(params["sampler"])
         scheduler = str(params["scheduler"])
         image_ref = rt.first(inputs.get("image"))
-        img2img = image_ref is not None
+        control_ref = rt.first(inputs.get("control_image"))
+        # Keep the Path|None: path_or_none() collapses None to "", which would make the
+        # `is not None` check below always true and load a ControlNet from an empty path.
+        controlnet_path = reqs.resolve_controlnet(params)
+        use_control = control_ref is not None and controlnet_path is not None
+        if control_ref is not None and controlnet_path is None:
+            logger.warning("Control image wired but no ControlNet model picked; ignoring control.")
+        # ControlNet is text-to-image + control; an img2img init image is ignored under control.
+        img2img = image_ref is not None and not use_control
 
         # Wired component handles from load/* subnodes override the dropdowns.
         model_ref = rt.component_ref(inputs, "model", "diffusion", _LABEL)
@@ -150,7 +170,11 @@ class ZImageRunner(NodeRunner):
 
         # Size-aware placement: hand the policy the on-disk sizes so it fits dtype/quant/offload to
         # THIS GPU, then refuse an impossible load up front rather than OOM-killing the server.
-        self._policy.set_footprint(_footprint(mode, source, vae_file, te_file))
+        self._policy.set_footprint(
+            _footprint(
+                mode, source, vae_file, te_file, str(controlnet_path) if use_control else "",
+            )
+        )
         fit = self._policy.fit_estimate()
         if fit is not None and not fit.fits:
             raise ComponentError(rt.wont_fit_message(fit))
@@ -172,6 +196,7 @@ class ZImageRunner(NodeRunner):
                 text=te_file,
                 quant=self._policy.quantization(),
                 loras=loras,
+                controlnet=str(controlnet_path) if use_control else None,
                 cancel_check=lambda: rt.raise_if_cancelled(ctx),
             )
         except CancelledError:
@@ -216,6 +241,11 @@ class ZImageRunner(NodeRunner):
         if img2img:
             call["image"] = rt.load_image(image_ref, _LABEL)
             call["strength"] = float(params.get("strength", 0.6))
+        if use_control:
+            call["control_image"] = rt.load_image(control_ref, _LABEL)
+            call["controlnet_conditioning_scale"] = float(
+                params.get("controlnet_conditioning_scale", 0.75)
+            )
 
         # Rebuild the scheduler for the chosen sampler/scheduler from the pipe's pristine base
         # config (immutable across cache hits).
@@ -273,6 +303,14 @@ class ZImageRunner(NodeRunner):
                 "seed": seed,
                 **({"strength": call["strength"]} if img2img else {}),
                 **(
+                    {
+                        "controlnet": str(controlnet_path),
+                        "controlnet_conditioning_scale": call["controlnet_conditioning_scale"],
+                    }
+                    if use_control
+                    else {}
+                ),
+                **(
                     {"loras": [{"file": lo.file, "strength": lo.strength} for lo in loras]}
                     if loras
                     else {}
@@ -301,8 +339,11 @@ def _load_pipeline(
     text: str,
     quant: Quantization = Quantization.NONE,
     loras: tuple[LoraRef, ...] = (),
+    controlnet: str | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> Any:
+    # A control build is its own cached pipeline, keyed on the control file in its own field so
+    # eviction can tell it apart from the plain t2i/i2i pipelines built from the same base weights.
     key = rt.PipelineKey(
         arch=_ARCH,
         diffusion=source,
@@ -311,6 +352,7 @@ def _load_pipeline(
         variant="i2i" if img2img else "t2i",
         quant=quant.value,
         loras=loaders.lora_cache_key(loras),
+        controlnet=controlnet or "",
     )
     with rt.PIPELINES.lock:
         cached = rt.PIPELINES.get(key)
@@ -354,6 +396,7 @@ def _load_pipeline(
                 vae_dtype=vae_dtype,
                 device=load_device,
                 loras=loras,
+                controlnet=controlnet,
                 cancel_check=cancel_check,
             )
             logger.info(
@@ -386,12 +429,18 @@ def _build_pipeline(
     vae_dtype: Any = None,
     device: str | None = None,
     loras: tuple[LoraRef, ...] = (),
+    controlnet: str | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> Any:
     """Build a Z-Image pipeline **offline**, from either a whole diffusers folder (``mode ==
     "pipeline"``) or three single ``.safetensors`` files (``mode == "single_file"``, the fast path
     the docs describe). ``quant`` applies to the single-file path only."""
     if mode == "pipeline":
+        if controlnet:
+            raise ComponentError(
+                "ControlNet needs the single-file diffusion layout (a file in diffusion_models/), "
+                "not a whole-pipeline folder. Switch the model or remove the ControlNet."
+            )
         if quant is not Quantization.NONE:
             logger.warning(
                 "Smart-memory quantization (%s) is not applied to a whole-pipeline folder; use the "
@@ -421,15 +470,16 @@ def _build_pipeline(
         vae_dtype=vae_dtype,
         device=device,
         loras=loras,
+        controlnet_file=controlnet,
         cancel_check=cancel_check,
     )
 
 
-def _footprint(mode: str, source: str, vae: str, text: str) -> ModelFootprint:
+def _footprint(mode: str, source: str, vae: str, text: str, controlnet: str = "") -> ModelFootprint:
     """On-disk component sizes for the fit estimate. Single-file mode only - a whole pipeline folder
     isn't sized here, so the policy falls back to its VRAM buckets."""
     diffusion = source if mode == "single_file" else ""
-    return ModelFootprint(**reqs.footprint_bytes(diffusion, vae, text))
+    return ModelFootprint(**reqs.footprint_bytes(diffusion, vae, text, controlnet))
 
 
 # --- prompt encoding ----------------------------------------------------------------------------

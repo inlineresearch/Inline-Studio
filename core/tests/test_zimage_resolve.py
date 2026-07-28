@@ -80,9 +80,13 @@ def test_no_repo_fallback_when_nothing_local(monkeypatch, tmp_path):
 def test_requirements_all_missing_on_empty_root(monkeypatch, tmp_path):
     _models_root(monkeypatch, tmp_path)
     components = reqs.zimage_requirements()
-    assert {c.id for c in components} == {"diffusion", "vae", "text_encoder"}
+    # The three required base components (from the split repo) + the optional ControlNet suggestion.
+    required = [c for c in components if not c.optional]
+    assert {c.id for c in required} == {"diffusion", "vae", "text_encoder"}
     assert all(not c.present for c in components)
-    assert all(c.repo == reqs.BASE_REPO for c in components)
+    assert all(c.repo == reqs.BASE_REPO for c in required)
+    controlnet = next(c for c in components if c.optional)
+    assert controlnet.id == "controlnet" and controlnet.repo == reqs.CONTROLNET_REPO
 
 
 def test_pipeline_dir_satisfies_vae_and_text_encoder(monkeypatch, tmp_path):

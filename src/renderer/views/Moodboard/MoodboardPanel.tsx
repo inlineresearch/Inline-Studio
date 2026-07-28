@@ -60,12 +60,16 @@ import { LayerNode } from './nodes/LayerNode'
 import { DirectorNode } from './nodes/DirectorNode'
 import { TrimNode } from './nodes/TrimNode'
 import { LoaderNode } from './nodes/LoaderNode'
+import { ControlSpaceNode } from './nodes/ControlSpaceNode'
 import { GraphNode } from './nodes/GraphNode'
 import { ResourceNode } from './nodes/ResourceNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
 import { CanvasToolbar } from './CanvasToolbar'
 import { AddNodeMenu, type AddNodeKind } from './AddNodeMenu'
+import { Modal } from '../../components/Modal'
+import { readRecipeFromBlob, type Recipe } from '../../lib/pngRecipe'
+import { buildGraphFromRecipe } from '../../lib/recipeGraph'
 import { FrameInspector } from './FrameInspector'
 import { CheckIcon, CloseIcon, CopyIcon } from '../../components/icons'
 
@@ -93,6 +97,7 @@ const nodeTypes: NodeTypes = {
   trim: TrimNode,
   prompt: PromptNode,
   loader: LoaderNode,
+  controlSpace: ControlSpaceNode,
   core: GraphNode,
   resource: ResourceNode,
 }
@@ -260,6 +265,7 @@ function Board(): React.JSX.Element {
   const addTrim = useMoodboardStore((s) => s.addTrim)
   const addEmptyFrame = useMoodboardStore((s) => s.addEmptyFrame)
   const addLoader = useMoodboardStore((s) => s.addLoader)
+  const addControlSpace = useMoodboardStore((s) => s.addControlSpace)
   const addLoaderAssets = useMoodboardStore((s) => s.addLoaderAssets)
   const addPrompt = useMoodboardStore((s) => s.addPrompt)
   const addCoreNode = useMoodboardStore((s) => s.addCoreNode)
@@ -300,6 +306,12 @@ function Board(): React.JSX.Element {
   } | null>(null)
   // Active canvas tool: Select (edit - marquee/move) vs Pan (view - drag pans, nodes locked).
   const [tool, setTool] = useState<'select' | 'pan'>('select')
+  // A dropped Inline image that carries a recipe: offer "Load graph" vs "Load as asset".
+  const [recipeChoice, setRecipeChoice] = useState<{
+    recipe: Recipe
+    drop: { x: number; y: number }
+    onAsset: () => void
+  } | null>(null)
   // "Add node" list (toolbar + button, or double-click empty canvas in Select mode).
   const [addMenu, setAddMenu] = useState<{
     x: number
@@ -716,6 +728,9 @@ function Board(): React.JSX.Element {
       case 'prompt':
         void addPrompt(m.flowX, m.flowY)
         break
+      case 'controlSpace':
+        void addControlSpace(m.flowX, m.flowY)
+        break
     }
   }
 
@@ -793,7 +808,7 @@ function Board(): React.JSX.Element {
     // into the Library, then drop a Load Assets loader fed by it at the drop point.
     const media = getMediaFileDrag(e.dataTransfer)
     if (media) {
-      void (async () => {
+      const loadAsAsset = async (): Promise<void> => {
         const asset = await importMediaUrlToLibrary(resolveMedia(media.filePath), media.name)
         if (!asset) return
         // Surface the imported asset in the store, or the loader can't resolve its input thumb
@@ -801,7 +816,18 @@ function Board(): React.JSX.Element {
         await loadAssets()
         const loader = await addLoader(drop.x, drop.y)
         if (loader) await addLoaderAssets(loader.id, [asset.id])
-      })()
+      }
+      // A generated PNG carries the recipe that made it → offer to rebuild the graph instead.
+      if (media.kind === 'image') {
+        void (async () => {
+          const blob = await fetch(resolveMedia(media.filePath))
+            .then((r) => r.blob())
+            .catch(() => null)
+          await offerRecipeOrRun(blob, drop, () => void loadAsAsset())
+        })()
+      } else {
+        void loadAsAsset()
+      }
       return
     }
 
@@ -832,12 +858,31 @@ function Board(): React.JSX.Element {
 
     const ids = getAssetDragIds(e.dataTransfer)
     if (ids.length === 0) {
-      // Files dropped from the OS → import into the library, then place as frames.
+      // Files dropped from the OS → import into the library, then place as frames. A shared Inline
+      // PNG carries its recipe, so offer to rebuild the graph instead of just importing it.
       const files = Array.from(e.dataTransfer.files ?? [])
-      if (files.length > 0) void placeDroppedFiles(files, drop)
+      if (files.length === 0) return
+      const png = files.find((f) => f.type === 'image/png')
+      if (png && files.length === 1) {
+        void offerRecipeOrRun(png, drop, () => void placeDroppedFiles(files, drop))
+      } else {
+        void placeDroppedFiles(files, drop)
+      }
       return
     }
     placeAssetsAt(ids, drop)
+  }
+
+  /** Read a recipe from the dropped image; if present, prompt Load-graph vs Load-as-asset, else run
+   * the asset fallback directly. */
+  const offerRecipeOrRun = async (
+    blob: Blob | null,
+    drop: { x: number; y: number },
+    onAsset: () => void,
+  ): Promise<void> => {
+    const recipe = blob ? await readRecipeFromBlob(blob) : null
+    if (recipe?.graph?.items?.length) setRecipeChoice({ recipe, drop, onAsset })
+    else onAsset()
   }
 
   /** Place existing library assets as frames at/near a drop point (cascaded). */
@@ -1038,6 +1083,49 @@ function Board(): React.JSX.Element {
         <CoreSettingsPanel />
         <ModelInfoPanel />
         <ModelRequirementsModal />
+
+        <Modal
+          open={recipeChoice !== null}
+          onClose={() => setRecipeChoice(null)}
+          title="This image carries its graph"
+        >
+          {recipeChoice && (
+            <div className="flex flex-col gap-4 p-5">
+              <p className="text-sm text-zinc-300">
+                This Inline image embeds the graph that generated it
+                {recipeChoice.recipe.prompt ? (
+                  <>
+                    {' '}
+                    (<span className="text-zinc-400">“{recipeChoice.recipe.prompt}”</span>)
+                  </>
+                ) : null}
+                . Rebuild that graph on the canvas, or just add the image as an asset?
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => {
+                    const c = recipeChoice
+                    setRecipeChoice(null)
+                    c.onAsset()
+                  }}
+                  className="rounded-md border border-border px-3 py-1.5 text-sm text-zinc-200 hover:bg-panel"
+                >
+                  Load as asset
+                </button>
+                <button
+                  onClick={() => {
+                    const c = recipeChoice
+                    setRecipeChoice(null)
+                    void buildGraphFromRecipe(c.recipe, c.drop)
+                  }}
+                  className="rounded-md border border-emerald-700 bg-emerald-600/20 px-3 py-1.5 text-sm text-emerald-200 hover:bg-emerald-600/30"
+                >
+                  Load graph
+                </button>
+              </div>
+            </div>
+          )}
+        </Modal>
       </div>
 
       <FrameInspector />
@@ -1188,6 +1276,9 @@ function itemToNode(
   }
   if (item.type === 'loader') {
     return { ...common, type: 'loader', data: { itemId: item.id } }
+  }
+  if (item.type === 'controlSpace') {
+    return { ...common, type: 'controlSpace', data: { itemId: item.id } }
   }
   if (item.type === 'core') {
     return { ...common, type: 'core', data: { itemId: item.id } }

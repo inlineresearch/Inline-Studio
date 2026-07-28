@@ -61,7 +61,7 @@ def use_fake_pipe(monkeypatch: pytest.MonkeyPatch) -> _FakePipe:
         rz,
         "_load_pipeline",
         lambda policy, *, img2img, source, mode, vae, text, quant=None, loras=(),
-        cancel_check=None: pipe,
+        controlnet=None, cancel_check=None: pipe,
     )
     # These tests mock the pipeline, so bypass the "models present on disk" gate.
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
@@ -85,7 +85,7 @@ def test_register_adds_descriptor_and_runner() -> None:
     descriptor = registry.get("alibaba/z-image-turbo")
     assert descriptor.output_kind is not None
     assert [p.id for p in descriptor.inputs] == [
-        "prompt", "model", "vae", "text_encoder", "lora", "image",
+        "prompt", "model", "vae", "text_encoder", "lora", "image", "control_image",
     ]
     assert descriptor.input("prompt").required
     # The component handles + lora + image are all optional (wire a Load node, or the dropdowns).
@@ -126,7 +126,7 @@ def test_wired_component_handles_override_dropdowns(monkeypatch: pytest.MonkeyPa
 
     def _fake_load(
         policy: Any, *, img2img: bool, source: str, mode: str, vae: str, text: str,
-        quant: Any = None, loras: Any = (), cancel_check: Any = None,
+        quant: Any = None, loras: Any = (), controlnet: Any = None, cancel_check: Any = None,
     ) -> Any:
         captured.update(source=source, mode=mode, vae=vae, text=text)
         return _FakePipe()
@@ -197,7 +197,7 @@ def test_cancel_during_sampling_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         rz, "_load_pipeline",
         lambda policy, *, img2img, source, mode, vae, text, quant=None, loras=(),
-        cancel_check=None: (_CancellingPipe()),
+        controlnet=None, cancel_check=None: (_CancellingPipe()),
     )
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
     monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))
@@ -482,3 +482,59 @@ def test_smaller_resolutions_only_suggests_smaller() -> None:
     for size in (2048, 1024, 768, 512, 384, 256, 200, 128):
         for s in rt.smaller_resolutions(size, size):
             assert int(s.split("x")[0]) < size
+
+
+# --- pipeline-cache eviction --------------------------------------------------------------------
+
+
+def _key(**over: Any) -> rt.PipelineKey:
+    base = dict(
+        arch="z-image", diffusion="/m.safetensors", vae="/ae.safetensors",
+        text_encoder="/qwen.safetensors", variant="t2i", quant="none",
+    )
+    return rt.PipelineKey(**{**base, **over})
+
+
+def test_evict_stale_drops_a_control_pipeline_when_a_plain_run_follows() -> None:
+    """The QA bug: a control build was keyed only through ``variant`` ("ctrl:<file>"), and eviction
+    matched on files alone - so the ControlNet pipeline survived a following plain run, pinning its
+    several-GB ControlNet while the plain transformer loaded on top, and the card OOMed."""
+    cache = rt.PipelineCache()
+    control = _key(quant="int8", controlnet="/union.safetensors")
+    cache.put(control, object())
+
+    cache.evict_stale(_key())  # the plain t2i run that follows
+
+    assert cache.get(control) is None
+
+
+def test_evict_stale_keeps_the_t2i_base_for_an_img2img_build() -> None:
+    """Only ``variant`` may differ: the i2i build still reuses the cached t2i base (from_pipe)."""
+    cache = rt.PipelineCache()
+    base = _key(variant="t2i")
+    cache.put(base, object())
+
+    cache.evict_stale(_key(variant="i2i"))
+
+    assert cache.get(base) is not None
+
+
+def test_evict_stale_keeps_an_identical_control_pipeline() -> None:
+    """A repeat control run must hit the cache, not rebuild 6 GB of ControlNet."""
+    cache = rt.PipelineCache()
+    control = _key(quant="int8", controlnet="/union.safetensors")
+    cache.put(control, object())
+
+    cache.evict_stale(control)
+
+    assert cache.get(control) is not None
+
+
+def test_control_key_keeps_the_controlnet_component_alive() -> None:
+    """The ControlNet file is not one of the three ``files``, so the component sweep must be told
+    about it explicitly or every control run reloads it from disk."""
+    key = _key(controlnet="/union.safetensors")
+    assert key.component_files == {
+        "/m.safetensors", "/ae.safetensors", "/qwen.safetensors", "/union.safetensors"
+    }
+    assert _key().component_files == {"/m.safetensors", "/ae.safetensors", "/qwen.safetensors"}

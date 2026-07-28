@@ -123,7 +123,9 @@ def _configure_gpu_speed(pipe: Any, placement: Placement) -> None:
 @dataclass(frozen=True)
 class PipelineKey:
     """Identifies one built pipeline. ``variant`` separates shapes built from the same weights
-    (t2i vs i2i); ``loras`` is order- and strength-sensitive because fusing is not commutative."""
+    (t2i vs i2i); ``loras`` is order- and strength-sensitive because fusing is not commutative.
+    ``controlnet`` is a *separate* field rather than part of ``variant`` so eviction can see it -
+    a control pipeline holds several GB of extra weights that must not survive a plain run."""
 
     arch: str
     diffusion: str
@@ -132,10 +134,16 @@ class PipelineKey:
     variant: str
     quant: str
     loras: tuple[str, ...] = ()
+    controlnet: str = ""
 
     @property
     def files(self) -> tuple[str, str, str]:
         return (self.diffusion, self.vae, self.text_encoder)
+
+    @property
+    def component_files(self) -> set[str]:
+        """Every weight file this pipeline holds - what a component sweep must keep alive."""
+        return set(self.files) | ({self.controlnet} if self.controlnet else set())
 
 
 class PipelineCache:
@@ -157,21 +165,37 @@ class PipelineCache:
         self._entries[key] = pipe
 
     def evict_stale(self, key: PipelineKey) -> None:
-        """Drop every pipeline that is not this key's (arch, files, LoRA stack), then free the
-        components behind them. Both variants of the surviving key are kept, so an i2i build can
-        still reuse a cached t2i base. Call under ``lock``."""
+        """Drop every pipeline that is not this key's (arch, files, LoRA stack, ControlNet, quant),
+        then free the components behind them. Only ``variant`` is allowed to differ, so an i2i build
+        still reuses a cached t2i base. Call under ``lock``.
+
+        ControlNet and quant are part of the match because both change what is *resident*, not just
+        the pipeline's shape: a surviving control pipeline pins its several-GB ControlNet (and its
+        transformer at the other quantization) while the new one loads on top, which OOMs the card.
+        """
         import gc
 
         from . import loaders
 
         for k in list(self._entries):
             keep = (
-                k.arch == key.arch and k.files == key.files and k.loras == key.loras
+                k.arch == key.arch
+                and k.files == key.files
+                and k.loras == key.loras
+                and k.controlnet == key.controlnet
+                and k.quant == key.quant
             )
             if not keep:
                 del self._entries[k]
+        # Drop the component-cache references too, THEN collect. Order matters: a diffusion
+        # transformer holds reference cycles, so it only frees on a gc - and stays referenced by the
+        # component cache until unload_components pops it. Collecting before that (the old order)
+        # freed the pipeline wrappers but left the multi-GB weights pinned, so empty_cache couldn't
+        # reclaim them and the next build (plain after control, a different quant) stacked -> OOM.
+        loaders.unload_components(
+            keep_files=key.component_files, keep_loras=key.loras, keep_quant=key.quant
+        )
         gc.collect()
-        loaders.unload_components(keep_files=set(key.files), keep_loras=key.loras)
         free_vram()
 
 

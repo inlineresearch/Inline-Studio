@@ -14,6 +14,7 @@ import { ExtensionsDialog } from '../Extensions/ExtensionsDialog'
 import { TrainerPanel } from '../Trainer/TrainerPanel'
 import { ContextMenu } from '../../components/ContextMenu'
 import { MediaLightbox } from '../../components/MediaLightbox'
+import { ControlSpaceEditorMount } from '../ControlSpace/ControlSpaceEditorMount'
 
 function TabButton({
   tab,
@@ -123,6 +124,7 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
 
       <ContextMenu />
       <MediaLightbox />
+      <ControlSpaceEditorMount />
       <ExtensionsDialog />
     </div>
   )

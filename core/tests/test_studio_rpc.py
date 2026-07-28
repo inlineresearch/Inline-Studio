@@ -72,6 +72,7 @@ def test_full_project_and_canvas_flow(client) -> None:
         "sample",
         "vae/decode",
         "vae/encode",
+        "control/apply",
     }
     assert rpc(client, "core:status")["value"]["running"] is True
 

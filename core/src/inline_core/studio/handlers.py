@@ -169,6 +169,7 @@ def register_studio_handlers(
     reg("moodboard:addDirector", lambda x, y: mb.add_director(conn(), x, y))
     reg("moodboard:addTrim", lambda x, y: mb.add_trim(conn(), x, y))
     reg("moodboard:addLoader", lambda x, y: mb.add_loader(conn(), x, y))
+    reg("moodboard:addControlSpace", lambda x, y: mb.add_control_space(conn(), x, y))
     reg("moodboard:addPrompt", lambda x, y: mb.add_prompt(conn(), x, y))
     reg("moodboard:addCoreNode", lambda t, x, y: mb.add_core_node(conn(), t, x, y))
     reg(

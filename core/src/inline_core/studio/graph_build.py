@@ -26,8 +26,9 @@ from . import moodboard as mb
 def _source_output_port(source: dict[str, Any] | None, source_handle: str | None) -> str:
     if source and source["type"] == "prompt":
         return "text"
-    # An asset, a rendered frame, or a Load Assets loader all become an ``input/image`` source node.
-    if source and source["type"] in ("asset", "frame", "loader"):
+    # An asset, a rendered frame, a Load Assets loader, or a Control Space render all become an
+    # ``input/image`` source node.
+    if source and source["type"] in ("asset", "frame", "loader", "controlSpace"):
         return "image"
     return source_handle or "out"  # a 'core' item's handles already are Core port ids
 
@@ -79,6 +80,18 @@ def _item_to_node(
     if item["type"] == "loader":
         asset_ids = data.get("assetIds") or []
         path = resolve_asset_path(asset_ids[0]) if asset_ids else None
+        if not path:
+            return None
+        return {
+            "id": item["id"],
+            "type": "input/image",
+            "params": {"asset": {"ref": "path", "path": path}},
+        }
+    # A Control Space node feeds its rendered OpenPose control map (a library asset) as a frozen
+    # image source, wired into a gen node's control input.
+    if item["type"] == "controlSpace":
+        asset_id = data.get("controlAssetId")
+        path = resolve_asset_path(asset_id) if asset_id else None
         if not path:
             return None
         return {

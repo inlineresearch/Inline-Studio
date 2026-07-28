@@ -46,6 +46,12 @@ def _register_builtins(
     requirements: RequirementsRegistry,
 ) -> list[str]:
     registered: list[str] = []
+    # Torch-free: the Control Space node is client-side, so its ControlNet download suggestion is
+    # offered even on a runtime-less install (registered unconditionally, unlike the model runners).
+    from ..models.controlspace import ControlSpaceProvider
+
+    requirements.register("controlSpace", ControlSpaceProvider())
+    registered.append("controlSpace")
     try:
         from ..models.zimage.provider import ZImageProvider
         from ..models.zimage.runner import register_zimage
@@ -72,6 +78,16 @@ def _register_builtins(
 
         register_zimage_primitives(registry, store, policy)
         registered.append("primitives:z-image")
+    except ImportError:
+        pass
+    try:
+        from ..models.preprocess.requirements import PreprocessProvider
+        from ..models.preprocess.runner import register_control_apply
+
+        register_control_apply(registry, store, policy)
+        # Torch-free: the annotator downloads are offered even when the runtime extra is absent.
+        requirements.register("control/apply", PreprocessProvider())
+        registered.append("control/apply")
     except ImportError:
         pass
     return registered

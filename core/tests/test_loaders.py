@@ -94,3 +94,38 @@ def test_unload_components_evicts_all_but_kept_files():
     remaining = {k[2] for k in loaders._CACHE}
     assert remaining == {"/models/ae.safetensors", "/models/qwen.safetensors"}
     loaders._CACHE.clear()
+
+
+def test_unload_components_evicts_the_same_file_at_another_quantization():
+    """Adding a ControlNet flips the fit plan from resident to int8, so the same transformer file
+    is cached twice. Without a quant-aware sweep both stay resident - two full-size models."""
+    loaders._CACHE.clear()
+    int8 = ("z-image", "diffusion", "/m.safetensors", "fp16", "int8", "cuda:0")
+    plain = ("z-image", "diffusion", "/m.safetensors", "fp16", "none", "cuda:0")
+    encoder = ("z-image", "text_encoder", "/qwen.safetensors", "fp16", "int8", "cuda:0")
+    loaders._CACHE.update({int8: object(), plain: object(), encoder: object()})
+
+    loaders.unload_components(
+        keep_files={"/m.safetensors", "/qwen.safetensors"}, keep_quant="none"
+    )
+
+    assert plain in loaders._CACHE
+    assert int8 not in loaders._CACHE
+    assert encoder not in loaders._CACHE  # the encoder quantizes too
+    loaders._CACHE.clear()
+
+
+def test_unload_components_keeps_never_quantized_kinds_across_a_quant_switch():
+    """The VAE and the ControlNet always key as NONE whatever the plan, so a quant-aware sweep must
+    not read their slot as a mismatch and drop them on every control run."""
+    loaders._CACHE.clear()
+    vae = ("z-image", "vae", "/ae.safetensors", "fp32", "none", "cuda:0")
+    controlnet = ("z-image", "controlnet", "/union.safetensors", "fp16", "none", "cuda:0")
+    loaders._CACHE.update({vae: object(), controlnet: object()})
+
+    loaders.unload_components(
+        keep_files={"/ae.safetensors", "/union.safetensors"}, keep_quant="int8"
+    )
+
+    assert vae in loaders._CACHE and controlnet in loaders._CACHE
+    loaders._CACHE.clear()

@@ -14,6 +14,7 @@ import {
   AdjustIcon,
   AlertIcon,
   BoxIcon,
+  DownloadIcon,
   ImageGlyph,
   NodeBadge,
   NodeBadgeRow,
@@ -99,6 +100,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const { itemId } = data as GraphNodeData
   const item = useMoodboardStore((s) => s.items.find((i) => i.id === itemId))
   const updateItem = useMoodboardStore((s) => s.updateItem)
+  const setConnectedPromptText = useMoodboardStore((s) => s.setConnectedPromptText)
   const coreType = item?.type === 'core' ? item.data.core?.type : undefined
   const descriptor = useCoreNodesStore((s) =>
     coreType ? s.descriptors.find((d) => d.type === coreType) : undefined,
@@ -178,8 +180,16 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // carry a single `output` - treat that as a one-entry history. `output` marks the active take.
   const outputs = core.outputs ?? (core.output ? [core.output] : [])
   const activeTakeId = core.output?.takeId
+  // Switching a take restores that image's recipe non-destructively: its settings onto this node's
+  // params, and its prompt onto the wired prompt node (if one still exists). No nodes are created.
   const setActiveOutput = (o: NonNullable<typeof core.output>): void => {
-    void updateItem(itemId, { data: { ...item.data, core: { ...core, output: o } } })
+    const nextCore = {
+      ...core,
+      output: o,
+      params: o.params ? { ...core.params, ...o.params } : core.params,
+    }
+    void updateItem(itemId, { data: { ...item.data, core: nextCore } })
+    if (typeof o.prompt === 'string') void setConnectedPromptText(itemId, o.prompt)
   }
 
   // Real "models missing" signal from the requirements check (replaces the old options heuristic,
@@ -188,6 +198,14 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const modelsMissing = reqs ? !reqs.allPresent : false
   const download = downloadsForType ? activeDownload(downloadsForType, reqs) : null
   const downloadPct = download ? Math.round(download.fraction * 100) : null
+  // A suggested (optional) component that isn't on disk yet - e.g. the opt-in ControlNet. Surfaced
+  // as a soft chip (not the alarming "Models missing" one) so control is one click away.
+  const suggested = reqs?.components.find((c) => c.optional && !c.present) ?? null
+  const suggestedDl = suggested && downloadsForType ? downloadsForType[suggested.id] : undefined
+  const suggestedPct = suggestedDl ? Math.round(suggestedDl.fraction * 100) : null
+  // The soft chip's noun follows the download's category: the annotator weights for Apply ControlNet
+  // read "detectors", the opt-in ControlNet model reads "ControlNet".
+  const suggestNoun = suggested?.category === 'annotators' ? 'detectors' : 'ControlNet'
 
   // A loader/plumbing node (no media output) renders compact - no preview, no Run (it loads with
   // whatever downstream node runs). Generation nodes get the full preview card + the graph Run
@@ -346,6 +364,18 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
             Models
           </button>
         )}
+        {suggested && !modelsMissing && (
+          <button
+            onClick={() => openReqs(descriptor.type)}
+            title={`${suggested.label} - optional download`}
+            className="nodrag flex h-6 items-center gap-1 rounded-full border border-border bg-panel/80 px-2 text-[10px] font-medium text-zinc-300 shadow-sm backdrop-blur hover:border-emerald-500/40 hover:text-emerald-300"
+          >
+            <DownloadIcon className="h-3.5 w-3.5" />
+            {suggestedDl && !suggestedDl.error
+              ? `${suggestNoun} ${suggestedPct}%`
+              : `Get ${suggestNoun}`}
+          </button>
+        )}
       </NodeBadgeRow>
 
       <NodeFrame
@@ -443,6 +473,17 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                   )}
                 </button>
               ))}
+            </div>
+          )}
+
+          {/* The active take's prompt (restored from its recipe on switch), so the shown image's
+              prompt is visible without opening Adjust. */}
+          {core.output?.prompt && (
+            <div
+              className="shrink-0 truncate border-t border-border bg-surface/90 px-2 py-1 text-[10px] text-zinc-400"
+              title={core.output.prompt}
+            >
+              {core.output.prompt}
             </div>
           )}
 

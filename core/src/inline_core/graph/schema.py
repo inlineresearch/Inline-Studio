@@ -26,6 +26,7 @@ class PortKind(str, Enum):
     LORA = "lora"
     CONDITIONING = "conditioning"
     LATENT = "latent"
+    CONTROL = "control"
 
 
 def port_satisfies(source: PortKind, target: PortKind) -> bool:
@@ -33,7 +34,10 @@ def port_satisfies(source: PortKind, target: PortKind) -> bool:
     if source == target:
         return True
     # a single image satisfies a list input (a one-element list)
-    return source is PortKind.IMAGE and target is PortKind.IMAGE_LIST
+    if source is PortKind.IMAGE and target is PortKind.IMAGE_LIST:
+        return True
+    # a control input accepts any image output (the control map is just an image)
+    return source is PortKind.IMAGE and target is PortKind.CONTROL
 
 
 @dataclass(frozen=True)
