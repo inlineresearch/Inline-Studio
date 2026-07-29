@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   centroid,
+  depthRange,
   drawOpenPose,
+  faceOcclusion,
+  facingLabel,
+  facingPromptHint,
+  headFrame,
   KEYPOINT_COUNT,
   KEYPOINTS,
   LIMBS,
+  nearestGroundHit,
   POSE_COLORS,
   PRESETS,
   rotatePoseY,
@@ -71,6 +77,124 @@ describe('pose transforms', () => {
       expect(y).toBeCloseTo(STANDING[i][1] - 2, 6)
       expect(z).toBeCloseTo(STANDING[i][2] + 3, 6)
     })
+  })
+})
+
+describe('faceOcclusion (front/back facing)', () => {
+  // STANDING faces +Z (nose is forward of the neck/ears in +Z).
+  const NOSE = 0
+  const R_EYE = 14
+  const L_EYE = 15
+  const R_EAR = 16
+  const L_EAR = 17
+
+  it('keeps the face when the camera is in front of it', () => {
+    const cull = faceOcclusion(STANDING, [0, 1.5, 5]) // camera at +Z, facing the character's front
+    expect(cull[NOSE]).toBe(false)
+    expect(cull[R_EYE]).toBe(false)
+    expect(cull[L_EYE]).toBe(false)
+  })
+
+  it('culls the nose and eyes but keeps the ears when the head faces away', () => {
+    const cull = faceOcclusion(STANDING, [0, 1.5, -5]) // camera behind the character
+    expect(cull[NOSE]).toBe(true)
+    expect(cull[R_EYE]).toBe(true)
+    expect(cull[L_EYE]).toBe(true)
+    expect(cull[R_EAR]).toBe(false) // ears stay - what OpenPose sees from behind
+    expect(cull[L_EAR]).toBe(false)
+  })
+
+  it('turning the character around flips which side the camera sees as the face', () => {
+    const turned = rotatePoseY(STANDING, Math.PI) // now faces -Z
+    const front = faceOcclusion(turned, [0, 1.5, 5]) // camera at +Z now sees the back of the head
+    expect(front[NOSE]).toBe(true)
+    const behind = faceOcclusion(turned, [0, 1.5, -5]) // camera at -Z now sees the face
+    expect(behind[NOSE]).toBe(false)
+  })
+})
+
+describe('facing', () => {
+  const FRONT: Vec3 = [0, 1.5, 5]
+  const BEHIND: Vec3 = [0, 1.5, -5]
+  const SIDE: Vec3 = [5, 1.5, 0.12] // level with the nose, so the camera is exactly side-on
+
+  it('the head frame points from the skull center toward the nose', () => {
+    const head = headFrame(STANDING)
+    expect(head).not.toBeNull()
+    expect(head!.forward[2]).toBeGreaterThan(0.8) // STANDING faces +Z
+    expect(Math.hypot(...head!.forward)).toBeCloseTo(1, 6)
+  })
+
+  it('labels front, back and profile from the camera position', () => {
+    expect(facingLabel(STANDING, FRONT)).toBe('front')
+    expect(facingLabel(STANDING, BEHIND)).toBe('back')
+    expect(facingLabel(STANDING, SIDE)).toBe('profile')
+  })
+
+  it('follows the character when it turns around', () => {
+    const turned = rotatePoseY(STANDING, Math.PI)
+    expect(facingLabel(turned, FRONT)).toBe('back')
+    expect(facingLabel(turned, BEHIND)).toBe('front')
+  })
+
+  it('a back-facing scene gets a prompt hint; a front-facing one needs none', () => {
+    expect(facingPromptHint(['front'])).toBeNull()
+    expect(facingPromptHint(['three-quarter'])).toBeNull()
+    const hint = facingPromptHint(['back', 'back'])
+    expect(hint?.positive).toContain('from behind')
+    expect(hint?.negative).toContain('looking at the camera')
+  })
+
+  it('says nothing when characters face different ways or the head is degenerate', () => {
+    expect(facingPromptHint(['back', 'front'])).toBeNull()
+    expect(facingPromptHint([])).toBeNull()
+    expect(facingPromptHint([null])).toBeNull()
+  })
+
+  it('agrees with faceOcclusion: a back label means the face keypoints are culled', () => {
+    expect(facingLabel(STANDING, BEHIND)).toBe('back')
+    expect(faceOcclusion(STANDING, BEHIND)[0]).toBe(true)
+    expect(faceOcclusion(STANDING, FRONT)[0]).toBe(false)
+  })
+})
+
+describe('depth map range', () => {
+  const CAM: Vec3 = [0, 1.2, 3.2]
+  const FWD: Vec3 = [0, -0.09, -0.99] // the editor's default framing, looking slightly down
+  const UP: Vec3 = [0, 1, 0]
+
+  it('finds the ground at the bottom of the frame, and reports none when looking up', () => {
+    const hit = nearestGroundHit(CAM, FWD, UP, 45)
+    expect(hit).not.toBeNull()
+    expect(hit!).toBeGreaterThan(0)
+    expect(hit!).toBeLessThan(3.2) // nearer than the character, so it owns the near plane
+    expect(nearestGroundHit(CAM, [0, 0.5, -0.87], UP, 45)).toBeNull()
+  })
+
+  it('spans nearest visible surface to backdrop, and never lets the backdrop hit pure black', () => {
+    const ground = nearestGroundHit(CAM, FWD, UP, 45)
+    const { near, far, backdrop } = depthRange([STANDING], CAM, ground)
+    expect(near).toBeCloseTo(ground!, 6) // the floor is nearer than the body
+    expect(backdrop).toBeGreaterThan(near)
+    expect(far).toBeGreaterThan(backdrop) // headroom, so the background is dark grey not 0
+    // The shader maps distance -> 1-t; the backdrop must land clear of black.
+    const backdropGrey = 1 - (backdrop - near) / (far - near)
+    expect(backdropGrey).toBeGreaterThan(0.05)
+  })
+
+  it('falls back to the body when there is no ground in frame', () => {
+    const { near } = depthRange([STANDING], CAM, null)
+    const nearest = Math.min(
+      ...STANDING.map(([x, y, z]) => Math.hypot(x - CAM[0], y - CAM[1], z - CAM[2])),
+    )
+    expect(near).toBeLessThan(nearest) // padded by a body radius so the surface isn't clipped
+    expect(near).toBeGreaterThan(nearest - 0.3)
+  })
+
+  it('degenerate input does not produce a NaN range', () => {
+    const { near, far } = depthRange([], CAM)
+    expect(Number.isFinite(near)).toBe(true)
+    expect(far).toBeGreaterThan(near)
   })
 })
 

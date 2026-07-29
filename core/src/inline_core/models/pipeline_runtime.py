@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
 import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -26,7 +27,7 @@ from ..graph.loader_runners import ComponentRef, LoraRef
 from ..graph.schema import Node
 from ..runtime.context import ExecutionContext
 from ..runtime.progress import Phase, ProgressEvent
-from ..takes import AssetRef
+from ..takes import AssetRef, Take
 
 logger = logging.getLogger("inline_core.models")
 
@@ -371,15 +372,24 @@ def free_vram() -> None:
 
 
 def smaller_resolutions(width: int, height: int) -> list[str]:
-    """Square sizes strictly smaller than the current image, so an OOM hint only ever suggests
-    something that actually cuts peak memory."""
-    ladder = [1024, 768, 512, 384, 256]
-    current = max(width, height)
-    smaller = [f"{s}x{s}" for s in ladder if s < current]
-    if smaller:
-        return smaller[:2]
-    half = max(64, (current // 2 // 8) * 8)
-    return [f"{half}x{half}"]
+    """Sizes that keep the requested aspect ratio but cut pixel count, which is what drives peak
+    memory. Suggesting off a ladder of squares got both halves wrong: 1024x1024 is only 4% fewer
+    pixels than 896x1216 (so it OOMs too), and it silently turns a portrait into a square."""
+    pixels = width * height
+    out: list[str] = []
+    for area in (0.7, 0.5, 0.35):
+        scale = math.sqrt(area)
+        w = max(64, round(width * scale / 64) * 64)
+        h = max(64, round(height * scale / 64) * 64)
+        label = f"{w}x{h}"
+        if w * h < pixels and label not in out:
+            out.append(label)
+        if len(out) == 2:
+            break
+    if out:
+        return out
+    half = f"{max(64, width // 2 // 64 * 64)}x{max(64, height // 2 // 64 * 64)}"
+    return [half] if half != f"{width}x{height}" else []  # already at the floor: nothing to suggest
 
 
 def oom_message(
@@ -406,11 +416,14 @@ def oom_message(
             "distilled to "
             "run CFG-free - set Guidance to 0 to halve the memory. Or "
         )
-    suggestions = " or ".join(smaller_resolutions(width, height))
+    smaller = smaller_resolutions(width, height)
+    # Suggestions keep the requested aspect: someone who asked for a portrait wants a smaller
+    # portrait, not a square.
+    try_hint = f" (you're at {width}x{height} - try {' or '.join(smaller)})" if smaller else ""
     lower = "lower" if cfg_hint else "Lower"
     return (
         f"Ran out of GPU memory generating a {width}x{height} image. {cfg_hint}{lower} the "
-        f"resolution (you're at {width}x{height} - try {suggestions}) or pick a smaller model."
+        f"resolution{try_hint} or pick a smaller model."
     )
 
 
@@ -471,7 +484,11 @@ def load_image(ref: Any, label: str) -> Any:
 
     if isinstance(ref, AssetRef) and ref.ref == "path" and ref.path:
         return Image.open(ref.path).convert("RGB")
-    raise ComponentError(f"{label} img2img needs a readable image path input.")
+    # An upstream node's render feeds a Take, not an AssetRef - e.g. Apply ControlNet's control map
+    # into a gen node's Control input. Open its file.
+    if isinstance(ref, Take) and ref.uri:
+        return Image.open(ref.uri).convert("RGB")
+    raise ComponentError(f"{label} needs a readable image input.")
 
 
 def first(values: list[Any] | None) -> Any:

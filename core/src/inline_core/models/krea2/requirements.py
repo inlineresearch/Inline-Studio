@@ -27,6 +27,11 @@ VAE_FILE = "qwen_image_vae_diffusers.safetensors"
 VAE_REPO_FILE = "vae/diffusion_pytorch_model.safetensors"
 TEXT_ENCODER_FILE = "qwen3vl_4b_bf16.safetensors"
 
+#: The public Krea 2 depth control-LoRA (rank-64 + expanded input projection). It lands in
+#: ``controlnet/`` alongside any Z-Image controlnet; resolution is name-scoped so the two never mix.
+DEPTH_CONTROL_REPO = "Patil/Krea-2-depth-controlnet"
+DEPTH_CONTROL_FILE = "depth-control-lora.safetensors"
+
 #: variant -> the file the popup downloads for that node.
 DIFFUSION_FILES = {
     "turbo": "krea2_turbo_bf16.safetensors",
@@ -98,6 +103,57 @@ def resolve_diffusion(variant: str, params: dict[str, object] | None = None) -> 
     return krea[0] if krea else None
 
 
+def resolve_depth_control(params: dict[str, object] | None = None) -> Path | None:
+    """The depth control-LoRA file, or None. Opt-in like Z-Image control: resolves only from
+    ``INLINE_KREA2_CONTROL`` or an explicit ``depth_controlnet`` dropdown pick (never auto)."""
+    env = os.environ.get("INLINE_KREA2_CONTROL", "").strip()
+    if env:
+        path = Path(env)
+        return path if path.exists() else None
+    chosen = str((params or {}).get("depth_controlnet") or "").strip()
+    if not chosen:
+        return None
+    picked = models_dir() / "controlnet" / chosen
+    return picked if picked.is_file() else None
+
+
+def auto_depth_control() -> Path | None:
+    """The depth control-LoRA to use when a control map is wired but none was picked - the exact
+    downloaded file, else a krea+depth-named weight. None if absent. Only consulted when a control
+    input is actually connected, so depth control stays opt-in and never touches a plain run."""
+    root = models_dir() / "controlnet"
+    if not root.is_dir():
+        return None
+    exact = root / DEPTH_CONTROL_FILE
+    if exact.is_file():
+        return exact
+    for path in sorted(root.iterdir()):
+        name = path.name.lower()
+        if path.is_file() and path.suffix.lower() in _WEIGHT_SUFFIXES:
+            if "krea" in name and "depth" in name:
+                return path
+    return None
+
+
+def depth_control_present() -> bool:
+    return auto_depth_control() is not None
+
+
+def depth_control_component() -> ModelComponent:
+    """The suggested depth control-LoRA download, offered on both Krea 2 nodes. Optional: it never
+    blocks a plain run."""
+    return ModelComponent(
+        id="depth_controlnet",
+        label="Depth control-LoRA",
+        category="controlnet",
+        present=depth_control_present(),
+        filename=DEPTH_CONTROL_FILE,
+        repo=DEPTH_CONTROL_REPO,
+        repo_file=DEPTH_CONTROL_FILE,
+        optional=True,
+    )
+
+
 def resolve_vae(params: dict[str, object] | None = None) -> Path | None:
     return _resolve_shared("vae", "vae", VAE_FILE, params)
 
@@ -160,6 +216,8 @@ def krea2_requirements(
             repo=VAE_REPO,
             repo_file=VAE_REPO_FILE,
         ),
+        # Suggested, not required: offered in the popup so a depth map has an adapter to run with.
+        depth_control_component(),
     ]
 
 
@@ -182,11 +240,15 @@ def _file_bytes(path: object) -> int:
 
 
 def footprint_bytes(
-    diffusion: object = None, vae: object = None, text_encoder: object = None
+    diffusion: object = None,
+    vae: object = None,
+    text_encoder: object = None,
+    controlnet: object = None,
 ) -> dict[str, int]:
     """On-disk sizes keyed to match ``ModelFootprint``. Torch-free (a plain ``stat``)."""
     return {
         "diffusion_bytes": _file_bytes(diffusion),
         "text_encoder_bytes": _file_bytes(text_encoder),
         "vae_bytes": _file_bytes(vae),
+        "controlnet_bytes": _file_bytes(controlnet),
     }

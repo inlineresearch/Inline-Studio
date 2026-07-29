@@ -43,6 +43,7 @@ CONTROL_APPLY = NodeDescriptor(
             "type", "Type", Widget.SELECT, "pose",
             options=(
                 Option("pose", "OpenPose (pose)"),
+                Option("depth_anything", "Depth-Anything V2 (depth, for Krea 2)"),
                 Option("depth", "MiDaS (depth)"),
                 Option("canny", "Canny edges (no model)"),
             ),
@@ -89,6 +90,8 @@ def _detector(kind: str) -> Any:
         ) from error
     if kind == "canny":
         det: Any = CannyDetector()
+    elif kind == "depth_anything":
+        det = _DepthAnythingDetector()
     elif kind == "depth":
         det = MidasDetector.from_pretrained(_annotator_source("dpt_hybrid-midas-501f0c75.pt"))
     elif kind == "pose":
@@ -99,6 +102,50 @@ def _detector(kind: str) -> Any:
         raise ComponentError(f"Unknown control type {kind!r}. Use pose, depth or canny.")
     _DETECTORS[kind] = det
     return det
+
+
+class _DepthAnythingDetector:
+    """Depth-Anything-V2-Large depth, the estimator the Krea 2 depth control-LoRA trained on.
+    Returns a grayscale RGB depth map (near = white), per-image normalized. Auto-fetches into the HF
+    cache on first use, the same fetch-once posture as the controlnet_aux detectors."""
+
+    _MODEL_ID = "depth-anything/Depth-Anything-V2-Large-hf"
+
+    _processor: Any
+    _model: Any
+
+    def __init__(self) -> None:
+        try:
+            import transformers
+        except ImportError as error:
+            raise ComponentError(
+                "Depth-Anything needs transformers (ships in the runtime extra). Reinstall it: "
+                "uv pip install -e '.[runtime]'."
+            ) from error
+        tf: Any = transformers
+        self._processor = tf.AutoImageProcessor.from_pretrained(self._MODEL_ID)
+        self._model = tf.AutoModelForDepthEstimation.from_pretrained(self._MODEL_ID).eval()
+
+    def __call__(
+        self, image: Any, detect_resolution: int = 512, image_resolution: int = 512
+    ) -> Any:
+        # Depth-Anything's processor governs its own input size, so the resolution knobs (meant for
+        # the controlnet_aux detectors) are accepted for a uniform call but not used here.
+        del detect_resolution, image_resolution
+        import numpy as np
+        import torch
+        import torch.nn.functional as F
+        from PIL import Image
+
+        with torch.no_grad():
+            inputs = self._processor(images=[image], return_tensors="pt")
+            depth: Any = self._model(**inputs).predicted_depth[None].float()
+            depth = F.interpolate(
+                depth, size=(image.height, image.width), mode="bilinear", align_corners=False
+            )[0, 0]
+            depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-6)
+        array = (depth.cpu().numpy() * 255).astype(np.uint8)
+        return Image.fromarray(array).convert("RGB")
 
 
 class ControlApplyRunner(NodeRunner):

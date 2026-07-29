@@ -155,7 +155,9 @@ class ZImageRunner(NodeRunner):
 
         # No hidden downloads: a required component that is neither wired nor on disk fails fast.
         missing = [
-            c.label for c in reqs.zimage_requirements(params) if not c.present and c.id not in wired
+            c.label
+            for c in reqs.zimage_requirements(params)
+            if not c.present and not c.optional and c.id not in wired
         ]
         if missing:
             raise ComponentError(

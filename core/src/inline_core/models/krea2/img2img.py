@@ -54,14 +54,14 @@ def img2img_kwargs(
     schedule.set_timesteps(sigmas=raw, mu=mu, device=device)
     sigma = schedule.sigmas[start].to(device)
 
-    latents = _encode_image(pipe, image, width, height, device, generator)
+    latents = encode_image(pipe, image, width, height, device, generator)
     noise = torch.randn(
         latents.shape, generator=generator, device=latents.device, dtype=latents.dtype
     )
     return {"latents": (1.0 - sigma) * latents + sigma * noise, "sigmas": raw[start:].tolist()}
 
 
-def _encode_image(
+def encode_image(
     pipe: Any, image: Any, width: int, height: int, device: str, generator: Any
 ) -> Any:
     """The input image as packed, normalized Krea 2 latents. The Qwen-Image VAE is a video codec, so

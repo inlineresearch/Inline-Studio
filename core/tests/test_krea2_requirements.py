@@ -84,7 +84,9 @@ def test_requirements_report_presence_per_component(monkeypatch, tmp_path):
 
     components = {c.id: c for c in reqs.krea2_requirements("turbo")}
 
-    assert [c.id for c in reqs.krea2_requirements("turbo")] == ["diffusion", "text_encoder", "vae"]
+    assert [c.id for c in reqs.krea2_requirements("turbo")] == [
+        "diffusion", "text_encoder", "vae", "depth_controlnet",
+    ]
     assert components["diffusion"].present
     assert components["text_encoder"].present
     assert not components["vae"].present
@@ -112,4 +114,35 @@ def test_footprint_sizes_the_files_that_exist(monkeypatch, tmp_path):
 
     sizes = reqs.footprint_bytes(model, None, "")
 
-    assert sizes == {"diffusion_bytes": 2048, "text_encoder_bytes": 0, "vae_bytes": 0}
+    assert sizes == {
+        "diffusion_bytes": 2048,
+        "text_encoder_bytes": 0,
+        "vae_bytes": 0,
+        "controlnet_bytes": 0,
+    }
+
+
+def test_depth_control_is_opt_in_and_never_auto_resolved(monkeypatch, tmp_path):
+    """A wired-but-unpicked depth map falls to ``auto_depth_control``; resolve stays explicit."""
+    root = _models_root(monkeypatch, tmp_path)
+    (root / "controlnet").mkdir()
+    monkeypatch.delenv("INLINE_KREA2_CONTROL", raising=False)
+
+    lora = root / "controlnet" / reqs.DEPTH_CONTROL_FILE
+    lora.write_bytes(b"")
+    # Present on disk, but resolve won't pick it without an explicit dropdown choice.
+    assert reqs.resolve_depth_control() is None
+    assert reqs.resolve_depth_control({"depth_controlnet": reqs.DEPTH_CONTROL_FILE}) == lora
+    # auto is what the runner consults once a control map is actually wired.
+    assert reqs.auto_depth_control() == lora
+    assert reqs.depth_control_present() is True
+
+
+def test_auto_depth_control_ignores_a_z_image_controlnet(monkeypatch, tmp_path):
+    """The Z-Image ControlNet shares ``controlnet/``; auto must not grab it for a Krea 2 node."""
+    root = _models_root(monkeypatch, tmp_path)
+    (root / "controlnet").mkdir()
+    (root / "controlnet" / "Z-Image-Turbo-Fun-Controlnet-Union.safetensors").write_bytes(b"")
+
+    assert reqs.auto_depth_control() is None
+    assert reqs.depth_control_present() is False

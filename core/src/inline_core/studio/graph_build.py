@@ -113,6 +113,75 @@ def _item_to_node(
     return None
 
 
+def _facing_hint(item: dict[str, Any]) -> dict[str, str] | None:
+    """The facing prompt text a Control Space node carries, if it is enabled and non-empty."""
+    scene = (item.get("data") or {}).get("controlScene") or {}
+    if scene.get("applyPromptHint") is False:
+        return None
+    hint = scene.get("promptHint")
+    if not isinstance(hint, dict):
+        return None
+    positive = str(hint.get("positive") or "").strip()
+    negative = str(hint.get("negative") or "").strip()
+    return {"positive": positive, "negative": negative} if positive or negative else None
+
+
+def _apply_facing_hints(nodes: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]) -> None:
+    """Fold a wired Control Space node's facing into the gen node's prompt and negative prompt.
+
+    A control map has no channel that can say "this character faces away" - the pose ControlNet only
+    sees a face-less skeleton, which is ambiguous, so the model falls back on its prior and renders
+    the head turned back. The text encoder is the only place facing can be stated, so it is stated
+    there. The prompt is rewired to a derived text node rather than editing the shared
+    ``input/text`` in place, so a second gen node reading the same prompt node is unaffected.
+    """
+    by_node = {n["id"]: n for n in nodes}
+    for node in list(nodes):
+        item = by_id.get(node["id"])
+        if item is None or item.get("type") != "core":
+            continue
+        inputs: dict[str, dict[str, str]] = node.get("inputs") or {}
+        hint: dict[str, str] | None = None
+        for edge in inputs.values():
+            source_item = by_id.get(edge["from"])
+            # Only when the control map itself made it into the graph - an unresolvable map means no
+            # ControlNet runs, and a lone "from behind" in the prompt would be a lie.
+            if edge["from"] not in by_node:
+                continue
+            if source_item is not None and source_item.get("type") == "controlSpace":
+                hint = _facing_hint(source_item)
+                if hint is not None:
+                    break
+        if hint is None:
+            continue
+        # Idempotent: a take's recipe records the params the run actually used, so restoring a take
+        # writes an injected hint back onto the node. Appending again would stack it every render.
+        if hint["negative"]:
+            params = node.setdefault("params", {})
+            existing = str(params.get("negative_prompt") or "").strip()
+            if hint["negative"] not in existing:
+                params["negative_prompt"] = (
+                    f"{existing}, {hint['negative']}" if existing else hint["negative"]
+                )
+        prompt_edge = inputs.get("prompt")
+        source = by_node.get(prompt_edge["from"]) if prompt_edge else None
+        # Only a plain text source can be extended; a node-produced prompt is left alone.
+        if not hint["positive"] or source is None or source["type"] != "input/text":
+            continue
+        text = str((source.get("params") or {}).get("text") or "").strip()
+        if hint["positive"] in text:
+            continue
+        derived_id = f"{node['id']}::facing"
+        nodes.append(
+            {
+                "id": derived_id,
+                "type": "input/text",
+                "params": {"text": f"{text}, {hint['positive']}" if text else hint["positive"]},
+            }
+        )
+        inputs["prompt"] = {"from": derived_id, "output": "text"}
+
+
 def _upstream_closure(target: str, connectors: list[dict[str, Any]]) -> set[str]:
     seen: set[str] = set()
     stack = [target]
@@ -151,4 +220,5 @@ def build_workflow_graph(
         node = _item_to_node(item, connectors, by_id, resolve_asset_path, resolve_frame_path)
         if node is not None:
             nodes.append(node)
+    _apply_facing_hints(nodes, by_id)
     return {"schemaVersion": 1, "nodes": nodes}, target_item_id

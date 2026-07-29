@@ -6,7 +6,7 @@
  * Depth output and free-fly camera modes build on this same scene (see docs/controlnet-control-space).
  */
 import { createPortal } from 'react-dom'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
 import { Grid, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
@@ -19,10 +19,14 @@ import { DepthRenderer } from './DepthRenderer'
 import {
   centroid,
   drawOpenPose,
+  faceOcclusion,
+  facingLabel,
+  facingPromptHint,
   PRESETS,
   rotatePoseY,
   STANDING,
   translatePose,
+  type Facing,
   type Point2D,
   type Vec3,
 } from './skeleton'
@@ -101,11 +105,20 @@ function PoseRenderer({
     if (!ctx) return
     const cam = outputCamera(camera, aspect)
     const v = new THREE.Vector3()
-    const project = (joints: Vec3[]): Point2D[] =>
-      joints.map(([x, y, z]) => {
+    const camPos: Vec3 = [cam.position.x, cam.position.y, cam.position.z]
+    const project = (joints: Vec3[]): Point2D[] => {
+      // Drop the face keypoints the head turns away from the camera, so a back-facing pose reads as
+      // back-facing to the ControlNet (not just a mirrored front).
+      const cull = faceOcclusion(joints, camPos)
+      return joints.map(([x, y, z], idx) => {
         v.set(x, y, z).project(cam)
-        return { x: (v.x * 0.5 + 0.5) * w, y: (1 - (v.y * 0.5 + 0.5)) * h, visible: v.z < 1 }
+        return {
+          x: (v.x * 0.5 + 0.5) * w,
+          y: (1 - (v.y * 0.5 + 0.5)) * h,
+          visible: v.z < 1 && !cull[idx],
+        }
       })
+    }
     // First character clears to black; the rest overlay onto the same map.
     characters.forEach((joints, i) => drawOpenPose(ctx, project(joints), w, h, i === 0))
     canvas.toBlob((blob) => {
@@ -118,6 +131,13 @@ function PoseRenderer({
 
 const btn =
   'rounded-md border border-border px-2 py-1 text-xs text-zinc-200 hover:bg-panel disabled:opacity-50'
+
+const FACING_TEXT: Record<Facing, string> = {
+  front: 'facing the camera',
+  'three-quarter': 'three-quarter view',
+  profile: 'side profile',
+  back: 'facing away (back view)',
+}
 
 // Output aspect presets (w/h). Match the pick to the gen node's width/height.
 const ASPECTS: { label: string; value: number }[] = [
@@ -161,6 +181,8 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
   const [nonce, setNonce] = useState(0)
   const [preview, setPreview] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [facings, setFacings] = useState<(Facing | null)[]>([])
+  const [applyHint, setApplyHint] = useState(true)
   const idSeq = useRef(1)
   // 'save' renders then persists the map to the node; 'preview' only refreshes the corner thumbnail.
   const renderMode = useRef<'preview' | 'save'>('preview')
@@ -190,6 +212,7 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
     setFov(scene?.fov ?? 45)
     setMapKind(scene?.output ?? 'pose')
     setAspect(scene?.aspect ?? 1)
+    setApplyHint(scene?.applyPromptHint ?? true)
     setActive(0)
     setSelJoint(null)
     setPreview((prev) => {
@@ -231,6 +254,18 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
     return () => window.removeEventListener('keydown', onKey)
   }, [open, active, selJoint])
 
+  // Facing depends on both the pose and the camera, so it is refreshed from each. State only changes
+  // when a label actually flips, so orbiting (which fires per frame) doesn't re-render the editor.
+  const refreshFacing = useCallback((chars: readonly Vec3[][]): void => {
+    const next = chars.map((joints) => facingLabel(joints, cameraPose.current.position))
+    setFacings((prev) =>
+      prev.length === next.length && prev.every((f, i) => f === next[i]) ? prev : next,
+    )
+  }, [])
+  useEffect(() => {
+    refreshFacing(characters.map((c) => c.joints))
+  }, [characters, refreshFacing])
+
   const captureCam = (): void => {
     const c = orbitRef.current
     if (!c) return
@@ -239,6 +274,7 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
       position: [cam.position.x, cam.position.y, cam.position.z],
       target: [c.target.x, c.target.y, c.target.z],
     }
+    refreshFacing(characters.map((c2) => c2.joints))
   }
   const resetView = (): void => {
     const c = orbitRef.current
@@ -304,6 +340,9 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
         camera: cameraPose.current,
         output: mapKind,
         aspect,
+        facing: facings,
+        promptHint: hint,
+        applyPromptHint: applyHint,
       }
       await useMoodboardStore.getState().updateItem(editingItemId, {
         data: { ...(item?.data ?? {}), controlAssetId: asset.id, controlScene: scene },
@@ -320,6 +359,8 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
   }
 
   const presetNames = useMemo(() => Object.keys(PRESETS), [])
+  const hint = applyHint ? facingPromptHint(facings) : null
+  const activeFacing = facings[active] ?? null
   if (!open) return null
 
   return createPortal(
@@ -526,6 +567,41 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
           <div className="pointer-events-none absolute left-3 top-3 rounded-md bg-black/60 px-2.5 py-1.5 text-[11px] text-zinc-300">
             Click a joint to select, drag the gizmo or use arrow keys (Shift = depth) to pose.
             Orbit/zoom with the mouse.
+          </div>
+
+          {/* Which way the camera sees the character, and the prompt text that facing adds. */}
+          <div className="absolute right-3 top-3 max-w-[15rem] rounded-md bg-black/60 px-2.5 py-1.5 text-[11px]">
+            <div className="flex items-center gap-1.5">
+              <span className="text-zinc-400">Character {active + 1}:</span>
+              <span
+                className={
+                  activeFacing === 'back'
+                    ? 'font-medium text-amber-300'
+                    : 'font-medium text-zinc-200'
+                }
+              >
+                {activeFacing ? FACING_TEXT[activeFacing] : 'unknown'}
+              </span>
+            </div>
+            <label className="mt-1 flex cursor-pointer items-start gap-1.5 text-zinc-400">
+              <input
+                type="checkbox"
+                checked={applyHint}
+                onChange={(e) => setApplyHint(e.target.checked)}
+                className="mt-0.5 accent-emerald-500"
+              />
+              <span>
+                Add facing to prompt
+                {hint && <span className="block text-zinc-500">“{hint.positive}”</span>}
+                {applyHint && !hint && (
+                  <span className="block text-zinc-500">
+                    {facings.length > 1 && new Set(facings).size > 1
+                      ? 'mixed facings - nothing added'
+                      : 'nothing needed for this facing'}
+                  </span>
+                )}
+              </span>
+            </label>
           </div>
         </div>
       </div>

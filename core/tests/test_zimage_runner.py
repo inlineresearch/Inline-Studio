@@ -252,6 +252,23 @@ def test_resolve_seed() -> None:
     assert 0 <= rt.resolve_seed("not-a-number") <= rt._SEED_MAX
 
 
+def test_load_image_accepts_take_and_asset_path(tmp_path: Any) -> None:
+    """Apply ControlNet feeds its control map in as a Take (not an AssetRef) - both must load."""
+    from PIL import Image
+
+    from inline_core.media import MediaKind
+    from inline_core.takes import AssetRef, Take
+
+    p = tmp_path / "map.png"
+    Image.new("RGB", (8, 8), "white").save(p)
+
+    take = Take(id="t", run_id="r", node_id="n", kind=MediaKind.IMAGE, uri=str(p), hash="h")
+    assert rt.load_image(take, "Z-Image").size == (8, 8)
+    assert rt.load_image(AssetRef(ref="path", path=str(p)), "Z-Image").size == (8, 8)
+    with pytest.raises(ComponentError, match="readable image"):
+        rt.load_image("nope", "Z-Image")
+
+
 def test_missing_models_fail_fast(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """An empty models dir must error clearly (pointing at the popup), never trigger a download."""
     monkeypatch.setenv("INLINE_MODELS_DIR", str(tmp_path))  # empty root -> everything missing
@@ -473,15 +490,38 @@ def test_shrink_vae_tiles_noop_when_already_small() -> None:
     assert vae.tile_latent_min_size == 32
 
 
-def test_smaller_resolutions_only_suggests_smaller() -> None:
-    """The OOM hint must never suggest a size >= the current one (the reported 512->768/512 bug)."""
-    assert rt.smaller_resolutions(1024, 1024) == ["768x768", "512x512"]
-    assert rt.smaller_resolutions(512, 512) == ["384x384", "256x256"]
-    assert rt.smaller_resolutions(256, 256) == ["128x128"]  # past the ladder -> halve
-    # never suggests the current size or larger
-    for size in (2048, 1024, 768, 512, 384, 256, 200, 128):
-        for s in rt.smaller_resolutions(size, size):
-            assert int(s.split("x")[0]) < size
+def _wh(label: str) -> tuple[int, int]:
+    w, h = label.split("x")
+    return int(w), int(h)
+
+
+def test_smaller_resolutions_cuts_pixels_not_just_the_long_edge() -> None:
+    """The hint must cut peak memory, which tracks pixel count - the reported 896x1216 bug, where
+    the square ladder suggested 1024x1024: 4% fewer pixels, and it OOMed too."""
+    for w, h in ((896, 1216), (1024, 1024), (1216, 832), (512, 512), (768, 1024)):
+        for label in rt.smaller_resolutions(w, h):
+            sw, sh = _wh(label)
+            assert sw * sh < w * h, f"{label} is not smaller than {w}x{h}"
+            assert sw * sh <= 0.8 * w * h, f"{label} barely cuts {w}x{h}"
+
+
+def test_smaller_resolutions_keeps_the_requested_aspect() -> None:
+    """A portrait request stays portrait - being told to render a square is not an answer."""
+    for w, h in ((896, 1216), (832, 1216), (1216, 832)):
+        for label in rt.smaller_resolutions(w, h):
+            sw, sh = _wh(label)
+            assert abs(sw / sh - w / h) < 0.12, f"{label} drifts from {w}x{h}'s aspect"
+            assert sw % 64 == 0 and sh % 64 == 0
+
+    # The size this box actually generates at is what a 896x1216 OOM should point you to.
+    assert "768x1024" in rt.smaller_resolutions(896, 1216)
+
+
+def test_smaller_resolutions_never_suggests_the_current_size() -> None:
+    for w, h in ((2048, 2048), (1024, 1024), (512, 512), (256, 256), (128, 128), (64, 64)):
+        assert f"{w}x{h}" not in rt.smaller_resolutions(w, h)
+    assert rt.smaller_resolutions(64, 64) == []  # at the floor: no suggestion beats none
+    assert "try" not in rt.oom_message(64, 64)
 
 
 # --- pipeline-cache eviction --------------------------------------------------------------------

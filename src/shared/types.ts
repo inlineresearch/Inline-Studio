@@ -280,6 +280,14 @@ export interface MoodboardItemData {
     /** Output aspect (w/h) of the rendered map; must match the gen node's resolution or the pose
      * comes out stretched. Defaults to 1 (square). */
     aspect?: number
+    /** How each character was turned relative to the camera when the map was rendered. */
+    facing?: ('front' | 'three-quarter' | 'profile' | 'back' | null)[]
+    /** Prompt text the facing needs, resolved at render time and appended to a downstream gen node's
+     * prompt / negative prompt. A control map cannot express "facing away" - only the text encoder
+     * can - so Control Space states it here. Null (or absent) = nothing to add. */
+    promptHint?: { positive: string; negative: string } | null
+    /** Whether the facing prompt hint is applied downstream (default true). */
+    applyPromptHint?: boolean
   }
   /** `trainDataset` / `caption` / `trainer` nodes: the training dataset they operate on. */
   datasetId?: string | null

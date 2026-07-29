@@ -34,6 +34,8 @@ export function ControlSpaceNode({ id, selected }: NodeProps): React.JSX.Element
   const assetId = item?.data.controlAssetId
   const asset = assetId ? assets.find((a) => a.id === assetId) : undefined
   const src = asset ? resolveMedia(asset.filePath) : null
+  const scene = item?.data.controlScene
+  const hint = (scene?.applyPromptHint ?? true) ? (scene?.promptHint ?? null) : null
   const suggested = reqs?.components.find((c) => c.optional && !c.present) ?? null
   const suggestedPct = suggestedDl ? Math.round(suggestedDl.fraction * 100) : null
 
@@ -76,7 +78,15 @@ export function ControlSpaceNode({ id, selected }: NodeProps): React.JSX.Element
             )}
           </div>
 
-          <div className="flex items-center justify-end border-t border-border bg-surface/90 px-2 py-1">
+          <div className="flex items-center justify-between gap-2 border-t border-border bg-surface/90 px-2 py-1">
+            {/* The facing text this node adds to a downstream prompt - the control map itself has no
+                way to say "facing away", so it is worth surfacing where the wiring is visible. */}
+            <span
+              className="truncate text-[10px] text-zinc-500"
+              title={hint ? `Adds to the prompt: “${hint.positive}”` : undefined}
+            >
+              {hint ? '+ facing in prompt' : ''}
+            </span>
             <button
               onClick={() => openEditor(id)}
               title="Open the 3D pose editor"

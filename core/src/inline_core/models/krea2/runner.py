@@ -32,6 +32,7 @@ from ...runtime.store import TakeStore
 from .. import loaders
 from .. import pipeline_runtime as rt
 from ..sampling import SamplingFamily, apply_sampling, sampling_param_fields
+from . import depth_control as dc
 from . import requirements as reqs
 from .img2img import img2img_kwargs
 
@@ -63,6 +64,7 @@ def _descriptor(variant: str) -> NodeDescriptor:
             Port("text_encoder", "Text encoder", PortKind.TEXT_ENCODER, required=False),
             Port("lora", "LoRA", PortKind.LORA, required=False),
             Port("image", "Image (img2img)", PortKind.IMAGE, required=False),
+            Port("control_image", "Depth control", PortKind.CONTROL, required=False),
         ),
         outputs=(Port("image", "Image", PortKind.IMAGE),),
         params=(
@@ -78,6 +80,17 @@ def _descriptor(variant: str) -> NodeDescriptor:
             ParamField(
                 "strength", "Denoise strength", Widget.NUMBER, 0.6, min=0.0, max=1.0, step=0.05,
                 advanced=True,
+            ),
+            # Depth control: wire a depth map into Control and pick the depth control-LoRA.
+            # Empty = plain generation. Strength dials the block LoRA; the depth structure always
+            # enters through the expanded input projection.
+            ParamField(
+                "depth_controlnet", "Depth control-LoRA", Widget.SELECT, "",
+                options_from="controlnet",
+            ),
+            ParamField(
+                "control_strength", "Control strength", Widget.NUMBER, 1.0,
+                min=0.0, max=2.0, step=0.05,
             ),
             ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
             ParamField(
@@ -130,7 +143,21 @@ class Krea2Runner(NodeRunner):
         sampler = str(params["sampler"])
         scheduler = str(params["scheduler"])
         image_ref = rt.first(inputs.get("image"))
-        img2img = image_ref is not None
+
+        # Depth control (opt-in): a depth map wired into Control + the depth control-LoRA picked.
+        # Auto-picks the adapter when a map is wired but none was chosen, so wiring just works.
+        control_ref = rt.first(inputs.get("control_image"))
+        depth_lora = reqs.resolve_depth_control(params)
+        if control_ref is not None and depth_lora is None:
+            depth_lora = reqs.auto_depth_control()
+            if depth_lora is not None:
+                logger.info("Depth control wired, none picked; auto-using %s", depth_lora.name)
+        use_control = control_ref is not None and depth_lora is not None
+        if control_ref is not None and depth_lora is None:
+            logger.warning("Depth control wired but no control-LoRA found in models/controlnet/.")
+        # Depth control starts from noise (the depth latent is the structure signal), so it and
+        # img2img are mutually exclusive - control wins when both are wired.
+        img2img = image_ref is not None and not use_control
 
         model_ref = rt.component_ref(inputs, "model", "diffusion", self._label)
         vae_ref = rt.component_ref(inputs, "vae", "vae", self._label)
@@ -141,7 +168,7 @@ class Krea2Runner(NodeRunner):
         missing = [
             c.label
             for c in reqs.krea2_requirements(self._variant, params)
-            if not c.present and c.id not in wired
+            if not c.present and not c.optional and c.id not in wired
         ]
         if missing:
             raise ComponentError(
@@ -161,8 +188,9 @@ class Krea2Runner(NodeRunner):
             reqs.resolve_text_encoder(params), "text encoder"
         )
 
+        control_file = str(depth_lora) if use_control else None
         self._policy.set_footprint(
-            ModelFootprint(**reqs.footprint_bytes(source, vae_file, te_file))
+            ModelFootprint(**reqs.footprint_bytes(source, vae_file, te_file, control_file))
         )
         fit = self._policy.fit_estimate()
         if fit is not None and not fit.fits:
@@ -185,6 +213,7 @@ class Krea2Runner(NodeRunner):
                 text=te_file,
                 quant=self._policy.quantization(),
                 loras=loras,
+                controlnet=control_file,
                 cancel_check=lambda: rt.raise_if_cancelled(ctx),
             )
         except CancelledError:
@@ -233,6 +262,19 @@ class Krea2Runner(NodeRunner):
                     device=gen_device,
                 )
             )
+        control_strength = float(params.get("control_strength", 1.0))
+        if use_control:
+            # The surgery is baked into the cached pipe; the depth latent and strength are per-run.
+            ctrl_latent = dc.encode_depth_latent(
+                pipe,
+                rt.load_image(control_ref, self._label),
+                width=width,
+                height=height,
+                device=gen_device,
+                generator=generator,
+            )
+            dc.set_control(pipe.transformer, ctrl_latent)
+            dc.set_control_strength(pipe.transformer, control_strength)
         # img2img starts partway down the schedule, so it runs fewer steps than `steps`.
         total_steps = len(call["sigmas"]) if "sigmas" in call else steps
 
@@ -297,6 +339,14 @@ class Krea2Runner(NodeRunner):
                 "seed": seed,
                 **({"strength": float(params.get("strength", 0.6))} if img2img else {}),
                 **(
+                    {
+                        "depth_controlnet": str(depth_lora),
+                        "control_strength": control_strength,
+                    }
+                    if use_control
+                    else {}
+                ),
+                **(
                     {"loras": [{"file": lo.file, "strength": lo.strength} for lo in loras]}
                     if loras
                     else {}
@@ -331,6 +381,7 @@ def _load_pipeline(
     text: str,
     quant: Quantization = Quantization.NONE,
     loras: tuple[LoraRef, ...] = (),
+    controlnet: str | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> Any:
     key = rt.PipelineKey(
@@ -341,6 +392,7 @@ def _load_pipeline(
         variant=variant,
         quant=quant.value,
         loras=loaders.lora_cache_key(loras),
+        controlnet=controlnet or "",
     )
     with rt.PIPELINES.lock:
         cached = rt.PIPELINES.get(key)
@@ -370,6 +422,10 @@ def _load_pipeline(
         )
         rt.configure_pipeline(pipe, policy)
         rt.capture_base_scheduler_config(pipe)
+        if controlnet:
+            # Depth control mutates the transformer (expanded input projection + block LoRA), so it
+            # is baked into this cache entry - a plain run keys to a different, unmodified pipe.
+            dc.install_depth_control(pipe.transformer, controlnet)
         rt.PIPELINES.put(key, pipe)
         logger.info("Krea 2 pipeline ready in %.1fs total", time.perf_counter() - started)
         return pipe
