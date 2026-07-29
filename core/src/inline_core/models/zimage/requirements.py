@@ -168,6 +168,23 @@ def resolve_controlnet(params: dict[str, object] | None = None) -> Path | None:
     return picked if picked.is_file() else None
 
 
+def auto_controlnet() -> Path | None:
+    """The best ControlNet to use when a control map is wired but none was explicitly picked - so
+    wiring a Control Space / Apply ControlNet just works. Prefers a Z-Image-named file, then a
+    distilled/turbo build (fewer sampling steps), else the first available. None if the folder is
+    empty. (Only consulted when a control input is actually connected - control stays opt-in.)"""
+    root = models_dir() / "controlnet"
+    if not root.is_dir():
+        return None
+    files = sorted(
+        p for p in root.iterdir() if p.is_file() and p.suffix.lower() in _WEIGHT_SUFFIXES
+    )
+    named = [p for p in files if "z" in p.name.lower() and "image" in p.name.lower()]
+    pool = named or files
+    distilled = [p for p in pool if any(t in p.name.lower() for t in ("8step", "8-step", "2602"))]
+    return (distilled or pool or [None])[0]
+
+
 def resolve_text_encoder(params: dict[str, object] | None = None) -> Path | None:
     """The text-encoder single file (dropdown pick / ``INLINE_ZIMAGE_TEXT_ENCODER`` / the split
     ``qwen_3_4b.safetensors``)."""

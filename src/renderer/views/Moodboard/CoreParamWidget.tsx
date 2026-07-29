@@ -37,6 +37,13 @@ export function CoreParamWidget({
     )
   }
   if (field.widget === 'select') {
+    const options = field.options ?? []
+    // A file-picker whose empty value means "none"/"auto" needs an explicit empty option, or the
+    // native select shows the FIRST file while the value is really "" - which reads as picked when
+    // it isn't (e.g. the ControlNet dropdown looked set but control was actually off).
+    const needsEmpty =
+      !options.some((o) => o.value === '') && (field.default === '' || field.optionsFrom != null)
+    const emptyLabel = field.optionsFrom === 'controlnet' ? 'None' : 'Auto'
     return (
       <label className="flex flex-col gap-1">
         <span className={labelCls}>{field.label}</span>
@@ -45,7 +52,8 @@ export function CoreParamWidget({
           onChange={(e) => onCommit(e.target.value)}
           className={inputCls}
         >
-          {(field.options ?? []).map((o) => (
+          {needsEmpty && <option value="">{emptyLabel}</option>}
+          {options.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>

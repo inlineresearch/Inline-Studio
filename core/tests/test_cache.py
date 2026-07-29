@@ -52,6 +52,26 @@ def test_seed_eligibility() -> None:
     assert not is_cache_eligible(_graph({}).node("m1"), registry)
 
 
+def test_control_wired_disables_cache() -> None:
+    """A gen node with a control map wired re-runs every time (never cached), so iterating on a pose
+    always applies the current control - even at a fixed seed."""
+    registry = make_registry()
+    with_control = parse_graph(
+        {
+            "schemaVersion": 1,
+            "nodes": [
+                {"id": "c", "type": "input/image",
+                 "params": {"asset": {"ref": "path", "path": "/c.png"}}},
+                {"id": "m1", "type": "fake/model", "params": {"seed": 7},
+                 "inputs": {"control": {"from": "c", "output": "image"}}},
+            ],
+        }
+    )
+    assert not is_cache_eligible(with_control.node("m1"), registry)
+    # Same node, fixed seed, but no control wired -> eligible as before.
+    assert is_cache_eligible(_graph({"seed": 7}).node("m1"), registry)
+
+
 def _image_graph(path: str) -> Graph:
     """A gen node fed by an input/image source node pointing at `path` (mirrors graph_build)."""
     return parse_graph(

@@ -81,9 +81,11 @@ ZIMAGE = NodeDescriptor(
         ParamField(
             "controlnet", "ControlNet", Widget.SELECT, "", options_from="controlnet",
         ),
+        # Cap 2.0, not 1.0: at strength 1 the ControlNet follows the gross pose (standing/sitting/
+        # orientation) but not fine limbs (arms up/out); ~1.2-1.5 is the sweet spot for a pose.
         ParamField(
-            "controlnet_conditioning_scale", "Control strength", Widget.NUMBER, 0.75,
-            min=0.0, max=1.0, step=0.05,
+            "controlnet_conditioning_scale", "Control strength", Widget.NUMBER, 1.0,
+            min=0.0, max=2.0, step=0.05,
         ),
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
         # Advanced: pick a specific file per component. "" = auto (the single file in that folder).
@@ -132,9 +134,15 @@ class ZImageRunner(NodeRunner):
         # Keep the Path|None: path_or_none() collapses None to "", which would make the
         # `is not None` check below always true and load a ControlNet from an empty path.
         controlnet_path = reqs.resolve_controlnet(params)
+        if control_ref is not None and controlnet_path is None:
+            # A control map is wired but no model picked (the picker defaults to none) - auto-use
+            # the best available ControlNet so wiring a control just works.
+            controlnet_path = reqs.auto_controlnet()
+            if controlnet_path is not None:
+                logger.info("Control wired, none picked; auto-using %s", controlnet_path.name)
         use_control = control_ref is not None and controlnet_path is not None
         if control_ref is not None and controlnet_path is None:
-            logger.warning("Control image wired but no ControlNet model picked; ignoring control.")
+            logger.warning("Control wired but no ControlNet found in models/controlnet/.")
         # ControlNet is text-to-image + control; an img2img init image is ignored under control.
         img2img = image_ref is not None and not use_control
 

@@ -114,3 +114,23 @@ describe('Control Space projection diagnostics', () => {
     expect(true).toBe(true)
   })
 })
+
+describe('full-body framing at portrait aspect (832x1216)', () => {
+  it('reports where head and feet land in the map', () => {
+    const aspect = 832 / 1216 // ~0.684 - the user's gen size
+    const cam = makeCamera(aspect)
+    const { w, h } = outputSize(aspect)
+    const p = project(STANDING, cam, w, h)
+    const head = p[0] // nose
+    const feet = [p[10], p[13]] // ankles
+    const inFrame = p.filter((q) => q.inFrame).length
+    console.log(`\naspect ${aspect.toFixed(3)} map ${w}x${h}:`)
+    console.log(`  head y = ${head.y.toFixed(0)} (top margin ${((head.y / h) * 100).toFixed(0)}%)`)
+    console.log(`  feet y = ${Math.max(feet[0].y, feet[1].y).toFixed(0)} (bottom edge at ${h})`)
+    console.log(
+      `  figure spans ${(((Math.max(feet[0].y, feet[1].y) - head.y) / h) * 100).toFixed(0)}% of the map height`,
+    )
+    console.log(`  ${inFrame}/18 joints in-frame`)
+    expect(inFrame).toBe(18)
+  })
+})

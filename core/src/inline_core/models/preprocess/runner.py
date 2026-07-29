@@ -35,14 +35,16 @@ CONTROL_APPLY = NodeDescriptor(
     icon="wand",
     output_kind=MediaKind.IMAGE,
     inputs=(Port("image", "Image", PortKind.IMAGE, required=True),),
-    outputs=(Port("image", "Control map", PortKind.IMAGE),),
+    # A control map, not a plain image: kind CONTROL so it only feeds a gen node's Control input,
+    # never the img2img Image input (that would run image-to-image from the black map, not control).
+    outputs=(Port("image", "Control map", PortKind.CONTROL),),
     params=(
         ParamField(
             "type", "Type", Widget.SELECT, "pose",
             options=(
                 Option("pose", "OpenPose (pose)"),
-                Option("depth", "Depth"),
-                Option("canny", "Canny (edges)"),
+                Option("depth", "MiDaS (depth)"),
+                Option("canny", "Canny edges (no model)"),
             ),
         ),
         ParamField(

@@ -8,6 +8,8 @@ import { useGraphSelectionStore } from '../../../store/graphSelectionStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { activeDownload, useModelRequirementsStore } from '../../../store/modelRequirementsStore'
 import { useExtensionsStore } from '../../../store/extensionsStore'
+import { useLightboxStore } from '../../../store/lightboxStore'
+import { matchControlAspect } from '../../../lib/matchControlAspect'
 import { NodeFrame } from './NodeFrame'
 import { NodeRunToolbar } from './NodeRunToolbar'
 import {
@@ -101,6 +103,8 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const item = useMoodboardStore((s) => s.items.find((i) => i.id === itemId))
   const updateItem = useMoodboardStore((s) => s.updateItem)
   const setConnectedPromptText = useMoodboardStore((s) => s.setConnectedPromptText)
+  const connectors = useMoodboardStore((s) => s.connectors)
+  const openLightbox = useLightboxStore((s) => s.open)
   const coreType = item?.type === 'core' ? item.data.core?.type : undefined
   const descriptor = useCoreNodesStore((s) =>
     coreType ? s.descriptors.find((d) => d.type === coreType) : undefined,
@@ -209,14 +213,32 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const modelsMissing = reqs ? !reqs.allPresent : false
   const download = downloadsForType ? activeDownload(downloadsForType, reqs) : null
   const downloadPct = download ? Math.round(download.fraction * 100) : null
-  // A suggested (optional) component that isn't on disk yet - e.g. the opt-in ControlNet. Surfaced
-  // as a soft chip (not the alarming "Models missing" one) so control is one click away.
-  const suggested = reqs?.components.find((c) => c.optional && !c.present) ?? null
+  // Apply ControlNet's detector download is scoped to the selected type, so canny never nags for a
+  // model and depth/pose only prompt for the one they use (component ids start with the detector).
+  const applyType = coreType === 'control/apply' ? String(core?.params?.type ?? 'pose') : null
+  const detectorNoun = applyType === 'depth' ? 'MiDaS' : applyType === 'pose' ? 'OpenPose' : null
+  const detectorPrefix = applyType === 'depth' ? 'midas' : applyType === 'pose' ? 'openpose' : null
+  // A suggested (optional) component that isn't on disk yet - the opt-in ControlNet, or (for Apply
+  // ControlNet) the detector its selected type needs. Surfaced as a soft chip, not the "missing" alarm.
+  const suggested = applyType
+    ? detectorPrefix
+      ? (reqs?.components.find((c) => !c.present && c.id.startsWith(detectorPrefix)) ?? null)
+      : null // canny needs no model
+    : (reqs?.components.find((c) => c.optional && !c.present) ?? null)
   const suggestedDl = suggested && downloadsForType ? downloadsForType[suggested.id] : undefined
   const suggestedPct = suggestedDl ? Math.round(suggestedDl.fraction * 100) : null
-  // The soft chip's noun follows the download's category: the annotator weights for Apply ControlNet
-  // read "detectors", the opt-in ControlNet model reads "ControlNet".
-  const suggestNoun = suggested?.category === 'annotators' ? 'detectors' : 'ControlNet'
+  // The chip's noun: the detector for Apply ControlNet, else the opt-in ControlNet model.
+  const suggestNoun =
+    detectorNoun ?? (suggested?.category === 'annotators' ? 'detectors' : 'ControlNet')
+
+  // Offer "Match aspect" only when a control map is actually wired into this node's Control input.
+  const controlWired =
+    (descriptor.inputs?.some((p) => p.id === 'control_image') ?? false) &&
+    connectors.some(
+      (c) =>
+        c.toItemId === itemId &&
+        (c.data as { targetHandle?: string }).targetHandle === 'control_image',
+    )
 
   // A loader/plumbing node (no media output) renders compact - no preview, no Run (it loads with
   // whatever downstream node runs). Generation nodes get the full preview card + the graph Run
@@ -406,7 +428,16 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
               <img
                 src={resolveMedia(core.output.filePath)}
                 alt=""
-                className="h-full w-full object-cover"
+                title="Double-click to expand"
+                onDoubleClick={() =>
+                  core.output &&
+                  openLightbox({
+                    src: resolveMedia(core.output.filePath),
+                    kind: 'image',
+                    name: core.output.prompt || descriptor.title,
+                  })
+                }
+                className="h-full w-full cursor-zoom-in object-cover"
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center px-4">
@@ -505,14 +536,25 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
             <span className="truncate px-1 text-[10px] uppercase tracking-wide text-zinc-500">
               {descriptor.category}
             </span>
-            <button
-              onClick={() => toggleSettings(itemId)}
-              title="Settings"
-              data-gen-settings-toggle
-              className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:bg-black/40 hover:text-zinc-100"
-            >
-              <AdjustIcon />
-            </button>
+            <div className="flex shrink-0 items-center gap-1">
+              {controlWired && (
+                <button
+                  onClick={() => void matchControlAspect(itemId)}
+                  title="Set Width/Height to the wired control map's aspect so the pose isn't stretched"
+                  className="nodrag flex h-6 items-center rounded px-1.5 text-[10px] text-zinc-400 hover:bg-black/40 hover:text-zinc-100"
+                >
+                  Match aspect
+                </button>
+              )}
+              <button
+                onClick={() => toggleSettings(itemId)}
+                title="Settings"
+                data-gen-settings-toggle
+                className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:bg-black/40 hover:text-zinc-100"
+              >
+                <AdjustIcon />
+              </button>
+            </div>
           </div>
         </div>
       </NodeFrame>

@@ -28,6 +28,7 @@ import { copyText } from '@/lib/clipboard'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
 import { portKindColor, portsSatisfy, type NodeDescriptor, type PortKind } from '@shared/coreNodes'
 import { useMoodboardStore } from '../../store/moodboardStore'
+import { useProjectStore } from '../../store/projectStore'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
 import { useGraphSelectionStore } from '../../store/graphSelectionStore'
 import { expandToGraphs, runTargets, toEdges } from './graphSelection'
@@ -84,6 +85,31 @@ function FrameNodeSwitch(props: NodeProps): React.JSX.Element {
   const provider = useFrameStore((s) => s.frames.find((f) => f.id === frameId)?.provider)
   if (!loader && provider === 'fal') return <GenNode {...props} />
   return <FrameNode {...props} />
+}
+
+/** Per-project canvas pan/zoom, so a project reopens where the user left it. Best-effort localStorage
+ * (per browser); a blocked/full store just falls back to fit-all. */
+const viewportKey = (id: string): string => `inline:viewport:${id}`
+
+function readViewport(id: string): { x: number; y: number; zoom: number } | null {
+  try {
+    const raw = localStorage.getItem(viewportKey(id))
+    const v = raw ? (JSON.parse(raw) as { x?: number; y?: number; zoom?: number }) : null
+    if (v && typeof v.x === 'number' && typeof v.y === 'number' && typeof v.zoom === 'number') {
+      return { x: v.x, y: v.y, zoom: v.zoom }
+    }
+  } catch {
+    /* corrupt or unavailable storage */
+  }
+  return null
+}
+
+function writeViewport(id: string, v: { x: number; y: number; zoom: number }): void {
+  try {
+    localStorage.setItem(viewportKey(id), JSON.stringify(v))
+  } catch {
+    /* storage full or blocked */
+  }
 }
 
 const nodeTypes: NodeTypes = {
@@ -290,7 +316,11 @@ function Board(): React.JSX.Element {
   const setCanvasSelection = useUiStore((s) => s.setCanvasSelection)
   const setCanvasCenter = useUiStore((s) => s.setCanvasCenter)
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const { screenToFlowPosition, getNodes } = useReactFlow()
+  const { screenToFlowPosition, getNodes, getViewport, setViewport, fitView } = useReactFlow()
+  const projectId = useProjectStore((s) => s.current?.id ?? null)
+  // Restore the canvas pan/zoom where the user left it, once per project open (after its board
+  // loads); a project with no saved view falls back to fit-all.
+  const restoredFor = useRef<string | null>(null)
   const updateNodeInternals = useUpdateNodeInternals()
   const [nodes, setNodes] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -328,6 +358,16 @@ function Board(): React.JSX.Element {
     void loadAssets()
     void loadFrames()
   }, [load, loadAssets, loadFrames])
+
+  // Once a project's board has loaded, restore the pan/zoom the user left it at (or fit-all if none).
+  // Guarded so it runs once per project open, after nodes exist (fitView needs them).
+  useEffect(() => {
+    if (!projectId || items.length === 0 || restoredFor.current === projectId) return
+    restoredFor.current = projectId
+    const saved = readViewport(projectId)
+    if (saved) void setViewport(saved)
+    else void fitView({ maxZoom: 1 })
+  }, [projectId, items.length, setViewport, fitView])
 
   const assetsById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets])
 
@@ -580,6 +620,9 @@ function Board(): React.JSX.Element {
     side: 'input' | 'output',
   ): PortKind | null => {
     const item = items.find((it) => it.id === itemId)
+    // Control Space emits a control map, not a plain image: kind it 'control' so it can only feed a
+    // gen node's Control input, never the img2img Image input (which would ignore the pose).
+    if (item?.type === 'controlSpace' && side === 'output') return 'control'
     const core = item?.type === 'core' ? item.data.core : undefined
     if (!core) return null
     const descriptor = coreDescriptors.find((d) => d.type === core.type)
@@ -1021,6 +1064,10 @@ function Board(): React.JSX.Element {
           onEdgesDelete={(deleted) => deleted.forEach((e) => void disconnect(e.id))}
           // Mirror the viewport so the assistant can use it as a "place here" spot.
           onMove={() => setCanvasCenter(centre())}
+          // Persist pan/zoom per project so it reopens where the user left it (see the restore effect).
+          onMoveEnd={() => {
+            if (projectId) writeViewport(projectId, getViewport())
+          }}
           onInit={() => setCanvasCenter(centre())}
           proOptions={{ hideAttribution: true }}
           minZoom={0.1}
@@ -1029,10 +1076,6 @@ function Board(): React.JSX.Element {
           // compositing layer small - with nodes spread far apart, the full layer can
           // exceed the GPU's max texture size and render as grey/blank when scrolling.
           onlyRenderVisibleElements
-          fitView
-          // Cap the initial fit's zoom so a board with a single small node (e.g. a new project's
-          // chooser) lands at a normal 1:1 view instead of blowing up to fill the viewport.
-          fitViewOptions={{ maxZoom: 1 }}
         >
           <Background gap={22} size={2.5} color="#525a66" />
         </ReactFlow>
