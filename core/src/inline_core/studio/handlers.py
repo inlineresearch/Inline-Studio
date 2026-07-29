@@ -14,6 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .. import __version__
 from . import assets as ax
 from . import config as cfg
 from . import fal as _fal
@@ -41,7 +42,8 @@ def register_studio_handlers(
     timeline: Any = None,
     training: Any = None,
     model_downloads: Any = None,
-    app_version: str = "1.0.0",
+    # Empty falls back to the installed package version; the launcher footer shows this.
+    app_version: str = "",
 ) -> None:
     def reg(channel: str, fn: Callable[..., Any]) -> None:
         async def handler(args: list[Any]) -> Any:
@@ -71,7 +73,7 @@ def register_studio_handlers(
     reg("project:mediaDirs", store.media_dirs)
     reg("project:export", lambda _path: None)  # zip export: pending (see plan)
     reg("dialog:pickDirectory", lambda *_: str(cfg.workspace_dir()))
-    reg("app:version", lambda: app_version)
+    reg("app:version", lambda: app_version or __version__)
     reg("settings:get", store.get_settings)
     reg("settings:setCoreUrl", store.set_core_url)
     reg("core:status", core_status)
