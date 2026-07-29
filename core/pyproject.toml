@@ -1,7 +1,7 @@
 [project]
 # PyPI name; the import package is `inline_core` (src/inline_core).
 name = "inline-core"
-version = "1.2.52"
+version = "1.2.53"
 description = "The generation engine behind Inline Studio."
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -28,6 +28,10 @@ runtime = [
   "scipy>=1.11",
   # We call snapshot_download directly for the model popup, so pin it rather than rely on transit.
   "huggingface_hub>=0.23",
+  # ControlNet preprocessors (the Apply ControlNet node): OpenPose/DWPose, MiDaS/Zoe depth, canny,
+  # HED, lineart, MLSD, scribble, normal. DWPose runs its detector on ONNX Runtime.
+  "controlnet-aux>=0.0.7",
+  "onnxruntime>=1.17",
 ]
 server = [
   "fastapi>=0.110",
@@ -74,6 +78,8 @@ all = [
   "torchao>=0.14",
   "scipy>=1.11",
   "huggingface_hub>=0.23",
+  "controlnet-aux>=0.0.7",
+  "onnxruntime>=1.17",
   # server
   "fastapi>=0.110",
   "uvicorn[standard]>=0.29",

@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.52-blue?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.53-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -222,6 +222,18 @@ Two things are worth knowing before you download 26 GB twice:
 - **The VAE is the diffusers-format one**, fetched from [`Qwen/Qwen-Image`](https://huggingface.co/Qwen/Qwen-Image). ComfyUI's `qwen_image_vae.safetensors` holds the same weights in a different module layout that diffusers cannot read. The node's model popup downloads the right file for you.
 
 Nothing here needs a Hugging Face token: every repo involved is public, and Krea's own gated repos are never touched.
+
+### ControlNet
+
+Steer a local render with a pose, depth, or edge map. Wire a control map into a gen node's **Control** input and pick a ControlNet in the node's Adjust sidebar.
+
+- **Control Space** - a 3D pose editor in a node. Pose one or more characters, frame a camera, and render the scene as an OpenPose skeleton or a depth map. No reference photo needed.
+- **Apply ControlNet** - turn any image into a control map (OpenPose, Depth-Anything V2, MiDaS depth, or Canny edges). Detector weights download once on first use.
+- **Z-Image Turbo** - full ControlNet via the Fun Union model. Use the distilled `-2602-8steps` build; the plain one is blurry at 8 steps.
+- **Krea 2** - depth control via the [`Patil/Krea-2-depth-controlnet`](https://huggingface.co/Patil/Krea-2-depth-controlnet) control-LoRA.
+- **Control strength** - dial how hard the map is followed, per node.
+
+Drop ControlNet files into `core/models/controlnet/`, or use the node's model popup to download them.
 
 ### Community extensions
 

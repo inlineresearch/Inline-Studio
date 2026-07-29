@@ -22,6 +22,7 @@ FAKE_MODEL = NodeDescriptor(
     inputs=(
         Port("prompt", "Prompt", PortKind.TEXT, required=True),
         Port("image", "Init image", PortKind.IMAGE, required=False),
+        Port("control", "Control", PortKind.CONTROL, required=False),
     ),
     outputs=(Port("image", "Image", PortKind.IMAGE),),
     params=(

@@ -21,6 +21,7 @@ export type PortKind =
   | 'lora'
   | 'conditioning'
   | 'latent'
+  | 'control'
 
 export interface CorePort {
   id: string
@@ -95,6 +96,9 @@ export interface ModelComponent {
   repo: string
   /** "Which model" - the repo narrowed to the exact subfolder(s), e.g. `Owner/Repo/vae`. */
   source: string
+  /** A suggested (not required) component - e.g. the opt-in ControlNet. Never counts toward
+   * `allPresent`; the UI offers it as a separate download suggestion. */
+  optional?: boolean
 }
 
 /** A node's model requirements with live presence (from `models:requirements`). */
@@ -137,7 +141,10 @@ export function producesFrame(descriptor: NodeDescriptor): boolean {
 /** Whether an output of `source` kind may feed an input of `target` kind. Mirrors Core. */
 export function portsSatisfy(source: PortKind, target: PortKind): boolean {
   if (source === target) return true
-  return source === 'image' && target === 'image[]'
+  if (source === 'image' && target === 'image[]') return true
+  // A control input accepts any image output (a raw image, a preprocessed control map, or a
+  // Control Space render); the control map is just an image.
+  return source === 'image' && target === 'control'
 }
 
 const PORT_COLORS: Record<PortKind, string> = {
@@ -153,6 +160,7 @@ const PORT_COLORS: Record<PortKind, string> = {
   lora: '#2dd4bf',
   conditioning: '#c084fc',
   latent: '#60a5fa',
+  control: '#f9a8d4',
 }
 
 /** A stable color per port kind, for Comfy-style colored sockets and edges. */

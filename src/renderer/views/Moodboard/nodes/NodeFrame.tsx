@@ -21,6 +21,7 @@ export function NodeFrame({
   padded = true,
   transparent = false,
   subtleSelect = false,
+  running = false,
   overflowVisible = false,
   onResizeStart,
   onResize,
@@ -36,6 +37,8 @@ export function NodeFrame({
   transparent?: boolean
   /** Use a soft light-grey selection outline instead of the loud accent (for media-heavy nodes). */
   subtleSelect?: boolean
+  /** This node is currently executing - show a green border so it's clear which node is running. */
+  running?: boolean
   /** Let content overflow the card (e.g. a dropdown that spills past the frame). Off by default. */
   overflowVisible?: boolean
   /** Resize hooks. When `onResizeEnd` is given it replaces the default width/height persist. */
@@ -46,10 +49,13 @@ export function NodeFrame({
 }): React.JSX.Element {
   const { updateItem, deleteItem } = useBoardActions()
 
+  // A running node's green border wins over the selection colour so it's always clear what's executing.
   const selBorder = subtleSelect ? 'border-zinc-600' : 'border-accent'
+  const activeBorder = running ? 'border-emerald-400' : selected ? selBorder : 'border-border'
   const box = transparent
-    ? `bg-transparent ${selected ? `border border-dashed ${subtleSelect ? 'border-zinc-600/70' : 'border-accent/60'}` : 'border border-transparent'}`
-    : `border bg-surface ${selected ? selBorder : 'border-border'}`
+    ? `bg-transparent ${running ? 'border border-emerald-400' : selected ? `border border-dashed ${subtleSelect ? 'border-zinc-600/70' : 'border-accent/60'}` : 'border border-transparent'}`
+    : `border bg-surface ${activeBorder}`
+  const ring = running ? 'ring-2 ring-emerald-400/30' : ''
 
   return (
     <>
@@ -68,7 +74,7 @@ export function NodeFrame({
         }}
       />
       <div
-        className={`h-full w-full rounded-md ${overflowVisible ? 'overflow-visible' : 'overflow-hidden'} ${box} ${padded ? 'p-1' : ''}`}
+        className={`h-full w-full rounded-md ${overflowVisible ? 'overflow-visible' : 'overflow-hidden'} ${box} ${ring} ${padded ? 'p-1' : ''}`}
       >
         {children}
       </div>

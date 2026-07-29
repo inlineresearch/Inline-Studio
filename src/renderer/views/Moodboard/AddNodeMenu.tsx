@@ -17,7 +17,14 @@ import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
-export type AddNodeKind = 'load' | 'layer' | 'preview' | 'director' | 'trim' | 'prompt'
+export type AddNodeKind =
+  | 'load'
+  | 'layer'
+  | 'preview'
+  | 'director'
+  | 'trim'
+  | 'prompt'
+  | 'controlSpace'
 
 type Tab = 'core' | 'api'
 
@@ -46,6 +53,7 @@ const ENTRIES: Entry[] = [
   { kind: 'director', label: 'Video Director', icon: <ClapperboardIcon />, category: CANVAS },
   { kind: 'trim', label: 'Edit Video/Audio', icon: <ScissorsIcon />, category: CANVAS },
   { kind: 'prompt', label: 'Prompt', icon: <PromptIcon />, category: CANVAS },
+  { kind: 'controlSpace', label: 'Control Space', icon: <PoseIcon />, category: CANVAS },
 ]
 
 export function AddNodeMenu({
@@ -325,6 +333,18 @@ function ImageIcon(): React.JSX.Element {
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <circle cx="8.5" cy="8.5" r="1.5" />
       <path d="M21 15l-5-5L5 21" />
+    </Svg>
+  )
+}
+
+function PoseIcon(): React.JSX.Element {
+  return (
+    <Svg>
+      <circle cx="12" cy="5" r="2" />
+      <path d="M12 7v6" />
+      <path d="M8 9h8" />
+      <path d="m12 13-3 6" />
+      <path d="m12 13 3 6" />
     </Svg>
   )
 }

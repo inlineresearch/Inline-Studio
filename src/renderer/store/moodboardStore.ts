@@ -46,6 +46,8 @@ interface MoodboardState {
   addEmptyFrame: (x: number, y: number) => Promise<MoodboardItem | null>
   /** Create a standalone "Load Assets" loader (a `type:'loader'` item holding asset refs). */
   addLoader: (x: number, y: number) => Promise<MoodboardItem | null>
+  /** Create a "Control Space" 3D pose-editor node (renders an OpenPose control map). */
+  addControlSpace: (x: number, y: number) => Promise<MoodboardItem | null>
   /** Append library assets to a loader's ordered asset list (deduped). */
   addLoaderAssets: (itemId: string, assetIds: string[]) => Promise<void>
   /** Remove one asset from a loader. */
@@ -83,6 +85,9 @@ interface MoodboardState {
   ) => Promise<MoodboardItem[]>
   /** `recordHistory: false` skips the undo snapshot - used by programmatic layout fits. */
   updateItem: (id: string, patch: MoodboardItemPatch, recordHistory?: boolean) => Promise<void>
+  /** Restore the text of the prompt node wired into `nodeId`'s `prompt` input (no-op if none). Used
+   * when switching a gen node's take history so the shown image's prompt is restored non-destructively. */
+  setConnectedPromptText: (nodeId: string, text: string) => Promise<void>
   deleteItem: (id: string) => Promise<void>
   /** Delete one render from a Core node's output history (and its file). */
   removeCoreOutput: (itemId: string, takeId: string) => Promise<void>
@@ -304,6 +309,22 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     try {
       get().record()
       const res = await studio().moodboard.addLoader(x, y)
+      if (!res.ok) {
+        set({ error: res.error })
+        return null
+      }
+      set((s) => ({ items: [...s.items, res.value] }))
+      return res.value
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+      return null
+    }
+  },
+
+  addControlSpace: async (x, y) => {
+    try {
+      get().record()
+      const res = await studio().moodboard.addControlSpace(x, y)
       if (!res.ok) {
         set({ error: res.error })
         return null
@@ -635,6 +656,18 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
     }
+  },
+
+  setConnectedPromptText: async (nodeId, text) => {
+    const { items, connectors } = get()
+    const conn = connectors.find(
+      (c) =>
+        c.toItemId === nodeId && (c.data as { targetHandle?: string }).targetHandle === 'prompt',
+    )
+    if (!conn) return
+    const promptNode = items.find((i) => i.id === conn.fromItemId && i.type === 'prompt')
+    if (!promptNode || promptNode.data.promptText === text) return
+    await get().updateItem(promptNode.id, { data: { ...promptNode.data, promptText: text } })
   },
 
   deleteItem: async (id) => {

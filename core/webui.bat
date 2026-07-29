@@ -90,7 +90,9 @@ rem slower with no error. When an NVIDIA GPU is present, resolve torch from the 
 set "TORCH_ARGS="
 where nvidia-smi >nul 2>nul || goto install_cpu
 nvidia-smi -L >nul 2>nul || goto install_cpu
-set "TORCH_ARGS=--extra-index-url https://download.pytorch.org/whl/cu124"
+rem unsafe-best-match: torchao is on the CUDA index too but only up to 0.9.0; without this uv's
+rem first-index rule stops there and fails our torchao>=0.14 pin instead of finding it on PyPI.
+set "TORCH_ARGS=--extra-index-url https://download.pytorch.org/whl/cu124 --index-strategy unsafe-best-match"
 echo NVIDIA GPU detected - installing the CUDA build of PyTorch.
 goto install_pkgs
 :install_cpu

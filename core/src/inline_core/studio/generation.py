@@ -12,6 +12,7 @@ returns immediately; progress arrives over ``/events``.
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import time
 import uuid
@@ -28,6 +29,10 @@ from ..runtime.progress import (
 )
 from . import moodboard as mb
 from .graph_build import build_workflow_graph
+from .image_meta import embed_recipe_png
+from .recipe import build_recipe
+
+logger = logging.getLogger("inline_core.studio.generation")
 
 _EXT = {"image": ".png", "video": ".mp4", "audio": ".mp3"}
 
@@ -131,23 +136,39 @@ class CoreGeneration:
         )
 
     def _save_take(self, item_id: str, take: Any) -> None:
-        """Copy a take's bytes into the project's takes/ dir and set its Core node's output."""
+        """Copy a take's bytes into the project's takes/ dir and set its Core node's output. Image
+        PNGs are re-saved with an embedded recipe (the params + upstream subgraph that made them) so
+        the file is self-describing; the params/prompt are also recorded on the node's output entry
+        so flipping through a node's take history can restore that image's settings."""
         folder: Path = self._store.folder()
+        conn = self._store.conn()
         kind = _kind_str(take.kind)
         src = Path(take.uri)
         ext = src.suffix or _EXT.get(kind, ".png")
         rel = f"takes/{uuid.uuid4()}{ext}"
         (folder / "takes").mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, folder / rel)
-        # take.node_id is the canvas item that produced it (node ids == item ids). Stamp createdAt
-        # (ms) so the Outputs gallery can interleave these with frame takes newest-first.
+        # take.node_id is the canvas item that produced it (node ids == item ids).
+        recipe = build_recipe(conn, take.node_id)
+        dst = folder / rel
+        embedded = False
+        if kind == "image" and ext.lower() == ".png":
+            try:
+                embed_recipe_png(src, dst, recipe)
+                embedded = True
+            except Exception:  # noqa: BLE001 - never fail a render over metadata; fall back to copy
+                logger.warning("Recipe embed failed for %s; copying without metadata", take.id)
+        if not embedded:
+            shutil.copyfile(src, dst)
+        # Stamp createdAt (ms) so the Outputs gallery interleaves these with frame takes.
         mb.set_core_node_output(
-            self._store.conn(),
+            conn,
             take.node_id,
             {
                 "takeId": take.id,
                 "filePath": rel,
                 "kind": kind,
                 "createdAt": int(time.time() * 1000),
+                "params": dict(getattr(take, "params", {}) or {}),
+                "prompt": recipe.get("prompt", ""),
             },
         )

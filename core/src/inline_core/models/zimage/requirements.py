@@ -28,11 +28,15 @@ from ..requirements import ModelComponent
 #: and with extension-declared requirements. Re-exported here so existing importers keep working.
 __all__ = [
     "BASE_REPO",
+    "CONTROLNET_FILE",
+    "CONTROLNET_REPO",
     "DIFFUSION_FILE",
     "SPLIT_REPO",
     "TEXT_ENCODER_FILE",
     "VAE_FILE",
     "ModelComponent",
+    "controlnet_component",
+    "controlnet_present",
     "diffusion_root",
     "download_target",
     "find_weight_file",
@@ -67,6 +71,19 @@ _LOCAL_NAMES = ("Z-Image-Turbo", "z-image-turbo", "Z-Image", "z-image")
 
 def diffusion_root() -> Path:
     return models_dir() / "diffusion_models"
+
+
+def foreign_model_message(path: str) -> str | None:
+    """A clear error when a diffusion file plainly belongs to another architecture (a Krea file
+    picked for a Z-Image node) - name-based, best-effort. Loading the wrong transformer through
+    Z-Image's VAE/text-encoder/ControlNet silently produces distorted output, so fail loudly."""
+    name = Path(path).name.lower()
+    if "krea" in name and "image" not in name:
+        return (
+            f"'{Path(path).name}' is a Krea model, but this is a Z-Image node. Pick a "
+            "z_image_*.safetensors in the Diffusion file dropdown (or clear it to auto-select)."
+        )
+    return None
 
 
 def find_weight_file(root: Path) -> Path | None:
@@ -136,6 +153,38 @@ def resolve_vae(params: dict[str, object] | None = None) -> Path | None:
     return _category_file("vae", VAE_FILE, "INLINE_ZIMAGE_VAE", (params or {}).get("vae"))
 
 
+def resolve_controlnet(params: dict[str, object] | None = None) -> Path | None:
+    """The ControlNet weight file, or None. Control is opt-in, so - unlike the base components -
+    this never auto-picks: it resolves only from ``INLINE_ZIMAGE_CONTROLNET`` or an explicit
+    dropdown choice in ``models/controlnet/``."""
+    env = os.environ.get("INLINE_ZIMAGE_CONTROLNET", "").strip()
+    if env:
+        path = Path(env)
+        return path if path.exists() else None
+    chosen = str((params or {}).get("controlnet") or "").strip()
+    if not chosen:
+        return None
+    picked = models_dir() / "controlnet" / chosen
+    return picked if picked.is_file() else None
+
+
+def auto_controlnet() -> Path | None:
+    """The best ControlNet to use when a control map is wired but none was explicitly picked - so
+    wiring a Control Space / Apply ControlNet just works. Prefers a Z-Image-named file, then a
+    distilled/turbo build (fewer sampling steps), else the first available. None if the folder is
+    empty. (Only consulted when a control input is actually connected - control stays opt-in.)"""
+    root = models_dir() / "controlnet"
+    if not root.is_dir():
+        return None
+    files = sorted(
+        p for p in root.iterdir() if p.is_file() and p.suffix.lower() in _WEIGHT_SUFFIXES
+    )
+    named = [p for p in files if "z" in p.name.lower() and "image" in p.name.lower()]
+    pool = named or files
+    distilled = [p for p in pool if any(t in p.name.lower() for t in ("8step", "8-step", "2602"))]
+    return (distilled or pool or [None])[0]
+
+
 def resolve_text_encoder(params: dict[str, object] | None = None) -> Path | None:
     """The text-encoder single file (dropdown pick / ``INLINE_ZIMAGE_TEXT_ENCODER`` / the split
     ``qwen_3_4b.safetensors``)."""
@@ -192,6 +241,35 @@ def _split_component(
     )
 
 
+#: The recommended Z-Image ControlNet: the distilled 8-step Union model (pose/depth/canny in one
+#: file), the variant verified to work on Turbo. Suggested, not required - control is opt-in.
+CONTROLNET_REPO = "alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1"
+CONTROLNET_FILE = "Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps.safetensors"
+
+
+def controlnet_present() -> bool:
+    """True if any weight file is in ``models/controlnet/`` (the user's, or a popup download)."""
+    root = models_dir() / "controlnet"
+    if not root.is_dir():
+        return False
+    return any(p.is_file() and p.suffix.lower() in _WEIGHT_SUFFIXES for p in root.iterdir())
+
+
+def controlnet_component() -> ModelComponent:
+    """The suggested ControlNet Union download - offered on the Z-Image and Control Space nodes so a
+    control map can actually steer generation. Optional: it never blocks a plain run."""
+    return ModelComponent(
+        id="controlnet",
+        label="ControlNet (Union, 8-step)",
+        category="controlnet",
+        present=controlnet_present(),
+        filename=CONTROLNET_FILE,
+        repo=CONTROLNET_REPO,
+        repo_file=CONTROLNET_FILE,
+        optional=True,
+    )
+
+
 def zimage_requirements(params: dict[str, object] | None = None) -> list[ModelComponent]:
     """The three Z-Image components with live presence, for the node's model popup.
 
@@ -224,6 +302,8 @@ def zimage_requirements(params: dict[str, object] | None = None) -> list[ModelCo
             filename=TEXT_ENCODER_FILE,
             present=is_pipeline or resolve_text_encoder(params) is not None,
         ),
+        # Suggested, not required: offered in the popup so a control map has a model to run against.
+        controlnet_component(),
     ]
 
 
@@ -250,13 +330,19 @@ def _file_bytes(path: object) -> int:
 
 
 def footprint_bytes(
-    diffusion: object = None, vae: object = None, text_encoder: object = None
+    diffusion: object = None,
+    vae: object = None,
+    text_encoder: object = None,
+    controlnet: object = None,
 ) -> dict[str, int]:
-    """On-disk byte sizes of the three single-file components, keyed to match ``ModelFootprint``'s
-    fields. Torch-free (a plain ``stat``) so the policy/UI can size the load without the runtime.
-    Pass the already-resolved paths (which honor wired handles); a missing/folder path is 0."""
+    """On-disk byte sizes of the single-file components, keyed to match ``ModelFootprint``'s fields.
+    Torch-free (a plain ``stat``) so the policy/UI can size the load without the runtime. Pass the
+    already-resolved paths (which honor wired handles); a missing/folder path is 0. ``controlnet``
+    is only set when control is actually in play - it is several GB and must not be charged to a
+    plain run."""
     return {
         "diffusion_bytes": _file_bytes(diffusion),
         "text_encoder_bytes": _file_bytes(text_encoder),
         "vae_bytes": _file_bytes(vae),
+        "controlnet_bytes": _file_bytes(controlnet),
     }

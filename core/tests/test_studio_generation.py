@@ -79,6 +79,44 @@ def test_build_workflow_graph_loader_into_zimage_image(tmp_path) -> None:
     assert by_id[z["id"]]["inputs"]["image"] == {"from": loader["id"], "output": "image"}
 
 
+def test_build_workflow_graph_control_space_into_zimage_control(tmp_path) -> None:
+    """A Control Space node's rendered OpenPose map, wired into Z-Image's control_image port,
+    becomes an input/image source node targeting that named input."""
+    store = _store(tmp_path)
+    conn = store.conn()
+    conn.execute(
+        "INSERT INTO assets (id, project_id, name, file_path, kind, created_at) "
+        "VALUES ('pose1', ?, 'pose', 'assets/pose.png', 'image', 0)",
+        (mb._project_id(conn),),
+    )
+    z = mb.add_core_node(conn, "alibaba/z-image-turbo", 400, 200)
+    cs = mb.add_control_space(conn, 80, 200)
+    assert cs["type"] == "controlSpace"
+    mb.update_item(conn, cs["id"], {"data": {"controlAssetId": "pose1"}})
+    mb.create_connector(conn, cs["id"], z["id"], "out", "control_image")
+
+    graph, _ = build_workflow_graph(conn, store.folder(), z["id"])
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    cs_node = by_id[cs["id"]]
+    assert cs_node["type"] == "input/image"
+    assert cs_node["params"]["asset"]["path"] == str(store.folder() / "assets/pose.png")
+    # The map lands on the control_image input, not the plain image input.
+    assert by_id[z["id"]]["inputs"]["control_image"] == {"from": cs["id"], "output": "image"}
+
+
+def test_build_workflow_graph_control_space_without_render_is_dropped(tmp_path) -> None:
+    """A Control Space node with no rendered map yet emits no source node (no dangling edge)."""
+    store = _store(tmp_path)
+    conn = store.conn()
+    z = mb.add_core_node(conn, "alibaba/z-image-turbo", 400, 200)
+    cs = mb.add_control_space(conn, 80, 200)
+    mb.create_connector(conn, cs["id"], z["id"], "out", "control_image")
+
+    graph, _ = build_workflow_graph(conn, store.folder(), z["id"])
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    assert cs["id"] not in by_id
+
+
 class _Events:
     def __init__(self) -> None:
         self.sent: list[tuple[str, dict]] = []

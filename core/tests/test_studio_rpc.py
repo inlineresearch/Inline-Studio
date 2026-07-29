@@ -72,6 +72,7 @@ def test_full_project_and_canvas_flow(client) -> None:
         "sample",
         "vae/decode",
         "vae/encode",
+        "control/apply",
     }
     assert rpc(client, "core:status")["value"]["running"] is True
 
@@ -109,3 +110,14 @@ def test_fal_run_without_key_errors_via_event(client) -> None:
     # Fal run is fire-and-forget (ok immediately); the missing-key error arrives as an event.
     res = rpc(client, "generation:run", "frame-x", {"endpoint": "fal-ai/x", "body": {}})
     assert res["ok"] is True
+
+
+def test_app_version_reports_the_installed_package_version(client) -> None:
+    """The launcher footer reads this channel. It used to return a hardcoded "1.0.0" default that
+    no call site ever overrode, so the UI showed 1.0.0 for every release."""
+    from inline_core import __version__
+
+    reported = rpc(client, "app:version")["value"]
+    assert reported == __version__
+    assert reported != "1.0.0"
+    assert reported.count(".") == 2  # a real semver, not a placeholder

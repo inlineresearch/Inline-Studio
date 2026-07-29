@@ -1,6 +1,6 @@
 {
   "name": "inline-studio",
-  "version": "1.2.52",
+  "version": "1.2.53",
   "description": "An experimentation layer for visual artists: a node canvas for building generative pipelines, served by the Inline Core engine.",
   "author": "Inline Studio",
   "license": "GPL-3.0-or-later",
@@ -21,14 +21,18 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
     "@xyflow/react": "^12.11.0",
-    "react-resizable-panels": "^2.1.9"
+    "react-resizable-panels": "^2.1.9",
+    "three": "^0.171.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
     "@types/node": "^22.10.5",
     "@types/react": "^19.0.4",
     "@types/react-dom": "^19.0.2",
+    "@types/three": "^0.171.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "eslint": "^9.18.0",

@@ -136,6 +136,9 @@ export type MoodboardItemType =
   | 'core'
   /** A "Load Assets" node: holds library asset refs in `data.assetIds`, feeds its hero downstream. */
   | 'loader'
+  /** A "Control Space" node: a 3D pose editor whose rendered OpenPose map (`data.controlAssetId`)
+   * feeds a gen node's control input. */
+  | 'controlSpace'
   /** Trainer-canvas: picks a training dataset and feeds it downstream. */
   | 'trainDataset'
   /** Trainer-canvas: auto-captions a dataset's images. */
@@ -260,6 +263,32 @@ export interface MoodboardItemData {
   loader?: boolean
   /** `loader` node: the library asset ids it holds, in order (hero = first). */
   assetIds?: string[]
+  /** `controlSpace` node: the library asset id of the last rendered OpenPose control map, fed
+   * downstream into a gen node's control input. */
+  controlAssetId?: string
+  /** `controlSpace` node: the serialized 3D scene so the editor reopens on the saved pose.
+   * `characters` is the current multi-character form; `joints` is the legacy single-character field,
+   * still read for scenes saved before multi-character support. */
+  controlScene?: {
+    joints?: [number, number, number][]
+    characters?: { joints: [number, number, number][] }[]
+    fov?: number
+    /** Camera pose so a saved render reproduces the exact framing on reopen. */
+    camera?: { position: [number, number, number]; target: [number, number, number] }
+    /** Which control map the node last rendered: an OpenPose skeleton or a depth map. */
+    output?: 'pose' | 'depth'
+    /** Output aspect (w/h) of the rendered map; must match the gen node's resolution or the pose
+     * comes out stretched. Defaults to 1 (square). */
+    aspect?: number
+    /** How each character was turned relative to the camera when the map was rendered. */
+    facing?: ('front' | 'three-quarter' | 'profile' | 'back' | null)[]
+    /** Prompt text the facing needs, resolved at render time and appended to a downstream gen node's
+     * prompt / negative prompt. A control map cannot express "facing away" - only the text encoder
+     * can - so Control Space states it here. Null (or absent) = nothing to add. */
+    promptHint?: { positive: string; negative: string } | null
+    /** Whether the facing prompt hint is applied downstream (default true). */
+    applyPromptHint?: boolean
+  }
   /** `trainDataset` / `caption` / `trainer` nodes: the training dataset they operate on. */
   datasetId?: string | null
   /** `caption` node: re-caption images that already have a caption. */
@@ -273,23 +302,26 @@ export interface MoodboardItemData {
   core?: {
     type: string
     params: Record<string, unknown>
-    /** The active media this node produced - shown large and flowed downstream. Project-relative.
-     * `createdAt` (ms) is stamped at generation; absent on renders made before it was tracked. */
-    output?: {
-      takeId: string
-      filePath: string
-      kind: 'image' | 'video' | 'audio'
-      createdAt?: number
-    }
+    /** The active media this node produced - shown large and flowed downstream. */
+    output?: CoreTakeRef
     /** Recent renders (newest first); `output` points at the active one. Drives the take-history
-     * strip on generation nodes. Same shape as `output`. */
-    outputs?: {
-      takeId: string
-      filePath: string
-      kind: 'image' | 'video' | 'audio'
-      createdAt?: number
-    }[]
+     * strip on generation nodes. */
+    outputs?: CoreTakeRef[]
   }
+}
+
+/** One render in a Core node's history: the media file plus the recipe fields that let switching to
+ * it restore the node's settings and its prompt (the reproducible-recipe feature). */
+export interface CoreTakeRef {
+  takeId: string
+  filePath: string
+  kind: 'image' | 'video' | 'audio'
+  /** Stamped at generation (ms); absent on renders made before it was tracked. */
+  createdAt?: number
+  /** The settings this take was generated with, so switching to it restores the node's params. */
+  params?: Record<string, unknown>
+  /** The prompt this take used (from the upstream prompt node), for display + restore. */
+  prompt?: string
 }
 
 export interface MoodboardItem {

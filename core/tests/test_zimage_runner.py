@@ -61,7 +61,7 @@ def use_fake_pipe(monkeypatch: pytest.MonkeyPatch) -> _FakePipe:
         rz,
         "_load_pipeline",
         lambda policy, *, img2img, source, mode, vae, text, quant=None, loras=(),
-        cancel_check=None: pipe,
+        controlnet=None, cancel_check=None: pipe,
     )
     # These tests mock the pipeline, so bypass the "models present on disk" gate.
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
@@ -85,7 +85,7 @@ def test_register_adds_descriptor_and_runner() -> None:
     descriptor = registry.get("alibaba/z-image-turbo")
     assert descriptor.output_kind is not None
     assert [p.id for p in descriptor.inputs] == [
-        "prompt", "model", "vae", "text_encoder", "lora", "image",
+        "prompt", "model", "vae", "text_encoder", "lora", "image", "control_image",
     ]
     assert descriptor.input("prompt").required
     # The component handles + lora + image are all optional (wire a Load node, or the dropdowns).
@@ -126,7 +126,7 @@ def test_wired_component_handles_override_dropdowns(monkeypatch: pytest.MonkeyPa
 
     def _fake_load(
         policy: Any, *, img2img: bool, source: str, mode: str, vae: str, text: str,
-        quant: Any = None, loras: Any = (), cancel_check: Any = None,
+        quant: Any = None, loras: Any = (), controlnet: Any = None, cancel_check: Any = None,
     ) -> Any:
         captured.update(source=source, mode=mode, vae=vae, text=text)
         return _FakePipe()
@@ -197,7 +197,7 @@ def test_cancel_during_sampling_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         rz, "_load_pipeline",
         lambda policy, *, img2img, source, mode, vae, text, quant=None, loras=(),
-        cancel_check=None: (_CancellingPipe()),
+        controlnet=None, cancel_check=None: (_CancellingPipe()),
     )
     monkeypatch.setattr(rz.reqs, "zimage_requirements", lambda params=None: [])
     monkeypatch.setattr(rz.reqs, "resolve_diffusion", lambda params=None: ("single_file", "fake"))
@@ -250,6 +250,23 @@ def test_resolve_seed() -> None:
     assert rt.resolve_seed(0) == 0
     assert 0 <= rt.resolve_seed(-1) <= rt._SEED_MAX  # random, non-negative
     assert 0 <= rt.resolve_seed("not-a-number") <= rt._SEED_MAX
+
+
+def test_load_image_accepts_take_and_asset_path(tmp_path: Any) -> None:
+    """Apply ControlNet feeds its control map in as a Take (not an AssetRef) - both must load."""
+    from PIL import Image
+
+    from inline_core.media import MediaKind
+    from inline_core.takes import AssetRef, Take
+
+    p = tmp_path / "map.png"
+    Image.new("RGB", (8, 8), "white").save(p)
+
+    take = Take(id="t", run_id="r", node_id="n", kind=MediaKind.IMAGE, uri=str(p), hash="h")
+    assert rt.load_image(take, "Z-Image").size == (8, 8)
+    assert rt.load_image(AssetRef(ref="path", path=str(p)), "Z-Image").size == (8, 8)
+    with pytest.raises(ComponentError, match="readable image"):
+        rt.load_image("nope", "Z-Image")
 
 
 def test_missing_models_fail_fast(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
@@ -473,12 +490,91 @@ def test_shrink_vae_tiles_noop_when_already_small() -> None:
     assert vae.tile_latent_min_size == 32
 
 
-def test_smaller_resolutions_only_suggests_smaller() -> None:
-    """The OOM hint must never suggest a size >= the current one (the reported 512->768/512 bug)."""
-    assert rt.smaller_resolutions(1024, 1024) == ["768x768", "512x512"]
-    assert rt.smaller_resolutions(512, 512) == ["384x384", "256x256"]
-    assert rt.smaller_resolutions(256, 256) == ["128x128"]  # past the ladder -> halve
-    # never suggests the current size or larger
-    for size in (2048, 1024, 768, 512, 384, 256, 200, 128):
-        for s in rt.smaller_resolutions(size, size):
-            assert int(s.split("x")[0]) < size
+def _wh(label: str) -> tuple[int, int]:
+    w, h = label.split("x")
+    return int(w), int(h)
+
+
+def test_smaller_resolutions_cuts_pixels_not_just_the_long_edge() -> None:
+    """The hint must cut peak memory, which tracks pixel count - the reported 896x1216 bug, where
+    the square ladder suggested 1024x1024: 4% fewer pixels, and it OOMed too."""
+    for w, h in ((896, 1216), (1024, 1024), (1216, 832), (512, 512), (768, 1024)):
+        for label in rt.smaller_resolutions(w, h):
+            sw, sh = _wh(label)
+            assert sw * sh < w * h, f"{label} is not smaller than {w}x{h}"
+            assert sw * sh <= 0.8 * w * h, f"{label} barely cuts {w}x{h}"
+
+
+def test_smaller_resolutions_keeps_the_requested_aspect() -> None:
+    """A portrait request stays portrait - being told to render a square is not an answer."""
+    for w, h in ((896, 1216), (832, 1216), (1216, 832)):
+        for label in rt.smaller_resolutions(w, h):
+            sw, sh = _wh(label)
+            assert abs(sw / sh - w / h) < 0.12, f"{label} drifts from {w}x{h}'s aspect"
+            assert sw % 64 == 0 and sh % 64 == 0
+
+    # The size this box actually generates at is what a 896x1216 OOM should point you to.
+    assert "768x1024" in rt.smaller_resolutions(896, 1216)
+
+
+def test_smaller_resolutions_never_suggests_the_current_size() -> None:
+    for w, h in ((2048, 2048), (1024, 1024), (512, 512), (256, 256), (128, 128), (64, 64)):
+        assert f"{w}x{h}" not in rt.smaller_resolutions(w, h)
+    assert rt.smaller_resolutions(64, 64) == []  # at the floor: no suggestion beats none
+    assert "try" not in rt.oom_message(64, 64)
+
+
+# --- pipeline-cache eviction --------------------------------------------------------------------
+
+
+def _key(**over: Any) -> rt.PipelineKey:
+    base = dict(
+        arch="z-image", diffusion="/m.safetensors", vae="/ae.safetensors",
+        text_encoder="/qwen.safetensors", variant="t2i", quant="none",
+    )
+    return rt.PipelineKey(**{**base, **over})
+
+
+def test_evict_stale_drops_a_control_pipeline_when_a_plain_run_follows() -> None:
+    """The QA bug: a control build was keyed only through ``variant`` ("ctrl:<file>"), and eviction
+    matched on files alone - so the ControlNet pipeline survived a following plain run, pinning its
+    several-GB ControlNet while the plain transformer loaded on top, and the card OOMed."""
+    cache = rt.PipelineCache()
+    control = _key(quant="int8", controlnet="/union.safetensors")
+    cache.put(control, object())
+
+    cache.evict_stale(_key())  # the plain t2i run that follows
+
+    assert cache.get(control) is None
+
+
+def test_evict_stale_keeps_the_t2i_base_for_an_img2img_build() -> None:
+    """Only ``variant`` may differ: the i2i build still reuses the cached t2i base (from_pipe)."""
+    cache = rt.PipelineCache()
+    base = _key(variant="t2i")
+    cache.put(base, object())
+
+    cache.evict_stale(_key(variant="i2i"))
+
+    assert cache.get(base) is not None
+
+
+def test_evict_stale_keeps_an_identical_control_pipeline() -> None:
+    """A repeat control run must hit the cache, not rebuild 6 GB of ControlNet."""
+    cache = rt.PipelineCache()
+    control = _key(quant="int8", controlnet="/union.safetensors")
+    cache.put(control, object())
+
+    cache.evict_stale(control)
+
+    assert cache.get(control) is not None
+
+
+def test_control_key_keeps_the_controlnet_component_alive() -> None:
+    """The ControlNet file is not one of the three ``files``, so the component sweep must be told
+    about it explicitly or every control run reloads it from disk."""
+    key = _key(controlnet="/union.safetensors")
+    assert key.component_files == {
+        "/m.safetensors", "/ae.safetensors", "/qwen.safetensors", "/union.safetensors"
+    }
+    assert _key().component_files == {"/m.safetensors", "/ae.safetensors", "/qwen.safetensors"}

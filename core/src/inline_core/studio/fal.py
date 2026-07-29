@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import re
 import uuid
 from pathlib import Path
@@ -19,6 +20,10 @@ from typing import Any
 
 from . import frames as fr
 from . import moodboard as mb
+from .image_meta import embed_recipe_png
+from .recipe import build_recipe
+
+logger = logging.getLogger("inline_core.studio.fal")
 
 _QUEUE_BASE = "https://queue.fal.run"
 
@@ -343,12 +348,36 @@ class FalGeneration:
         self, client: Any, frame_id: str, ref: dict[str, str], request_id: str, params: dict
     ) -> str:
         folder: Path = self._store.folder()
+        conn = self._store.conn()
         data = await client.get(ref["url"])
         data.raise_for_status()
         rel = f"takes/{uuid.uuid4()}{ref['ext']}"
         (folder / "takes").mkdir(parents=True, exist_ok=True)
-        (folder / rel).write_bytes(data.content)
-        take = fr.add_take(
-            self._store.conn(), frame_id, rel, ref["kind"], params, comfy_prompt_id=request_id
-        )
+        dst = folder / rel
+        # Embed the recipe into fal PNG outputs so a shared image can rebuild its graph. Only PNG
+        # carries a tEXt chunk (jpg/webp/video can't); the take stores params in the DB regardless.
+        is_png = ref["kind"] == "image" and ref["ext"].lower() == ".png"
+        if not (is_png and self._embed_recipe(conn, frame_id, data.content, dst)):
+            dst.write_bytes(data.content)
+        take = fr.add_take(conn, frame_id, rel, ref["kind"], params, comfy_prompt_id=request_id)
         return take["id"]
+
+    def _embed_recipe(self, conn: Any, frame_id: str, content: bytes, dst: Path) -> bool:
+        """Write `content` to `dst` with the fal frame's recipe embedded. False (caller writes raw)
+        if the frame has no canvas item or embedding fails - metadata must never fail a render."""
+        try:
+            item_id = next(
+                (i["id"] for i in mb.list_board(conn)["items"] if i.get("frameId") == frame_id),
+                None,
+            )
+            if item_id is None:
+                return False
+            recipe = build_recipe(conn, item_id)
+            tmp = dst.with_suffix(dst.suffix + ".raw")
+            tmp.write_bytes(content)
+            embed_recipe_png(tmp, dst, recipe)
+            tmp.unlink(missing_ok=True)
+            return True
+        except Exception:  # noqa: BLE001
+            logger.warning("Recipe embed failed for fal frame %s; saving raw", frame_id)
+            return False

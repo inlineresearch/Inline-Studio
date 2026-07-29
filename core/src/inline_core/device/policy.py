@@ -87,10 +87,14 @@ class ModelFootprint:
     diffusion_bytes: int = 0
     text_encoder_bytes: int = 0
     vae_bytes: int = 0
+    #: A ControlNet loaded alongside the denoiser. Never quantized, so it counts full in every plan.
+    controlnet_bytes: int = 0
 
     @property
     def total_bytes(self) -> int:
-        return self.diffusion_bytes + self.text_encoder_bytes + self.vae_bytes
+        return (
+            self.diffusion_bytes + self.text_encoder_bytes + self.vae_bytes + self.controlnet_bytes
+        )
 
 
 @dataclass(frozen=True)

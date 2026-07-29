@@ -337,8 +337,15 @@ def lora_cache_key(loras: tuple[LoraRef, ...]) -> tuple[str, ...]:
     return tuple(f"{lora.file}@{lora.strength}" for lora in loras)
 
 
+#: Component kinds whose cache key carries a real quantization (the others always store NONE, so
+#: comparing their quant slot against the plan's would evict them every time.)
+_QUANTIZED_KINDS = ("diffusion", "text_encoder")
+
+
 def unload_components(
-    keep_files: set[str] | None = None, keep_loras: tuple[str, ...] | None = None
+    keep_files: set[str] | None = None,
+    keep_loras: tuple[str, ...] | None = None,
+    keep_quant: str | None = None,
 ) -> None:
     """Drop cached components whose source file is NOT in ``keep_files``, freeing their VRAM/RAM.
 
@@ -351,7 +358,11 @@ def unload_components(
     ``keep_loras`` (the LoRA-stack suffix being loaded, from ``lora_cache_key``) additionally evicts
     a kept file's diffusion transformer when it carries a *different* stack: fusing a LoRA into an
     already-resident checkpoint would otherwise keep the unfused transformer AND the fused one - two
-    full-size models on the card. Left None, eviction is file-only (the pre-LoRA behaviour)."""
+    full-size models on the card. Left None, eviction is file-only (the pre-LoRA behaviour).
+
+    ``keep_quant`` does the same across quantizations: the fit plan re-quantizes when the footprint
+    changes (adding a ControlNet flips a resident load to int8), and the same file at two quants is
+    two cache entries, so without this the int8 and full-size transformers both stay resident."""
     keep = keep_files or set()
     with _CACHE_LOCK:
         stale = []
@@ -359,6 +370,8 @@ def unload_components(
             if k[2] not in keep:
                 stale.append(k)
             elif keep_loras is not None and k[1] == "diffusion" and tuple(k[6:]) != keep_loras:
+                stale.append(k)
+            elif keep_quant is not None and k[1] in _QUANTIZED_KINDS and k[4] != keep_quant:
                 stale.append(k)
         for k in stale:
             comp = _CACHE.pop(k)
@@ -414,6 +427,84 @@ def load_diffusion(
         *lora_cache_key(loras),
     )
     return _cached(key, build)
+
+
+#: The Fun ControlNet Union geometry (15 control layers on even base layers, 2 refiners, 33-channel
+#: control latent) - shared by the 2.0/2.1/2601/2602 full-size files. Bundled because a dropped-in
+#: single file has no config beside it and ``from_single_file`` would otherwise reach for the
+#: reference repo's ``config.json`` - a fetch the engine forbids (``local_files_only``), so an
+#: offline load raised "does not appear to have a file named config.json". The **lite** variants
+#: apply control to 3 layers instead and need their own config; `_controlnet_layer_count` rejects
+#: them with a clear message rather than a raw tensor-shape error.
+ZIMAGE_CONTROLNET_CONFIG = {
+    "add_control_noise_refiner": "control_noise_refiner",
+    "all_f_patch_size": [1],
+    "all_patch_size": [2],
+    "control_in_dim": 33,
+    "control_layers_places": [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28],
+    "control_refiner_layers_places": [0, 1],
+    "dim": 3840,
+    "n_heads": 30,
+    "n_kv_heads": 30,
+    "n_refiner_layers": 2,
+    "norm_eps": 1e-05,
+    "qk_norm": True,
+}
+
+
+def _controlnet_layer_count(file: str) -> int:
+    """How many control layers a ControlNet checkpoint carries, read from its header alone (no
+    weights). 0 when the file can't be inspected - the strict load then reports the mismatch."""
+    try:
+        from safetensors import safe_open
+
+        with safe_open(file, "pt") as handle:
+            prefix = "control_layers."
+            return len(
+                {k.split(".")[1] for k in handle.keys() if k.startswith(prefix)}  # noqa: SIM118
+            )
+    except Exception:  # noqa: BLE001 - a probe must never be the thing that fails a load
+        return 0
+
+
+def load_zimage_controlnet(file: str, dtype: Any, device: str | None = None) -> Any:
+    """The Z-Image ControlNet transformer from a single ``.safetensors`` (e.g. the Fun Union model).
+
+    Built from the bundled config and filled by ``assign=``, so nothing is ever fetched and the
+    weights land straight on ``device`` (never a full-size CPU copy first). The pipeline grafts the
+    shared transformer layers via ``from_transformer`` at build time. Small next to the base
+    transformer, so it is never quantized."""
+
+    def build() -> Any:
+        from accelerate import init_empty_weights
+        from diffusers import ZImageControlNetModel
+        from safetensors.torch import load_file
+
+        expected = len(ZIMAGE_CONTROLNET_CONFIG["control_layers_places"])
+        found = _controlnet_layer_count(file)
+        if found and found != expected:
+            raise ComponentError(
+                f"This ControlNet applies control to {found} layers, but Inline Core only bundles "
+                f"the {expected}-layer Z-Image Fun ControlNet geometry (the 'lite' variants use "
+                "fewer). Use a full-size Fun Union/Tile file."
+            )
+        with init_empty_weights():
+            model = ZImageControlNetModel.from_config(ZIMAGE_CONTROLNET_CONFIG)
+        state = load_file(file, device=device or "cpu")
+        state = {key: value.to(dtype) for key, value in state.items()}
+        # assign= replaces the meta parameters outright; a plain copy_ into meta storage errors.
+        model.load_state_dict(state, strict=True, assign=True)
+        state.clear()
+        _release_transient()
+        return model.eval()
+
+    # Never quantized, but the key still carries a quant slot so every kind shares one layout (the
+    # eviction sweep indexes into it positionally).
+    return _cached(
+        ("z-image", "controlnet", file, _dtype_key(dtype), Quantization.NONE.value,
+         _device_key(device)),
+        build,
+    )
 
 
 def load_vae(arch: str, file: str, dtype: Any, device: str | None = None) -> Any:
@@ -778,6 +869,7 @@ def assemble_zimage_pipeline(
     vae_dtype: Any = None,
     device: str | None = None,
     loras: tuple[LoraRef, ...] = (),
+    controlnet_file: str | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> Any:
     """Build a Z-Image pipeline from three local single files. Components are cached individually,
@@ -792,7 +884,7 @@ def assemble_zimage_pipeline(
     second load bails after the current component instead of only at the first denoise step. It
     cannot break into a single component's blocking read (the transformer dominates), but it stops
     the run before loading the VAE + text encoder + placing + denoising."""
-    from diffusers import ZImageImg2ImgPipeline, ZImagePipeline
+    from diffusers import ZImageControlNetPipeline, ZImageImg2ImgPipeline, ZImagePipeline
 
     arch = _ZIMAGE.key
     transformer = load_diffusion(arch, diffusion_file, dtype, quant, device=device, loras=loras)
@@ -808,6 +900,19 @@ def assemble_zimage_pipeline(
     )
     _release_transient()
     scheduler = load_scheduler(arch)
+    if controlnet_file:
+        # ControlNet runs text-to-image + control (no img2img in this path). The pipeline __init__
+        # grafts the shared transformer layers onto the ControlNet via from_transformer.
+        controlnet = load_zimage_controlnet(controlnet_file, dtype, device=device)
+        _release_transient()
+        return ZImageControlNetPipeline(
+            scheduler=scheduler,
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            transformer=transformer,
+            controlnet=controlnet,
+        )
     cls = ZImageImg2ImgPipeline if img2img else ZImagePipeline
     return cls(
         scheduler=scheduler,

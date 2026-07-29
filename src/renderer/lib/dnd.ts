@@ -44,20 +44,34 @@ export function getFrameDragId(dt: DataTransfer): string | null {
  */
 export const OUTPUT_DND_TYPE = 'application/x-inlinestudio-output'
 
-export function setOutputDragPayload(dt: DataTransfer, frameId: string, takeId?: string): void {
-  dt.setData(OUTPUT_DND_TYPE, JSON.stringify({ frameId, takeId: takeId ?? null }))
+export function setOutputDragPayload(
+  dt: DataTransfer,
+  frameId: string,
+  takeId?: string,
+  filePath?: string,
+): void {
+  dt.setData(
+    OUTPUT_DND_TYPE,
+    JSON.stringify({ frameId, takeId: takeId ?? null, filePath: filePath ?? null }),
+  )
 }
 
-function parseOutputPayload(dt: DataTransfer): { frameId: string; takeId: string | null } | null {
+function parseOutputPayload(
+  dt: DataTransfer,
+): { frameId: string; takeId: string | null; filePath: string | null } | null {
   const raw = dt.getData(OUTPUT_DND_TYPE)
   if (!raw) return null
   try {
-    const p = JSON.parse(raw) as { frameId?: unknown; takeId?: unknown }
+    const p = JSON.parse(raw) as { frameId?: unknown; takeId?: unknown; filePath?: unknown }
     if (typeof p.frameId !== 'string') return null
-    return { frameId: p.frameId, takeId: typeof p.takeId === 'string' ? p.takeId : null }
+    return {
+      frameId: p.frameId,
+      takeId: typeof p.takeId === 'string' ? p.takeId : null,
+      filePath: typeof p.filePath === 'string' ? p.filePath : null,
+    }
   } catch {
     // Legacy payload: a bare frame id string.
-    return { frameId: raw, takeId: null }
+    return { frameId: raw, takeId: null, filePath: null }
   }
 }
 
@@ -69,6 +83,10 @@ export function getOutputDragId(dt: DataTransfer): string | null {
 /** Decode a dragged output's specific take id, or null (unknown / not an output drag). */
 export function getOutputTakeId(dt: DataTransfer): string | null {
   return parseOutputPayload(dt)?.takeId ?? null
+}
+
+export function getOutputFilePath(dt: DataTransfer): string | null {
+  return parseOutputPayload(dt)?.filePath ?? null
 }
 
 /**

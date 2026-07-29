@@ -55,7 +55,8 @@ def use_fake_pipe(monkeypatch: pytest.MonkeyPatch) -> _FakePipe:
     pipe = _FakePipe()
     monkeypatch.setattr(
         rk, "_load_pipeline",
-        lambda policy, *, variant, source, vae, text, quant=None, loras=(), cancel_check=None: pipe,
+        lambda policy, *, variant, source, vae, text, quant=None, loras=(), controlnet=None,
+        cancel_check=None: pipe,
     )
     monkeypatch.setattr(rk.reqs, "krea2_requirements", lambda variant, params=None: [])
     monkeypatch.setattr(rk.reqs, "resolve_diffusion", lambda variant, params=None: "krea2.st")
@@ -80,7 +81,7 @@ def test_register_adds_both_nodes() -> None:
     assert registry.has("krea/krea-2-raw")
     descriptor = registry.get("krea/krea-2-turbo")
     assert [p.id for p in descriptor.inputs] == [
-        "prompt", "model", "vae", "text_encoder", "lora", "image",
+        "prompt", "model", "vae", "text_encoder", "lora", "image", "control_image",
     ]
     assert descriptor.input("prompt").required
     assert descriptor.output_kind is not None
@@ -144,7 +145,7 @@ def test_a_missing_prompt_is_a_clear_error(use_fake_pipe: _FakePipe) -> None:
 
 def test_missing_models_point_at_the_popup(monkeypatch: pytest.MonkeyPatch) -> None:
     component = types.SimpleNamespace(
-        id="diffusion", label="Diffusion model (TURBO)", present=False
+        id="diffusion", label="Diffusion model (TURBO)", present=False, optional=False
     )
     monkeypatch.setattr(rk.reqs, "krea2_requirements", lambda variant, params=None: [component])
     runner = rk.Krea2Runner(_FakeStore(), MemoryPolicy(), "turbo")

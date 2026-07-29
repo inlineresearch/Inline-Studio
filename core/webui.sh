@@ -123,7 +123,10 @@ if [[ "$RUN_INSTALL" -eq 1 ]]; then
   # slower, with no error. When an NVIDIA GPU is present, resolve torch from the CUDA index.
   TORCH_INDEX=()
   if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
-    TORCH_INDEX=(--extra-index-url https://download.pytorch.org/whl/cu124)
+    # unsafe-best-match: torchao is on the CUDA index too but only up to 0.9.0; without this uv's
+    # first-index rule stops there and fails our torchao>=0.14 pin instead of finding it on PyPI.
+    TORCH_INDEX=(--extra-index-url https://download.pytorch.org/whl/cu124 \
+      --index-strategy unsafe-best-match)
     echo "NVIDIA GPU detected - installing the CUDA build of PyTorch."
   else
     echo "No NVIDIA GPU detected - installing the default (CPU) build of PyTorch."

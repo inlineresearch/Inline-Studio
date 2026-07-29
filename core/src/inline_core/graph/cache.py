@@ -12,7 +12,7 @@ from typing import Any
 
 from ..takes import Take
 from .registry import Registry
-from .schema import Graph, Node
+from .schema import Graph, Node, PortKind
 
 
 class NodeCache(ABC):
@@ -40,8 +40,15 @@ def _canonical_params(node: Node, registry: Registry) -> dict[str, Any]:
 
 
 def is_cache_eligible(node: Node, registry: Registry) -> bool:
-    """False when any seed param resolves to a negative (random) value."""
+    """False when a control map is wired, or any seed param resolves to a negative (random) value.
+
+    A node driven by a control map re-runs every time: the user iterates on the pose/depth and
+    expects each run to apply the current control, so a cached take would read as "control not
+    taking effect" (even a re-render at the same seed must re-apply it)."""
     descriptor = registry.get(node.type)
+    for port in descriptor.inputs:
+        if port.kind is PortKind.CONTROL and node.inputs.get(port.id):
+            return False
     defaults = descriptor.defaults()
     for key in descriptor.seed_keys():
         value = node.params.get(key, defaults.get(key))
@@ -81,3 +88,29 @@ def node_cache_key(
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
     memo[node_id] = digest
     return digest
+
+
+def asset_content_hashes(graph: Graph) -> dict[str, str]:
+    """The byte hash of each file-backed source node's asset, keyed by node id. Feeds
+    ``node_cache_key`` so the cache invalidates when a file's *content* changes even though its path
+    did not (a re-rendered control map, an in-place-replaced input image). Only ``ref="path"`` refs
+    are hashable; a missing file is skipped - its path still keys the node through its params."""
+    import os
+
+    hashes: dict[str, str] = {}
+    for node in graph.nodes:
+        asset = node.params.get("asset")
+        if not isinstance(asset, dict) or asset.get("ref") != "path":
+            continue
+        path = asset.get("path")
+        if isinstance(path, str) and os.path.isfile(path):
+            hashes[node.id] = _file_hash(path)
+    return hashes
+
+
+def _file_hash(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

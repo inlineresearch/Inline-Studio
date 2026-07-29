@@ -8,12 +8,15 @@ import { useGraphSelectionStore } from '../../../store/graphSelectionStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { activeDownload, useModelRequirementsStore } from '../../../store/modelRequirementsStore'
 import { useExtensionsStore } from '../../../store/extensionsStore'
+import { useLightboxStore } from '../../../store/lightboxStore'
+import { matchControlAspect } from '../../../lib/matchControlAspect'
 import { NodeFrame } from './NodeFrame'
 import { NodeRunToolbar } from './NodeRunToolbar'
 import {
   AdjustIcon,
   AlertIcon,
   BoxIcon,
+  DownloadIcon,
   ImageGlyph,
   NodeBadge,
   NodeBadgeRow,
@@ -99,6 +102,9 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const { itemId } = data as GraphNodeData
   const item = useMoodboardStore((s) => s.items.find((i) => i.id === itemId))
   const updateItem = useMoodboardStore((s) => s.updateItem)
+  const setConnectedPromptText = useMoodboardStore((s) => s.setConnectedPromptText)
+  const connectors = useMoodboardStore((s) => s.connectors)
+  const openLightbox = useLightboxStore((s) => s.open)
   const coreType = item?.type === 'core' ? item.data.core?.type : undefined
   const descriptor = useCoreNodesStore((s) =>
     coreType ? s.descriptors.find((d) => d.type === coreType) : undefined,
@@ -137,7 +143,14 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   if (!item || item.type !== 'core' || !item.data.core || !descriptor) {
     return (
-      <NodeFrame id={id} selected={!!selected} minWidth={200} minHeight={92} subtleSelect>
+      <NodeFrame
+        id={id}
+        selected={!!selected}
+        minWidth={200}
+        minHeight={92}
+        subtleSelect
+        running={busy}
+      >
         <div className="flex h-full flex-col items-center justify-center gap-1 p-3 text-center">
           {coreType && disabledPack ? (
             // The extension is installed but off, so this is a toggle away from working.
@@ -178,8 +191,20 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // carry a single `output` - treat that as a one-entry history. `output` marks the active take.
   const outputs = core.outputs ?? (core.output ? [core.output] : [])
   const activeTakeId = core.output?.takeId
+  // Switching a take restores that image's recipe non-destructively: its settings onto this node's
+  // params, and its prompt onto the wired prompt node (if one still exists). No nodes are created.
+  // The take's *seed* is deliberately NOT restored - keep the node's current seed so browsing history
+  // never pins a fixed seed (which would make every re-generation identical and turn on the node
+  // cache, so connection/control changes would stop taking effect until the seed was reset).
   const setActiveOutput = (o: NonNullable<typeof core.output>): void => {
-    void updateItem(itemId, { data: { ...item.data, core: { ...core, output: o } } })
+    let params = core.params
+    if (o.params) {
+      const restored: Record<string, unknown> = { ...o.params }
+      delete restored.seed
+      params = { ...core.params, ...restored }
+    }
+    void updateItem(itemId, { data: { ...item.data, core: { ...core, output: o, params } } })
+    if (typeof o.prompt === 'string') void setConnectedPromptText(itemId, o.prompt)
   }
 
   // Real "models missing" signal from the requirements check (replaces the old options heuristic,
@@ -188,6 +213,32 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const modelsMissing = reqs ? !reqs.allPresent : false
   const download = downloadsForType ? activeDownload(downloadsForType, reqs) : null
   const downloadPct = download ? Math.round(download.fraction * 100) : null
+  // Apply ControlNet's detector download is scoped to the selected type, so canny never nags for a
+  // model and depth/pose only prompt for the one they use (component ids start with the detector).
+  const applyType = coreType === 'control/apply' ? String(core?.params?.type ?? 'pose') : null
+  const detectorNoun = applyType === 'depth' ? 'MiDaS' : applyType === 'pose' ? 'OpenPose' : null
+  const detectorPrefix = applyType === 'depth' ? 'midas' : applyType === 'pose' ? 'openpose' : null
+  // A suggested (optional) component that isn't on disk yet - the opt-in ControlNet, or (for Apply
+  // ControlNet) the detector its selected type needs. Surfaced as a soft chip, not the "missing" alarm.
+  const suggested = applyType
+    ? detectorPrefix
+      ? (reqs?.components.find((c) => !c.present && c.id.startsWith(detectorPrefix)) ?? null)
+      : null // canny needs no model
+    : (reqs?.components.find((c) => c.optional && !c.present) ?? null)
+  const suggestedDl = suggested && downloadsForType ? downloadsForType[suggested.id] : undefined
+  const suggestedPct = suggestedDl ? Math.round(suggestedDl.fraction * 100) : null
+  // The chip's noun: the detector for Apply ControlNet, else the opt-in ControlNet model.
+  const suggestNoun =
+    detectorNoun ?? (suggested?.category === 'annotators' ? 'detectors' : 'ControlNet')
+
+  // Offer "Match aspect" only when a control map is actually wired into this node's Control input.
+  const controlWired =
+    (descriptor.inputs?.some((p) => p.id === 'control_image') ?? false) &&
+    connectors.some(
+      (c) =>
+        c.toItemId === itemId &&
+        (c.data as { targetHandle?: string }).targetHandle === 'control_image',
+    )
 
   // A loader/plumbing node (no media output) renders compact - no preview, no Run (it loads with
   // whatever downstream node runs). Generation nodes get the full preview card + the graph Run
@@ -266,6 +317,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           minHeight={44}
           padded={false}
           subtleSelect
+          running={busy}
         >
           <div className="flex h-full w-full flex-col gap-1 px-2 py-1.5">
             {selectParams.length > 0 ? (
@@ -346,6 +398,18 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
             Models
           </button>
         )}
+        {suggested && !modelsMissing && (
+          <button
+            onClick={() => openReqs(descriptor.type)}
+            title={`${suggested.label} - optional download`}
+            className="nodrag flex h-6 items-center gap-1 rounded-full border border-border bg-panel/80 px-2 text-[10px] font-medium text-zinc-300 shadow-sm backdrop-blur hover:border-emerald-500/40 hover:text-emerald-300"
+          >
+            <DownloadIcon className="h-3.5 w-3.5" />
+            {suggestedDl && !suggestedDl.error
+              ? `${suggestNoun} ${suggestedPct}%`
+              : `Get ${suggestNoun}`}
+          </button>
+        )}
       </NodeBadgeRow>
 
       <NodeFrame
@@ -355,6 +419,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         minHeight={200}
         padded={false}
         subtleSelect
+        running={busy}
       >
         <div className="relative flex h-full w-full flex-col">
           {/* Edge-to-edge output preview. */}
@@ -363,7 +428,16 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
               <img
                 src={resolveMedia(core.output.filePath)}
                 alt=""
-                className="h-full w-full object-cover"
+                title="Double-click to expand"
+                onDoubleClick={() =>
+                  core.output &&
+                  openLightbox({
+                    src: resolveMedia(core.output.filePath),
+                    kind: 'image',
+                    name: core.output.prompt || descriptor.title,
+                  })
+                }
+                className="h-full w-full cursor-zoom-in object-cover"
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center px-4">
@@ -446,19 +520,41 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
             </div>
           )}
 
+          {/* The active take's prompt (restored from its recipe on switch), so the shown image's
+              prompt is visible without opening Adjust. */}
+          {core.output?.prompt && (
+            <div
+              className="shrink-0 truncate border-t border-border bg-surface/90 px-2 py-1 text-[10px] text-zinc-400"
+              title={core.output.prompt}
+            >
+              {core.output.prompt}
+            </div>
+          )}
+
           {/* Footer: category label + settings (adjust). Run lives on the graph's output node. */}
           <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface/90 px-1.5 py-1">
             <span className="truncate px-1 text-[10px] uppercase tracking-wide text-zinc-500">
               {descriptor.category}
             </span>
-            <button
-              onClick={() => toggleSettings(itemId)}
-              title="Settings"
-              data-gen-settings-toggle
-              className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:bg-black/40 hover:text-zinc-100"
-            >
-              <AdjustIcon />
-            </button>
+            <div className="flex shrink-0 items-center gap-1">
+              {controlWired && (
+                <button
+                  onClick={() => void matchControlAspect(itemId)}
+                  title="Set Width/Height to the wired control map's aspect so the pose isn't stretched"
+                  className="nodrag flex h-6 items-center rounded px-1.5 text-[10px] text-zinc-400 hover:bg-black/40 hover:text-zinc-100"
+                >
+                  Match aspect
+                </button>
+              )}
+              <button
+                onClick={() => toggleSettings(itemId)}
+                title="Settings"
+                data-gen-settings-toggle
+                className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-400 hover:bg-black/40 hover:text-zinc-100"
+              >
+                <AdjustIcon />
+              </button>
+            </div>
           </div>
         </div>
       </NodeFrame>

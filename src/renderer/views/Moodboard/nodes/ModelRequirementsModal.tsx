@@ -34,6 +34,15 @@ function ComponentRow({
           <span className="shrink-0 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-accent">
             Ready
           </span>
+        ) : comp.optional && !busy ? (
+          <button
+            onClick={() => void download(nodeType, comp.id)}
+            title="Optional - enables ControlNet, but not required to generate"
+            className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-panel px-2 py-1 text-[10px] font-medium text-zinc-300 hover:border-emerald-500/50 hover:text-emerald-300"
+          >
+            <DownloadIcon className="h-3.5 w-3.5" />
+            Suggested
+          </button>
         ) : busy ? (
           <span className="shrink-0 text-[10px] font-medium text-emerald-300">{pct}%</span>
         ) : (
@@ -73,7 +82,8 @@ export function ModelRequirementsModal(): React.JSX.Element | null {
   )
 
   if (!nodeType || !reqs) return null
-  const missing = reqs.components.filter((c) => !c.present)
+  // Optional (suggested) components never count as "missing" or block "Download all".
+  const missing = reqs.components.filter((c) => !c.present && !c.optional)
 
   return (
     <div

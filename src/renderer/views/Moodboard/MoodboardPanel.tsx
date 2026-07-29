@@ -28,6 +28,7 @@ import { copyText } from '@/lib/clipboard'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
 import { portKindColor, portsSatisfy, type NodeDescriptor, type PortKind } from '@shared/coreNodes'
 import { useMoodboardStore } from '../../store/moodboardStore'
+import { useProjectStore } from '../../store/projectStore'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
 import { useGraphSelectionStore } from '../../store/graphSelectionStore'
 import { expandToGraphs, runTargets, toEdges } from './graphSelection'
@@ -42,6 +43,7 @@ import {
   getFrameDragId,
   getMediaFileDrag,
   getOutputDragId,
+  getOutputFilePath,
   getOutputTakeId,
 } from '../../lib/dnd'
 import { ImageNode } from './nodes/ImageNode'
@@ -60,12 +62,16 @@ import { LayerNode } from './nodes/LayerNode'
 import { DirectorNode } from './nodes/DirectorNode'
 import { TrimNode } from './nodes/TrimNode'
 import { LoaderNode } from './nodes/LoaderNode'
+import { ControlSpaceNode } from './nodes/ControlSpaceNode'
 import { GraphNode } from './nodes/GraphNode'
 import { ResourceNode } from './nodes/ResourceNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
 import { CanvasToolbar } from './CanvasToolbar'
 import { AddNodeMenu, type AddNodeKind } from './AddNodeMenu'
+import { Modal } from '../../components/Modal'
+import { readRecipeFromBlob, type Recipe } from '../../lib/pngRecipe'
+import { buildGraphFromRecipe } from '../../lib/recipeGraph'
 import { FrameInspector } from './FrameInspector'
 import { CheckIcon, CloseIcon, CopyIcon } from '../../components/icons'
 
@@ -81,6 +87,31 @@ function FrameNodeSwitch(props: NodeProps): React.JSX.Element {
   return <FrameNode {...props} />
 }
 
+/** Per-project canvas pan/zoom, so a project reopens where the user left it. Best-effort localStorage
+ * (per browser); a blocked/full store just falls back to fit-all. */
+const viewportKey = (id: string): string => `inline:viewport:${id}`
+
+function readViewport(id: string): { x: number; y: number; zoom: number } | null {
+  try {
+    const raw = localStorage.getItem(viewportKey(id))
+    const v = raw ? (JSON.parse(raw) as { x?: number; y?: number; zoom?: number }) : null
+    if (v && typeof v.x === 'number' && typeof v.y === 'number' && typeof v.zoom === 'number') {
+      return { x: v.x, y: v.y, zoom: v.zoom }
+    }
+  } catch {
+    /* corrupt or unavailable storage */
+  }
+  return null
+}
+
+function writeViewport(id: string, v: { x: number; y: number; zoom: number }): void {
+  try {
+    localStorage.setItem(viewportKey(id), JSON.stringify(v))
+  } catch {
+    /* storage full or blocked */
+  }
+}
+
 const nodeTypes: NodeTypes = {
   image: ImageNode,
   video: VideoNode,
@@ -93,6 +124,7 @@ const nodeTypes: NodeTypes = {
   trim: TrimNode,
   prompt: PromptNode,
   loader: LoaderNode,
+  controlSpace: ControlSpaceNode,
   core: GraphNode,
   resource: ResourceNode,
 }
@@ -260,6 +292,7 @@ function Board(): React.JSX.Element {
   const addTrim = useMoodboardStore((s) => s.addTrim)
   const addEmptyFrame = useMoodboardStore((s) => s.addEmptyFrame)
   const addLoader = useMoodboardStore((s) => s.addLoader)
+  const addControlSpace = useMoodboardStore((s) => s.addControlSpace)
   const addLoaderAssets = useMoodboardStore((s) => s.addLoaderAssets)
   const addPrompt = useMoodboardStore((s) => s.addPrompt)
   const addCoreNode = useMoodboardStore((s) => s.addCoreNode)
@@ -283,7 +316,11 @@ function Board(): React.JSX.Element {
   const setCanvasSelection = useUiStore((s) => s.setCanvasSelection)
   const setCanvasCenter = useUiStore((s) => s.setCanvasCenter)
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const { screenToFlowPosition, getNodes } = useReactFlow()
+  const { screenToFlowPosition, getNodes, getViewport, setViewport, fitView } = useReactFlow()
+  const projectId = useProjectStore((s) => s.current?.id ?? null)
+  // Restore the canvas pan/zoom where the user left it, once per project open (after its board
+  // loads); a project with no saved view falls back to fit-all.
+  const restoredFor = useRef<string | null>(null)
   const updateNodeInternals = useUpdateNodeInternals()
   const [nodes, setNodes] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -300,6 +337,12 @@ function Board(): React.JSX.Element {
   } | null>(null)
   // Active canvas tool: Select (edit - marquee/move) vs Pan (view - drag pans, nodes locked).
   const [tool, setTool] = useState<'select' | 'pan'>('select')
+  // A dropped Inline image that carries a recipe: offer "Load graph" vs "Load as asset".
+  const [recipeChoice, setRecipeChoice] = useState<{
+    recipe: Recipe
+    drop: { x: number; y: number }
+    onAsset: () => void
+  } | null>(null)
   // "Add node" list (toolbar + button, or double-click empty canvas in Select mode).
   const [addMenu, setAddMenu] = useState<{
     x: number
@@ -315,6 +358,16 @@ function Board(): React.JSX.Element {
     void loadAssets()
     void loadFrames()
   }, [load, loadAssets, loadFrames])
+
+  // Once a project's board has loaded, restore the pan/zoom the user left it at (or fit-all if none).
+  // Guarded so it runs once per project open, after nodes exist (fitView needs them).
+  useEffect(() => {
+    if (!projectId || items.length === 0 || restoredFor.current === projectId) return
+    restoredFor.current = projectId
+    const saved = readViewport(projectId)
+    if (saved) void setViewport(saved)
+    else void fitView({ maxZoom: 1 })
+  }, [projectId, items.length, setViewport, fitView])
 
   const assetsById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets])
 
@@ -567,6 +620,9 @@ function Board(): React.JSX.Element {
     side: 'input' | 'output',
   ): PortKind | null => {
     const item = items.find((it) => it.id === itemId)
+    // Control Space emits a control map, not a plain image: kind it 'control' so it can only feed a
+    // gen node's Control input, never the img2img Image input (which would ignore the pose).
+    if (item?.type === 'controlSpace' && side === 'output') return 'control'
     const core = item?.type === 'core' ? item.data.core : undefined
     if (!core) return null
     const descriptor = coreDescriptors.find((d) => d.type === core.type)
@@ -716,6 +772,9 @@ function Board(): React.JSX.Element {
       case 'prompt':
         void addPrompt(m.flowX, m.flowY)
         break
+      case 'controlSpace':
+        void addControlSpace(m.flowX, m.flowY)
+        break
     }
   }
 
@@ -793,15 +852,17 @@ function Board(): React.JSX.Element {
     // into the Library, then drop a Load Assets loader fed by it at the drop point.
     const media = getMediaFileDrag(e.dataTransfer)
     if (media) {
-      void (async () => {
-        const asset = await importMediaUrlToLibrary(resolveMedia(media.filePath), media.name)
-        if (!asset) return
-        // Surface the imported asset in the store, or the loader can't resolve its input thumb
-        // (resolveInputThumbs drops any input whose asset isn't loaded) and shows "no media".
-        await loadAssets()
-        const loader = await addLoader(drop.x, drop.y)
-        if (loader) await addLoaderAssets(loader.id, [asset.id])
-      })()
+      // A generated PNG carries the recipe that made it → offer to rebuild the graph instead.
+      if (media.kind === 'image') {
+        void (async () => {
+          const blob = await fetch(resolveMedia(media.filePath))
+            .then((r) => r.blob())
+            .catch(() => null)
+          await offerRecipeOrRun(blob, drop, () => void loadImageAsAsset(media.filePath, drop))
+        })()
+      } else {
+        void loadImageAsAsset(media.filePath, drop)
+      }
       return
     }
 
@@ -810,11 +871,28 @@ function Board(): React.JSX.Element {
     const outputFrameId = getOutputDragId(e.dataTransfer)
     if (outputFrameId) {
       const takeId = getOutputTakeId(e.dataTransfer)
-      void (async () => {
+      const outPath = getOutputFilePath(e.dataTransfer)
+      const newFrameFromOutput = async (): Promise<void> => {
         if (takeId) await setHero(outputFrameId, takeId)
         const item = await addEmptyFrame(drop.x, drop.y)
         if (item?.frameId) await addSourceInput(item.frameId, outputFrameId)
-      })()
+      }
+      // A fal PNG output carries its recipe → offer to rebuild the graph; else the default flow.
+      if (outPath && outPath.toLowerCase().endsWith('.png')) {
+        void (async () => {
+          const blob = await fetch(resolveMedia(outPath))
+            .then((r) => r.blob())
+            .catch(() => null)
+          const recipe = blob ? await readRecipeFromBlob(blob) : null
+          if (recipe?.graph?.items?.length) {
+            setRecipeChoice({ recipe, drop, onAsset: () => void loadImageAsAsset(outPath, drop) })
+          } else {
+            void newFrameFromOutput()
+          }
+        })()
+      } else {
+        void newFrameFromOutput()
+      }
       return
     }
 
@@ -832,12 +910,46 @@ function Board(): React.JSX.Element {
 
     const ids = getAssetDragIds(e.dataTransfer)
     if (ids.length === 0) {
-      // Files dropped from the OS → import into the library, then place as frames.
+      // Files dropped from the OS → import into the library, then place as frames. A shared Inline
+      // PNG carries its recipe, so offer to rebuild the graph instead of just importing it.
       const files = Array.from(e.dataTransfer.files ?? [])
-      if (files.length > 0) void placeDroppedFiles(files, drop)
+      if (files.length === 0) return
+      const png = files.find((f) => f.type === 'image/png')
+      if (png && files.length === 1) {
+        void offerRecipeOrRun(png, drop, () => void placeDroppedFiles(files, drop))
+      } else {
+        void placeDroppedFiles(files, drop)
+      }
       return
     }
     placeAssetsAt(ids, drop)
+  }
+
+  /** Import an image at a project-relative path into the Library, then drop a Load Assets loader fed
+   * by it (the "Load as asset" action for a dropped generation). */
+  const loadImageAsAsset = async (
+    filePath: string,
+    drop: { x: number; y: number },
+  ): Promise<void> => {
+    const name = filePath.split('/').pop() || 'image.png'
+    const asset = await importMediaUrlToLibrary(resolveMedia(filePath), name)
+    if (!asset) return
+    // Surface the imported asset in the store, or the loader can't resolve its input thumb.
+    await loadAssets()
+    const loader = await addLoader(drop.x, drop.y)
+    if (loader) await addLoaderAssets(loader.id, [asset.id])
+  }
+
+  /** Read a recipe from the dropped image; if present, prompt Load-graph vs Load-as-asset, else run
+   * the asset fallback directly. */
+  const offerRecipeOrRun = async (
+    blob: Blob | null,
+    drop: { x: number; y: number },
+    onAsset: () => void,
+  ): Promise<void> => {
+    const recipe = blob ? await readRecipeFromBlob(blob) : null
+    if (recipe?.graph?.items?.length) setRecipeChoice({ recipe, drop, onAsset })
+    else onAsset()
   }
 
   /** Place existing library assets as frames at/near a drop point (cascaded). */
@@ -952,6 +1064,10 @@ function Board(): React.JSX.Element {
           onEdgesDelete={(deleted) => deleted.forEach((e) => void disconnect(e.id))}
           // Mirror the viewport so the assistant can use it as a "place here" spot.
           onMove={() => setCanvasCenter(centre())}
+          // Persist pan/zoom per project so it reopens where the user left it (see the restore effect).
+          onMoveEnd={() => {
+            if (projectId) writeViewport(projectId, getViewport())
+          }}
           onInit={() => setCanvasCenter(centre())}
           proOptions={{ hideAttribution: true }}
           minZoom={0.1}
@@ -960,10 +1076,6 @@ function Board(): React.JSX.Element {
           // compositing layer small - with nodes spread far apart, the full layer can
           // exceed the GPU's max texture size and render as grey/blank when scrolling.
           onlyRenderVisibleElements
-          fitView
-          // Cap the initial fit's zoom so a board with a single small node (e.g. a new project's
-          // chooser) lands at a normal 1:1 view instead of blowing up to fill the viewport.
-          fitViewOptions={{ maxZoom: 1 }}
         >
           <Background gap={22} size={2.5} color="#525a66" />
         </ReactFlow>
@@ -1038,6 +1150,49 @@ function Board(): React.JSX.Element {
         <CoreSettingsPanel />
         <ModelInfoPanel />
         <ModelRequirementsModal />
+
+        <Modal
+          open={recipeChoice !== null}
+          onClose={() => setRecipeChoice(null)}
+          title="This image carries its graph"
+        >
+          {recipeChoice && (
+            <div className="flex flex-col gap-4 p-5">
+              <p className="text-sm text-zinc-300">
+                This Inline image embeds the graph that generated it
+                {recipeChoice.recipe.prompt ? (
+                  <>
+                    {' '}
+                    (<span className="text-zinc-400">“{recipeChoice.recipe.prompt}”</span>)
+                  </>
+                ) : null}
+                . Rebuild that graph on the canvas, or just add the image as an asset?
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => {
+                    const c = recipeChoice
+                    setRecipeChoice(null)
+                    c.onAsset()
+                  }}
+                  className="rounded-md border border-border px-3 py-1.5 text-sm text-zinc-200 hover:bg-panel"
+                >
+                  Load as asset
+                </button>
+                <button
+                  onClick={() => {
+                    const c = recipeChoice
+                    setRecipeChoice(null)
+                    void buildGraphFromRecipe(c.recipe, c.drop)
+                  }}
+                  className="rounded-md border border-emerald-700 bg-emerald-600/20 px-3 py-1.5 text-sm text-emerald-200 hover:bg-emerald-600/30"
+                >
+                  Load graph
+                </button>
+              </div>
+            </div>
+          )}
+        </Modal>
       </div>
 
       <FrameInspector />
@@ -1188,6 +1343,9 @@ function itemToNode(
   }
   if (item.type === 'loader') {
     return { ...common, type: 'loader', data: { itemId: item.id } }
+  }
+  if (item.type === 'controlSpace') {
+    return { ...common, type: 'controlSpace', data: { itemId: item.id } }
   }
   if (item.type === 'core') {
     return { ...common, type: 'core', data: { itemId: item.id } }

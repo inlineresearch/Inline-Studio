@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
 import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -26,7 +27,7 @@ from ..graph.loader_runners import ComponentRef, LoraRef
 from ..graph.schema import Node
 from ..runtime.context import ExecutionContext
 from ..runtime.progress import Phase, ProgressEvent
-from ..takes import AssetRef
+from ..takes import AssetRef, Take
 
 logger = logging.getLogger("inline_core.models")
 
@@ -123,7 +124,9 @@ def _configure_gpu_speed(pipe: Any, placement: Placement) -> None:
 @dataclass(frozen=True)
 class PipelineKey:
     """Identifies one built pipeline. ``variant`` separates shapes built from the same weights
-    (t2i vs i2i); ``loras`` is order- and strength-sensitive because fusing is not commutative."""
+    (t2i vs i2i); ``loras`` is order- and strength-sensitive because fusing is not commutative.
+    ``controlnet`` is a *separate* field rather than part of ``variant`` so eviction can see it -
+    a control pipeline holds several GB of extra weights that must not survive a plain run."""
 
     arch: str
     diffusion: str
@@ -132,10 +135,16 @@ class PipelineKey:
     variant: str
     quant: str
     loras: tuple[str, ...] = ()
+    controlnet: str = ""
 
     @property
     def files(self) -> tuple[str, str, str]:
         return (self.diffusion, self.vae, self.text_encoder)
+
+    @property
+    def component_files(self) -> set[str]:
+        """Every weight file this pipeline holds - what a component sweep must keep alive."""
+        return set(self.files) | ({self.controlnet} if self.controlnet else set())
 
 
 class PipelineCache:
@@ -157,21 +166,37 @@ class PipelineCache:
         self._entries[key] = pipe
 
     def evict_stale(self, key: PipelineKey) -> None:
-        """Drop every pipeline that is not this key's (arch, files, LoRA stack), then free the
-        components behind them. Both variants of the surviving key are kept, so an i2i build can
-        still reuse a cached t2i base. Call under ``lock``."""
+        """Drop every pipeline that is not this key's (arch, files, LoRA stack, ControlNet, quant),
+        then free the components behind them. Only ``variant`` is allowed to differ, so an i2i build
+        still reuses a cached t2i base. Call under ``lock``.
+
+        ControlNet and quant are part of the match because both change what is *resident*, not just
+        the pipeline's shape: a surviving control pipeline pins its several-GB ControlNet (and its
+        transformer at the other quantization) while the new one loads on top, which OOMs the card.
+        """
         import gc
 
         from . import loaders
 
         for k in list(self._entries):
             keep = (
-                k.arch == key.arch and k.files == key.files and k.loras == key.loras
+                k.arch == key.arch
+                and k.files == key.files
+                and k.loras == key.loras
+                and k.controlnet == key.controlnet
+                and k.quant == key.quant
             )
             if not keep:
                 del self._entries[k]
+        # Drop the component-cache references too, THEN collect. Order matters: a diffusion
+        # transformer holds reference cycles, so it only frees on a gc - and stays referenced by the
+        # component cache until unload_components pops it. Collecting before that (the old order)
+        # freed the pipeline wrappers but left the multi-GB weights pinned, so empty_cache couldn't
+        # reclaim them and the next build (plain after control, a different quant) stacked -> OOM.
+        loaders.unload_components(
+            keep_files=key.component_files, keep_loras=key.loras, keep_quant=key.quant
+        )
         gc.collect()
-        loaders.unload_components(keep_files=set(key.files), keep_loras=key.loras)
         free_vram()
 
 
@@ -347,15 +372,24 @@ def free_vram() -> None:
 
 
 def smaller_resolutions(width: int, height: int) -> list[str]:
-    """Square sizes strictly smaller than the current image, so an OOM hint only ever suggests
-    something that actually cuts peak memory."""
-    ladder = [1024, 768, 512, 384, 256]
-    current = max(width, height)
-    smaller = [f"{s}x{s}" for s in ladder if s < current]
-    if smaller:
-        return smaller[:2]
-    half = max(64, (current // 2 // 8) * 8)
-    return [f"{half}x{half}"]
+    """Sizes that keep the requested aspect ratio but cut pixel count, which is what drives peak
+    memory. Suggesting off a ladder of squares got both halves wrong: 1024x1024 is only 4% fewer
+    pixels than 896x1216 (so it OOMs too), and it silently turns a portrait into a square."""
+    pixels = width * height
+    out: list[str] = []
+    for area in (0.7, 0.5, 0.35):
+        scale = math.sqrt(area)
+        w = max(64, round(width * scale / 64) * 64)
+        h = max(64, round(height * scale / 64) * 64)
+        label = f"{w}x{h}"
+        if w * h < pixels and label not in out:
+            out.append(label)
+        if len(out) == 2:
+            break
+    if out:
+        return out
+    half = f"{max(64, width // 2 // 64 * 64)}x{max(64, height // 2 // 64 * 64)}"
+    return [half] if half != f"{width}x{height}" else []  # already at the floor: nothing to suggest
 
 
 def oom_message(
@@ -382,11 +416,14 @@ def oom_message(
             "distilled to "
             "run CFG-free - set Guidance to 0 to halve the memory. Or "
         )
-    suggestions = " or ".join(smaller_resolutions(width, height))
+    smaller = smaller_resolutions(width, height)
+    # Suggestions keep the requested aspect: someone who asked for a portrait wants a smaller
+    # portrait, not a square.
+    try_hint = f" (you're at {width}x{height} - try {' or '.join(smaller)})" if smaller else ""
     lower = "lower" if cfg_hint else "Lower"
     return (
         f"Ran out of GPU memory generating a {width}x{height} image. {cfg_hint}{lower} the "
-        f"resolution (you're at {width}x{height} - try {suggestions}) or pick a smaller model."
+        f"resolution{try_hint} or pick a smaller model."
     )
 
 
@@ -447,7 +484,11 @@ def load_image(ref: Any, label: str) -> Any:
 
     if isinstance(ref, AssetRef) and ref.ref == "path" and ref.path:
         return Image.open(ref.path).convert("RGB")
-    raise ComponentError(f"{label} img2img needs a readable image path input.")
+    # An upstream node's render feeds a Take, not an AssetRef - e.g. Apply ControlNet's control map
+    # into a gen node's Control input. Open its file.
+    if isinstance(ref, Take) and ref.uri:
+        return Image.open(ref.uri).convert("RGB")
+    raise ComponentError(f"{label} needs a readable image input.")
 
 
 def first(values: list[Any] | None) -> Any:

@@ -37,6 +37,25 @@ def test_requirements_empty_for_unknown_node_type():
     }
 
 
+def test_apply_controlnet_offers_annotator_weights_as_suggested_downloads(monkeypatch, tmp_path):
+    """control/apply's provider lists the controlnet_aux detector weights - all optional, so an empty
+    models/annotators/ never reads as "models missing", and each carries its HF repo file."""
+    monkeypatch.setenv("INLINE_MODELS_DIR", str(tmp_path))
+    from inline_core.models.preprocess.requirements import ANNOTATOR_REPO, PreprocessProvider
+    from inline_core.models.requirements import RequirementsRegistry
+
+    reg = RequirementsRegistry()
+    reg.register("control/apply", PreprocessProvider())
+    view = ModelDownloads(events=None, requirements=reg).requirements("control/apply")
+
+    files = {c["localPath"] for c in view["components"]}
+    assert "annotators/body_pose_model.pth" in files
+    assert "annotators/dpt_hybrid-midas-501f0c75.pt" in files
+    assert all(c["optional"] for c in view["components"])
+    assert all(c["repo"] == ANNOTATOR_REPO for c in view["components"])
+    assert view["allPresent"] is True  # optional-only -> never blocks the node
+
+
 def test_download_retries_anonymously_when_a_cached_token_is_invalid(tmp_path, monkeypatch):
     """A stale/invalid cached HF token 401s even on a public repo (masked as "not found"). The
     download must drop the token and retry anonymously, not fail."""
@@ -87,4 +106,5 @@ def test_component_json_shape():
         "repo": "Comfy-Org/z_image",
         # "which model" is the repo + the exact file this component pulls.
         "source": "Comfy-Org/z_image/ae.safetensors",
+        "optional": False,
     }

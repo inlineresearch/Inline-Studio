@@ -54,7 +54,8 @@ class ModelDownloads:
         components = self._components(node_type)
         return {
             "components": [_component_json(c) for c in components],
-            "allPresent": all(c.present for c in components),
+            # Suggested (optional) components never count as missing; control is opt-in.
+            "allPresent": all(c.present for c in components if not getattr(c, "optional", False)),
             "estimate": self._estimate(node_type),
         }
 
@@ -83,7 +84,9 @@ class ModelDownloads:
             return
         components = self._components(node_type)
         if component_id == "all":
-            targets = [c for c in components if not c.present]
+            # "Download all" grabs required-missing only; a suggested component (e.g. a multi-GB
+            # ControlNet) is fetched only when asked for by its own id.
+            targets = [c for c in components if not c.present and not getattr(c, "optional", False)]
         else:
             targets = [c for c in components if c.id == component_id]
         for comp in targets:
@@ -192,6 +195,7 @@ def _component_json(component: Any) -> dict[str, Any]:
         "localPath": component.local_path,
         "repo": component.repo,
         "source": _source_label(component),
+        "optional": bool(getattr(component, "optional", False)),
     }
 
 
