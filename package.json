@@ -1,6 +1,6 @@
 {
   "name": "inline-studio",
-  "version": "1.2.52",
+  "version": "1.2.53",
   "description": "An experimentation layer for visual artists: a node canvas for building generative pipelines, served by the Inline Core engine.",
   "author": "Inline Studio",
   "license": "GPL-3.0-or-later",
