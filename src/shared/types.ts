@@ -423,7 +423,7 @@ export interface ModelDownloadErrorEvent {
 
 /** Turbo needs a training adapter to avoid "turbo drift"; a de-turbo base trains without one. */
 /** The model family a LoRA is trained for. */
-export type TrainingArch = 'z-image' | 'krea2'
+export type TrainingArch = 'z-image' | 'krea2' | 'flux2'
 
 /**
  * Which base checkpoint a run trains against. `raw` is Krea 2's undistilled base (the recommended

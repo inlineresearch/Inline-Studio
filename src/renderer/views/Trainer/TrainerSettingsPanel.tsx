@@ -51,9 +51,14 @@ const BASES: Record<TrainingArch, { value: TrainingBaseMode; label: string }[]> 
     { value: 'raw', label: 'Krea 2 RAW (recommended)' },
     { value: 'turbo_adapter', label: 'Krea 2 Turbo (+ training adapter)' },
   ],
+  // FLUX.2 has no de-distillation adapter: you train on a Base checkpoint and the adapter still
+  // loads on the distilled build for generation, which is both faster and better.
+  flux2: [{ value: 'raw', label: 'FLUX.2 Base (required)' }],
 }
 
-/** Only Krea 2 has a 4-bit base path, so the control is hidden for Z-Image rather than lying. */
+/** Krea 2 and FLUX.2 have a 4-bit base path; the control is hidden for Z-Image rather than lying. */
+const QUANTIZABLE: TrainingArch[] = ['krea2', 'flux2']
+
 const QUANTS: { value: TrainingBaseQuant; label: string }[] = [
   { value: 'auto', label: 'Auto (fit to this GPU)' },
   { value: 'none', label: 'Full precision (bf16)' },
@@ -75,6 +80,7 @@ const SCOPES: { value: TrainingLoraScope; label: string }[] = [
 const ARCHS: { value: TrainingArch; label: string }[] = [
   { value: 'z-image', label: 'Z-Image' },
   { value: 'krea2', label: 'Krea 2' },
+  { value: 'flux2', label: 'FLUX.2' },
 ]
 
 function NumberField({
@@ -248,9 +254,14 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
             Train on RAW, then generate with Krea 2 Turbo - the LoRA carries over.
           </span>
         )}
+        {arch === 'flux2' && (
+          <span className="text-[10px] text-zinc-600">
+            Train on Base, then generate with the distilled build - the LoRA carries over.
+          </span>
+        )}
       </label>
 
-      {arch === 'krea2' && (
+      {QUANTIZABLE.includes(arch) && (
         <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
           Base precision
           <select
@@ -271,7 +282,7 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
         </label>
       )}
 
-      {arch === 'krea2' && (hp.baseQuant ?? 'auto') !== 'nf4' && (
+      {QUANTIZABLE.includes(arch) && (hp.baseQuant ?? 'auto') !== 'nf4' && (
         <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
           CPU offload
           <select

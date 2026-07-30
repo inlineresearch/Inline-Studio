@@ -5,12 +5,16 @@ import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { useCoreNodesStore } from '../../../store/coreNodesStore'
 import { useGenerationStore } from '../../../store/generationStore'
 import { useGraphSelectionStore } from '../../../store/graphSelectionStore'
+import { useAssetStore } from '../../../store/assetStore'
+import { useFrameStore } from '../../../store/frameStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { activeDownload, useModelRequirementsStore } from '../../../store/modelRequirementsStore'
 import { useExtensionsStore } from '../../../store/extensionsStore'
 import { useLightboxStore } from '../../../store/lightboxStore'
 import { matchControlAspect } from '../../../lib/matchControlAspect'
+import { resolveCoreInputThumbs } from './coreInputThumbs'
 import { NodeFrame } from './NodeFrame'
+import { ReferenceStrip } from './ReferenceStrip'
 import { NodeRunToolbar } from './NodeRunToolbar'
 import {
   AdjustIcon,
@@ -104,6 +108,10 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const updateItem = useMoodboardStore((s) => s.updateItem)
   const setConnectedPromptText = useMoodboardStore((s) => s.setConnectedPromptText)
   const connectors = useMoodboardStore((s) => s.connectors)
+  const items = useMoodboardStore((s) => s.items)
+  const assets = useAssetStore((s) => s.assets)
+  const frames = useFrameStore((s) => s.frames)
+  const takesByFrame = useFrameStore((s) => s.takesByFrame)
   const openLightbox = useLightboxStore((s) => s.open)
   const coreType = item?.type === 'core' ? item.data.core?.type : undefined
   const descriptor = useCoreNodesStore((s) =>
@@ -249,6 +257,19 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // An extension-provided node carries its owning extension's id (`ext:<id>:<module>`) - surface it
   // as a chip so it's clear which extension a canvas node came from.
   const extName = isExtensionNode(descriptor.source) ? extensionOf(descriptor.source) : null
+
+  // A reference list (FLUX.2 and friends): the prompt addresses these by position, "the jacket from
+  // image 2", so the card numbers them in wiring order - the same order graph_build sends the engine.
+  const listPort = descriptor.inputs.find((p) => p.kind === 'image[]')
+  const references = listPort
+    ? resolveCoreInputThumbs(itemId, listPort.id, {
+        items,
+        connectors,
+        assets,
+        frames,
+        takesByFrame,
+      })
+    : []
 
   // Split each side into content (top-packed) and model-family (bottom-packed) ports.
   const inContent = descriptor.inputs.filter((p) => !isModelPort(p.kind))
@@ -424,6 +445,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         <div className="relative flex h-full w-full flex-col">
           {/* Edge-to-edge output preview. */}
           <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
+            {references.length > 0 && <ReferenceStrip references={references} />}
             {core.output?.kind === 'image' ? (
               <img
                 src={resolveMedia(core.output.filePath)}

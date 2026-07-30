@@ -55,7 +55,7 @@ def test_back_facing_control_space_states_the_facing_in_the_prompt(conn) -> None
     nodes = _nodes(conn, gen_id)
 
     # The prompt is rewired to a derived text node; the shared prompt node is left untouched.
-    source = nodes[gen_id]["inputs"]["prompt"]["from"]
+    source = nodes[gen_id]["inputs"]["prompt"][0]["from"]
     assert source != prompt_id
     assert nodes[source]["params"]["text"] == f"a woman standing, {BACK_HINT['positive']}"
     assert nodes[prompt_id]["params"]["text"] == "a woman standing"
@@ -82,7 +82,7 @@ def test_the_hint_never_stacks_when_a_restored_take_already_carries_it(conn) -> 
     )
     nodes = _nodes(conn, gen_id)
     assert nodes[gen_id]["params"]["negative_prompt"] == BACK_HINT["negative"]
-    assert nodes[gen_id]["inputs"]["prompt"]["from"] == prompt_id  # no second derived node
+    assert nodes[gen_id]["inputs"]["prompt"][0]["from"] == prompt_id  # no second derived node
 
 
 @pytest.mark.parametrize(
@@ -97,7 +97,7 @@ def test_the_hint_never_stacks_when_a_restored_take_already_carries_it(conn) -> 
 def test_no_hint_leaves_the_prompt_alone(conn, scene) -> None:
     gen_id, prompt_id = _board(conn, scene)
     nodes = _nodes(conn, gen_id)
-    assert nodes[gen_id]["inputs"]["prompt"]["from"] == prompt_id
+    assert nodes[gen_id]["inputs"]["prompt"][0]["from"] == prompt_id
     assert not nodes[gen_id]["params"].get("negative_prompt")
 
 
@@ -107,5 +107,5 @@ def test_an_unresolvable_control_map_adds_nothing(conn) -> None:
     control_id = next(i["id"] for i in mb.list_items(conn) if i["type"] == "controlSpace")
     mb.update_item(conn, control_id, {"data": {"controlScene": {"promptHint": BACK_HINT}}})
     nodes = _nodes(conn, gen_id)
-    assert nodes[gen_id]["inputs"]["prompt"]["from"] == prompt_id
+    assert nodes[gen_id]["inputs"]["prompt"][0]["from"] == prompt_id
     assert not nodes[gen_id]["params"].get("negative_prompt")

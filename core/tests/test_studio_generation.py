@@ -30,7 +30,7 @@ def test_build_workflow_graph_prompt_into_zimage(tmp_path) -> None:
     by_type = {n["type"]: n for n in graph["nodes"]}
     assert by_type["input/text"]["params"] == {"text": "a neon city"}
     zi = by_type["alibaba/z-image-turbo"]
-    assert zi["inputs"]["prompt"] == {"from": prompt["id"], "output": "text"}
+    assert zi["inputs"]["prompt"] == [{"from": prompt["id"], "output": "text"}]
 
 
 def test_build_workflow_graph_frame_output_into_zimage_image(tmp_path) -> None:
@@ -51,7 +51,7 @@ def test_build_workflow_graph_frame_output_into_zimage_image(tmp_path) -> None:
     assert frame_node["params"]["asset"]["path"] == str(store.folder() / "takes/hero.png")
     # Z-Image's image input references the frame node's "image" output - no dangling edge.
     zi = by_id[z["id"]]
-    assert zi["inputs"]["image"] == {"from": frame_item["id"], "output": "image"}
+    assert zi["inputs"]["image"] == [{"from": frame_item["id"], "output": "image"}]
     assert take["id"]  # hero take exists
 
 
@@ -76,7 +76,7 @@ def test_build_workflow_graph_loader_into_zimage_image(tmp_path) -> None:
     loader_node = by_id[loader["id"]]
     assert loader_node["type"] == "input/image"
     assert loader_node["params"]["asset"]["path"] == str(store.folder() / "assets/a.png")
-    assert by_id[z["id"]]["inputs"]["image"] == {"from": loader["id"], "output": "image"}
+    assert by_id[z["id"]]["inputs"]["image"] == [{"from": loader["id"], "output": "image"}]
 
 
 def test_build_workflow_graph_control_space_into_zimage_control(tmp_path) -> None:
@@ -101,7 +101,7 @@ def test_build_workflow_graph_control_space_into_zimage_control(tmp_path) -> Non
     assert cs_node["type"] == "input/image"
     assert cs_node["params"]["asset"]["path"] == str(store.folder() / "assets/pose.png")
     # The map lands on the control_image input, not the plain image input.
-    assert by_id[z["id"]]["inputs"]["control_image"] == {"from": cs["id"], "output": "image"}
+    assert by_id[z["id"]]["inputs"]["control_image"] == [{"from": cs["id"], "output": "image"}]
 
 
 def test_build_workflow_graph_control_space_without_render_is_dropped(tmp_path) -> None:

@@ -200,6 +200,45 @@ def test_fit_wont_fit_when_bigger_than_vram_and_ram() -> None:
     assert fit is not None and fit.plan == "wont-fit" and fit.fits is False
 
 
+#: A FLUX.2 dev-scale footprint: the 32B transformer plus the Mistral-3 encoder. Far past what int8
+#: can squeeze onto a 24 GB card, which is the rung NF4 exists for.
+_FLUX2_DEV_FOOTPRINT = ModelFootprint(
+    diffusion_bytes=35_455_599_592,
+    text_encoder_bytes=18_034_640_095,
+    vae_bytes=336_213_556,
+)
+
+
+def test_fit_nf4_when_int8_exceeds_vram() -> None:
+    # A 24 GB card cannot hold FLUX.2 dev at int8 (~27 GB of weights) but does hold it at NF4
+    # (~15 GB), so the ladder takes the 4-bit rung instead of falling all the way to streaming.
+    policy = MemoryPolicy(_CUDA, vram_gb=24, ram_gb=64)
+    policy.set_footprint(_FLUX2_DEV_FOOTPRINT)
+    fit = policy.fit_estimate()
+    assert fit is not None and fit.plan == "nf4" and fit.fits is True
+    assert policy.quantization() is Quantization.NF4
+    # NF4 keeps weights resident, like int8: bitsandbytes and accelerate's offload hooks do not mix.
+    assert policy.placement("denoiser").offload_mode is OffloadMode.NONE
+
+
+def test_nf4_does_not_force_bf16_on_a_card_without_it() -> None:
+    # Only torchao int8 needs a bf16 compute dtype. NF4 carries its own compute dtype, so a Turing
+    # card keeps fp16 and its tensor cores, with the VAE still upcast against overflow.
+    policy = MemoryPolicy(_CUDA, vram_gb=24, ram_gb=64, supports_bf16=False)
+    policy.set_footprint(_FLUX2_DEV_FOOTPRINT)
+    assert policy.quantization() is Quantization.NF4
+    assert policy.placement("denoiser").dtype is DType.FP16
+    assert policy.placement("vae").dtype is DType.FP32
+
+
+def test_fit_prefers_int8_over_nf4_when_int8_fits() -> None:
+    # The ladder is ordered by quality, not by size: NF4 is only reached when int8 cannot fit.
+    policy = MemoryPolicy(_CUDA, vram_gb=15.6, ram_gb=64)
+    policy.set_footprint(_ZIMAGE_FOOTPRINT)
+    fit = policy.fit_estimate()
+    assert fit is not None and fit.plan == "int8"
+
+
 def test_fit_offload_when_int8_exceeds_vram_but_model_fits_ram() -> None:
     # Small GPU, ample RAM: int8 won't fit VRAM, but the model fits RAM -> stream (sequential),
     # unquantized (int8 + offload deadlock).

@@ -32,6 +32,12 @@ _ENV = {
         "text_encoders": "INLINE_KREA2_TEXT_ENCODER",
         "adapter": "INLINE_KREA2_TRAIN_ADAPTER",
     },
+    archs.FLUX2: {
+        "diffusion_models": "INLINE_FLUX2_MODEL",
+        "vae": "INLINE_FLUX2_VAE",
+        "text_encoders": "INLINE_FLUX2_TEXT_ENCODER",
+        "adapter": "INLINE_FLUX2_TRAIN_ADAPTER",
+    },
 }
 
 
@@ -69,6 +75,15 @@ def _require(root: Path, arch: str, category: str) -> str:
 
 def _resolve(arch: str, category: str) -> Any:
     """The arch's own answer for a component, so training and generation pick the same file."""
+    if arch == archs.FLUX2:
+        from ..models.flux2 import requirements as flux2_reqs
+
+        if category == "vae":
+            return flux2_reqs.resolve_vae(None)
+        if category == "text_encoders":
+            return flux2_reqs.resolve_text_encoder(None)
+        return flux2_reqs.resolve_diffusion(None)
+
     if arch == archs.KREA2:
         from ..models.krea2 import requirements as krea2_reqs
 
@@ -89,10 +104,31 @@ def _resolve(arch: str, category: str) -> Any:
     return resolved[1] if resolved and resolved[0] == "single_file" else None
 
 
+
+def loader_arch(arch: str, models_dir: str | None = None) -> str:
+    """The ``models/loaders.py`` arch key for a training arch.
+
+    They are not the same namespace: training says ``flux2`` while the loaders key their config and
+    tokenizer bundles per variant (``flux2-klein-4b``, ``flux2-dev``), because a 4B and a 9B need
+    different encoder configs. Resolved from whichever checkpoint is installed.
+    """
+    if arch != archs.FLUX2:
+        return arch
+    from ..models.flux2 import requirements as flux2_reqs
+
+    variant = flux2_reqs.resolved_variant(None)
+    return variant.arch if variant is not None else "flux2-klein-4b"
+
+
 def _adapter_path(root: Path, arch: str, base_mode: str) -> str | None:
     """The de-distillation adapter for a turbo base mode, or None when the base is undistilled."""
     if base_mode not in ("turbo_adapter",):
         return None
+    if arch == archs.FLUX2:
+        raise RuntimeError(
+            "FLUX.2 has no de-distillation adapter. Train against a -base- checkpoint instead; "
+            "the adapter it produces still loads on the distilled build afterwards."
+        )
     picked = os.environ.get(_ENV[arch]["adapter"])
     if not picked:
         loras = root / "loras"
@@ -156,6 +192,23 @@ def load_encoders(models_dir: str, arch: str, device: str, dtype: Any) -> Encode
         )
         return Encoders(vae, text_encoder, tokenizer, scheduler, pipeline)
 
+    if arch == archs.FLUX2:
+        from diffusers import Flux2KleinPipeline
+
+        larch = loader_arch(arch, models_dir)
+        vae = loaders.load_flux2_vae(larch, vae_file, dtype, device=device)
+        text_encoder, tokenizer = loaders.load_text_encoder(
+            larch, encoder_file, dtype, device=device
+        )
+        scheduler = loaders.load_scheduler(larch)
+        # Transformer-less, so caption encoding goes through diffusers' own Qwen3 chat template and
+        # three-layer tap rather than a copy here that could drift from inference.
+        pipeline = Flux2KleinPipeline(
+            scheduler=scheduler, vae=None, text_encoder=text_encoder, tokenizer=tokenizer,
+            transformer=None,
+        )
+        return Encoders(vae, text_encoder, tokenizer, scheduler, pipeline)
+
     vae = loaders.load_vae(arch, vae_file, dtype, device=device)
     text_encoder, tokenizer = loaders.load_text_encoder(arch, encoder_file, dtype, device=device)
     return Encoders(vae, text_encoder, tokenizer, loaders.load_scheduler(arch))
@@ -184,12 +237,12 @@ def free_encoders(encoders: Encoders) -> None:
 
 #: Architectures whose loader can build a 4-bit base. Z-Image is not here because it does not need
 #: to be: it trains in ~15GB at 1024, so bf16 already fits the cards people have.
-_QUANTIZABLE = {archs.KREA2}
+_QUANTIZABLE = {archs.KREA2, archs.FLUX2}
 
 #: Peak activation cost per image token, measured at rank 16, batch 1, gradient checkpointing on.
 #: Krea 2's wider blocks cost roughly 7x Z-Image's per token, and activations - not weights - are
 #: what decides whether 1024 fits.
-_ACTIVATION_MB_PER_TOKEN = {archs.KREA2: 5.2, archs.Z_IMAGE: 0.8}
+_ACTIVATION_MB_PER_TOKEN = {archs.KREA2: 5.2, archs.Z_IMAGE: 0.8, archs.FLUX2: 1.6}
 
 #: Room left for the adapter, its 8-bit optimizer state and allocator slack.
 _MARGIN_BYTES = 2 * 1024**3
@@ -294,6 +347,17 @@ def load_transformer(
     loras: tuple[LoraRef, ...] = (LoraRef(file=adapter, strength=1.0),) if adapter else ()
 
     diffusion = _base_file(root, arch, base_mode)
+    if arch == archs.FLUX2:
+        from ..models.checkpoint import CheckpointReader
+        from ..models.flux2 import variants as flux2_variants
+
+        config = flux2_variants.derive_transformer_config(CheckpointReader(diffusion).shapes())
+        if config is None:
+            raise RuntimeError(f"{Path(diffusion).name} is not a FLUX.2 checkpoint.")
+        return loaders.load_flux2_transformer(
+            loader_arch(arch, models_dir), diffusion, config, dtype, quant,
+            device=device, loras=loras,
+        )
     if arch == archs.KREA2:
         return loaders.load_krea2_transformer(
             diffusion, dtype, quant, device=device, loras=loras
@@ -303,6 +367,8 @@ def load_transformer(
 
 def _base_file(root: Path, arch: str, base_mode: str) -> str:
     """The base checkpoint this run trains against."""
+    if arch == archs.FLUX2:
+        return _flux2_base_file(root)
     if arch != archs.KREA2:
         return _require(root, arch, "diffusion_models")
 
@@ -317,3 +383,36 @@ def _base_file(root: Path, arch: str, base_mode: str) -> str:
             f"Add {reqs.DIFFUSION_FILES[variant]} there."
         )
     return str(diffusion)
+
+
+def _flux2_base_file(root: Path) -> str:
+    """The **undistilled** FLUX.2 checkpoint to train against.
+
+    Training on a step-distilled build is the documented cause of the collapse reports: BFL and
+    musubi-tuner both say to train on ``-base-`` and load the adapter onto the distilled model
+    afterwards, which is also faster and usually better. So a distilled checkpoint is refused here
+    rather than silently producing a bad LoRA hours later.
+    """
+    from ..models.flux2 import variants as flux2_variants
+
+    override = os.environ.get(_ENV[archs.FLUX2]["diffusion_models"])
+    if override:
+        return override
+    folder = root / "diffusion_models"
+    candidates = sorted(folder.iterdir()) if folder.is_dir() else []
+    detected = [(p, flux2_variants.detect(p)) for p in candidates if p.is_file()]
+    base = [p for p, v in detected if v is not None and not v.distilled]
+    if base:
+        return str(base[0])
+    distilled = [(p, v) for p, v in detected if v is not None]
+    if distilled:
+        name, variant = distilled[0][0].name, distilled[0][1]
+        raise RuntimeError(
+            f"{name} is the step-distilled FLUX.2 {variant.label} build, which trains badly. "
+            "Download the matching Base checkpoint from the FLUX.2 node's model popup and train "
+            "on that - the LoRA still loads on the distilled build for generation."
+        )
+    raise RuntimeError(
+        f"No FLUX.2 checkpoint found under {folder}. Download one from the node's model popup "
+        f"(or set {_ENV[archs.FLUX2]['diffusion_models']})."
+    )

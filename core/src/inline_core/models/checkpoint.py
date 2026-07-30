@@ -59,6 +59,11 @@ class CheckpointReader:
     def keys(self) -> list[str]:
         return list(self._index)
 
+    def shapes(self) -> dict[str, list[int]]:
+        """Every tensor's shape, from the header alone - no torch, no tensor read. Lets a caller
+        infer a checkpoint's architecture (layer counts, widths) before deciding how to load it."""
+        return {key: list(entry.get("shape") or []) for key, entry in self._index.items()}
+
     def get_tensor(self, key: str, device: str | None = None) -> Any:
         """One tensor, read straight from its byte range into a fresh buffer."""
         import torch

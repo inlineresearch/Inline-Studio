@@ -18,6 +18,7 @@ from typing import Any
 
 Z_IMAGE = "z-image"
 KREA2 = "krea2"
+FLUX2 = "flux2"
 
 #: Z-Image: every ZImageTransformerBlock's attention + SwiGLU feed-forward Linears, confirmed
 #: against ZImageTransformer2DModel.named_modules() (34 blocks, 238 Linears).
@@ -45,10 +46,53 @@ _KREA2_TARGETS = [
 ]
 
 
-#: The attention projections shared by both architectures. Narrowing to these is the Krea 2
-#: authors' advice for long runs: adapting the feed-forward and projection layers too is stronger
-#: on short style runs but costs prompt adherence as the run goes on.
-_ATTENTION = ("to_q", "to_k", "to_v", "to_out.0", "to_gate")
+#: FLUX.2: every Linear in the MMDiT stack, confirmed against Flux2Transformer2DModel's own
+#: named_parameters (5 double + 20 single blocks on klein 4B, 169 tensors, no biases anywhere).
+#: Double blocks carry separate image/text streams (``add_*`` is the text side); single blocks fuse
+#: QKV and the MLP into one ``to_qkv_mlp_proj``, which is why they cannot be adapted attention-only.
+#:
+#: The single blocks' output projection is deliberately absent. PEFT matches targets by module-name
+#: suffix, and a single block's is ``attn.to_out`` (a Linear) while a double block's is also
+#: ``attn.to_out`` (a ModuleList of Linear + Dropout, which PEFT refuses) - no suffix separates
+#: them. The single blocks still learn through ``to_qkv_mlp_proj``, their dominant projection.
+_FLUX2_TARGETS = [
+    "to_q",
+    "to_k",
+    "to_v",
+    "to_out.0",
+    "add_q_proj",
+    "add_k_proj",
+    "add_v_proj",
+    "to_add_out",
+    "ff.linear_in",
+    "ff.linear_out",
+    "ff_context.linear_in",
+    "ff_context.linear_out",
+    "to_qkv_mlp_proj",
+    "x_embedder",
+    "context_embedder",
+    "proj_out",
+]
+
+
+#: The attention projections, across architectures. Narrowing to these is the Krea 2 authors' advice
+#: for long runs: adapting the feed-forward and projection layers too is stronger on short style
+#: runs but costs prompt adherence as the run goes on.
+#:
+#: ``to_qkv_mlp_proj`` is deliberately absent: FLUX.2's single blocks fuse attention and MLP into
+#: that one projection, so including it would silently make "attention" mean "everything". On
+#: FLUX.2 this scope therefore adapts the double blocks only - the text/image fusion stage.
+_ATTENTION = (
+    "to_q",
+    "to_k",
+    "to_v",
+    "to_out.0",
+    "to_gate",
+    "add_q_proj",
+    "add_k_proj",
+    "add_v_proj",
+    "to_add_out",
+)
 
 
 @dataclass(frozen=True)
@@ -141,6 +185,55 @@ def _krea2_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, 
     )
 
 
+
+# --- FLUX.2 ---------------------------------------------------------------------------------------
+
+
+def _flux2_sigma(device: Any, shift: float) -> Any:
+    import torch
+
+    # Logit-normal, matching the reference trainers. FLUX.2's shift is resolution dependent and
+    # computed at inference (``compute_empirical_mu``), so it is not baked into the training
+    # distribution - the same reasoning as Krea 2.
+    del shift
+    return torch.sigmoid(torch.randn((), device=device))
+
+
+def _flux2_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, Any]) -> Any:
+    """One prediction from Flux2Transformer2DModel, mirroring Flux2KleinPipeline's denoise call.
+
+    The latent arrives already patchified and batch-norm normalized by the precache (see
+    ``dataset._flux2_latent``), so it is (128, H/16, W/16) and packing is the pipeline's plain
+    flatten to (1, tokens, 128). ``timestep`` is the raw sigma: the pipeline passes
+    ``timestep / 1000`` where its own timesteps are ``sigma * 1000``.
+
+    The packing and position-id helpers come from the pipeline itself rather than a local copy, so
+    training cannot drift from inference.
+    """
+    from diffusers import Flux2KleinPipeline as P
+
+    latents = noisy.unsqueeze(0)  # (C, h, w) -> (1, C, h, w)
+    packed = P._pack_latents(latents)
+    img_ids = P._prepare_latent_ids(latents).to(packed.device)
+    embed = item["embed"]
+    embed = embed.unsqueeze(0) if embed.dim() == 2 else embed
+    txt_ids = P._prepare_text_ids(embed).to(packed.device)
+
+    out = transformer(
+        hidden_states=packed,
+        encoder_hidden_states=embed,
+        timestep=timestep.reshape(1),
+        img_ids=img_ids,
+        txt_ids=txt_ids,
+        guidance=None,
+        return_dict=False,
+    )[0]
+    channels, height, width = noisy.shape
+    # Unpack: (1, tokens, C) -> (C, h, w), the inverse of the flatten above.
+    return out[:, : height * width].permute(0, 2, 1).reshape(channels, height, width)
+
+
+
 ARCHS: dict[str, TrainingArch] = {
     Z_IMAGE: TrainingArch(
         key=Z_IMAGE,
@@ -159,6 +252,16 @@ ARCHS: dict[str, TrainingArch] = {
         timestep=lambda sigma: sigma,
         target=lambda clean, noise: noise - clean,
         forward=_krea2_forward,
+    ),
+    FLUX2: TrainingArch(
+        key=FLUX2,
+        target_modules=_FLUX2_TARGETS,
+        sigma=_flux2_sigma,
+        # Rectified flow with Krea 2's convention: x_t = (1 - sigma) * clean + sigma * noise, so
+        # d x_t / d sigma is noise - clean, and the model is called at the sigma itself.
+        timestep=lambda sigma: sigma,
+        target=lambda clean, noise: noise - clean,
+        forward=_flux2_forward,
     ),
 }
 

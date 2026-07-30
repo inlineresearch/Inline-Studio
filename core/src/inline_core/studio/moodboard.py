@@ -117,10 +117,13 @@ def list_board(conn: sqlite3.Connection, surface: str = STUDIO_SURFACE) -> dict[
             "SELECT * FROM moodboard_items WHERE surface = ?", (surface,)
         ).fetchall()
     ]
+    # Ordered explicitly: wiring order is user-visible semantics for a list input (FLUX.2 addresses
+    # reference images by position, "the jacket from image 2"), so it must not depend on row order.
     connectors = [
         _row_to_connector(r)
         for r in conn.execute(
-            "SELECT * FROM moodboard_connectors WHERE surface = ?", (surface,)
+            "SELECT * FROM moodboard_connectors WHERE surface = ? ORDER BY created_at, id",
+            (surface,),
         ).fetchall()
     ]
     return {"items": items, "connectors": connectors}

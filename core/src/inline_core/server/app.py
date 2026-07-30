@@ -321,7 +321,7 @@ def create_app(
             studio_store,
             core_models=core_models,
             core_status=core_status,
-            generation=CoreGeneration(studio_store, manager, events),
+            generation=CoreGeneration(studio_store, manager, events, registry),
             fal_generation=FalGeneration(studio_store, events),
             timeline=Timeline(studio_store, events),
             training=Training(studio_store, events, on_output=catalog.rescan),
