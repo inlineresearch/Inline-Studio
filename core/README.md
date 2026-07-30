@@ -39,12 +39,17 @@ a 6 GB laptop, pure CPU, or split across several GPUs, without touching the grap
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
+`--python` pins each install to `./.venv`; without it uv targets whatever venv or conda env is
+activated in your shell, and installs land there instead.
+
 ```
 uv venv
-uv pip install -e ".[server]"     # engine + HTTP/websocket API
-uv pip install -e ".[runtime]"    # + torch, diffusers, transformers (for real generation)
-uv pip install -e ".[runtime,parallel]"  # + xfuser, to split one image across GPUs (2+ GPUs)
+uv pip install --python .venv/bin/python -e ".[server]"    # engine + HTTP/websocket API
+uv pip install --python .venv/bin/python -e ".[runtime]"   # + torch, diffusers, transformers
+uv pip install --python .venv/bin/python -e ".[runtime,parallel]"  # + xfuser, 2+ GPUs
 ```
+
+Or let the launcher do it: `./webui.sh --install --extra runtime` (Windows: `.\webui.bat`).
 
 ## Models
 

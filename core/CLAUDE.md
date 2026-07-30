@@ -211,14 +211,17 @@ real codec that moves tensors lives with the model runner.
 
 ```
 uv venv                                   # create ./.venv
-uv pip install -e ".[server,dev]"         # engine + server + test tooling
-uv pip install -e ".[runtime]"            # + torch, diffusers, transformers (real generation)
-uv pip install -e ".[runtime,parallel]"   # + xfuser, for multi-GPU denoise (2+ GPUs)
+# --python pins the target: without it uv installs into an activated venv/conda env, not ./.venv
+uv pip install --python .venv/bin/python -e ".[server,dev]"   # engine + server + test tooling
+uv pip install --python .venv/bin/python -e ".[runtime]"      # + torch, diffusers, transformers
+uv pip install --python .venv/bin/python -e ".[runtime,parallel]"  # + xfuser, multi-GPU denoise
 
 ./webui.sh                                # run (loopback:8848); friendly flags → INLINE_* env
 ./webui.sh --listen --port 9000           # bind all interfaces
 ./webui.sh --lowvram                      # tight-VRAM profile
 ./webui.sh --install --extra runtime      # set up ./.venv with the model runtime, then exit
+                                          # (reuses an existing ./.venv; --recreate rebuilds it, and
+                                          #  an activated foreign env is reported, never modified)
 python -m inline_core.server              # run the server directly (INLINE_HOST / INLINE_PORT)
 
 ruff check .                              # lint (zero warnings)
