@@ -52,6 +52,8 @@ cd Inline-Studio\core
 
 That's it: `--install` sets up the environment and installs everything once, then `webui.sh` / `webui.bat` runs the app on one port. See **[Command-line options](#command-line-options)** for every flag (`--listen`, `--port`, `--lowvram`, `--multi-gpu`, …).
 
+Everything lands in `core/.venv`, which Inline Studio owns. If you already have another virtualenv or conda env activated in that shell (a ComfyUI one, say), it is left completely untouched - `--install` says so and carries on. Re-running `--install` is safe: an existing `core/.venv` is reused, so adding an extra later is just another `--install --extra NAME`.
+
 Prefer pip over the launcher? `pip install -r requirements.txt` (from the repo root) installs the whole app - engine, UI, model runtime, and trainer - from PyPI; then run `inline-studio`.
 
 ### Hardware support
@@ -75,22 +77,24 @@ Nobody has verified Inline Studio on AMD yet, so treat this as a starting point 
 
 ```bash
 cd core
-uv venv
-uv pip install -e ".[runtime,server]"        # engine + runtime (pulls the default PyPI torch)
+./webui.sh --install --extra runtime         # engine + runtime (pulls the default PyPI torch)
 
 # Replace torch with the ROCm build. Pick the index that matches YOUR ROCm version -
 # check https://pytorch.org/get-started/locally/ (rocm6.2 shown here as an example).
-uv pip install --force-reinstall --index-url https://download.pytorch.org/whl/rocm6.2 torch
+# --python pins the install to Inline Studio's venv, whatever is activated in your shell.
+uv pip install --python .venv/bin/python --force-reinstall \
+  --index-url https://download.pytorch.org/whl/rocm6.2 torch
 
 # Verify you actually got a ROCm build (hip should print a version, not None):
-uv run python -c "import torch; print(torch.cuda.is_available(), torch.version.hip)"
+.venv/bin/python -c "import torch; print(torch.cuda.is_available(), torch.version.hip)"
 ```
 
 Then run `./webui.sh` as usual.
 
-Two gotchas:
+Three gotchas:
 
-- **Don't run `uv sync` afterwards** - it re-resolves the environment against the lockfile and will pull the PyPI torch back over your ROCm build. Use `uv pip install` for follow-up installs.
+- **Don't run `uv sync` afterwards** - it re-resolves the environment against the lockfile and will pull the PyPI torch back over your ROCm build. Use `uv pip install --python .venv/bin/python` for follow-up installs.
+- **Don't pass `--recreate`** - it rebuilds `.venv` from scratch and your ROCm torch goes with it. A plain `--install` re-run reuses the venv and is safe.
 - ROCm presents itself through `torch.cuda`, so the engine will treat it as a CUDA device and may largely work. But the dtype heuristics key off **NVIDIA** compute capability (`< 8.0` → fp16), which is meaningless on RDNA/CDNA, and the int8 (torchao) path is unverified on ROCm. If it works - or doesn't - [open an issue](https://github.com/inlineresearch/Inline-Studio/issues); that's the fastest way to get AMD properly supported.
 
 **Known limits, so you can judge before installing:**
@@ -120,6 +124,8 @@ cd core
 uv sync --extra server --extra runtime   # server + the local model runtime (torch/diffusers)
 uv run python main.py --front-end-root ../dist-web
 ```
+
+`uv sync` here manages `core/.venv` as a project environment - it is exact, so it removes anything not in the lockfile (including the `inline-studio-frontend` package a previous `--install` may have added, which doesn't matter when you're serving `--front-end-root ../dist-web`).
 
 Then open **http://127.0.0.1:8848**. Add your [fal.ai API key](https://fal.ai/dashboard/keys) in Settings for hosted models, and set up local generation as in [Two ways to generate](#two-ways-to-generate). The canvas and planning work without any models.
 
@@ -151,7 +157,7 @@ The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` envir
 
 </details>
 
-`webui.sh` also has `--install` / `--extra NAME` to set up the venv. New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
+`webui.sh` also has `--install` / `--extra NAME` to set up the venv, plus `--recreate` (rebuild `.venv` from scratch) and `--use-active-env` (install into / run from the environment activated in your shell instead of `.venv`). New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
 
 ## Features
 
