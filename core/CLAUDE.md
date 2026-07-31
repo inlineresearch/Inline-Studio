@@ -95,7 +95,16 @@ HTTP/WS  →  server/app.py  →  RunManager  →  Executor  →  Registry (desc
   the ComfyUI-equivalent decomposed graph and the intended long-term surface. **Descriptor-only
   today - their runners land in C2.** A graph built from them validates and type-checks but raises
   `No runner registered` at execution.
-- **Model runners** (`models/<name>/`) - high-level single generation nodes. **`alibaba/z-image-turbo`
+- **Model runners** (`models/<name>/`) - high-level single generation nodes. **`black-forest-labs/flux-2`
+  (`models/flux2/`) is the reference for a _family_:** one node covers klein 4B/9B, their base builds,
+  the KV variant and dev, because the picked checkpoint is identified from its own tensor shapes
+  (`flux2/variants.py`) and everything else follows. Adding a checkpoint is a row in that table.
+  Two rules it establishes: **identify a checkpoint by content, never by filename** (`diffusion_models/`
+  is shared across architectures, and Qwen3-4B and Qwen3-VL-4B have byte-identical embedding shapes),
+  and **derive geometry from the checkpoint** rather than bundling a config per variant, so a future
+  build loads with no code change. A **diffusers folder** is a valid checkpoint too, which is the only
+  way a 32B model reaches a 24 GB card: its NF4 shards stream through `from_pretrained`, where
+  `from_single_file` cannot quantize at all. **`alibaba/z-image-turbo`
   (`models/zimage/`) is the one runnable generation path today** (prompt + optional image → one take,
   backed by diffusers' `ZImagePipeline`/`ZImageImg2ImgPipeline`). This is the "Z-Image pipeline that
   already works" - the primitives will reach parity in C2. It loads from a **single diffusion
@@ -143,6 +152,18 @@ between nodes and are never takes.
   (Turing/Volta - compute capability < 8.0, e.g. a T4): same footprint, but it uses the fp16 tensor
   cores instead of bf16's slow path. The **VAE stays upcast** (bf16, or fp32 when the denoiser is
   fp16) because fp16 VAE decode can overflow to black/NaN images (`_compute_dtype` in `device/`).
+- **Quantization rungs** - the fit ladder is full-precision resident → int8 resident → **NF4 resident**
+  → sequential offload → wont-fit. NF4 is what makes a 32B model viable on a 24 GB card. Note int8
+  forces bf16 (torchao's weight-only int8 silently no-ops under fp16) while NF4 does not, so a Turing
+  card keeps its fp16 tensor cores under NF4.
+- **Prequantized checkpoints must not be re-quantized.** A checkpoint that ships already quantized
+  (`flux2/variants.is_prequantized`) has an on-disk size that already _is_ its resident size, so the
+  ladder's assumption that quantization halves it does not hold, and handing diffusers a second,
+  different quantization config is a hard error. Pass `Quantization.NONE` for those.
+- **Staged loading** - when the text encoder and the transformer cannot be co-resident (dev is a
+  15 GB encoder beside an 18 GB transformer), the prompt is encoded first and the encoder freed before
+  the transformer loads. The decision has to be made _before_ the load: by the time an OOM fires there
+  is nothing left to free.
 - **Multi-GPU** - `INLINE_PARALLEL` (e.g. `pipefusion=2`, `pipefusion=2,ulysses=2`); degrees multiply
   to the world size, which must equal the GPU count.
 
@@ -202,6 +223,11 @@ real codec that moves tensors lives with the model runner.
   Don't scatter it.
 - **Bring-your-own models.** Nothing is downloaded by the engine. The catalog scans; the user places
   files. A model picker is a `SELECT` param with `options_from="<category>"`.
+- **Verify image models by rendering.** The FLUX.2 work shipped five bugs past a green test suite,
+  and every one produced a _wrong image rather than an error_: a mis-keyed checkpoint, a
+  vision-language encoder loaded in place of a text one, an unnormalized latent, and a control context
+  cast to a quantized weight's `uint8` storage dtype. A unit test cannot see a plausible-but-wrong
+  image. Render something and look at it.
 - **Tests (pytest).** Cover the logic that matters: graph validate/topo/executor/cache, the catalog
   scan, the run store + server contract, the device/memory policy, the parallel group + xfuser seam,
   and each model runner (import-guarded, no GPU needed). See `tests/`.

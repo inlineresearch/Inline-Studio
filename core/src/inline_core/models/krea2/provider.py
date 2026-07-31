@@ -28,6 +28,17 @@ class Krea2Provider:
     def download_target(self, component: ModelComponent) -> Path:
         return models_dir() / component.category
 
+    def resolved(self) -> dict[str, str]:
+        """What this node would load right now, so the pickers show real files instead of "auto"."""
+        from pathlib import Path as _Path
+
+        picks = {
+            "model": resolve_diffusion(self._variant),
+            "vae": resolve_vae(None),
+            "text_encoder": resolve_text_encoder(None),
+        }
+        return {k: _Path(str(v)).name for k, v in picks.items() if v}
+
     def estimate(self, policy: Any) -> dict[str, Any] | None:
         """Whether the model will fit this machine, so the popup can warn before a 26GB load.
         ``None`` whenever it can't be sized - a wrong estimate is worse than none."""

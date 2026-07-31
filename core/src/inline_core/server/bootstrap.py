@@ -74,6 +74,15 @@ def _register_builtins(
     except ImportError:
         pass
     try:
+        from ..models.flux2.provider import Flux2Provider
+        from ..models.flux2.runner import FLUX2, register_flux2
+
+        register_flux2(registry, store, policy)
+        requirements.register(FLUX2.type, Flux2Provider())
+        registered.append(FLUX2.type)
+    except ImportError:
+        pass
+    try:
         from ..models.zimage.primitives import register_zimage_primitives
 
         register_zimage_primitives(registry, store, policy)

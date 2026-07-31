@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ..graph.schema import parse_graph
+from ..graph.schema import PortKind, parse_graph
 from ..runtime.progress import (
     CancelledEvent,
     ErrorEvent,
@@ -44,11 +44,20 @@ def _kind_str(kind: Any) -> str:
 class CoreGeneration:
     """Drives core-node runs and streams their progress as Studio generation events."""
 
-    def __init__(self, store: Any, manager: Any, events: Any) -> None:
+    def __init__(self, store: Any, manager: Any, events: Any, registry: Any = None) -> None:
         self._store = store
         self._manager = manager
         self._events = events
+        self._registry = registry
         self._active: dict[str, str] = {}  # canvas item id -> run id
+
+    def _is_list_port(self, node_type: str, port_id: str) -> bool:
+        """Whether a port accepts several wires. Only the registry knows, and the canvas needs it to
+        decide whether a second wire into a handle adds a reference or replaces the first."""
+        if self._registry is None or not self._registry.has(node_type):
+            return False
+        port = self._registry.get(node_type).input(port_id)
+        return port is not None and port.kind is PortKind.IMAGE_LIST
 
     def run_workflow(self, item_id: str) -> None:
         # If this item still has a run in flight - e.g. the user hit Run again without waiting for a
@@ -60,7 +69,7 @@ class CoreGeneration:
         if previous is not None:
             self._manager.cancel(previous)
         graph_dict, target = build_workflow_graph(
-            self._store.conn(), self._store.folder(), item_id
+            self._store.conn(), self._store.folder(), item_id, self._is_list_port
         )
         self._progress(item_id, 0.02, "Submitting")
         record, _created = self._manager.submit(parse_graph(graph_dict), target)

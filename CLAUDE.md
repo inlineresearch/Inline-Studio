@@ -79,6 +79,14 @@ Fal node definitions stay studio-side (`src/shared/nodes/`): the browser builds 
 Core relays it to `queue.fal.run` with the API key server-side. Core nodes (e.g. Z-Image) run through
 Core's own graph engine.
 
+**List inputs.** A port of kind `image[]` accepts several wires, and their order is meaning, not
+decoration: FLUX.2 addresses reference images by position ("the jacket from image 2"). Ordering runs
+from `moodboard.list_board` (connectors ordered by `created_at`) through `graph_build._edges_for`
+(which accumulates on list ports and keeps last-wins everywhere else) to the numbered `ReferenceStrip`
+on the node face. A Load Assets node wired to a list port contributes **all** of its assets. If you
+touch any of those, keep `coreInputThumbs.ts` in step or the numbers on the card stop matching the
+numbers the prompt resolves.
+
 ### Directory map (TS side)
 
 ```

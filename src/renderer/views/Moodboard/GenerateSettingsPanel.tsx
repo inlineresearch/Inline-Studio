@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { getNodeDef } from '@shared/nodes/registry'
-import { defaultParams } from '@shared/nodes/types'
+import { defaultParams, type NodeDef } from '@shared/nodes/types'
 import { useFrameStore } from '../../store/frameStore'
 import { useGenerationStore } from '../../store/generationStore'
 import { useSettingsDraft } from '../../lib/useSettingsDraft'
@@ -26,7 +26,7 @@ export function GenerateSettingsPanel(): React.JSX.Element | null {
     [def, frame],
   )
   const persist = (params: Record<string, unknown>): void => {
-    if (frameId) void setParams(frameId, params)
+    if (frameId) void setParams(frameId, def ? clampNumbers(def, params) : params)
   }
   const { local, dirty, change, apply } = useSettingsDraft(
     frameId ? `${frameId}:${defId ?? ''}` : null,
@@ -75,4 +75,25 @@ export function GenerateSettingsPanel(): React.JSX.Element | null {
       </div>
     </div>
   )
+}
+
+/**
+ * Bound every number param to its declared range before it is stored.
+ *
+ * The inputs keep a live draft and only clamp on blur, but clicking outside the panel persists on
+ * `pointerdown`, which lands first. Without this an out-of-range entry stuck in the box while the
+ * request quietly used the clamped value, so the field and the render disagreed forever.
+ */
+function clampNumbers(def: NodeDef, params: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...params }
+  for (const field of def.params) {
+    if (field.widget !== 'number') continue
+    const n = Number(out[field.key])
+    if (!Number.isFinite(n)) {
+      out[field.key] = field.default
+      continue
+    }
+    out[field.key] = Math.min(field.max ?? n, Math.max(field.min ?? n, n))
+  }
+  return out
 }

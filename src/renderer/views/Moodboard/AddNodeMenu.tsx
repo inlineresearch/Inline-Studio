@@ -12,6 +12,8 @@
 
 import { useState } from 'react'
 
+import { useMenuPlacement } from './useMenuPlacement'
+
 import { addableCoreNodes, type NodeDescriptor } from '@shared/coreNodes'
 import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
@@ -80,6 +82,7 @@ export function AddNodeMenu({
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('core')
+  const place = useMenuPlacement<HTMLDivElement>(x, y, above)
 
   // Only high-level model nodes are offered; samplers/inputs are hidden plumbing.
   const all = addableCoreNodes(coreNodes)
@@ -101,10 +104,11 @@ export function AddNodeMenu({
     <>
       <div className="absolute inset-0 z-20" onClick={onClose} />
       <div
+        ref={place.ref}
         className={`absolute z-30 flex w-64 select-none flex-col overflow-hidden rounded-md border border-border bg-panel text-xs shadow-xl ${
-          above ? '-translate-x-1/2 -translate-y-full' : ''
+          above ? '-translate-x-1/2 -translate-y-full' : place.flipped ? '-translate-y-full' : ''
         }`}
-        style={{ left: x, top: y }}
+        style={place.style}
       >
         <div className="flex border-b border-border">
           <TabButton active={tab === 'core'} onClick={() => setTab('core')}>
@@ -115,8 +119,9 @@ export function AddNodeMenu({
           </TabButton>
         </div>
 
-        {/* One scroll area for the active tab, not per-section. */}
-        <div className="max-h-[70vh] overflow-y-auto">
+        {/* One scroll area for the active tab, not per-section. `nowheel` keeps React Flow from
+            swallowing the wheel and zooming the canvas instead of scrolling this list. */}
+        <div className="nowheel overflow-y-auto" style={{ maxHeight: place.maxHeight }}>
           {tab === 'core' ? (
             <>
               {sections.map(([category, rows]) => (

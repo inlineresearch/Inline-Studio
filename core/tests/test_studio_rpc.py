@@ -61,6 +61,7 @@ def test_full_project_and_canvas_flow(client) -> None:
     visible = {m["type"] for m in models["models"] if not m.get("hidden")}
     assert visible == {
         "alibaba/z-image-turbo",
+        "black-forest-labs/flux-2",
         "krea/krea-2-turbo",
         "krea/krea-2-raw",
         "load/diffusion-model",

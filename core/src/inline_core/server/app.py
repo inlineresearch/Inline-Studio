@@ -182,14 +182,14 @@ def create_app(
             return Response(status_code=304)
         body = {
             "registryVersion": version,
-            "models": [descriptor_json(d, catalog) for d in registry.descriptors()],
+            "models": [descriptor_json(d, catalog, reqs) for d in registry.descriptors()],
         }
         return JSONResponse(body, headers={"ETag": etag})
 
     @app.get("/v1/models/{model_type:path}")
     async def get_model(model_type: str) -> Response:
         try:
-            return JSONResponse(descriptor_json(registry.get(model_type), catalog))
+            return JSONResponse(descriptor_json(registry.get(model_type), catalog, reqs))
         except UnknownNodeType as error:
             return _error("not_found", str(error), 404)
 
@@ -310,7 +310,9 @@ def create_app(
         def core_models() -> dict[str, Any]:
             return {
                 "registryVersion": _version(registry, catalog),
-                "models": [descriptor_json(d, catalog) for d in registry.descriptors()],
+                "models": [
+                    descriptor_json(d, catalog, reqs) for d in registry.descriptors()
+                ],
             }
 
         def core_status() -> dict[str, Any]:
@@ -321,7 +323,7 @@ def create_app(
             studio_store,
             core_models=core_models,
             core_status=core_status,
-            generation=CoreGeneration(studio_store, manager, events),
+            generation=CoreGeneration(studio_store, manager, events, registry),
             fal_generation=FalGeneration(studio_store, events),
             timeline=Timeline(studio_store, events),
             training=Training(studio_store, events, on_output=catalog.rescan),

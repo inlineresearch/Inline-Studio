@@ -47,6 +47,10 @@ _SMART_RESIDENT_MIN_VRAM_GB = 6.0
 # ~half the fp16 weight bytes. Deliberately generous so the estimate errs toward a lighter plan.
 _ACTIVATION_HEADROOM_GB = 2.5
 _INT8_FACTOR = 0.5
+# NF4 (bitsandbytes) stores 4-bit weights plus per-block scales, so ~0.55 bytes per parameter
+# against fp16's 2. The rung exists for the very large checkpoints (FLUX.2 dev and friends) that
+# int8 still cannot fit; it is CUDA-only and, like int8, never combined with CPU offload.
+_NF4_FACTOR = 0.28
 
 
 def _system_ram_gb() -> float | None:
@@ -222,7 +226,14 @@ class MemoryPolicy(DevicePolicy):
                 int8, budget, True,
                 "Weights are int8-quantized to fit this GPU's VRAM.",
             )
-        # int8 still won't fit resident -> CPU-offload streaming. Only viable if the (unquantized)
+        nf4 = big * _NF4_FACTOR + fixed
+        if nf4 <= cap:
+            return FitEstimate(
+                "nf4", Quantization.NF4, OffloadMode.NONE, prof(Profile.LOWVRAM),
+                nf4, budget, True,
+                "Weights are 4-bit (NF4) quantized to fit this GPU's VRAM.",
+            )
+        # Even 4-bit won't fit resident -> CPU-offload streaming. Only viable if the (unquantized)
         # model fits in system RAM, since sequential offload holds the off-GPU weights there.
         ram = self._ram_gb
         if ram is not None and full > ram:

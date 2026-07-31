@@ -51,9 +51,14 @@ const BASES: Record<TrainingArch, { value: TrainingBaseMode; label: string }[]> 
     { value: 'raw', label: 'Krea 2 RAW (recommended)' },
     { value: 'turbo_adapter', label: 'Krea 2 Turbo (+ training adapter)' },
   ],
+  // FLUX.2 has no de-distillation adapter: you train on a Base checkpoint and the adapter still
+  // loads on the distilled build for generation, which is both faster and better.
+  flux2: [{ value: 'raw', label: 'FLUX.2 Base (required)' }],
 }
 
-/** Only Krea 2 has a 4-bit base path, so the control is hidden for Z-Image rather than lying. */
+/** Krea 2 and FLUX.2 have a 4-bit base path; the control is hidden for Z-Image rather than lying. */
+const QUANTIZABLE: TrainingArch[] = ['krea2', 'flux2']
+
 const QUANTS: { value: TrainingBaseQuant; label: string }[] = [
   { value: 'auto', label: 'Auto (fit to this GPU)' },
   { value: 'none', label: 'Full precision (bf16)' },
@@ -75,6 +80,7 @@ const SCOPES: { value: TrainingLoraScope; label: string }[] = [
 const ARCHS: { value: TrainingArch; label: string }[] = [
   { value: 'z-image', label: 'Z-Image' },
   { value: 'krea2', label: 'Krea 2' },
+  { value: 'flux2', label: 'FLUX.2' },
 ]
 
 function NumberField({
@@ -140,6 +146,10 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
   const dirty = JSON.stringify(hp) !== JSON.stringify(applied)
 
   if (!item) return null
+  // The sidebar is shared by every Trainer node that has settings, so it dispatches on the item.
+  // Everything below this point is training hyperparams and only applies to the Trainer node.
+  if (item.type === 'caption')
+    return <CaptionSettings itemId={itemId} overwrite={Boolean(item.data.overwrite)} />
 
   const arch: TrainingArch = hp.arch ?? 'z-image'
   const set = <K extends keyof TrainingHyperparams>(key: K, value: TrainingHyperparams[K]): void =>
@@ -248,9 +258,14 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
             Train on RAW, then generate with Krea 2 Turbo - the LoRA carries over.
           </span>
         )}
+        {arch === 'flux2' && (
+          <span className="text-[10px] text-zinc-600">
+            Train on Base, then generate with the distilled build - the LoRA carries over.
+          </span>
+        )}
       </label>
 
-      {arch === 'krea2' && (
+      {QUANTIZABLE.includes(arch) && (
         <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
           Base precision
           <select
@@ -271,7 +286,7 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
         </label>
       )}
 
-      {arch === 'krea2' && (hp.baseQuant ?? 'auto') !== 'nf4' && (
+      {QUANTIZABLE.includes(arch) && (hp.baseQuant ?? 'auto') !== 'nf4' && (
         <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
           CPU offload
           <select
@@ -416,6 +431,48 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
           </div>
         </div>
       </Modal>
+    </div>
+  )
+}
+
+/** Caption node settings. Small today, but it is where the Adjust button has to lead: a button that
+ * silently toggled a hidden flag read as broken, because nothing on the node showed what it did. */
+function CaptionSettings({
+  itemId,
+  overwrite,
+}: {
+  itemId: string
+  overwrite: boolean
+}): React.JSX.Element {
+  const patchData = useTrainerBoardStore((s) => s.patchData)
+  const toggleSettings = useTrainerBoardStore((s) => s.toggleSettings)
+  return (
+    <div className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l border-border bg-surface/40 p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-zinc-200">Caption settings</span>
+        <button
+          onClick={() => toggleSettings(itemId)}
+          className="rounded p-1 text-zinc-400 hover:bg-panel hover:text-zinc-200"
+          title="Close"
+        >
+          <XIcon className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <label className="flex items-start gap-2 text-[11px] text-zinc-400">
+        <input
+          type="checkbox"
+          checked={overwrite}
+          onChange={(e) => void patchData(itemId, { overwrite: e.target.checked })}
+          className="mt-0.5 accent-emerald-500"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-zinc-200">Re-caption every image</span>
+          <span className="text-zinc-500">
+            Off, only images with an empty caption are captioned, so hand-written captions survive a
+            re-run. On, every caption is replaced.
+          </span>
+        </span>
+      </label>
     </div>
   )
 }

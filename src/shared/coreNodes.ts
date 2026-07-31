@@ -102,9 +102,29 @@ export interface ModelComponent {
 }
 
 /** A node's model requirements with live presence (from `models:requirements`). */
+/**
+ * Whether the node's models fit this machine, from the engine's own device policy.
+ *
+ * Only meaningful once the components are installed: it sizes what is on disk, so a fresh install
+ * with nothing downloaded reports a zero footprint and an optimistic `fits`. Gate every use on
+ * `allPresent`.
+ */
+export interface ModelFitEstimate {
+  /** How the weights would load: 'resident' | 'int8' | 'nf4' | 'offload' | 'wont-fit'. */
+  plan: string
+  fits: boolean
+  requiredVramMb: number
+  totalVramMb: number | null
+  freeVramMb: number | null
+  freeRamMb: number | null
+  /** Set when the plan is worth surfacing (quantized, offloaded, or will not fit). */
+  warning: string | null
+}
+
 export interface ModelRequirements {
   components: ModelComponent[]
   allPresent: boolean
+  estimate?: ModelFitEstimate | null
 }
 
 const ENGINE_KINDS: readonly PortKind[] = [

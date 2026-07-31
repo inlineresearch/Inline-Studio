@@ -1,7 +1,7 @@
 [project]
 # PyPI name; the import package is `inline_core` (src/inline_core).
 name = "inline-core"
-version = "1.2.53"
+version = "1.2.6"
 description = "The generation engine behind Inline Studio."
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -127,4 +127,6 @@ typeCheckingMode = "strict"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." so `tests` imports as a package: several suites share fixtures via `from tests.x import y`,
+# and without it those modules fail to collect and silently stop running.
+pythonpath = ["src", "."]

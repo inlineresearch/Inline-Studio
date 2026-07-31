@@ -15,6 +15,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from ..config import models_dir
+
 # Category subfolders scanned under the models root. These are the keys a param's `options_from`
 # may reference (see graph/primitives.py); ensure_dirs() creates them so drop-in is obvious.
 CATEGORIES: tuple[str, ...] = (
@@ -96,3 +98,22 @@ class ModelCatalog:
                 # A sharded model (config + shards) is one entry, named for its folder.
                 names.append(entry.name)
         return sorted(names)
+
+
+def resolve_picked(category: str, chosen: object) -> Path | None:
+    """A model dropdown's stored value, resolved to a file under ``category``.
+
+    The select serves bare filenames, but projects written before it did store the full relative
+    path, and joining one of those under the category doubles the prefix into a path that cannot
+    exist. So: try the value as given under the category, then its bare name there, then the value
+    as a path in its own right. Returns None when nothing matches, which callers must not stringify
+    (``str(None)`` reaching a loader reads as a corrupt file rather than a stale pick).
+    """
+    name = str(chosen or "").strip()
+    if not name:
+        return None
+    root = models_dir() / category
+    for candidate in (root / name, root / Path(name).name, Path(name)):
+        if candidate.exists():
+            return candidate
+    return None

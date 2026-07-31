@@ -3,7 +3,7 @@
  * Resource node. Same React Flow + node-card design as the Studio moodboard, but backed by the
  * `trainer` surface so the two boards stay separate.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
@@ -15,6 +15,7 @@ import {
   type Edge,
   type Node,
   type NodeChange,
+  type EdgeTypes,
   type NodeTypes,
   type OnConnect,
 } from '@xyflow/react'
@@ -23,6 +24,9 @@ import { studio } from '@/lib/studio'
 import { useTrainerBoardStore, type TrainerNodeKind } from '../../store/trainerBoardStore'
 import { useModelRequirementsStore } from '../../store/modelRequirementsStore'
 import { BoardActionsContext } from '../Moodboard/nodes/boardActions'
+import { CanvasToolbar } from '../Moodboard/CanvasToolbar'
+import { TrainerDeletableEdge } from './edges/TrainerDeletableEdge'
+import { TrainerAddMenu } from './TrainerAddMenu'
 import { ModelRequirementsModal } from '../Moodboard/nodes/ModelRequirementsModal'
 import { ResourceNode } from '../Moodboard/nodes/ResourceNode'
 import {
@@ -36,6 +40,11 @@ import { CaptionNode } from './nodes/CaptionNode'
 import { LossGraphNode } from './nodes/LossGraphNode'
 import { TrainDatasetNode } from './nodes/TrainDatasetNode'
 import { TrainerNode } from './nodes/TrainerNode'
+
+// Clicking a connector selects it and shows the ✕ to unlink, same as the Studio canvas.
+const edgeTypes: EdgeTypes = {
+  deletable: TrainerDeletableEdge,
+}
 
 const nodeTypes: NodeTypes = {
   trainDataset: TrainDatasetNode,
@@ -69,51 +78,6 @@ function toNode(item: MoodboardItem): Node {
   }
 }
 
-function AddMenu({ onAdd }: { onAdd: (kind: TrainerNodeKind) => void }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const groups = useMemo(() => {
-    const out = new Map<string, typeof ADDABLE>()
-    for (const entry of ADDABLE)
-      out.set(entry.category, [...(out.get(entry.category) ?? []), entry])
-    return [...out.entries()]
-  }, [])
-
-  return (
-    <div className="absolute left-3 top-3 z-10">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="rounded-md border border-border bg-panel/95 px-3 py-1.5 text-xs font-medium text-zinc-200 shadow-sm backdrop-blur hover:bg-panel"
-      >
-        + Add node
-      </button>
-      {open && (
-        <div className="mt-1 w-52 rounded-md border border-border bg-panel/95 p-1 shadow-lg backdrop-blur">
-          {groups.map(([category, entries]) => (
-            <div key={category}>
-              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                {category}
-              </div>
-              {entries.map((e) => (
-                <button
-                  key={e.kind}
-                  onClick={() => {
-                    onAdd(e.kind)
-                    setOpen(false)
-                  }}
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-zinc-200 hover:bg-surface"
-                >
-                  <span className="text-zinc-400">{e.icon}</span>
-                  {e.label}
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function Canvas(): React.JSX.Element {
   const items = useTrainerBoardStore((s) => s.items)
   const connectors = useTrainerBoardStore((s) => s.connectors)
@@ -126,6 +90,9 @@ function Canvas(): React.JSX.Element {
   const disconnect = useTrainerBoardStore((s) => s.disconnect)
 
   const [nodes, setNodes] = useState<Node[]>([])
+  const [tool, setTool] = useState<'select' | 'pan'>('select')
+  const [addMenu, setAddMenu] = useState<{ x: number; y: number; above: boolean } | null>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const rf = useReactFlow()
 
   useEffect(() => {
@@ -174,6 +141,7 @@ function Canvas(): React.JSX.Element {
         target: c.toItemId,
         sourceHandle: (c.data?.sourceHandle as string | null) ?? undefined,
         targetHandle: (c.data?.targetHandle as string | null) ?? undefined,
+        type: 'deletable',
       })),
     [connectors],
   )
@@ -193,23 +161,43 @@ function Canvas(): React.JSX.Element {
 
   const boardActions = useMemo(() => ({ updateItem, deleteItem }), [updateItem, deleteItem])
 
+  /** Double-click empty canvas opens the node list there, matching the Studio canvas. */
+  const onCanvasDoubleClick = (e: React.MouseEvent): void => {
+    if (tool !== 'select') return
+    if (!(e.target as HTMLElement).classList.contains('react-flow__pane')) return
+    window.getSelection()?.removeAllRanges() // the double-click also word-selects nearby text
+    const rect = wrapperRef.current?.getBoundingClientRect()
+    setAddMenu({
+      x: rect ? e.clientX - rect.left : e.clientX,
+      y: rect ? e.clientY - rect.top : e.clientY,
+      above: false,
+    })
+  }
+
   return (
-    <div className="relative h-full min-h-0 w-full">
+    <div
+      ref={wrapperRef}
+      className="relative h-full min-h-0 w-full"
+      onDoubleClick={onCanvasDoubleClick}
+    >
       {error && (
         <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-md bg-red-500/10 px-3 py-1.5 text-xs text-red-400">
           {error}
         </div>
       )}
-      <AddMenu onAdd={addAtViewport} />
       <BoardActionsContext.Provider value={boardActions}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           connectionMode={ConnectionMode.Loose}
           deleteKeyCode={['Backspace', 'Delete']}
           zoomOnDoubleClick={false}
           defaultEdgeOptions={{ interactionWidth: 20 }}
+          panOnDrag={tool === 'pan' ? true : [1, 2]}
+          selectionOnDrag={tool === 'select'}
+          nodesDraggable={tool === 'select'}
           onNodesChange={onNodesChange}
           onNodeDragStop={(_e, node) =>
             void updateItem(node.id, { x: node.position.x, y: node.position.y })
@@ -225,6 +213,29 @@ function Canvas(): React.JSX.Element {
           <Background variant={BackgroundVariant.Dots} gap={16} size={1} className="opacity-40" />
         </ReactFlow>
       </BoardActionsContext.Provider>
+      <CanvasToolbar
+        tool={tool}
+        onSelectTool={() => setTool('select')}
+        onPanTool={() => setTool('pan')}
+        onOpenAdd={(buttonRect) => {
+          const rect = wrapperRef.current?.getBoundingClientRect()
+          setAddMenu({
+            x: buttonRect.left + buttonRect.width / 2 - (rect?.left ?? 0),
+            y: buttonRect.top - 8 - (rect?.top ?? 0),
+            above: true,
+          })
+        }}
+      />
+      {addMenu && (
+        <TrainerAddMenu
+          x={addMenu.x}
+          y={addMenu.y}
+          above={addMenu.above}
+          entries={ADDABLE}
+          onPick={addAtViewport}
+          onClose={() => setAddMenu(null)}
+        />
+      )}
       <ModelRequirementsModal />
     </div>
   )

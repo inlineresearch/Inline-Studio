@@ -105,7 +105,85 @@ _KREA2 = ArchSpec(
     ),
 )
 
-SPECS: dict[str, ArchSpec] = {_ZIMAGE.key: _ZIMAGE, _KREA2.key: _KREA2}
+#: FLUX.2 klein 4B: BFL's own repo is Apache-2.0 and ungated, so one repo covers every small asset
+#: including ``chat_template.jinja`` - klein encodes the prompt through the Qwen3 chat template, and
+#: a wrong template silently degrades the embedding. The transformer config is NOT fetched: it is
+#: derived from the picked checkpoint (see ``flux2/variants.py``), which is what lets one node load
+#: 4B, 9B, dev and any future build without a per-variant config.
+_FLUX2_KLEIN_4B = ArchSpec(
+    key="flux2-klein-4b",
+    assets_repo="black-forest-labs/FLUX.2-klein-4B",
+    asset_files=tuple(
+        AssetFile(path)
+        for path in (
+            "vae/config.json",
+            "scheduler/scheduler_config.json",
+            "text_encoder/config.json",
+            "text_encoder/generation_config.json",
+            "tokenizer/tokenizer.json",
+            "tokenizer/tokenizer_config.json",
+            "tokenizer/chat_template.jinja",
+            "tokenizer/special_tokens_map.json",
+            "tokenizer/added_tokens.json",
+            "tokenizer/merges.txt",
+            "tokenizer/vocab.json",
+        )
+    ),
+)
+
+#: FLUX.2 klein 9B: BFL's 9B repos are gated, so the encoder config comes from the ungated Qwen3-8B
+#: repo it is built from. The VAE, scheduler and tokenizer are identical family-wide, so they still
+#: come from the 4B repo.
+_FLUX2_KLEIN_9B = ArchSpec(
+    key="flux2-klein-9b",
+    assets_repo="Qwen/Qwen3-8B",
+    asset_files=(
+        AssetFile("config.json", local="text_encoder/config.json"),
+        AssetFile("vae/config.json", repo="black-forest-labs/FLUX.2-klein-4B"),
+        AssetFile("scheduler/scheduler_config.json", repo="black-forest-labs/FLUX.2-klein-4B"),
+        *(
+            AssetFile(path, repo="black-forest-labs/FLUX.2-klein-4B")
+            for path in (
+                "tokenizer/tokenizer.json",
+                "tokenizer/tokenizer_config.json",
+                "tokenizer/chat_template.jinja",
+                "tokenizer/special_tokens_map.json",
+                "tokenizer/added_tokens.json",
+                "tokenizer/merges.txt",
+                "tokenizer/vocab.json",
+            )
+        ),
+    ),
+)
+
+#: FLUX.2 dev: its assets come from BFL's own repo, not from Mistral's. The upstream Mistral repo
+#: ships `tekken.json` (Mistral's own tokenizer format) and has no diffusers-style processor config
+#: at all, so the pipeline cannot be built from it. BFL's repo is access-gated, which the fetch
+#: handles by using the ambient HF token (see ``ensure_assets``).
+_FLUX2_DEV = ArchSpec(
+    key="flux2-dev",
+    assets_repo="black-forest-labs/FLUX.2-dev",
+    asset_files=(
+        AssetFile("text_encoder/config.json"),
+        AssetFile("text_encoder/generation_config.json"),
+        AssetFile("tokenizer/tokenizer.json"),
+        AssetFile("tokenizer/tokenizer_config.json"),
+        AssetFile("tokenizer/preprocessor_config.json"),
+        AssetFile("tokenizer/processor_config.json"),
+        AssetFile("tokenizer/special_tokens_map.json"),
+        AssetFile("tokenizer/chat_template.jinja"),
+        AssetFile("vae/config.json", repo="black-forest-labs/FLUX.2-klein-4B"),
+        AssetFile("scheduler/scheduler_config.json", repo="black-forest-labs/FLUX.2-klein-4B"),
+    ),
+)
+
+SPECS: dict[str, ArchSpec] = {
+    _ZIMAGE.key: _ZIMAGE,
+    _KREA2.key: _KREA2,
+    _FLUX2_KLEIN_4B.key: _FLUX2_KLEIN_4B,
+    _FLUX2_KLEIN_9B.key: _FLUX2_KLEIN_9B,
+    _FLUX2_DEV.key: _FLUX2_DEV,
+}
 
 
 def _spec(arch: str) -> ArchSpec:
@@ -144,17 +222,24 @@ def ensure_assets(arch: str) -> Path:
         try:
             import shutil
 
-            from huggingface_hub import hf_hub_download
 
             for asset in spec.asset_files:
                 repo, local = asset.target(spec)
-                # token=False: these repos are public, and a stale ambient token 401s even on those.
-                fetched = hf_hub_download(repo, asset.path, local_dir=str(root), token=False)
+                fetched = _fetch_asset(repo, asset.path, root)
                 if local != asset.path:
                     destination = root / local
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(fetched, destination)
         except Exception as error:  # noqa: BLE001 - re-raised as a clear component error
+            # A gated repo is an access problem, not a config problem, and the fix is a click on
+            # the model page rather than anything in the app - so say that instead.
+            if type(error).__name__ == "GatedRepoError":
+                raise ComponentError(
+                    f"{spec.assets_repo} is a gated repository and this Hugging Face account has "
+                    f"not been granted access. Open https://huggingface.co/{spec.assets_repo} , "
+                    "accept the licence, then run this again. (Log in with `hf auth login` or set "
+                    "HF_TOKEN if you have not already.)"
+                ) from error
             raise ComponentError(
                 f"Could not fetch the one-time {arch} config/tokenizer assets from "
                 f"{spec.assets_repo} ({error}). This ~15 MB download happens once; after it, "
@@ -162,6 +247,26 @@ def ensure_assets(arch: str) -> Path:
             ) from error
         marker.write_text("ok")
     return root
+
+
+
+def _fetch_asset(repo: str, path: str, root: Path) -> str:
+    """One small asset, trying the ambient HF token first and anonymously second.
+
+    Both directions matter: an access-gated repo (FLUX.2 dev) needs the user's token, while a
+    stale or invalid cached token 401s even on a public repo - so neither order alone works. This
+    mirrors what the model downloader does for weights (``studio/models.py``).
+    """
+    from huggingface_hub import hf_hub_download
+    from huggingface_hub.utils import HfHubHTTPError
+
+    try:
+        return hf_hub_download(repo, path, local_dir=str(root))
+    except HfHubHTTPError as error:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+        if status not in (401, 403):
+            raise
+        return hf_hub_download(repo, path, local_dir=str(root), token=False)
 
 
 def _link_or_copy(src: Path, dst: Path) -> None:
@@ -920,4 +1025,361 @@ def assemble_zimage_pipeline(
         text_encoder=text_encoder,
         tokenizer=tokenizer,
         transformer=transformer,
+    )
+
+
+# --- FLUX.2 --------------------------------------------------------------------------------------
+
+
+def _flux2_config_dir(arch: str, file: str, config: dict[str, Any]) -> Path:
+    """A tiny staging dir holding the transformer config derived from ``file``, so diffusers'
+    ``from_single_file`` has a local config to read.
+
+    The config is derived from the checkpoint's own tensor shapes rather than fetched, which is what
+    lets one node load klein 4B, klein 9B, dev and any later build. Keyed by the weights path, so a
+    different checkpoint stages its own."""
+    digest = hashlib.sha1(f"{file}:{sorted(config.items())!r}".encode()).hexdigest()[:16]
+    stage = assets_root(arch) / "transformer_config" / digest
+    marker = stage / "config.json"
+    if marker.is_file():
+        return stage
+    with _ASSETS_LOCK:
+        if marker.is_file():
+            return stage
+        import json
+
+        stage.mkdir(parents=True, exist_ok=True)
+        payload = {"_class_name": "Flux2Transformer2DModel", **config}
+        marker.write_text(json.dumps(payload, indent=2))
+    return stage
+
+
+def _is_gguf(file: str) -> bool:
+    return Path(file).suffix.lower() == ".gguf"
+
+
+def _gguf_config(dtype: Any) -> Any:
+    """diffusers' GGUF quantization config, or a clear error when the optional backend is absent.
+
+    Unlike int8/NF4 this is not a fallback-to-full-precision case: a ``.gguf`` file cannot be read
+    at all without it, so failing with an install hint beats a raw parser traceback."""
+    try:
+        from diffusers import GGUFQuantizationConfig
+
+        return GGUFQuantizationConfig(compute_dtype=dtype)
+    except Exception as error:  # noqa: BLE001 - surfaced as a node error with an install hint
+        raise ComponentError(
+            "Reading a .gguf checkpoint needs the 'gguf' package. Install it (pip install gguf) or "
+            "pick a .safetensors model in the Diffusion file dropdown."
+        ) from error
+
+
+def load_flux2_transformer(
+    arch: str,
+    file: str,
+    config: dict[str, Any],
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    device: str | None = None,
+    loras: tuple[LoraRef, ...] = (),
+) -> Any:
+    """The FLUX.2 transformer from a single ``.safetensors`` or ``.gguf``.
+
+    ``config`` is the geometry derived from the checkpoint. GGUF carries its own quantization, so
+    the fit plan's quant is ignored for those files - the file already is the smaller weights."""
+
+    def build() -> Any:
+        from diffusers import Flux2Transformer2DModel
+
+        if Path(file).is_dir():
+            # A diffusers folder carries its own config and, for the prequantized dev checkpoints,
+            # already-NF4 shards. from_pretrained streams them shard by shard, which is the only
+            # way a 32B model reaches a 24 GB card: nothing is ever materialized at full size.
+            # (from_single_file cannot do this - it ignores quantization_config entirely.)
+            return Flux2Transformer2DModel.from_pretrained(
+                file,
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+                local_files_only=True,
+                **({"device_map": {"": device}} if device else {}),
+            )
+
+        root = _flux2_config_dir(arch, file, config)
+        kwargs: dict[str, Any] = {}
+        if _is_gguf(file):
+            kwargs["quantization_config"] = _gguf_config(dtype)
+        model = Flux2Transformer2DModel.from_single_file(
+            file,
+            config=str(root),
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+            device=device,
+            local_files_only=True,
+            **kwargs,
+        )
+        if _is_gguf(file):
+            if loras:
+                raise ComponentError(
+                    "LoRAs cannot be fused into a .gguf checkpoint. Use a .safetensors model, or "
+                    "remove the LoRA."
+                )
+            return model
+        # Fuse before quantizing: the fuse adds a full-precision delta into each weight, which a
+        # quantized weight is not a plain tensor to accept. Same ordering as the Z-Image path.
+        if loras:
+            from .lora import fuse_loras
+
+            fuse_loras(model, loras)
+        if quant is Quantization.NF4:
+            _swap_to_4bit(model)
+            if device:
+                model.to(device)  # bitsandbytes quantizes each weight during this move
+        else:
+            # from_single_file ignores quantization_config, so int8 is applied after the load.
+            _quantize_in_place(model, quant)
+        return model
+
+    key = (
+        arch, "diffusion", file, _dtype_key(dtype), quant.value, _device_key(device),
+        *lora_cache_key(loras),
+    )
+    return _cached(key, build)
+
+
+def load_flux2_vae(arch: str, file: str, dtype: Any, device: str | None = None) -> Any:
+    """The FLUX.2 VAE from a single ``.safetensors`` plus the bundled config.
+
+    ``AutoencoderKLFlux2`` has no single-file converter in diffusers, so the config-driven
+    ``from_config`` + ``assign=`` load is used instead (the same shape as the Z-Image ControlNet
+    loader). Never quantized: the config sets ``force_upcast`` and it is only a few hundred MB.
+    Note this VAE carries running batch-norm buffers instead of FLUX.1's latent scale/shift scalars,
+    so a strict load is what guarantees they arrived."""
+
+    def build() -> Any:
+        import torch
+        from diffusers import AutoencoderKLFlux2
+        from safetensors.torch import load_file
+
+        root = ensure_assets(arch)
+        config = AutoencoderKLFlux2.load_config(str(root), subfolder="vae")
+        with torch.device("meta"):
+            model = AutoencoderKLFlux2.from_config(config)
+        expected = set(model.state_dict())
+        state = _flux2_vae_state(load_file(file, device=device or "cpu"), config, expected)
+        missing = expected - set(state)
+        if missing:
+            raise ComponentError(
+                f"'{Path(file).name}' is not a FLUX.2 VAE ({len(missing)} tensors missing, e.g. "
+                f"{sorted(missing)[0]}). Download the FLUX.2 VAE from the node's model popup."
+            )
+        model = model.to_empty(device=device or "cpu")
+        model.load_state_dict({k: v.to(dtype) for k, v in state.items()}, strict=True, assign=True)
+        state.clear()
+        _release_transient()
+        return model.eval()
+
+    return _cached(
+        (arch, "vae", file, _dtype_key(dtype), Quantization.NONE.value, _device_key(device)), build
+    )
+
+
+def _flux2_vae_state(
+    state: dict[str, Any], config: dict[str, Any], expected: set[str]
+) -> dict[str, Any]:
+    """The shipped VAE in diffusers key order.
+
+    The distributed file (BFL's, and ComfyUI's repack of it) uses the original LDM layout -
+    ``decoder.mid.attn_1.k`` where diffusers has ``decoder.mid_block.attentions.0.to_k`` - and
+    diffusers has no single-file loader for ``AutoencoderKLFlux2``. Its LDM converter does the bulk
+    of the rename; two things it does not know about are handled here:
+
+    - ``bn.*``, the running batch-norm statistics FLUX.2 uses in place of FLUX.1's latent
+      scale/shift scalars. Losing these silently produces washed-out output rather than an error.
+    - ``quant_conv`` / ``post_quant_conv``, which the file nests under encoder/decoder.
+
+    A file that is already diffusers-keyed is passed through untouched.
+    """
+    if expected.issubset(state):
+        return state
+    from diffusers.loaders.single_file_utils import convert_ldm_vae_checkpoint
+
+    converted: dict[str, Any] = dict(convert_ldm_vae_checkpoint(dict(state), config))
+    for source, target in (
+        ("encoder.quant_conv", "quant_conv"),
+        ("decoder.post_quant_conv", "post_quant_conv"),
+    ):
+        for suffix in ("weight", "bias"):
+            value = state.get(f"{source}.{suffix}")
+            if value is not None:
+                converted[f"{target}.{suffix}"] = value
+    converted.update({k: v for k, v in state.items() if k.startswith("bn.")})
+    return converted
+
+
+def assemble_flux2_encoders(
+    *,
+    arch: str,
+    pipeline: str,
+    distilled: bool,
+    vae_file: str,
+    text_encoder_file: str,
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    vae_dtype: Any = None,
+    device: str | None = None,
+) -> Any:
+    """A **transformer-less** FLUX.2 pipeline: VAE + text encoder + scheduler only.
+
+    For the checkpoints where the encoder and the transformer cannot be resident together - dev is
+    18 GB of NF4 transformer against a 15 GB encoder, 33 GB on a 24 GB card - the prompt is encoded
+    through this first, the encoder is freed, and only then is the transformer loaded and attached.
+    Same trick the trainer uses to precache before the base loads.
+    """
+    from diffusers import Flux2KleinKVPipeline, Flux2KleinPipeline, Flux2Pipeline
+
+    vae = load_flux2_vae(arch, vae_file, dtype if vae_dtype is None else vae_dtype, device=device)
+    _release_transient()
+    if pipeline == "dev":
+        text_encoder, tokenizer = load_flux2_mistral_encoder(
+            arch, text_encoder_file, dtype, quant, device=device
+        )
+    else:
+        text_encoder, tokenizer = load_text_encoder(
+            arch, text_encoder_file, dtype, quant, device=device
+        )
+    _release_transient()
+    scheduler = load_scheduler(arch)
+
+    common = dict(scheduler=scheduler, vae=vae, text_encoder=text_encoder, tokenizer=tokenizer)
+    if pipeline == "dev":
+        return Flux2Pipeline(transformer=None, **common)
+    cls = Flux2KleinKVPipeline if pipeline == "klein-kv" else Flux2KleinPipeline
+    return cls(transformer=None, is_distilled=distilled, **common)
+
+
+def attach_flux2_transformer(
+    pipe: Any,
+    *,
+    arch: str,
+    diffusion_file: str,
+    config: dict[str, Any],
+    vae_file: str,
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    device: str | None = None,
+    loras: tuple[LoraRef, ...] = (),
+) -> Any:
+    """Free the text encoder, then load the transformer into the VRAM it was holding.
+
+    The VAE is kept: it is small and the decode still needs it. Dropped rather than moved to the
+    CPU, because the hosts that need this staging are exactly the ones whose RAM cannot take a
+    15 GB encoder either.
+    """
+    pipe.text_encoder = None
+    pipe.tokenizer = None
+    unload_components(keep_files={vae_file})
+    _release_transient()
+    pipe.transformer = load_flux2_transformer(
+        arch, diffusion_file, config, dtype, quant, device=device, loras=loras
+    )
+    _release_transient()
+    return pipe
+
+
+def assemble_flux2_pipeline(
+    *,
+    arch: str,
+    pipeline: str,
+    distilled: bool,
+    diffusion_file: str,
+    config: dict[str, Any],
+    vae_file: str,
+    text_encoder_file: str,
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    vae_dtype: Any = None,
+    device: str | None = None,
+    loras: tuple[LoraRef, ...] = (),
+    cancel_check: Callable[[], None] | None = None,
+) -> Any:
+    """Build a FLUX.2 pipeline from three local single files.
+
+    ``pipeline`` selects the class family: ``"klein"``/``"klein-kv"`` (Qwen3 encoder) or ``"dev"``
+    (Mistral-3). Components are cached individually, so swapping one file reuses the others, and
+    buffers are released between the big loads so peak memory tracks one component rather than their
+    sum. The returned pipeline is unplaced - the runner owns placement."""
+    from diffusers import Flux2KleinKVPipeline, Flux2KleinPipeline, Flux2Pipeline
+
+    transformer = load_flux2_transformer(
+        arch, diffusion_file, config, dtype, quant, device=device, loras=loras
+    )
+    _release_transient()
+    if cancel_check is not None:
+        cancel_check()
+    vae = load_flux2_vae(arch, vae_file, dtype if vae_dtype is None else vae_dtype, device=device)
+    _release_transient()
+    if cancel_check is not None:
+        cancel_check()
+    if pipeline == "dev":
+        text_encoder, tokenizer = load_flux2_mistral_encoder(
+            arch, text_encoder_file, dtype, quant, device=device
+        )
+    else:
+        # klein's encoder is a stock Qwen3 - the same loader (and the same on-disk file) Z-Image
+        # uses, so a user who already ran Z-Image has it.
+        text_encoder, tokenizer = load_text_encoder(
+            arch, text_encoder_file, dtype, quant, device=device
+        )
+    _release_transient()
+    scheduler = load_scheduler(arch)
+
+    if pipeline == "dev":
+        return Flux2Pipeline(
+            scheduler=scheduler,
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            transformer=transformer,
+        )
+    cls = Flux2KleinKVPipeline if pipeline == "klein-kv" else Flux2KleinPipeline
+    return cls(
+        scheduler=scheduler,
+        vae=vae,
+        text_encoder=text_encoder,
+        tokenizer=tokenizer,
+        transformer=transformer,
+        is_distilled=distilled,
+    )
+
+
+def load_flux2_mistral_encoder(
+    arch: str,
+    file: str,
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    device: str | None = None,
+) -> tuple[Any, Any]:
+    """FLUX.2 dev's Mistral-3 text encoder + processor, staged like the Qwen3 one so transformers
+    streams tensors to the GPU instead of materializing all ~35 GB in host RAM."""
+
+    def build() -> tuple[Any, Any]:
+        from transformers import AutoProcessor, Mistral3ForConditionalGeneration
+
+        root = ensure_assets(arch)
+        # A folder is already a loadable model directory (and for the NF4 build, already quantized);
+        # a single file is staged next to the bundled config so transformers can stream it.
+        weights_dir = file if Path(file).is_dir() else str(_staged_encoder_dir(arch, file))
+        text_encoder = Mistral3ForConditionalGeneration.from_pretrained(
+            weights_dir,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+            device_map={"": device} if device else None,
+            local_files_only=True,
+            quantization_config=_quant_config(quant, framework="transformers"),
+        )
+        processor = AutoProcessor.from_pretrained(str(root / "tokenizer"), local_files_only=True)
+        return text_encoder, processor
+
+    return _cached(
+        (arch, "text_encoder", file, _dtype_key(dtype), quant.value, _device_key(device)), build
     )

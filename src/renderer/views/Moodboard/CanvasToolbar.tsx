@@ -2,6 +2,9 @@
  * Floating bottom-center widget bar: a horizontal strip of canvas tools - Select (edit), Pan
  * (view), Text, and Add (opens a node list). It sits inside the canvas area, so it tracks the
  * Assets panel as it opens/resizes.
+ *
+ * Shared by both canvases. The Trainer omits `onAddText`, since it has no text node, and the
+ * button is dropped rather than shown disabled.
  */
 export function CanvasToolbar({
   tool,
@@ -14,8 +17,8 @@ export function CanvasToolbar({
   tool: 'select' | 'pan'
   onSelectTool: () => void
   onPanTool: () => void
-  /** Add a text node (at canvas centre). */
-  onAddText: () => void
+  /** Add a text node (at canvas centre). Omitted on canvases without text nodes (the Trainer). */
+  onAddText?: () => void
   /** Open the "Add node" list, anchored to the + button. */
   onOpenAdd: (buttonRect: DOMRect) => void
 }): React.JSX.Element {
@@ -28,9 +31,11 @@ export function CanvasToolbar({
         <HandIcon />
       </ToolButton>
       <div className="mx-0.5 h-6 w-px self-center bg-border" />
-      <ToolButton label="Add text" onClick={onAddText}>
-        <span className="text-base font-bold leading-none">T</span>
-      </ToolButton>
+      {onAddText && (
+        <ToolButton label="Add text" onClick={onAddText}>
+          <span className="text-base font-bold leading-none">T</span>
+        </ToolButton>
+      )}
       <ToolButton
         label="Add node"
         onClick={(e) => onOpenAdd(e.currentTarget.getBoundingClientRect())}

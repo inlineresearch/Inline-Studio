@@ -8,13 +8,8 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useTrainingStore } from '../../../store/trainingStore'
 import { useTrainerBoardStore } from '../../../store/trainerBoardStore'
 import { NodeFrame } from '../../Moodboard/nodes/NodeFrame'
-import {
-  AdjustIcon,
-  CaptionGlyph,
-  NodeBadge,
-  NodeBadgeRow,
-  PlayIcon,
-} from '../../Moodboard/nodes/NodeBadge'
+import { AdjustIcon, CaptionGlyph, NodeBadge, NodeBadgeRow } from '../../Moodboard/nodes/NodeBadge'
+import { NodeRunToolbar } from '../../Moodboard/nodes/NodeRunToolbar'
 import { DATASET_HANDLE, wiredDatasetId } from './handles'
 
 export function CaptionNode({ id, selected }: NodeProps): React.JSX.Element {
@@ -27,6 +22,8 @@ export function CaptionNode({ id, selected }: NodeProps): React.JSX.Element {
   const loadItems = useTrainingStore((s) => s.loadItems)
   const autoCaption = useTrainingStore((s) => s.autoCaption)
   const captioning = useTrainingStore((s) => s.captioning)
+  const toggleSettings = useTrainerBoardStore((s) => s.toggleSettings)
+  const settingsItemId = useTrainerBoardStore((s) => s.settingsItemId)
 
   useEffect(() => {
     void loadDatasets()
@@ -52,6 +49,16 @@ export function CaptionNode({ id, selected }: NodeProps): React.JSX.Element {
 
   return (
     <>
+      {/* The same floating control every runnable node uses, rather than one buried in the footer. */}
+      <NodeRunToolbar
+        isTarget={!!selected}
+        busy={captioning}
+        onRun={() => datasetId && void autoCaption(datasetId, overwrite)}
+        onStop={() => {}}
+        disabled={!datasetId || total === 0}
+        disabledReason={!datasetId ? 'Wire or pick a dataset first' : 'This dataset has no images'}
+        runLabel="Auto-caption"
+      />
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<CaptionGlyph />}>Caption</NodeBadge>
         {total > 0 && (
@@ -112,24 +119,16 @@ export function CaptionNode({ id, selected }: NodeProps): React.JSX.Element {
           <div className="flex items-center justify-between border-t border-border bg-surface/90 px-2 py-1">
             {/* The model is configurable (INLINE_CAPTIONER_MODEL), so don't name one here. */}
             <span className="text-[10px] text-zinc-500">Auto-caption</span>
-            <div className="flex items-center gap-1">
-              <button
-                data-gen-settings-toggle
-                onClick={() => void patchData(id, { overwrite: !overwrite })}
-                title={overwrite ? 'Re-caption every image' : 'Only caption empty captions'}
-                className={`nodrag rounded p-1 ${overwrite ? 'text-emerald-400' : 'text-zinc-400'} hover:bg-panel`}
-              >
-                <AdjustIcon className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => datasetId && void autoCaption(datasetId, overwrite)}
-                disabled={!datasetId || captioning || total === 0}
-                title="Auto-caption"
-                className="nodrag rounded p-1 text-emerald-400 hover:bg-panel disabled:opacity-40"
-              >
-                <PlayIcon className="h-4 w-4" />
-              </button>
-            </div>
+            <button
+              data-gen-settings-toggle
+              onClick={() => toggleSettings(id)}
+              title="Adjust caption settings"
+              className={`nodrag rounded p-1 hover:bg-panel ${
+                settingsItemId === id ? 'text-zinc-100' : 'text-zinc-400'
+              }`}
+            >
+              <AdjustIcon className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </NodeFrame>

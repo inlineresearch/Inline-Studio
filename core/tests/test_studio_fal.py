@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from inline_core.studio import fal
+from inline_core.studio import frames as fr
 from inline_core.studio import moodboard as mb
 from inline_core.studio.store import StudioStore
 
@@ -188,3 +189,48 @@ def test_resolve_fal_inputs_media_and_prompt(tmp_path) -> None:
     assert len(resolved["images"]) == 1
     assert resolved["images"][0].startswith("data:image/png;base64,")
     assert resolved["videos"] == [] and resolved["audios"] == []
+    # Untagged inputs stay out of byHandle so they fall back to positional kind resolution.
+    assert resolved["byHandle"] == {}
+
+
+def test_resolve_fal_inputs_groups_by_handle(tmp_path) -> None:
+    """Two images on different ports (a start and an end keyframe) stay distinguishable."""
+    store = StudioStore(tmp_path / "app", tmp_path / "ws")
+    project = store.create_project("Fal")
+    conn, folder = store.conn(), store.folder()
+    (folder / "assets").mkdir(exist_ok=True)
+    for name in ("start", "end"):
+        (folder / "assets" / f"{name}.png").write_bytes(name.encode())
+        conn.execute(
+            "INSERT INTO assets (id, project_id, name, file_path, kind, created_at) "
+            f"VALUES ('{name}', ?, '{name}', 'assets/{name}.png', 'image', 0)",
+            (project["id"],),
+        )
+    gen = mb.add_gen_node(conn, "minimax/h3/image-to-video", 0, 0, kind="video", params={},
+                          title="H3")
+    fr.add_input(conn, gen["frameId"], "start", "image")
+    fr.add_input(conn, gen["frameId"], "end", "end_image")
+
+    resolved = fal.resolve_fal_inputs(conn, folder, gen["frameId"])
+    assert len(resolved["images"]) == 2
+    assert resolved["byHandle"]["image"] == [resolved["images"][0]]
+    assert resolved["byHandle"]["end_image"] == [resolved["images"][1]]
+
+
+def test_the_same_asset_can_feed_two_ports(tmp_path) -> None:
+    """Dedup is per (asset, handle): one image wired to both keyframes must not collapse to one."""
+    store = StudioStore(tmp_path / "app", tmp_path / "ws")
+    project = store.create_project("Fal")
+    conn = store.conn()
+    conn.execute(
+        "INSERT INTO assets (id, project_id, name, file_path, kind, created_at) "
+        "VALUES ('a1', ?, 'in', 'assets/in.png', 'image', 0)",
+        (project["id"],),
+    )
+    gen = mb.add_gen_node(conn, "minimax/h3/image-to-video", 0, 0, kind="video", params={},
+                          title="H3")
+    first = fr.add_input(conn, gen["frameId"], "a1", "image")
+    second = fr.add_input(conn, gen["frameId"], "a1", "end_image")
+    assert first["id"] != second["id"]
+    # Re-adding the same (asset, handle) pair still dedups.
+    assert fr.add_input(conn, gen["frameId"], "a1", "image")["id"] == first["id"]

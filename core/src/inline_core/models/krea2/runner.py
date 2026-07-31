@@ -94,15 +94,15 @@ def _descriptor(variant: str) -> NodeDescriptor:
             ),
             ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
             ParamField(
-                "model", "Diffusion file (auto)", Widget.SELECT, "",
+                "model", "Diffusion model", Widget.SELECT, "",
                 options_from="diffusion_models", advanced=True,
             ),
             ParamField(
-                "text_encoder", "Text-encoder file (auto)", Widget.SELECT, "",
+                "text_encoder", "Text encoder", Widget.SELECT, "",
                 options_from="text_encoders", advanced=True,
             ),
             ParamField(
-                "vae", "VAE file (auto)", Widget.SELECT, "",
+                "vae", "VAE", Widget.SELECT, "",
                 options_from="vae", advanced=True,
             ),
         ),

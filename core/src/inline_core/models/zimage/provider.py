@@ -30,6 +30,18 @@ class ZImageProvider:
     def download_target(self, component: ModelComponent) -> Path:
         return models_dir() / component.category
 
+    def resolved(self) -> dict[str, str]:
+        """What this node would load right now, so the pickers show real files instead of "auto"."""
+        from pathlib import Path as _Path
+
+        diffusion = resolve_diffusion(None)
+        picks: dict[str, Any] = {
+            "model": diffusion[1] if diffusion and diffusion[0] == "single_file" else None,
+            "vae": resolve_vae(None),
+            "text_encoder": resolve_text_encoder(None),
+        }
+        return {k: _Path(str(v)).name for k, v in picks.items() if v}
+
     def estimate(self, policy: Any) -> dict[str, Any] | None:
         """Whether the model will fit this machine, and how (resident / int8 / offload / won't
         fit), so the popup warns BEFORE a load. Pure ``stat`` + a live VRAM/RAM probe; ``None``

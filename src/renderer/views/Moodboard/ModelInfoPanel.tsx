@@ -8,14 +8,16 @@ const KIND_LABEL: Record<PortKind, string> = {
   image: 'Image',
   'image[]': 'Images',
   video: 'Video',
+  'video[]': 'Videos',
   audio: 'Audio',
+  'audio[]': 'Audio',
   text: 'Text',
   path: 'File',
 }
 
 function KindIcon({ kind }: { kind: PortKind }): React.JSX.Element {
-  if (kind === 'video') return <VideoGlyph className="h-4 w-4" />
-  if (kind === 'audio') return <AudioGlyph className="h-4 w-4" />
+  if (kind === 'video' || kind === 'video[]') return <VideoGlyph className="h-4 w-4" />
+  if (kind === 'audio' || kind === 'audio[]') return <AudioGlyph className="h-4 w-4" />
   if (kind === 'text') return <span className="text-sm font-bold leading-none">T</span>
   return <ImageGlyph className="h-4 w-4" />
 }

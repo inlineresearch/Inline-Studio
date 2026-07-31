@@ -74,6 +74,8 @@ export interface FrameInput {
   assetId: string | null
   sourceFrameId: string | null
   position: number
+  /** The model input port this was wired to, or null when untagged (drag-drop / pre-v17 rows). */
+  handle: string | null
 }
 
 /** Every ComfyUI render of a frame becomes an immutable Take. */
@@ -423,7 +425,7 @@ export interface ModelDownloadErrorEvent {
 
 /** Turbo needs a training adapter to avoid "turbo drift"; a de-turbo base trains without one. */
 /** The model family a LoRA is trained for. */
-export type TrainingArch = 'z-image' | 'krea2'
+export type TrainingArch = 'z-image' | 'krea2' | 'flux2'
 
 /**
  * Which base checkpoint a run trains against. `raw` is Krea 2's undistilled base (the recommended

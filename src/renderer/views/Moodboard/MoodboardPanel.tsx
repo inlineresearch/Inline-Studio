@@ -27,6 +27,8 @@ import { importFilesToLibrary, importMediaUrlToLibrary } from '@/lib/importFiles
 import { copyText } from '@/lib/clipboard'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
 import { portKindColor, portsSatisfy, type NodeDescriptor, type PortKind } from '@shared/coreNodes'
+import { getNodeDef } from '@shared/nodes/registry'
+import { portIdForHandle } from '@shared/nodes/handles'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useProjectStore } from '../../store/projectStore'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
@@ -69,6 +71,9 @@ import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
 import { CanvasToolbar } from './CanvasToolbar'
 import { AddNodeMenu, type AddNodeKind } from './AddNodeMenu'
+import { FirstRunHints } from './GettingStarted/FirstRunHints'
+import { StarterCards } from './GettingStarted/StarterCards'
+import { useStarterGraph } from './GettingStarted/useStarterGraph'
 import { Modal } from '../../components/Modal'
 import { readRecipeFromBlob, type Recipe } from '../../lib/pngRecipe'
 import { buildGraphFromRecipe } from '../../lib/recipeGraph'
@@ -301,6 +306,7 @@ function Board(): React.JSX.Element {
   const undo = useMoodboardStore((s) => s.undo)
   const redo = useMoodboardStore((s) => s.redo)
   const addSourceInput = useFrameStore((s) => s.addSourceInput)
+  const addInputs = useFrameStore((s) => s.addInputs)
   const setHero = useFrameStore((s) => s.setHero)
   const genError = useGenerationStore((s) => s.error)
   const setGenError = useGenerationStore((s) => s.setError)
@@ -603,6 +609,9 @@ function Board(): React.JSX.Element {
     return screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
   }
 
+  const loading = useMoodboardStore((s) => s.loading)
+  const { onPick: onPickStarter } = useStarterGraph({ setNodes, fitView, centre })
+
   /** The topmost layer whose rectangle contains an absolute flow point (or null). */
   const layerAt = (pos: { x: number; y: number }, exceptId?: string): MoodboardItem | null => {
     const hit = items
@@ -671,14 +680,24 @@ function Board(): React.JSX.Element {
 
     void connect(c.source, c.target, c.sourceHandle ?? null, c.targetHandle ?? null)
 
-    // Output → Frame/GenNode input ('in', or a GenNode's 'audio' dot): also wire the data flow-link
-    // (the DAG edge). The target frame takes the source's frame - a frame/GenNode directly, or the
-    // frame feeding a Preview - as a live input, resolved to that frame's hero take at generate time.
-    if (
-      tgt?.type === 'frame' &&
-      (c.targetHandle === 'in' || c.targetHandle === 'audio') &&
-      tgt.frameId
-    ) {
+    // Output → Frame/GenNode media input: also wire the data flow-link (the DAG edge). The target
+    // frame takes the source's frame - a frame/GenNode directly, or the frame feeding a Preview - as
+    // a live input, resolved to that frame's hero take at generate time. Everything but the 'prompt'
+    // dot is a media input; the input records which port it landed on, so a model with two ports of
+    // one kind (start vs end keyframe) can tell them apart.
+    if (tgt?.type === 'frame' && c.targetHandle !== 'prompt' && tgt.frameId) {
+      const tgtFrame = frames.find((f) => f.id === tgt.frameId)
+      const tgtDef = tgtFrame?.modelId ? getNodeDef(tgtFrame.modelId) : undefined
+      const handle = tgtDef ? portIdForHandle(tgtDef, c.targetHandle) : null
+      // A library source contributes the assets themselves: a Load Assets node all of its own, a
+      // single asset node itself. Without this the edge drew but no input row was written, so the
+      // node looked wired and generated from nothing.
+      const assetIds =
+        src?.type === 'loader' ? (src.data?.assetIds ?? []) : src?.assetId ? [src.assetId] : []
+      if (assetIds.length > 0) {
+        void addInputs(tgt.frameId, assetIds, handle)
+        return
+      }
       let sourceFrameId: string | undefined
       if (src?.type === 'frame') {
         sourceFrameId = src.frameId ?? undefined
@@ -689,7 +708,7 @@ function Board(): React.JSX.Element {
           : undefined
       }
       if (sourceFrameId && sourceFrameId !== tgt.frameId) {
-        void addSourceInput(tgt.frameId, sourceFrameId)
+        void addSourceInput(tgt.frameId, sourceFrameId, handle)
       }
     }
     // Wiring into a Director node's input handle just persists the connector (above); the
@@ -1080,7 +1099,10 @@ function Board(): React.JSX.Element {
           <Background gap={22} size={2.5} color="#525a66" />
         </ReactFlow>
 
-        {items.length === 0 && <EmptyCanvasHint />}
+        {/* Gate on loading too: items is briefly empty while the board loads, and the cards
+            flashing in and out reads as a glitch. */}
+        {items.length === 0 && !loading && <StarterCards onPick={onPickStarter} />}
+        <FirstRunHints wrapperRef={wrapperRef} />
 
         {genError && <GenErrorToast message={genError} onDismiss={() => setGenError(null)} />}
 
@@ -1245,34 +1267,6 @@ function GenErrorToast({
   )
 }
 
-/** Centered hint shown over an empty canvas. Non-interactive so it never blocks drops. */
-function EmptyCanvasHint(): React.JSX.Element {
-  return (
-    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-      <div className="flex max-w-sm flex-col items-center gap-2 text-center">
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="h-9 w-9 text-zinc-600"
-        >
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <circle cx="8.5" cy="8.5" r="1.5" />
-          <path d="m21 15-4.5-4.5L7 20" />
-        </svg>
-        <p className="text-sm font-medium text-zinc-300">Your canvas is empty</p>
-        <p className="text-xs leading-relaxed text-zinc-500">
-          Drag an asset from the Assets panel onto the canvas to create your first frame.
-        </p>
-      </div>
-    </div>
-  )
-}
-
-/** Map items to React Flow nodes - layers first so they precede their children. */
 function toNodes(
   items: MoodboardItem[],
   assetsById: Map<

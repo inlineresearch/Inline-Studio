@@ -29,6 +29,7 @@ import { DATASET_HANDLE, RUN_HANDLE, wiredDatasetId } from './handles'
 function requirementType(arch: string, baseMode: string): string {
   if (arch === 'krea2')
     return baseMode === 'turbo_adapter' ? 'krea/krea-2-turbo' : 'krea/krea-2-raw'
+  if (arch === 'flux2') return 'black-forest-labs/flux-2'
   return 'alibaba/z-image-turbo'
 }
 

@@ -33,19 +33,63 @@ def _source_output_port(source: dict[str, Any] | None, source_handle: str | None
     return source_handle or "out"  # a 'core' item's handles already are Core port ids
 
 
+def _loader_assets(item: dict[str, Any] | None) -> list[str]:
+    """The asset ids a Load Assets node holds, in the order the user arranged them."""
+    if item is None or item.get("type") != "loader":
+        return []
+    return list((item.get("data") or {}).get("assetIds") or [])
+
+
+def ref_node_id(loader_id: str, index: int) -> str:
+    """The derived source-node id for one asset of a fanned-out Load Assets node."""
+    return f"{loader_id}::ref{index}"
+
+
 def _edges_for(
-    item_id: str, connectors: list[dict[str, Any]], by_id: dict[str, dict[str, Any]]
-) -> dict[str, dict[str, str]]:
-    inputs: dict[str, dict[str, str]] = {}
+    item_id: str,
+    connectors: list[dict[str, Any]],
+    by_id: dict[str, dict[str, Any]],
+    is_list_port: Callable[[str, str], bool],
+    fanned_out: dict[str, int],
+) -> dict[str, list[dict[str, str]]]:
+    """This node's input edges, keyed by target port.
+
+    A **list** port keeps every wire, in connector order, because that order is user-visible: FLUX.2
+    addresses reference images by position. Any other port keeps only the last wire, which is the
+    long-standing behaviour - the canvas allows a second wire and treats it as a replacement, and
+    turning that into a validation error would break existing boards.
+
+    A Load Assets node wired into a list port contributes **all** of its assets rather than just the
+    first, so one loader holding three references composes from three. ``fanned_out`` records which
+    loaders were expanded so the node pass emits matching source nodes.
+    """
+    target = by_id.get(item_id)
+    target_type = ((target or {}).get("data") or {}).get("core", {}).get("type") or ""
+    inputs: dict[str, list[dict[str, str]]] = {}
     for c in connectors:
         if c["toItemId"] != item_id:
             continue
         data = c.get("data") or {}
-        target_handle = data.get("targetHandle") or "in"
-        inputs[target_handle] = {
-            "from": c["fromItemId"],
-            "output": _source_output_port(by_id.get(c["fromItemId"]), data.get("sourceHandle")),
-        }
+        handle = data.get("targetHandle") or "in"
+        source_id = c["fromItemId"]
+        source = by_id.get(source_id)
+        output = _source_output_port(source, data.get("sourceHandle"))
+        listed = bool(target_type) and is_list_port(target_type, handle)
+
+        assets = _loader_assets(source) if listed else []
+        if len(assets) > 1:
+            fanned_out[source_id] = len(assets)
+            edges = [
+                {"from": ref_node_id(source_id, i), "output": "image"}
+                for i in range(len(assets))
+            ]
+        else:
+            edges = [{"from": source_id, "output": output}]
+
+        if listed:
+            inputs.setdefault(handle, []).extend(edges)
+        else:
+            inputs[handle] = edges[:1]
     return inputs
 
 
@@ -55,6 +99,8 @@ def _item_to_node(
     by_id: dict[str, dict[str, Any]],
     resolve_asset_path: Callable[[str], str | None],
     resolve_frame_path: Callable[[str], str | None],
+    is_list_port: Callable[[str, str], bool],
+    fanned_out: dict[str, int],
 ) -> dict[str, Any] | None:
     data = item.get("data") or {}
     if item["type"] == "core" and data.get("core"):
@@ -62,7 +108,7 @@ def _item_to_node(
             "id": item["id"],
             "type": data["core"]["type"],
             "params": data["core"].get("params") or {},
-            "inputs": _edges_for(item["id"], connectors, by_id),
+            "inputs": _edges_for(item["id"], connectors, by_id, is_list_port, fanned_out),
         }
     if item["type"] == "prompt":
         text = data.get("promptText") or ""
@@ -76,9 +122,12 @@ def _item_to_node(
             "type": "input/image",
             "params": {"asset": {"ref": "path", "path": path}},
         }
-    # A Load Assets loader feeds its hero (first) asset as a frozen image source.
+    # A Load Assets loader feeds its hero (first) asset as a frozen image source. Wired into a list
+    # port it instead contributes every asset it holds, one source node each (see _edges_for).
     if item["type"] == "loader":
         asset_ids = data.get("assetIds") or []
+        if item["id"] in fanned_out:
+            return None  # replaced by the derived per-asset sources
         path = resolve_asset_path(asset_ids[0]) if asset_ids else None
         if not path:
             return None
@@ -140,18 +189,21 @@ def _apply_facing_hints(nodes: list[dict[str, Any]], by_id: dict[str, dict[str, 
         item = by_id.get(node["id"])
         if item is None or item.get("type") != "core":
             continue
-        inputs: dict[str, dict[str, str]] = node.get("inputs") or {}
+        inputs: dict[str, list[dict[str, str]]] = node.get("inputs") or {}
         hint: dict[str, str] | None = None
-        for edge in inputs.values():
-            source_item = by_id.get(edge["from"])
-            # Only when the control map itself made it into the graph - an unresolvable map means no
-            # ControlNet runs, and a lone "from behind" in the prompt would be a lie.
-            if edge["from"] not in by_node:
-                continue
-            if source_item is not None and source_item.get("type") == "controlSpace":
-                hint = _facing_hint(source_item)
-                if hint is not None:
-                    break
+        for edges in inputs.values():
+            for edge in edges:
+                source_item = by_id.get(edge["from"])
+                # Only when the control map itself made it into the graph - an unresolvable map
+                # means no ControlNet runs, and a lone "from behind" in the prompt would be a lie.
+                if edge["from"] not in by_node:
+                    continue
+                if source_item is not None and source_item.get("type") == "controlSpace":
+                    hint = _facing_hint(source_item)
+                    if hint is not None:
+                        break
+            if hint is not None:
+                break
         if hint is None:
             continue
         # Idempotent: a take's recipe records the params the run actually used, so restoring a take
@@ -163,8 +215,8 @@ def _apply_facing_hints(nodes: list[dict[str, Any]], by_id: dict[str, dict[str, 
                 params["negative_prompt"] = (
                     f"{existing}, {hint['negative']}" if existing else hint["negative"]
                 )
-        prompt_edge = inputs.get("prompt")
-        source = by_node.get(prompt_edge["from"]) if prompt_edge else None
+        prompt_edges = inputs.get("prompt") or []
+        source = by_node.get(prompt_edges[0]["from"]) if prompt_edges else None
         # Only a plain text source can be extended; a node-produced prompt is left alone.
         if not hint["positive"] or source is None or source["type"] != "input/text":
             continue
@@ -179,7 +231,7 @@ def _apply_facing_hints(nodes: list[dict[str, Any]], by_id: dict[str, dict[str, 
                 "params": {"text": f"{text}, {hint['positive']}" if text else hint["positive"]},
             }
         )
-        inputs["prompt"] = {"from": derived_id, "output": "text"}
+        inputs["prompt"] = [{"from": derived_id, "output": "text"}]
 
 
 def _upstream_closure(target: str, connectors: list[dict[str, Any]]) -> set[str]:
@@ -197,9 +249,17 @@ def _upstream_closure(target: str, connectors: list[dict[str, Any]]) -> set[str]
 
 
 def build_workflow_graph(
-    conn: sqlite3.Connection, folder: Path, target_item_id: str
+    conn: sqlite3.Connection,
+    folder: Path,
+    target_item_id: str,
+    is_list_port: Callable[[str, str], bool] | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Build the Core graph for a canvas node from the open project's board."""
+    """Build the Core graph for a canvas node from the open project's board.
+
+    ``is_list_port(node_type, port_id)`` reports whether a port accepts several wires; the registry
+    supplies it (see ``studio/generation.py``). Without it every port is treated as single-valued,
+    which is the pre-multi-reference behaviour and keeps this callable from a plain test.
+    """
     board = mb.list_board(conn)
     items, connectors = board["items"], board["connectors"]
     by_id = {i["id"]: i for i in items}
@@ -212,13 +272,55 @@ def build_workflow_graph(
         out = fr.resolve_frame_file(conn, frame_id)
         return str(folder / out["filePath"]) if out else None
 
+    listed = is_list_port or (lambda _type, _port: False)
+    closure = sorted(_upstream_closure(target_item_id, connectors))
+    # Two passes: the edges decide which loaders fan out, so they must be resolved before the node
+    # pass can know whether to emit one source per loader or one per asset.
+    fanned_out: dict[str, int] = {}
+    edges_by_node = {
+        node_id: _edges_for(node_id, connectors, by_id, listed, fanned_out)
+        for node_id in closure
+        if (by_id.get(node_id) or {}).get("type") == "core"
+    }
+
     nodes: list[dict[str, Any]] = []
-    for node_id in _upstream_closure(target_item_id, connectors):
+    for node_id in closure:
         item = by_id.get(node_id)
         if item is None:
             continue
-        node = _item_to_node(item, connectors, by_id, resolve_asset_path, resolve_frame_path)
+        node = _item_to_node(
+            item, connectors, by_id, resolve_asset_path, resolve_frame_path, listed, fanned_out
+        )
         if node is not None:
+            if node_id in edges_by_node:
+                node["inputs"] = edges_by_node[node_id]
             nodes.append(node)
+        nodes.extend(_fanned_out_sources(item, fanned_out, resolve_asset_path))
     _apply_facing_hints(nodes, by_id)
     return {"schemaVersion": 1, "nodes": nodes}, target_item_id
+
+
+def _fanned_out_sources(
+    item: dict[str, Any],
+    fanned_out: dict[str, int],
+    resolve_asset_path: Callable[[str], str | None],
+) -> list[dict[str, Any]]:
+    """One frozen image source per asset of a Load Assets node feeding a list port. An unresolvable
+    asset is skipped rather than failing the run, matching the single-asset path."""
+    count = fanned_out.get(item.get("id") or "")
+    if not count:
+        return []
+    asset_ids = _loader_assets(item)[:count]
+    sources: list[dict[str, Any]] = []
+    for index, asset_id in enumerate(asset_ids):
+        path = resolve_asset_path(asset_id)
+        if not path:
+            continue
+        sources.append(
+            {
+                "id": ref_node_id(item["id"], index),
+                "type": "input/image",
+                "params": {"asset": {"ref": "path", "path": path}},
+            }
+        )
+    return sources

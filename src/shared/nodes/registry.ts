@@ -11,9 +11,13 @@ import { SEEDANCE_T2V } from './seedanceT2V'
 import { SEEDANCE_I2V } from './seedanceI2V'
 import { SEEDANCE_REF2V } from './seedanceRef2V'
 import { KREA_V2 } from './kreaV2'
+import { FLUX_2, FLUX_2_EDIT } from './flux2'
 import { SONILO_V2M } from './soniloVideoToMusic'
 import { SONILO_T2M } from './soniloTextToMusic'
 import { SONILO_V2V } from './soniloVideoToVideo'
+import { MINIMAX_H3_T2V } from './minimaxH3T2V'
+import { MINIMAX_H3_I2V } from './minimaxH3I2V'
+import { MINIMAX_H3_REF2V } from './minimaxH3Ref2V'
 
 export const NODE_DEFS: readonly NodeDef[] = [
   GPT_IMAGE_2,
@@ -23,7 +27,12 @@ export const NODE_DEFS: readonly NodeDef[] = [
   SEEDANCE_T2V,
   SEEDANCE_I2V,
   SEEDANCE_REF2V,
+  MINIMAX_H3_T2V,
+  MINIMAX_H3_I2V,
+  MINIMAX_H3_REF2V,
   KREA_V2,
+  FLUX_2,
+  FLUX_2_EDIT,
   SONILO_V2M,
   SONILO_T2M,
   SONILO_V2V,
@@ -49,6 +58,8 @@ const OWNER_LABELS: Record<string, string> = {
   bytedance: 'ByteDance',
   krea: 'Krea',
   sonilo: 'Sonilo',
+  // H3's ids have no `fal-ai/` prefix, unlike MiniMax's older Hailuo endpoints.
+  minimax: 'MiniMax',
 }
 
 export function modelOwner(id: string): string {

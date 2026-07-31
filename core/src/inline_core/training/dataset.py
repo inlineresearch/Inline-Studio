@@ -69,8 +69,7 @@ def precache(
     if not pairs:
         raise RuntimeError("The exported dataset is empty.")
 
-    encode_latent = _krea2_latent if arch == archs.KREA2 else _zimage_latent
-    encode_caption = _krea2_caption if arch == archs.KREA2 else _zimage_caption
+    encode_latent, encode_caption = _encoders_for(arch)
     cached: list[dict[str, Any]] = []
     for img_path, caption in pairs:
         for mirrored in (False, True) if flip else (False,):
@@ -94,7 +93,7 @@ def precache_empty(components: Any, arch: str, device: str) -> dict[str, Any]:
     still loaded - by training time the encoder has been freed to make room for the transformer."""
     import torch
 
-    encode_caption = _krea2_caption if arch == archs.KREA2 else _zimage_caption
+    _latent, encode_caption = _encoders_for(arch)
     with torch.no_grad():
         item = encode_caption(components, "", device)
     return {k: v.cpu() for k, v in item.items()}
@@ -156,3 +155,55 @@ def _krea2_caption(components: Any, caption: str, device: str) -> dict[str, Any]
         prompt=caption or "", device=torch.device(device)
     )
     return {"embed": embeds[0], "mask": mask[0]}
+
+
+# --- FLUX.2 -------------------------------------------------------------------------------------
+
+
+def _flux2_latent(vae: Any, pixels: Any) -> Any:
+    """Pixels -> the latent FLUX.2 actually denoises, matching ``_encode_vae_image``.
+
+    Two steps beyond a plain encode, and both are load-bearing. The VAE patchifies 2x2 on top of its
+    8x downscale, so the trained latent is 128 channels at H/16, not 32 at H/8. And FLUX.2 replaced
+    FLUX.1's scale/shift scalars with **running batch-norm statistics carried in the checkpoint** -
+    normalizing with a scalar (or not at all) trains against off-manifold latents that still look
+    plausible, so this must come from ``vae.bn``.
+    """
+    import torch
+    from diffusers import Flux2KleinPipeline as P
+
+    latent = vae.encode(pixels).latent_dist.mode()
+    latent = P._patchify_latents(latent)
+    mean = vae.bn.running_mean.view(1, -1, 1, 1).to(latent.device, latent.dtype)
+    std = torch.sqrt(vae.bn.running_var.view(1, -1, 1, 1) + vae.config.batch_norm_eps).to(
+        latent.device, latent.dtype
+    )
+    return (latent - mean) / std
+
+
+def _flux2_caption(components: Any, caption: str, device: str) -> dict[str, Any]:
+    """Caption -> conditioning, straight from ``Flux2KleinPipeline.encode_prompt``.
+
+    Routed through the pipeline rather than reimplemented because the details are easy to get
+    subtly wrong and impossible to notice: the Qwen3 chat template with thinking **off** (a thinking
+    preamble corrupts the embedding), and three intermediate layers stacked rather than the last.
+    """
+    import torch
+
+    with torch.no_grad():
+        embeds, _ids = components.pipeline.encode_prompt(
+            prompt=caption or "", device=torch.device(device), max_sequence_length=512
+        )
+    return {"embed": embeds[0]}  # (seq, 3 * hidden); FLUX.2 pads to a fixed length, no mask needed
+
+
+#: arch -> (latent encoder, caption encoder). Each arch reuses its own pipeline's encoding path, so
+#: a training latent is byte-for-byte what generation would produce from the same image.
+_ENCODERS = {
+    archs.KREA2: (_krea2_latent, _krea2_caption),
+    archs.FLUX2: (_flux2_latent, _flux2_caption),
+}
+
+
+def _encoders_for(arch: str) -> tuple[Any, Any]:
+    return _ENCODERS.get(arch, (_zimage_latent, _zimage_caption))

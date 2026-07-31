@@ -21,7 +21,12 @@ def port_json(port: Port) -> dict[str, Any]:
     return {"id": port.id, "label": port.label, "kind": port.kind.value, "required": port.required}
 
 
-def param_json(field: ParamField, catalog: ModelCatalog | None = None) -> dict[str, Any]:
+def param_json(
+    field: ParamField,
+    catalog: ModelCatalog | None = None,
+    resolved: dict[str, str] | None = None,
+    options_for: Any = None,
+) -> dict[str, Any]:
     out: dict[str, Any] = {
         "key": field.key,
         "label": field.label,
@@ -37,8 +42,17 @@ def param_json(field: ParamField, catalog: ModelCatalog | None = None) -> dict[s
     options = [{"value": o.value, "label": o.label} for o in field.options]
     if field.options_from is not None:
         out["optionsFrom"] = field.options_from
-        if catalog is not None:
+        # A node's own provider narrows the shared category to the files it can actually load;
+        # without that a FLUX.2 node lists Z-Image checkpoints that fail on load.
+        allowed = options_for(field.options_from) if options_for else None
+        if allowed is not None:
+            options += [{"value": f, "label": f} for f in allowed]
+        elif catalog is not None:
             options += [{"value": f, "label": f} for f in catalog.list(field.options_from)]
+    # Show the file the node would actually use rather than an opaque "auto", so what a user sees
+    # is what ran, and so they have something concrete to change.
+    if resolved and field.key in resolved:
+        out["default"] = resolved[field.key]
     if options:
         out["options"] = options
     if field.advanced:
@@ -47,8 +61,16 @@ def param_json(field: ParamField, catalog: ModelCatalog | None = None) -> dict[s
 
 
 def descriptor_json(
-    descriptor: NodeDescriptor, catalog: ModelCatalog | None = None
+    descriptor: NodeDescriptor,
+    catalog: ModelCatalog | None = None,
+    requirements: Any = None,
 ) -> dict[str, Any]:
+    resolved = requirements.resolved(descriptor.type) if requirements else {}
+    options_for = (
+        (lambda category: requirements.catalog_options(descriptor.type, category))
+        if requirements
+        else None
+    )
     out: dict[str, Any] = {
         "type": descriptor.type,
         "title": descriptor.title,
@@ -58,7 +80,9 @@ def descriptor_json(
         "outputKind": descriptor.output_kind.value if descriptor.output_kind else None,
         "inputs": [port_json(p) for p in descriptor.inputs],
         "outputs": [port_json(p) for p in descriptor.outputs],
-        "params": [param_json(p, catalog) for p in descriptor.params],
+        "params": [
+            param_json(p, catalog, resolved, options_for) for p in descriptor.params
+        ],
     }
     if descriptor.hidden:
         out["hidden"] = True

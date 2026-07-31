@@ -56,6 +56,7 @@ const input = (over: Partial<FrameInput>): FrameInput => ({
   assetId: null,
   sourceFrameId: null,
   position: 0,
+  handle: null,
   ...over,
 })
 
