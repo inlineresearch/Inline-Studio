@@ -414,19 +414,23 @@ The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader
 | Krea 2  | Turbo + adapter | 512  | **4-bit**      | 11.7GB        | **11.9GB**    |
 | Krea 2  | Turbo + adapter | 1024 | bf16           | out of memory | out of memory |
 | Krea 2  | Turbo + adapter | 1024 | **4-bit**      | **27.8GB**    | out of memory |
+| FLUX.2  | Base (klein 4B) | 512  | bf16           | 8.6GB         | not measured  |
+| FLUX.2  | Base (klein 4B) | 512  | **4-bit**      | 8.6GB         | not measured  |
+| FLUX.2  | Base (klein 4B) | 1024 | bf16           | 9.9GB         | not measured  |
+| FLUX.2  | Base (klein 4B) | 1024 | **4-bit**      | 9.9GB         | not measured  |
 
 A training adapter is free: it is fused into the base before training starts, so Turbo-plus-adapter and the undistilled base peak identically.
 
-FLUX.2 training figures have not been measured yet, so this table covers Z-Image and Krea 2 only.
+**FLUX.2 is the cheapest of the three to train, and 4-bit does nothing for it.** Both precisions peak at the same number because the peak is not the transformer: klein's base is 7.4GB while its Qwen3-4B text encoder is 7.5GB, so the caption and latent caching pass at the start of the run costs more than training itself does. Dropping the frozen base to 4-bit shrinks a part of the run that was never the high-water mark, and the step gets slower for nothing. Leave base precision on Auto for FLUX.2, which is what it already picks. The rows above are klein Base 4B, the only checkpoint the trainer accepts for this architecture.
 
-Which card fits what (24GB and 32GB are interpolated, not measured):
+Which card fits what (24GB and 32GB are interpolated, not measured, as are the FLUX.2 columns on 16GB: those peaks were measured on an L40S and leave room on a smaller card, but no 16GB run has been done):
 
-| Card | Z-Image 512 | Z-Image 1024 | Krea 2 512 | Krea 2 1024 |
-| ---- | ----------- | ------------ | ---------- | ----------- |
-| 16GB | yes         | no           | yes, 4-bit | no          |
-| 24GB | yes         | yes          | yes        | no          |
-| 32GB | yes         | yes          | yes        | yes, 4-bit  |
-| 48GB | yes         | yes          | yes        | 4-bit only  |
+| Card | Z-Image 512 | Z-Image 1024 | Krea 2 512 | Krea 2 1024 | FLUX.2 512 | FLUX.2 1024 |
+| ---- | ----------- | ------------ | ---------- | ----------- | ---------- | ----------- |
+| 16GB | yes         | no           | yes, 4-bit | no          | yes        | yes         |
+| 24GB | yes         | yes          | yes        | no          | yes        | yes         |
+| 32GB | yes         | yes          | yes        | yes, 4-bit  | yes        | yes         |
+| 48GB | yes         | yes          | yes        | 4-bit only  | yes        | yes         |
 
 Fitting and being usable are different questions. Turing has no native bf16, so a T4 runs the same work about 4x slower:
 
@@ -437,6 +441,8 @@ Fitting and being usable are different questions. Turing has no native bf16, so 
 | Z-Image 512                       | 85s  | 285s |
 
 A 1500-step Krea 2 run is roughly 40 minutes on an L40S and 3 hours on a T4.
+
+FLUX.2 is quicker than either. On an L40S, klein Base 4B trains at about 0.3s a step at 512 and 1.0s a step at 1024, so a 1500-step run comes in around 8 minutes at 512 and 25 minutes at 1024. Forcing the 4-bit base costs about 10 percent a step at both resolutions. FLUX.2 has not been timed on a T4.
 
 **Krea 2 at 512 with the 4-bit base is the configuration to reach for on a small card.** 1024 needs about 32GB and no setting closes that gap: activations scale with image tokens, and gradient checkpointing and memory-efficient attention are already on. Train at 512 instead, since a LoRA trained at 512 applies at any generation resolution.
 
@@ -458,9 +464,9 @@ Krea 2's base is 26GB at bf16, which is what makes it expensive to fine-tune. Th
 - **Full precision (bf16)** forces the unquantized base.
 - **4-bit (NF4)** forces the quantized base.
 
-The setting appears for Krea 2 and FLUX.2. Z-Image has no 4-bit path and does not need one: it trains in about 15 GB at 1024, so bf16 already fits the cards people have.
+The setting appears for Krea 2 and FLUX.2, but it only pays off on Krea 2. Z-Image has no 4-bit path and does not need one: it trains in about 15 GB at 1024, so bf16 already fits the cards people have. FLUX.2 has the path and gains nothing from it, because klein 4B is smaller than its own text encoder and the peak sits in the caching pass either way, so Auto leaves it at bf16. See [Benchmark results](#benchmark-results).
 
-To keep the peak down, the VAE and text encoder are loaded first, used to cache latents and captions, then freed before the transformer loads, so the peak is the transformer on its own rather than all three resident at once. If you do hit an out-of-memory error, lower the training resolution before changing anything else.
+To keep the peak down, the VAE and text encoder are loaded first, used to cache latents and captions, then freed before the transformer loads, so the two never stack. Which half then owns the peak depends on the model: for Z-Image and Krea 2 it is the transformer, for FLUX.2 klein it is the caching pass. If you do hit an out-of-memory error, lower the training resolution before changing anything else.
 
 ## FAQ
 
