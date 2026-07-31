@@ -92,26 +92,31 @@ FLUX2 = NodeDescriptor(
         ),
         # FLUX.2 is flow-match, so these tune the FlowMatchEuler scheduler - see models/sampling.py.
         *sampling_param_fields(SamplingFamily.FLOW_MATCH),
+        # A FLUX.2 ControlNet Union (dev only). Empty = off, and a wired control map is then fed
+        # through the reference channel instead, which works on every variant.
+        ParamField("controlnet", "ControlNet (dev only)", Widget.SELECT, "",
+                   options_from="controlnet"),
+        ParamField("control_strength", "Control strength", Widget.NUMBER, 0.75,
+                   min=0.0, max=2.0, step=0.05),
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
-        # "" = identify the picked checkpoint from its tensor shapes. The explicit options exist for
-        # a file whose name hides whether it is a base or distilled build.
+        # Normally identified from the checkpoint's tensor shapes and served as the default, so this
+        # only needs overriding for a file whose name hides whether it is a base or distilled build
+        # (the one thing shapes cannot tell apart). A pick that contradicts the file is ignored.
         ParamField(
             "variant", "Model variant", Widget.SELECT, "",
-            options=(Option("", "Auto (detect from file)"), *(
-                Option(v.key, f"FLUX.2 {v.label}") for v in V.VARIANTS
-            )),
+            options=tuple(Option(v.key, f"FLUX.2 {v.label}") for v in V.VARIANTS),
             advanced=True,
         ),
         ParamField(
-            "model", "Diffusion file (auto)", Widget.SELECT, "",
+            "model", "Diffusion model", Widget.SELECT, "",
             options_from="diffusion_models", advanced=True,
         ),
         ParamField(
-            "text_encoder", "Text-encoder file (auto)", Widget.SELECT, "",
+            "text_encoder", "Text encoder", Widget.SELECT, "",
             options_from="text_encoders", advanced=True,
         ),
         ParamField(
-            "vae", "VAE file (auto)", Widget.SELECT, "", options_from="vae", advanced=True,
+            "vae", "VAE", Widget.SELECT, "", options_from="vae", advanced=True,
         ),
     ),
 )
@@ -177,9 +182,12 @@ class Flux2Runner(NodeRunner):
         # map is just one more reference; FLUX.2 conditions on it the same way.
         refs = list(inputs.get("image") or [])
         control = rt.first(inputs.get("control_image"))
-        if control is not None:
+        control_file = _resolve_controlnet(params, variant, control)
+        # Without a ControlNet the map is just another reference, which is how klein does control.
+        if control is not None and control_file is None:
             refs.append(control)
         images = [rt.load_image(ref, _LABEL) for ref in refs]
+        control_map = rt.load_image(control, _LABEL) if control_file else None
 
         # Size-aware placement: hand the policy the on-disk sizes so it fits dtype/quant/offload to
         # THIS GPU, then refuse an impossible load up front rather than OOM-killing the server.
@@ -190,6 +198,11 @@ class Flux2Runner(NodeRunner):
         if fit is not None and not fit.fits:
             raise ComponentError(rt.wont_fit_message(fit))
 
+        staged = _needs_staged_encode(source, vae_file, te_file, self._policy)
+        # A checkpoint that ships already quantized loads as-is: re-quantizing it is a hard error,
+        # and its on-disk weights are already the resident ones.
+        prequantized = V.is_prequantized(source)
+        quant = Quantization.NONE if prequantized else self._policy.quantization()
         logger.info(
             "%s (%s) run: %dx%d, %d steps, guidance=%.1f, %d reference(s) | %s",
             _LABEL, variant.label, width, height, steps, guidance, len(images),
@@ -206,8 +219,9 @@ class Flux2Runner(NodeRunner):
                 config=config,
                 vae=vae_file,
                 text=te_file,
-                quant=self._policy.quantization(),
+                quant=quant,
                 loras=loras,
+                staged=staged,
                 cancel_check=lambda: rt.raise_if_cancelled(ctx),
             )
         except CancelledError:
@@ -262,6 +276,27 @@ class Flux2Runner(NodeRunner):
                 layers=variant.text_encoder_layers,
             )
         )
+        if staged and getattr(pipe, "transformer", None) is None:
+            if "prompt_embeds" not in call:
+                raise ComponentError(
+                    f"{_LABEL} {variant.label} needs its prompt encoded before the transformer "
+                    "loads, but encoding did not produce embeddings. Free some VRAM and retry."
+                )
+            ctx.emitter.emit(
+                rt.progress_event(ctx, node, Phase.LOADING, 0.5, status="Loading transformer…")
+            )
+            loaders.attach_flux2_transformer(
+                pipe,
+                arch=variant.arch,
+                diffusion_file=source,
+                config=config,
+                vae_file=vae_file,
+                dtype=rt.torch_dtype(self._policy.placement("denoiser")),
+                quant=quant,
+                device=None if placement.offload else str(placement.device),
+                loras=loras,
+            )
+            rt.capture_base_scheduler_config(pipe)
 
         # Rebuild the scheduler for the chosen sampler/scheduler from the pipe's pristine base
         # config (immutable across cache hits).
@@ -279,6 +314,41 @@ class Flux2Runner(NodeRunner):
         )
         rt.raise_if_cancelled(ctx)  # cancelled during load? don't start the denoise
         sample_start = time.perf_counter()
+        handles: list[Any] = []
+        if control_map is not None and control_file:
+            from . import controlnet as cn
+
+            ctx.emitter.emit(
+                rt.progress_event(ctx, node, Phase.LOADING, 0.8, status="Loading ControlNet…")
+            )
+            # The branch is 8.2 GB at bf16, which does not fit beside a resident dev transformer.
+            # Whenever the base is itself quantized, the branch takes NF4 too: it is a frozen side
+            # branch, so 4-bit costs it less than not running at all.
+            branch_quant = (
+                Quantization.NF4
+                if prequantized or quant is not Quantization.NONE
+                else Quantization.NONE
+            )
+            branch = cn.load_control_branch(
+                control_file, config, rt.torch_dtype(placement),
+                device=None if placement.offload else str(placement.device),
+                quant=branch_quant,
+            )
+            reference_tokens = sum(
+                (img.height // 16) * (img.width // 16) for img in images
+            )
+            context = cn.build_context(
+                pipe, control_map, height, width, rt.torch_dtype(placement),
+                str(placement.device), reference_tokens=reference_tokens,
+            )
+            handles = cn.attach(
+                pipe.transformer, branch, context,
+                scale=float(params.get("control_strength", 0.75)),
+            )
+            logger.info(
+                "ControlNet Union attached at layers %s, strength %.2f",
+                cn.CONTROL_LAYERS, float(params.get("control_strength", 0.75)),
+            )
         try:
             with rt.text_encoder_detached(pipe, "prompt_embeds" in call):
                 image = pipe(**call).images[0]
@@ -291,6 +361,11 @@ class Flux2Runner(NodeRunner):
         except MemoryError as error:
             rt.free_vram()
             raise ComponentError(_oom(width, height, len(images), host=True)) from error
+        finally:
+            # The pipeline is cached, so leaving hooks attached would silently control every later
+            # run on this checkpoint.
+            for handle in handles:
+                handle.remove()
         elapsed = time.perf_counter() - sample_start
         peak_gb = rt.peak_vram_gb()
         peak_note = f", peak VRAM {peak_gb:.1f}GB" if peak_gb else ""
@@ -321,6 +396,12 @@ class Flux2Runner(NodeRunner):
                 "seed": seed,
                 **({"references": len(images)} if images else {}),
                 **(
+                    {"controlnet": control_file,
+                     "control_strength": float(params.get("control_strength", 0.75))}
+                    if control_file
+                    else {}
+                ),
+                **(
                     {"loras": [{"file": lo.file, "strength": lo.strength} for lo in loras]}
                     if loras
                     else {}
@@ -346,13 +427,25 @@ def _identify(source: str, params: dict[str, Any]) -> tuple[V.Flux2Variant, dict
     a mislabeled variant should still load with the right shapes.
     """
     shapes = _shapes(source)
-    config = V.derive_transformer_config(shapes) if shapes else None
+    # A folder states its geometry in config.json; a single file has it derived from tensor shapes.
+    config = V.derive_transformer_config(shapes) if shapes else V.config_for(source)
     if config is None:
         raise ComponentError(
             f"'{source}' is not a FLUX.2 diffusion model. Pick a FLUX.2 checkpoint in the "
             "Diffusion file dropdown, or download one from the node's model popup."
         )
-    variant = V.get(str(params.get("variant") or "")) or V.detect(source, shapes)
+    forced = V.get(str(params.get("variant") or ""))
+    # An explicit pick that contradicts the file is dropped rather than honoured. The dropdown
+    # defaults to a concrete variant, so applying any setting persists one; without this guard,
+    # swapping the checkpoint later would build the old variant pipeline for the new file.
+    if forced is not None and forced.joint_attention_dim != config["joint_attention_dim"]:
+        logger.warning(
+            "Ignoring the Model variant override (%s): this checkpoint is not that build. "
+            "Identifying it from the file instead.",
+            forced.label,
+        )
+        forced = None
+    variant = forced or V.detect(source, shapes)
     if variant is None:
         raise ComponentError(
             "Could not tell which FLUX.2 variant this checkpoint is. Pick one explicitly in the "
@@ -364,6 +457,8 @@ def _identify(source: str, params: dict[str, Any]) -> tuple[V.Flux2Variant, dict
 def _shapes(source: str) -> dict[str, list[int]] | None:
     from pathlib import Path
 
+    if Path(source).is_dir():
+        return None  # a folder carries a config.json instead; see V.config_for
     if Path(source).suffix.lower() == ".gguf":
         return _gguf_shapes(source)
     try:
@@ -415,6 +510,36 @@ def _resolve_negative(params: dict[str, Any], variant: V.Flux2Variant) -> str | 
     return negative
 
 
+
+def _resolve_controlnet(
+    params: dict[str, Any], variant: V.Flux2Variant, control: Any
+) -> str | None:
+    """The Fun ControlNet Union file to run, or None to send the map down the reference channel.
+
+    The Union is built against dev's block geometry, so it is refused on klein rather than loaded
+    into a model it does not fit. That is not a dead end: klein still gets structural control from
+    the reference channel, just more loosely.
+    """
+    from ...config import models_dir
+
+    chosen = str(params.get("controlnet") or "").strip()
+    if not chosen or control is None:
+        return None
+    if variant.pipeline != "dev":
+        logger.warning(
+            "The FLUX.2 ControlNet Union is built for dev's geometry, so it is skipped on %s. "
+            "The control map is being used as a reference image instead.",
+            variant.label,
+        )
+        return None
+    path = models_dir() / "controlnet" / chosen
+    if not path.is_file():
+        logger.warning("ControlNet %s not found in models/controlnet/; using it as a reference.",
+                       chosen)
+        return None
+    return str(path)
+
+
 def _oom(width: int, height: int, references: int, *, host: bool = False) -> str:
     message = rt.oom_message(width, height, host=host)
     if references:
@@ -423,6 +548,35 @@ def _oom(width: int, height: int, references: int, *, host: bool = False) -> str
             "every step, so removing one is often the cheapest fix."
         )
     return message
+
+
+
+def _needs_staged_encode(
+    diffusion: str, vae: str, text_encoder: str, policy: DevicePolicy
+) -> bool:
+    """Whether the text encoder and the transformer are too big to be resident together.
+
+    dev is the case this exists for: an 18 GB NF4 transformer beside a 15 GB encoder is 33 GB on a
+    24 GB card, so the whole-pipeline build OOMs during the load - before anything can be freed.
+    When they do not fit, the prompt is encoded first and the encoder dropped to make room.
+
+    On-disk size is the right measure here because the checkpoints that trigger this are already
+    quantized on disk, so what they weigh is what they will occupy.
+    """
+    budget_mb = policy.vram_budget_mb()
+    if not budget_mb:
+        return False  # CPU or an unmeasurable device takes the normal path
+    total = budget_mb / 1024
+    sizes = reqs.footprint_bytes(diffusion, vae, text_encoder)
+    gb = 1024**3
+    whole = sum(sizes.values()) / gb
+    without_encoder = (sizes["diffusion_bytes"] + sizes["vae_bytes"]) / gb
+    budget = total - _ACTIVATION_HEADROOM_GB
+    return whole > budget and without_encoder <= budget
+
+
+#: Room left for activations, matching the device policy's own reserve.
+_ACTIVATION_HEADROOM_GB = 2.5
 
 
 # --- pipeline build -------------------------------------------------------------------------------
@@ -438,6 +592,7 @@ def _load_pipeline(
     text: str,
     quant: Quantization = Quantization.NONE,
     loras: tuple[LoraRef, ...] = (),
+    staged: bool = False,
     cancel_check: Callable[[], None] | None = None,
 ) -> Any:
     key = rt.PipelineKey(
@@ -467,6 +622,24 @@ def _load_pipeline(
         # doesn't stack VRAM.
         rt.PIPELINES.evict_stale(key)
         placement = policy.placement("denoiser")
+        if staged:
+            logger.info(
+                "%s %s: encoding before the transformer loads - they do not fit together",
+                _LABEL, variant.label,
+            )
+            pipe = loaders.assemble_flux2_encoders(
+                arch=variant.arch,
+                pipeline=variant.pipeline,
+                distilled=variant.distilled,
+                vae_file=vae,
+                text_encoder_file=text,
+                dtype=rt.torch_dtype(placement),
+                quant=quant,
+                vae_dtype=rt.torch_dtype(policy.placement("vae")),
+                device=None if placement.offload else str(placement.device),
+            )
+            rt.capture_base_scheduler_config(pipe)
+            return pipe
         # Resident placement streams weights straight to the GPU; the offload path loads to CPU so
         # accelerate can install its hooks before placing.
         pipe = loaders.assemble_flux2_pipeline(

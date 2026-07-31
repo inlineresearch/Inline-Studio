@@ -1091,6 +1091,19 @@ def load_flux2_transformer(
     def build() -> Any:
         from diffusers import Flux2Transformer2DModel
 
+        if Path(file).is_dir():
+            # A diffusers folder carries its own config and, for the prequantized dev checkpoints,
+            # already-NF4 shards. from_pretrained streams them shard by shard, which is the only
+            # way a 32B model reaches a 24 GB card: nothing is ever materialized at full size.
+            # (from_single_file cannot do this - it ignores quantization_config entirely.)
+            return Flux2Transformer2DModel.from_pretrained(
+                file,
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+                local_files_only=True,
+                **({"device_map": {"": device}} if device else {}),
+            )
+
         root = _flux2_config_dir(arch, file, config)
         kwargs: dict[str, Any] = {}
         if _is_gguf(file):
@@ -1203,6 +1216,76 @@ def _flux2_vae_state(
     return converted
 
 
+def assemble_flux2_encoders(
+    *,
+    arch: str,
+    pipeline: str,
+    distilled: bool,
+    vae_file: str,
+    text_encoder_file: str,
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    vae_dtype: Any = None,
+    device: str | None = None,
+) -> Any:
+    """A **transformer-less** FLUX.2 pipeline: VAE + text encoder + scheduler only.
+
+    For the checkpoints where the encoder and the transformer cannot be resident together - dev is
+    18 GB of NF4 transformer against a 15 GB encoder, 33 GB on a 24 GB card - the prompt is encoded
+    through this first, the encoder is freed, and only then is the transformer loaded and attached.
+    Same trick the trainer uses to precache before the base loads.
+    """
+    from diffusers import Flux2KleinKVPipeline, Flux2KleinPipeline, Flux2Pipeline
+
+    vae = load_flux2_vae(arch, vae_file, dtype if vae_dtype is None else vae_dtype, device=device)
+    _release_transient()
+    if pipeline == "dev":
+        text_encoder, tokenizer = load_flux2_mistral_encoder(
+            arch, text_encoder_file, dtype, quant, device=device
+        )
+    else:
+        text_encoder, tokenizer = load_text_encoder(
+            arch, text_encoder_file, dtype, quant, device=device
+        )
+    _release_transient()
+    scheduler = load_scheduler(arch)
+
+    common = dict(scheduler=scheduler, vae=vae, text_encoder=text_encoder, tokenizer=tokenizer)
+    if pipeline == "dev":
+        return Flux2Pipeline(transformer=None, **common)
+    cls = Flux2KleinKVPipeline if pipeline == "klein-kv" else Flux2KleinPipeline
+    return cls(transformer=None, is_distilled=distilled, **common)
+
+
+def attach_flux2_transformer(
+    pipe: Any,
+    *,
+    arch: str,
+    diffusion_file: str,
+    config: dict[str, Any],
+    vae_file: str,
+    dtype: Any,
+    quant: Quantization = Quantization.NONE,
+    device: str | None = None,
+    loras: tuple[LoraRef, ...] = (),
+) -> Any:
+    """Free the text encoder, then load the transformer into the VRAM it was holding.
+
+    The VAE is kept: it is small and the decode still needs it. Dropped rather than moved to the
+    CPU, because the hosts that need this staging are exactly the ones whose RAM cannot take a
+    15 GB encoder either.
+    """
+    pipe.text_encoder = None
+    pipe.tokenizer = None
+    unload_components(keep_files={vae_file})
+    _release_transient()
+    pipe.transformer = load_flux2_transformer(
+        arch, diffusion_file, config, dtype, quant, device=device, loras=loras
+    )
+    _release_transient()
+    return pipe
+
+
 def assemble_flux2_pipeline(
     *,
     arch: str,
@@ -1283,9 +1366,11 @@ def load_flux2_mistral_encoder(
         from transformers import AutoProcessor, Mistral3ForConditionalGeneration
 
         root = ensure_assets(arch)
-        weights_dir = _staged_encoder_dir(arch, file)
+        # A folder is already a loadable model directory (and for the NF4 build, already quantized);
+        # a single file is staged next to the bundled config so transformers can stream it.
+        weights_dir = file if Path(file).is_dir() else str(_staged_encoder_dir(arch, file))
         text_encoder = Mistral3ForConditionalGeneration.from_pretrained(
-            str(weights_dir),
+            weights_dir,
             torch_dtype=dtype,
             low_cpu_mem_usage=True,
             device_map={"": device} if device else None,

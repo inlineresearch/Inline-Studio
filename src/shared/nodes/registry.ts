@@ -11,6 +11,7 @@ import { SEEDANCE_T2V } from './seedanceT2V'
 import { SEEDANCE_I2V } from './seedanceI2V'
 import { SEEDANCE_REF2V } from './seedanceRef2V'
 import { KREA_V2 } from './kreaV2'
+import { FLUX_2, FLUX_2_EDIT } from './flux2'
 import { SONILO_V2M } from './soniloVideoToMusic'
 import { SONILO_T2M } from './soniloTextToMusic'
 import { SONILO_V2V } from './soniloVideoToVideo'
@@ -24,6 +25,8 @@ export const NODE_DEFS: readonly NodeDef[] = [
   SEEDANCE_I2V,
   SEEDANCE_REF2V,
   KREA_V2,
+  FLUX_2,
+  FLUX_2_EDIT,
   SONILO_V2M,
   SONILO_T2M,
   SONILO_V2V,

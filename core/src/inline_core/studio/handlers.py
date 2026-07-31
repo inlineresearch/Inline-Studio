@@ -31,6 +31,24 @@ def _unlink(folder: Path, relatives: list[str]) -> None:
             pass
 
 
+
+#: A node whose face is almost entirely an image preview. At the old 200x120 the render was a
+#: thumbnail you had to open a lightbox to read, so generation nodes open large and portrait.
+GENERATION_NODE_SIZE = (320, 480)
+#: Loaders and other plumbing have no preview, so growing them would only cost canvas space.
+COMPACT_NODE_SIZE = (200, 120)
+
+
+def core_node_size(models: list[dict[str, Any]], core_type: str) -> tuple[int, int]:
+    """How large a Core node opens. Decided here rather than in the renderer because only the
+    registry knows whether a type produces a media output. An unknown type is assumed compact:
+    guessing large would leave a big empty card on the canvas."""
+    descriptor = next((m for m in models if m.get("type") == core_type), None)
+    if descriptor and descriptor.get("outputKind"):
+        return GENERATION_NODE_SIZE
+    return COMPACT_NODE_SIZE
+
+
 def register_studio_handlers(
     rpc: Any,
     store: StudioStore,
@@ -173,7 +191,13 @@ def register_studio_handlers(
     reg("moodboard:addLoader", lambda x, y: mb.add_loader(conn(), x, y))
     reg("moodboard:addControlSpace", lambda x, y: mb.add_control_space(conn(), x, y))
     reg("moodboard:addPrompt", lambda x, y: mb.add_prompt(conn(), x, y))
-    reg("moodboard:addCoreNode", lambda t, x, y: mb.add_core_node(conn(), t, x, y))
+    def _size(core_type: str) -> tuple[int, int]:
+        try:
+            return core_node_size(core_models().get("models", []), core_type)
+        except Exception:  # noqa: BLE001 - a sizing hint must never block adding a node
+            return COMPACT_NODE_SIZE
+
+    reg("moodboard:addCoreNode", lambda t, x, y: mb.add_core_node(conn(), t, x, y, *_size(t)))
     reg(
         "moodboard:addGenNode",
         lambda mid, x, y: mb.add_gen_node(conn(), mid, x, y, kind="image", params={}, title=mid),

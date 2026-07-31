@@ -253,7 +253,12 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // control floated on the output node.
   const isLoader = descriptor.outputKind == null
   const fileParam = core?.params?.file
-  const fileLabel = fileParam ? String(fileParam) : 'Auto'
+  // Name the weights rather than saying "Auto": the point of the label is to tell you what will
+  // load. A generation node's provider resolves this; a plain loader has none, so fall back to the
+  // first file in its catalog, which is the one the engine auto-picks anyway.
+  const fileField = descriptor.params.find((p) => p.key === 'file')
+  const fileFallback = fileField?.default || fileField?.options?.[0]?.value
+  const fileLabel = String(fileParam || fileFallback || 'Not installed')
   // An extension-provided node carries its owning extension's id (`ext:<id>:<module>`) - surface it
   // as a chip so it's clear which extension a canvas node came from.
   const extName = isExtensionNode(descriptor.source) ? extensionOf(descriptor.source) : null
@@ -345,16 +350,25 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
               selectParams.map((field) => {
                 const opts = field.options ?? []
                 const hasAuto = opts.some((o) => o.value === '')
+                // A node saved before Core resolved these still stores "", which matches no option
+                // and renders blank; fall back to the resolved default.
+                const stored = core.params?.[field.key]
+                // Empty means "engine auto-picks", which is the first file; show that rather than a
+                // blank select. Display only - the stored value stays empty until the user picks.
+                const fallback = field.default || opts[0]?.value || ''
+                const selected = stored == null || stored === '' ? fallback : stored
                 return (
                   <select
                     key={field.key}
-                    value={String(core.params?.[field.key] ?? field.default ?? '')}
+                    value={String(selected)}
                     onChange={(e) => setParam(field.key, e.target.value)}
                     title={field.label}
                     className="nodrag w-full min-w-0 rounded border border-border bg-panel px-1.5 py-1 text-[10px] text-zinc-200 outline-none focus:border-accent"
                   >
-                    {/* Empty value = auto-pick the first file; shown as a "Select …" prompt. */}
-                    {!hasAuto && <option value="">{`Select ${field.label}`}</option>}
+                    {/* Only when nothing resolved: otherwise the concrete file is already shown. */}
+                    {!hasAuto && !field.default && (
+                      <option value="">{`Select ${field.label}`}</option>
+                    )}
                     {opts.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}

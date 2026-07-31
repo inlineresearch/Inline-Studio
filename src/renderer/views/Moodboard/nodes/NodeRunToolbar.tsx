@@ -31,6 +31,7 @@ export function NodeRunToolbar({
     <NodeToolbar isVisible={isTarget} position={Position.Top} align="end" offset={12}>
       {busy ? (
         <button
+          data-run-toolbar
           onClick={onStop}
           title={stopLabel}
           className="nodrag flex items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1 text-[11px] font-medium text-zinc-200 shadow-lg hover:bg-black/40 hover:text-white"
@@ -40,6 +41,7 @@ export function NodeRunToolbar({
         </button>
       ) : (
         <button
+          data-run-toolbar
           onClick={onRun}
           disabled={disabled}
           title={disabled ? disabledReason : runLabel}

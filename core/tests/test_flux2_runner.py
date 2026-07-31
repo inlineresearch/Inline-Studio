@@ -16,9 +16,11 @@ runner = pytest.importorskip("inline_core.models.flux2.runner")
 def test_one_node_covers_the_whole_family() -> None:
     assert runner.FLUX2.type == "black-forest-labs/flux-2"
     assert runner.FLUX2.output_kind is not None, "it produces a Frame with take history"
-    # Every variant is reachable from the one node's dropdown, plus the auto entry.
+    # Every variant is reachable from the one node's dropdown, and only real ones are listed: the
+    # variant is normally identified from the checkpoint and served as the default, so an "auto"
+    # entry would only hide which build actually ran.
     variant = next(p for p in runner.FLUX2.params if p.key == "variant")
-    assert [o.value for o in variant.options] == ["", *(v.key for v in V.VARIANTS)]
+    assert [o.value for o in variant.options] == [v.key for v in V.VARIANTS]
 
 
 def test_references_are_a_list_port_and_there_is_no_img2img_strength() -> None:
@@ -102,3 +104,23 @@ def test_the_descriptor_matches_the_pipelines_it_drives() -> None:
     dev = inspect.signature(diffusers.Flux2Pipeline.__call__).parameters
     assert "negative_prompt_embeds" in klein
     assert "negative_prompt_embeds" not in dev
+
+
+def test_a_variant_override_that_contradicts_the_checkpoint_is_ignored(tmp_path) -> None:
+    """The dropdown defaults to a concrete variant and the settings panel persists the whole draft,
+    so a node can end up carrying a variant that no longer matches its file. Honouring it would
+    build the wrong pipeline and produce noise; the file wins."""
+    from tests.test_flux2_resolve import _write_header_only
+    from tests.test_flux2_variants import DEV, KLEIN_4B, _shapes
+
+    dev_file = _write_header_only(tmp_path / "flux2_dev.safetensors", _shapes(DEV))
+    # A stale pick from when this node pointed at a klein checkpoint.
+    variant, config = runner._identify(str(dev_file), {"variant": "klein-4b"})
+    assert variant is V.get("dev"), "the checkpoint decides, not the stale override"
+    assert config["joint_attention_dim"] == 15360
+
+    # A pick that agrees with the file is still honoured: it is the only way to say "this is a Base
+    # build" for a file whose name does not say so, which shapes cannot reveal.
+    klein_file = _write_header_only(tmp_path / "anon.safetensors", _shapes(KLEIN_4B))
+    forced, _ = runner._identify(str(klein_file), {"variant": "klein-4b-base"})
+    assert forced is V.get("klein-4b-base")

@@ -12,8 +12,18 @@ import { useCanvasPrefsStore } from '../../../store/canvasPrefsStore'
  * A connector that highlights when clicked and shows a ✕ button at its midpoint to
  * remove the link between two nodes. `data.functional` distinguishes the animated
  * output→preview wire (indigo) from purely-visual frame links (gray).
+ *
+ * The Studio and Trainer canvases keep separate stores, and React Flow builds edges from a type map
+ * and cannot pass props. So the drawing lives in `DeletableEdgeBody`, which takes `disconnect`
+ * explicitly, and each canvas wraps it with its own store. One implementation, two thin wrappers.
  */
 export function DeletableEdge(props: EdgeProps): React.JSX.Element {
+  return <DeletableEdgeBody {...props} disconnect={useMoodboardStore((s) => s.disconnect)} />
+}
+
+export function DeletableEdgeBody(
+  props: EdgeProps & { disconnect: (id: string) => void | Promise<void> },
+): React.JSX.Element {
   const {
     id,
     sourceX,
@@ -25,8 +35,8 @@ export function DeletableEdge(props: EdgeProps): React.JSX.Element {
     markerEnd,
     selected,
     data,
+    disconnect,
   } = props
-  const disconnect = useMoodboardStore((s) => s.disconnect)
   // Line style is a live canvas preference - every edge subscribes, so switching it in Settings
   // restyles all connectors at once. `angled` = cornered (smooth step); `wave` = curved (bezier).
   const edgeStyle = useCanvasPrefsStore((s) => s.edgeStyle)

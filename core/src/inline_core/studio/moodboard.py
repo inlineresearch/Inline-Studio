@@ -192,9 +192,18 @@ def add_text(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     )
 
 
-def add_core_node(conn: sqlite3.Connection, core_type: str, x: float, y: float) -> dict[str, Any]:
+def add_core_node(
+    conn: sqlite3.Connection,
+    core_type: str,
+    x: float,
+    y: float,
+    width: float = 200,
+    height: float = 120,
+) -> dict[str, Any]:
+    """A Core node on the canvas. The caller sizes it, because only the registry knows whether this
+    type renders an image preview (a generation node) or is compact plumbing (a loader)."""
     return _insert_item(
-        conn, item_type="core", x=x, y=y, width=200, height=120,
+        conn, item_type="core", x=x, y=y, width=width, height=height,
         data={"core": {"type": core_type, "params": {}}},
     )
 

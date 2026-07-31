@@ -8,11 +8,14 @@ from typing import Any
 from ...config import models_dir
 from ..requirements import ModelComponent
 from .requirements import (
+    flux2_checkpoints,
+    flux2_encoders,
     flux2_requirements,
     footprint_bytes,
     resolve_diffusion,
     resolve_text_encoder,
     resolve_vae,
+    resolved_variant,
 )
 
 
@@ -28,6 +31,29 @@ class Flux2Provider:
 
     def download_target(self, component: ModelComponent) -> Path:
         return models_dir() / component.category
+
+    def resolved(self) -> dict[str, str]:
+        """What the node would load right now, so its pickers open on the real files rather than
+        on "auto". Names are relative to their category folder, matching the dropdown values."""
+        picks = {
+            "model": resolve_diffusion(None),
+            "vae": resolve_vae(None),
+            "text_encoder": resolve_text_encoder(None),
+        }
+        out = {key: path.name for key, path in picks.items() if path is not None}
+        variant = resolved_variant(None)
+        if variant is not None:
+            out["variant"] = variant.key
+        return out
+
+    def catalog_options(self, category: str) -> list[str] | None:
+        """Only the files this node can actually load. The categories are shared with Z-Image and
+        Krea 2, so an unfiltered list offers checkpoints that would fail on load."""
+        if category == "diffusion_models":
+            return [p.name for p in flux2_checkpoints()]
+        if category == "text_encoders":
+            return [p.name for p in flux2_encoders()]
+        return None
 
     def estimate(self, policy: Any) -> dict[str, Any] | None:
         """Whether the installed checkpoint fits this machine, and how, so the popup warns before a

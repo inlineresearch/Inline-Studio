@@ -21,7 +21,10 @@ from pathlib import Path
 __all__ = [
     "VARIANTS",
     "Flux2Variant",
+    "config_for",
     "derive_transformer_config",
+    "folder_config",
+    "is_prequantized",
     "detect",
     "get",
     "text_encoder_kind",
@@ -242,24 +245,80 @@ def _name_flags(name: str) -> tuple[bool, bool]:
     return "-base-" in padded, "-kv-" in padded
 
 
-def detect(path: str | Path, shapes: dict[str, list[int]] | None = None) -> Flux2Variant | None:
-    """Which FLUX.2 variant a checkpoint file is, or None if it is not one.
+def folder_config(path: str | Path) -> dict[str, object] | None:
+    """The transformer config of a diffusers-format checkpoint **folder**, or None.
 
-    Pass ``shapes`` when the header has already been read, so it is not read twice. Never reads
-    tensor data and never imports torch.
+    A prequantized dev checkpoint ships as a folder of shards plus a ``config.json`` rather than one
+    consolidated file, so there is no header to derive geometry from - and no need, because the
+    config is right there. Recognised by its ``_class_name``, so a folder belonging to another
+    architecture is left alone.
+    """
+    folder = Path(path)
+    marker = folder / "config.json"
+    if not folder.is_dir() or not marker.is_file():
+        return None
+    try:
+        import json
+
+        config = json.loads(marker.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(config, dict):
+        return None
+    if config.get("_class_name") != "Flux2Transformer2DModel":
+        return None
+    return {k: v for k, v in config.items() if not k.startswith("_")}
+
+
+def is_prequantized(path: str | Path) -> bool:
+    """Whether a checkpoint folder carries its own quantization (an NF4 dev build, say).
+
+    Such a checkpoint must not be quantized again: its on-disk size already is its resident size,
+    and handing diffusers a second, different quantization config is a hard error. It also means the
+    fit ladder's assumption - that on-disk size is bf16 and quantization can halve it - does not
+    hold here, so the caller passes ``Quantization.NONE`` and loads the weights as they are.
+    """
+    folder = Path(path)
+    if not folder.is_dir():
+        return False
+    try:
+        import json
+
+        config = json.loads((folder / "config.json").read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(config, dict) and bool(config.get("quantization_config"))
+
+
+def config_for(path: str | Path) -> dict[str, object] | None:
+    """The transformer geometry for a checkpoint, whether it is a single file or a folder."""
+    folder = folder_config(path)
+    if folder is not None:
+        return folder
+    shapes = _shapes_of(path)
+    return derive_transformer_config(shapes) if shapes else None
+
+
+def _shapes_of(path: str | Path) -> dict[str, list[int]] | None:
+    file = Path(path)
+    if not file.is_file() or file.suffix.lower() not in _WEIGHT_SUFFIXES:
+        return None
+    try:
+        from ..checkpoint import CheckpointReader
+
+        return CheckpointReader(file).shapes()
+    except Exception:  # noqa: BLE001 - an unreadable or foreign file is simply "not FLUX.2"
+        return None
+
+
+def detect(path: str | Path, shapes: dict[str, list[int]] | None = None) -> Flux2Variant | None:
+    """Which FLUX.2 variant a checkpoint is, or None if it is not one.
+
+    Handles both a single ``.safetensors`` and a diffusers folder. Pass ``shapes`` when the header
+    has already been read, so it is not read twice. Never reads tensor data, never imports torch.
     """
     file = Path(path)
-    if shapes is None:
-        if not file.is_file() or file.suffix.lower() not in _WEIGHT_SUFFIXES:
-            return None
-        try:
-            from ..checkpoint import CheckpointReader
-
-            shapes = CheckpointReader(file).shapes()
-        except Exception:  # noqa: BLE001 - an unreadable or foreign file is simply "not FLUX.2"
-            return None
-
-    config = derive_transformer_config(shapes)
+    config = derive_transformer_config(shapes) if shapes is not None else config_for(file)
     if config is None:
         return None
     is_base, is_kv = _name_flags(file.name)

@@ -54,6 +54,23 @@ class RequirementsProvider(Protocol):
         the hidden Hugging Face cache."""
         ...
 
+    def resolved(self) -> dict[str, str]:
+        """param key -> the file this node would load right now, for its own dropdowns.
+
+        Optional. Without it a node's file pickers sit on "auto", which tells a user nothing about
+        what actually ran; with it the node opens showing the real selection, which is also the
+        thing they need in order to change it.
+        """
+        ...
+
+    def catalog_options(self, category: str) -> list[str] | None:
+        """The files in a category this node can actually load, or None to accept the whole catalog.
+
+        Optional. Categories are shared across architectures, so an unfiltered list offers a FLUX.2
+        node a Z-Image checkpoint that would fail on load.
+        """
+        ...
+
     def estimate(self, policy: Any) -> dict[str, Any] | None:
         """Whether the model will fit this machine, or None when it can't be sized.
 
@@ -85,6 +102,33 @@ class RequirementsRegistry:
 
     def has(self, node_type: str) -> bool:
         return node_type in self._providers
+
+    def resolved(self, node_type: str) -> dict[str, str]:
+        """A node's resolved file picks, or empty when it does not implement the optional hook."""
+        return _optional(self._providers.get(node_type), "resolved", {}) or {}
+
+    def catalog_options(self, node_type: str, category: str) -> list[str] | None:
+        """A node's allowed files in a category, or None to accept the whole catalog."""
+        provider = self._providers.get(node_type)
+        hook = getattr(provider, "catalog_options", None)
+        if hook is None:
+            return None
+        try:
+            return hook(category)
+        except Exception:  # noqa: BLE001 - a provider must never break the model list
+            return None
+
+
+def _optional(provider: object | None, name: str, fallback: Any) -> Any:
+    """Call an optional provider hook, tolerating both absence and failure: the node list is served
+    on every catalog change and must not depend on a provider behaving."""
+    hook = getattr(provider, name, None)
+    if hook is None:
+        return fallback
+    try:
+        return hook()
+    except Exception:  # noqa: BLE001 - a provider must never break the model list
+        return fallback
 
     def node_types(self) -> list[str]:
         return sorted(self._providers)

@@ -146,6 +146,10 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
   const dirty = JSON.stringify(hp) !== JSON.stringify(applied)
 
   if (!item) return null
+  // The sidebar is shared by every Trainer node that has settings, so it dispatches on the item.
+  // Everything below this point is training hyperparams and only applies to the Trainer node.
+  if (item.type === 'caption')
+    return <CaptionSettings itemId={itemId} overwrite={Boolean(item.data.overwrite)} />
 
   const arch: TrainingArch = hp.arch ?? 'z-image'
   const set = <K extends keyof TrainingHyperparams>(key: K, value: TrainingHyperparams[K]): void =>
@@ -427,6 +431,48 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
           </div>
         </div>
       </Modal>
+    </div>
+  )
+}
+
+/** Caption node settings. Small today, but it is where the Adjust button has to lead: a button that
+ * silently toggled a hidden flag read as broken, because nothing on the node showed what it did. */
+function CaptionSettings({
+  itemId,
+  overwrite,
+}: {
+  itemId: string
+  overwrite: boolean
+}): React.JSX.Element {
+  const patchData = useTrainerBoardStore((s) => s.patchData)
+  const toggleSettings = useTrainerBoardStore((s) => s.toggleSettings)
+  return (
+    <div className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l border-border bg-surface/40 p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-zinc-200">Caption settings</span>
+        <button
+          onClick={() => toggleSettings(itemId)}
+          className="rounded p-1 text-zinc-400 hover:bg-panel hover:text-zinc-200"
+          title="Close"
+        >
+          <XIcon className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <label className="flex items-start gap-2 text-[11px] text-zinc-400">
+        <input
+          type="checkbox"
+          checked={overwrite}
+          onChange={(e) => void patchData(itemId, { overwrite: e.target.checked })}
+          className="mt-0.5 accent-emerald-500"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-zinc-200">Re-caption every image</span>
+          <span className="text-zinc-500">
+            Off, only images with an empty caption are captioned, so hand-written captions survive a
+            re-run. On, every caption is replaced.
+          </span>
+        </span>
+      </label>
     </div>
   )
 }

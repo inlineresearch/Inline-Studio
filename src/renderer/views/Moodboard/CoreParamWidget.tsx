@@ -38,17 +38,22 @@ export function CoreParamWidget({
   }
   if (field.widget === 'select') {
     const options = field.options ?? []
-    // A file-picker whose empty value means "none"/"auto" needs an explicit empty option, or the
+    // A picker whose empty value genuinely means "none" needs an explicit empty option, or the
     // native select shows the FIRST file while the value is really "" - which reads as picked when
     // it isn't (e.g. the ControlNet dropdown looked set but control was actually off).
-    const needsEmpty =
-      !options.some((o) => o.value === '') && (field.default === '' || field.optionsFrom != null)
+    //
+    // Only when the *default* is empty, though. Core now resolves a concrete file for the model,
+    // VAE and text-encoder pickers, and offering "Auto" beside it hides which file actually ran.
+    const needsEmpty = !options.some((o) => o.value === '') && field.default === ''
     const emptyLabel = field.optionsFrom === 'controlnet' ? 'None' : 'Auto'
+    // A node saved before Core resolved these still has "" stored, which would match no option and
+    // render blank. Fall back to the resolved default so an existing node shows its real file too.
+    const selected = value == null || value === '' ? field.default : value
     return (
       <label className="flex flex-col gap-1">
         <span className={labelCls}>{field.label}</span>
         <select
-          value={String(value ?? field.default)}
+          value={String(selected)}
           onChange={(e) => onCommit(e.target.value)}
           className={inputCls}
         >

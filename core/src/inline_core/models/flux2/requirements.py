@@ -29,6 +29,8 @@ __all__ = [
     "TEXT_ENCODER_FILE",
     "VAE_FILE",
     "download_target",
+    "flux2_checkpoints",
+    "flux2_encoders",
     "flux2_requirements",
     "footprint_bytes",
     "resolve_diffusion",
@@ -99,11 +101,19 @@ def _category(name: str) -> Path:
 
 
 def _weight_files(category: str) -> list[Path]:
+    """Every candidate in a category: consolidated single files, plus diffusers-format folders.
+
+    A prequantized dev checkpoint ships as a folder of shards, which is the only practical way to
+    put a 32B model on a 24 GB card - the NF4 weights are already quantized on disk, so nothing has
+    to be materialized at full size first."""
     root = _category(category)
     if not root.is_dir():
         return []
     return sorted(
-        p for p in root.iterdir() if p.is_file() and p.suffix.lower() in _WEIGHT_SUFFIXES
+        p
+        for p in root.iterdir()
+        if (p.is_file() and p.suffix.lower() in _WEIGHT_SUFFIXES)
+        or (p.is_dir() and (p / "config.json").is_file())
     )
 
 
@@ -114,13 +124,15 @@ _IDENTIFIED: dict[tuple[str, int, int], V.Flux2Variant | None] = {}
 
 def _identify(path: Path) -> V.Flux2Variant | None:
     try:
-        stat = path.stat()
+        target = path / "config.json" if path.is_dir() else path
+        stat = target.stat()
     except OSError:
         return None
     key = (str(path), stat.st_size, int(stat.st_mtime))
     if key not in _IDENTIFIED:
-        # A GGUF header is not safetensors, so those fall back to the filename.
-        gguf = path.suffix.lower() == ".gguf"
+        # A GGUF header is not safetensors, so those fall back to the filename. A folder carries a
+        # config.json, which V.detect reads directly.
+        gguf = path.is_file() and path.suffix.lower() == ".gguf"
         _IDENTIFIED[key] = _identify_gguf(path) if gguf else V.detect(path)
     return _IDENTIFIED[key]
 
@@ -149,6 +161,8 @@ def _encoder_width(path: Path) -> int | None:
     FLUX.2's text-only encoder and rendered structured noise. A multimodal checkpoint carries a
     vision tower and nests its text stack under ``language_model``; both are rejected here.
     """
+    if path.is_dir():
+        return _folder_encoder_width(path)
     if path.suffix.lower() not in (".safetensors", ".sft"):
         return None
     try:
@@ -165,6 +179,48 @@ def _encoder_width(path: Path) -> int | None:
     return None
 
 
+
+def _folder_encoder_width(folder: Path) -> int | None:
+    """A diffusers-format encoder folder states its width, and whether it is multimodal, in its
+    config. dev's Mistral-3 encoder legitimately is multimodal, so unlike the single-file check this
+    does not disqualify a vision tower - it reports the text stack's width."""
+    marker = folder / "config.json"
+    if not marker.is_file():
+        return None
+    try:
+        import json
+
+        config = json.loads(marker.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(config, dict):
+        return None
+    text = config.get("text_config")
+    if isinstance(text, dict) and isinstance(text.get("hidden_size"), int):
+        return int(text["hidden_size"])
+    size = config.get("hidden_size")
+    return int(size) if isinstance(size, int) else None
+
+
+def flux2_checkpoints() -> list[Path]:
+    """Every FLUX.2 checkpoint installed, identified by content rather than by name."""
+    return [p for p in _weight_files("diffusion_models") if _identify(p) is not None]
+
+
+def flux2_encoders() -> list[Path]:
+    """Text encoders matching an installed FLUX.2 checkpoint's width, plus dev's Mistral."""
+    variants = {v.joint_attention_dim // 3 for v in map(_identify, flux2_checkpoints()) if v} or {
+        2560
+    }
+    out = [p for p in _weight_files("text_encoders") if _encoder_width(p) in variants]
+    out += [
+        p
+        for p in _weight_files("text_encoders")
+        if p not in out and "mistral" in p.name.lower()
+    ]
+    return out
+
+
 def resolve_diffusion(params: dict[str, object] | None = None) -> Path | None:
     """The FLUX.2 checkpoint to load: an explicit dropdown pick, ``INLINE_FLUX2_MODEL``, else the
     first file in ``diffusion_models/`` that identifies as FLUX.2. Files belonging to another
@@ -176,7 +232,7 @@ def resolve_diffusion(params: dict[str, object] | None = None) -> Path | None:
     chosen = str((params or {}).get("model") or "").strip()
     if chosen:
         picked = _category("diffusion_models") / chosen
-        return picked if picked.is_file() else None
+        return picked if picked.exists() else None
     return next((p for p in _weight_files("diffusion_models") if _identify(p) is not None), None)
 
 
@@ -200,7 +256,7 @@ def resolve_vae(params: dict[str, object] | None = None) -> Path | None:
     chosen = str((params or {}).get("vae") or "").strip()
     if chosen:
         picked = _category("vae") / chosen
-        return picked if picked.is_file() else None
+        return picked if picked.exists() else None
     files = _weight_files("vae")
     exact = _category("vae") / VAE_FILE
     if exact.is_file():
@@ -220,7 +276,7 @@ def resolve_text_encoder(params: dict[str, object] | None = None) -> Path | None
     chosen = str((params or {}).get("text_encoder") or "").strip()
     if chosen:
         picked = _category("text_encoders") / chosen
-        return picked if picked.is_file() else None
+        return picked if picked.exists() else None
     files = _weight_files("text_encoders")
     if not files:
         return None
@@ -333,6 +389,8 @@ def _file_bytes(path: object) -> int:
         return 0
     try:
         p = Path(text)
+        if p.is_dir():
+            return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
         return p.stat().st_size if p.is_file() else 0
     except OSError:
         return 0

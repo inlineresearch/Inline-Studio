@@ -20,7 +20,7 @@
 Inline Studio is a free, open-source app for **AI filmmaking on a node canvas**, powered by the built-in **Inline Core** engine (local diffusion models) and hosted [fal](https://fal.ai) models. It gives AI filmmakers a free-form canvas to build a whole visual pipeline, from moodboard to final cut.
 
 - **Non-destructive by default** - every render is kept as a versioned take; generating again adds one, nothing is overwritten.
-- **Local diffusion generation engine** - the built-in Inline Core engine runs popular diffusion models on your own GPU from a single model file, no external server. Currently supported: **Z-Image Turbo** and **Krea 2** (RAW + Turbo).
+- **Local diffusion generation engine** - the built-in Inline Core engine runs popular diffusion models on your own GPU from a single model file, no external server. Currently supported: **Z-Image Turbo**, **Krea 2** (RAW + Turbo), and **FLUX.2**.
 - **Hosted models via API Nodes** - reach for closed models with no GPU and no setup for instant creative range; see [API Nodes](#api-nodes).
 - **Mix both in the same film** - Inline Studio handles everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
 
@@ -99,9 +99,9 @@ Three gotchas:
 
 **Known limits, so you can judge before installing:**
 
-- **Local model coverage is Z-Image Turbo and Krea 2** today. Flux, SDXL and others are planned; hosted models via [API Nodes](#api-nodes) need no GPU at all.
+- **Local model coverage is Z-Image Turbo, Krea 2 and FLUX.2** today. SDXL and others are planned; hosted models via [API Nodes](#api-nodes) need no GPU at all.
 - **Krea 2 is a 12.9B model and needs a big card to generate.** The bf16 checkpoint is 26 GB on disk, and generation peaks around 36 GB at 1024 with guidance on, so a 40 GB+ GPU is the practical floor for inference. **Training is cheaper than generating**, because the 4-bit base path puts Krea 2 LoRA training at 512 inside 12 GB - see [Benchmark results](#benchmark-results). Z-Image remains the low-VRAM path for generation.
-- **1024² with Guidance (CFG) above 0 needs more than 16 GB.** CFG runs the prompt and negative prompt together, doubling the denoise. Z-Image Turbo is distilled to run CFG-free - at Guidance 0, 1024² fits in ~11.5 GB.
+- **1024² with Guidance (CFG) above 0 needs more than 16 GB.** CFG runs the prompt and negative prompt together, doubling the denoise. Z-Image Turbo is distilled to run CFG-free - at Guidance 0, 1024² fits in ~11.5 GB. FLUX.2 klein 4B peaks near 17.9 GB at bf16, so 24 GB holds it resident and a 16 GB card runs it quantized instead.
 
 </details>
 
@@ -165,7 +165,8 @@ The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` envir
 - **Versioned, non-destructive takes** - every render is kept. Generating again adds a new take; nothing is overwritten. Star the keeper and it flows downstream.
 - **Chain frames into a generative pipeline** - wire one frame's output into the next frame's input. Refine a shot, feed it forward, regenerate the source, and everything downstream follows.
 - **Video editing on the canvas** - the **Video Director node** is a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export; the **Trim Video/Audio node** lets you drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
-- **Local generation, built in** - the Inline Core engine runs diffusion models on your own GPU. Z-Image Turbo and Krea 2 from single model files, no external server to set up.
+- **Local generation, built in** - the Inline Core engine runs diffusion models on your own GPU. Z-Image Turbo, Krea 2, and FLUX.2 from single model files (or a diffusers folder for a prequantized build), no external server to set up.
+- **Multi-reference composition** - with **FLUX.2**, wire several images into one node and compose from them: "the character from image 1 wearing the jacket from image 2". The node numbers the references on its face so the prompt can address them by position. One image edits it, several combine them. See [FLUX.2](#flux2).
 - **Train your own LoRAs** - the Trainer tab is a second canvas where the dataset, captioning, training run, and loss curve are all nodes. The finished LoRA drops into `models/loras/` and shows up in the LoRA loader node, ready to generate with. See [LoRA training](#lora-training).
 - **API Nodes for hosted models** - run closed models right on the canvas with no GPU. Add a Generate node, pick a model, and bring your own provider key. See [API Nodes](#api-nodes).
 - **Community extensions** - install custom nodes from a GitHub repo in one click, security-reviewed and dependency-isolated. Browse the [registry](https://github.com/inlineresearch/Inline-Registry) or [build your own](https://github.com/inlineresearch/Inline-Studio-Extension-Guide).
@@ -185,12 +186,12 @@ From the home screen, **Export** zips a project into one archive. Import it on t
 
 Pick whatever fits the shot, and mix both in one film. However you render, the frame keeps its full take history, so you never lose a good version.
 
-| How you render                          | What it's like                                                                                                                                                                                                                                                                                                  | What you need                                                                                                                                                                                    |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Local GPU: Inline Core** _(built in)_ | Drop a **Z-Image Turbo** or **Krea 2** node, wire a prompt, hit Run: one node, no loader/sampler wiring. A single `.safetensors` is all you bring; the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Your own GPU. No account, no external server. Low-VRAM friendly: it auto-fits the model to your card (streaming weights + int8) so a model too big for full precision still runs, with no flags. |
-| **Hosted: API Nodes**                   | Add a Generate node and pick a model: hosted, closed models across image, video, and audio. No GPU, instant range. See [API Nodes](#api-nodes) for the model list and providers.                                                                                                                                | A provider key (currently [fal](https://fal.ai/dashboard/keys)); it stays on your machine, and you pay per render (each node estimates the price first).                                         |
+| How you render                          | What it's like                                                                                                                                                                                                                                                                                                                                                                        | What you need                                                                                                                                                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Local GPU: Inline Core** _(built in)_ | Drop a **Z-Image Turbo**, **Krea 2**, or **FLUX.2** node, wire a prompt, hit Run: one node, no loader/sampler wiring. A single `.safetensors` is usually all you bring (a prequantized build can be a diffusers folder); the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Your own GPU. No account, no external server. Low-VRAM friendly: it auto-fits the model to your card (streaming weights, int8, then NF4) so a model too big for full precision still runs, with no flags. |
+| **Hosted: API Nodes**                   | Add a Generate node and pick a model: hosted, closed models across image, video, and audio. No GPU, instant range. See [API Nodes](#api-nodes) for the model list and providers.                                                                                                                                                                                                      | A provider key (currently [fal](https://fal.ai/dashboard/keys)); it stays on your machine, and you pay per render (each node estimates the price first).                                                  |
 
-For local generation, either drop a `.safetensors` into `core/models/diffusion_models/`, or add a model node and use its **model popup** (a blinking hint shows up when something's missing) to download the diffusion model, VAE, and text-encoder into `core/models/`, with visible progress. The canvas and planning work with no models at all. See [Krea 2](#krea-2) for that model's files and VRAM.
+For local generation, either drop a `.safetensors` into `core/models/diffusion_models/`, or add a model node and use its **model popup** (a blinking hint shows up when something's missing) to download the diffusion model, VAE, and text-encoder into `core/models/`, with visible progress. The canvas and planning work with no models at all. See [Krea 2](#krea-2) and [FLUX.2](#flux2) for those models' files and VRAM.
 
 ## Inline Core generation engine
 
@@ -229,6 +230,40 @@ Two things are worth knowing before you download 26 GB twice:
 
 Nothing here needs a Hugging Face token: every repo involved is public, and Krea's own gated repos are never touched.
 
+### FLUX.2
+
+[FLUX.2](https://bfl.ai/blog/flux-2) from Black Forest Labs is the first family here that is natively **multi-reference**: reference images ride in the denoiser's token sequence, so "the character from image 1 wearing the jacket from image 2" is a first-class capability rather than a workaround.
+
+One node, **FLUX.2**, covers the whole family. Pick a checkpoint in the node's Adjust sidebar and it identifies itself: klein 4B, klein 9B, either Base build, the KV variant, or dev. Steps and guidance default to "from model", so switching a distilled checkpoint for its Base build moves 4 steps at guidance 1.0 to 50 at guidance 4.0 without touching a setting.
+
+- **Reference images** - wire one image to edit it, or several to compose from them. The node numbers them on its face, and the prompt addresses them by position. There is no denoise-strength slider because FLUX.2 has no img2img: a single reference _is_ the edit.
+- **klein 4B is Apache 2.0** and the recommended starting point. It renders 1024px in four steps. At bf16 it is 16.1 GB of weights peaking around 17.9 GB, so a 24 GB card holds it resident; on a 16 GB card the fit ladder drops it to int8 or fp16 and it still runs. Its text encoder is the same Qwen3-4B file Z-Image already uses, so if you have run Z-Image you have most of it.
+- **dev is 32B.** The fp8 build the model popup offers wants around 32 GB. Bring a prequantized NF4 folder yourself and it fits a 24 GB card instead, because the prompt is encoded first and the text encoder freed before the transformer loads.
+
+Files come from the ungated ComfyUI repacks. The model popup fetches klein 4B, its text encoder and the VAE in one click, and offers the rest of the family as optional extras:
+
+```
+core/models/
+  diffusion_models/  flux-2-klein-4b.safetensors                      <- the default, Apache 2.0
+                     flux-2-klein-base-4b.safetensors                 <- the base build, for LoRA training
+                     flux-2-klein-9b-int8-ConvRot-comfyui.safetensors <- klein 9B, int8, ~12 GB
+                     flux2_dev_fp8mixed.safetensors                   <- dev, fp8, ~32 GB
+  text_encoders/     qwen_3_4b.safetensors                            <- the 4B builds, shared with Z-Image
+                     qwen_3_8b.safetensors                            <- klein 9B
+                     mistral_3_small_flux2_fp8.safetensors            <- dev
+  vae/               flux2-vae.safetensors
+```
+
+Each klein size needs its own text encoder, and dev uses Mistral-3 rather than Qwen3.
+
+For dev on a 24 GB card, take the ungated [`diffusers/FLUX.2-dev-bnb-4bit`](https://huggingface.co/diffusers/FLUX.2-dev-bnb-4bit) instead: an 18.1 GB NF4 transformer beside a 15.4 GB NF4 encoder, far cheaper than the fp8 single file. Clone it into `diffusion_models/` as a folder. The popup does not fetch it, and a diffusers folder is a valid checkpoint anywhere a single file is.
+
+Worth knowing:
+
+- **Prompts are prose, not tags.** FLUX.2 wants natural language, and keyword stuffing works against it. Word order carries weight.
+- **Only the Base klein checkpoints take a negative prompt.** The distilled builds run no classifier-free guidance and dev is guidance-distilled, so a negative prompt is logged and ignored there rather than silently pretending to apply.
+- **dev and every 9B build are non-commercial.** klein 4B, its Base build, and the VAE are Apache 2.0.
+
 ### ControlNet
 
 Steer a local render with a pose, depth, or edge map. Wire a control map into a gen node's **Control** input and pick a ControlNet in the node's Adjust sidebar.
@@ -237,6 +272,7 @@ Steer a local render with a pose, depth, or edge map. Wire a control map into a 
 - **Apply ControlNet** - turn any image into a control map (OpenPose, Depth-Anything V2, MiDaS depth, or Canny edges). Detector weights download once on first use.
 - **Z-Image Turbo** - full ControlNet via the Fun Union model. Use the distilled `-2602-8steps` build; the plain one is blurry at 8 steps.
 - **Krea 2** - depth control via the [`Patil/Krea-2-depth-controlnet`](https://huggingface.co/Patil/Krea-2-depth-controlnet) control-LoRA.
+- **FLUX.2** - two routes. On any variant, a control map wired into **Control** is used as a reference image, which steers loosely and costs nothing extra. On **dev**, pick the [`alibaba-pai/FLUX.2-dev-Fun-Controlnet-Union`](https://huggingface.co/alibaba-pai/FLUX.2-dev-Fun-Controlnet-Union) model for tight structural adherence: one union model covering canny, depth, pose, HED, MLSD, scribble and gray, with no mode to select. It needs real headroom, rendering at 512px on a 24 GB card.
 - **Control strength** - dial how hard the map is followed, per node.
 
 Drop ControlNet files into `core/models/controlnet/`, or use the node's model popup to download them.
@@ -271,7 +307,7 @@ For the full engineering story (the graph/sampler/device-policy design, the node
 
 **API Nodes** bring hosted, closed models onto the same canvas: no GPU, no setup, instant creative range. Add a Generate node, pick a model, and bring your own provider key (it stays on your machine); you pay the provider per render, and each node estimates the price before you run.
 
-The initial provider is **[fal](https://fal.ai)**, with models across image, video, and audio: **GPT Image 2**, **Nano Banana**, **Seedance**, **LTX**, **Sonilo**, and many more. Add your [fal.ai key](https://fal.ai/dashboard/keys) in Settings to use them. More providers will follow behind the same API Node surface.
+The initial provider is **[fal](https://fal.ai)**, with models across image, video, and audio: **FLUX.2**, **FLUX.2 Edit**, **GPT Image 2**, **Nano Banana**, **Seedance**, **LTX**, **Sonilo**, and many more. Add your [fal.ai key](https://fal.ai/dashboard/keys) in Settings to use them. More providers will follow behind the same API Node surface.
 
 However you render, the frame keeps its full, non-destructive take history, so you can mix API Nodes and local generation in the same film without ever losing a good version.
 
@@ -314,12 +350,16 @@ A dataset's trigger word is prepended to every caption during training, so the m
 
 ### Architecture and base model modes
 
-The Trainer's Adjust panel picks the **architecture** first (Z-Image or Krea 2), then a base within it. Training directly on a step-distilled checkpoint breaks the distillation down (turbo drift), so each architecture offers a way around that.
+The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, or FLUX.2), then a base within it. Training directly on a step-distilled checkpoint breaks the distillation down (turbo drift), so each architecture offers a way around that.
 
 **Krea 2** avoids the problem outright, which is why it is the recommended path:
 
 - **Krea 2 RAW** trains on the undistilled base. Nothing to fuse, nothing to drift. Put `krea2_raw_bf16.safetensors` in `models/diffusion_models/`, train, then generate with the **Krea 2 Turbo** node - the LoRA carries over unchanged.
 - **Krea 2 Turbo + training adapter** exists for people who only hold Turbo. Put [ostris/krea2_turbo_training_adapter](https://huggingface.co/ostris/krea2_turbo_training_adapter) in `models/loras/`, or point `INLINE_KREA2_TRAIN_ADAPTER` at it.
+
+**FLUX.2** works like Krea 2, with no adapter to download:
+
+- **FLUX.2 Base** is the only option, and the trainer refuses a distilled checkpoint rather than letting a run produce a bad adapter hours later. Put `flux-2-klein-base-4b.safetensors` in `models/diffusion_models/`, train, then generate with the distilled **klein 4B** checkpoint. The LoRA carries over unchanged.
 
 **Z-Image** is distilled either way:
 
@@ -367,6 +407,8 @@ The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader
 
 A training adapter is free: it is fused into the base before training starts, so Turbo-plus-adapter and the undistilled base peak identically.
 
+FLUX.2 training figures have not been measured yet, so this table covers Z-Image and Krea 2 only.
+
 Which card fits what (24GB and 32GB are interpolated, not measured):
 
 | Card | Z-Image 512 | Z-Image 1024 | Krea 2 512 | Krea 2 1024 |
@@ -406,7 +448,7 @@ Krea 2's base is 26GB at bf16, which is what makes it expensive to fine-tune. Th
 - **Full precision (bf16)** forces the unquantized base.
 - **4-bit (NF4)** forces the quantized base.
 
-Z-Image has no 4-bit path and does not need one, so the setting only appears for Krea 2.
+The setting appears for Krea 2 and FLUX.2. Z-Image has no 4-bit path and does not need one: it trains in about 15 GB at 1024, so bf16 already fits the cards people have.
 
 To keep the peak down, the VAE and text encoder are loaded first, used to cache latents and captions, then freed before the transformer loads, so the peak is the transformer on its own rather than all three resident at once. If you do hit an out-of-memory error, lower the training resolution before changing anything else.
 
@@ -422,7 +464,7 @@ Only for **local** generation. The built-in Inline Core engine renders on the GP
 
 ### What models can I run?
 
-See [Two ways to generate](#two-ways-to-generate): local Z-Image or [Krea 2](#krea-2) on your own GPU, or hosted fal models. Adding a new local model is a Core change (a model runner), no UI release.
+See [Two ways to generate](#two-ways-to-generate): local Z-Image, [Krea 2](#krea-2), or [FLUX.2](#flux2) on your own GPU, or hosted fal models. Adding a new local model is a Core change (a model runner), no UI release.
 
 ## Contributing
 
@@ -438,6 +480,8 @@ The LoRA trainer's approach to training on a step-distilled model follows [**ai-
 
 Krea 2 support follows the reference implementations in [**diffusers**](https://github.com/huggingface/diffusers) (`Krea2Pipeline` and the Krea 2 DreamBooth LoRA example). Krea 2 is released by [Krea AI](https://www.krea.ai/) under the [Krea AI Community License](https://www.krea.ai/krea-2-licensing); the weights are the user's to obtain and use under that license.
 
+[**FLUX.2**](https://bfl.ai/blog/flux-2) is released by Black Forest Labs. klein 4B, its Base build, and the VAE are Apache 2.0; dev and the 9B builds carry non-commercial terms. The weights are the user's to obtain and use under those.
+
 ## Help shape Inline Studio
 
 Are you an AI filmmaker who wants to help us make this better? We run a **paid trial feedback program**: use Inline Studio on real work, tell us what helps and what gets in your way, and get paid for your time.
@@ -450,4 +494,4 @@ Come say hi on our [Discord](https://discord.gg/cSUS88VdY9) and reach out, we'll
 
 Copyright (C) 2026 Inline Studio. Licensed under the [GNU General Public License v3.0](LICENSE): you may use, study, share and modify it, and any work you distribute that builds on it must also be GPL-3.0.
 
-The models you run carry their own licenses, which the GPL does not change: Krea 2 is under the [Krea AI Community License](https://www.krea.ai/krea-2-licensing) and Z-Image under Tongyi's terms. You bring your own weights and use them under those.
+The models you run carry their own licenses, which the GPL does not change: Krea 2 is under the [Krea AI Community License](https://www.krea.ai/krea-2-licensing), Z-Image under Tongyi's terms, and FLUX.2 is split - klein 4B, its Base build, and the VAE are Apache 2.0, while dev and every 9B build are non-commercial. You bring your own weights and use them under those.
