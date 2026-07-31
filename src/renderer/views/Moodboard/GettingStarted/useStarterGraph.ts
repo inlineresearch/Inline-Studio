@@ -12,6 +12,7 @@ import type { Node } from '@xyflow/react'
 import { buildStarterGraph } from '../../../lib/starterGraph'
 import { recipeFor } from '../../../lib/starterRecipes'
 import type { StarterKey } from '../../../lib/vramAdvice'
+import { useFalSettingsStore } from '../../../store/falSettingsStore'
 import { useModelRequirementsStore } from '../../../store/modelRequirementsStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { useOnboardingStore } from '../../../store/onboardingStore'
@@ -65,7 +66,7 @@ export function useStarterGraph({ setNodes, fitView, centre }: Options): {
       if (!recipe) return
 
       // Training lives on its own canvas, which seeds its own graph when empty.
-      if (!recipe.coreType) {
+      if (!recipe.coreType && !recipe.falModelId) {
         useUiStore.getState().setActiveTab('trainer')
         return
       }
@@ -77,6 +78,15 @@ export function useStarterGraph({ setNodes, fitView, centre }: Options): {
           if (ids.length !== 2) return
           pending.current = ids
           const genId = ids[1]
+          if (!coreType) {
+            // Hosted models have nothing to download. The key is the only thing that can be
+            // missing, and Settings is where it goes, so open that instead of a model popup.
+            useOnboardingStore.getState().armHints({ itemId: genId, surface: 'studio' })
+            if (!useFalSettingsStore.getState().configured) {
+              useUiStore.getState().setSettingsOpen(true)
+            }
+            return
+          }
           const ready = useModelRequirementsStore.getState().byType[coreType]?.allPresent
           if (ready) {
             useOnboardingStore.getState().armHints({ itemId: genId, surface: 'studio' })

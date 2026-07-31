@@ -13,14 +13,19 @@ type Store = ReturnType<typeof useMoodboardStore.getState>
 
 function stub(over: Partial<Store> = {}) {
   const addCoreNode = vi.fn<Store['addCoreNode']>(async () => item('gen', { keepMe: 1 }))
+  const addGenNode = vi.fn<Store['addGenNode']>(async () => ({
+    ...item('gen', { keepMe: 1 }),
+    frameId: 'frame-1',
+  }))
   const addPrompt = vi.fn<Store['addPrompt']>(async () => item('prompt', { keepMe: 2 }))
   const updateItem = vi.fn<Store['updateItem']>(async () => undefined)
   const connect = vi.fn<Store['connect']>(async () => undefined)
-  useMoodboardStore.setState({ addCoreNode, addPrompt, updateItem, connect, ...over })
-  return { addCoreNode, addPrompt, updateItem, connect }
+  useMoodboardStore.setState({ addCoreNode, addGenNode, addPrompt, updateItem, connect, ...over })
+  return { addCoreNode, addGenNode, addPrompt, updateItem, connect }
 }
 
 const ZIMAGE = recipeFor('zimage')!
+const API = recipeFor('api')!
 
 describe('buildStarterGraph', () => {
   beforeEach(() => {
@@ -76,5 +81,26 @@ describe('buildStarterGraph', () => {
     const s = stub()
     expect(await buildStarterGraph(recipeFor('training')!, { x: 0, y: 0 })).toEqual([])
     expect(s.addCoreNode).not.toHaveBeenCalled()
+    expect(s.addGenNode).not.toHaveBeenCalled()
+  })
+
+  it('builds the API card as a fal node and wires the same prompt handle', async () => {
+    const setParams = vi.fn(async () => undefined)
+    useGenerationStore.setState({ setParams })
+    const s = stub()
+
+    const ids = await buildStarterGraph(API, { x: 0, y: 0 })
+
+    expect(ids).toEqual(['prompt', 'gen'])
+    expect(s.addGenNode).toHaveBeenCalledWith(
+      'minimax/h3/text-to-video',
+      expect.any(Number),
+      expect.any(Number),
+    )
+    expect(s.addCoreNode).not.toHaveBeenCalled()
+    // A fal node's params live on its frame, so they must not be written into the item's data.
+    expect(setParams).toHaveBeenCalledWith('frame-1', API.params)
+    expect(s.updateItem.mock.calls.map((c) => c[0])).toEqual(['prompt'])
+    expect(s.connect).toHaveBeenCalledWith('prompt', 'gen', 'out', 'prompt')
   })
 })

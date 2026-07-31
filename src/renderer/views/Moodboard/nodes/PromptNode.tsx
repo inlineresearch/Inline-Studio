@@ -11,7 +11,18 @@ import { NodeBadge, NodeBadgeRow } from './NodeBadge'
 export function PromptNode({ id, selected }: NodeProps): React.JSX.Element {
   const item = useMoodboardStore((s) => s.items.find((it) => it.id === id))
   const updateItem = useMoodboardStore((s) => s.updateItem)
-  const [text, setText] = useState<string>(() => (item?.data.promptText as string) ?? '')
+  const stored = (item?.data.promptText as string | undefined) ?? ''
+  const [text, setText] = useState<string>(stored)
+  // Re-seed when the stored text changes underneath us. The node mounts as soon as the item is
+  // created, so anything that writes the text a moment later (a getting-started card, a recipe
+  // rebuilt from a dropped image, an undo) would otherwise leave the textarea showing the empty
+  // value it mounted with. Adjusting state during render rather than in an effect is React's own
+  // guidance for this, and avoids a frame of stale text.
+  const [seeded, setSeeded] = useState(stored)
+  if (seeded !== stored) {
+    setSeeded(stored)
+    setText(stored)
+  }
 
   const commit = (): void => {
     if (!item) return

@@ -140,9 +140,12 @@ def register_studio_handlers(
     reg("frames:listTakes", lambda fid: fr.list_takes(conn(), fid))
     reg("frames:heroTakes", lambda: fr.hero_takes(conn()))
     reg("frames:listInputs", lambda: fr.list_inputs(conn()))
-    reg("frames:addInput", lambda fid, aid: fr.add_input(conn(), fid, aid))
-    reg("frames:addInputs", lambda fid, aids: fr.add_inputs(conn(), fid, aids))
-    reg("frames:addSourceInput", lambda fid, src: fr.add_source_input(conn(), fid, src))
+    reg("frames:addInput", lambda fid, aid, handle=None: fr.add_input(conn(), fid, aid, handle))
+    reg("frames:addInputs", lambda fid, aids, handle=None: fr.add_inputs(conn(), fid, aids, handle))
+    reg(
+        "frames:addSourceInput",
+        lambda fid, src, handle=None: fr.add_source_input(conn(), fid, src, handle),
+    )
     reg("frames:removeInput", lambda fid, aid: fr.remove_input(conn(), fid, aid))
     reg("frames:removeInputById", lambda fid, iid: fr.remove_input_by_id(conn(), fid, iid))
     reg("frames:reorderInputs", lambda fid, aids: fr.reorder_inputs(conn(), fid, aids))

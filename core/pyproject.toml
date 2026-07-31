@@ -127,4 +127,6 @@ typeCheckingMode = "strict"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." so `tests` imports as a package: several suites share fixtures via `from tests.x import y`,
+# and without it those modules fail to collect and silently stop running.
+pythonpath = ["src", "."]

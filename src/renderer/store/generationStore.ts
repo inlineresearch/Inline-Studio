@@ -5,7 +5,7 @@
  */
 import { create } from 'zustand'
 import { getNodeDef } from '@shared/nodes/registry'
-import { emptyResolvedInputs } from '@shared/nodes/types'
+import { emptyResolvedInputs, mediaFamily, portMedia } from '@shared/nodes/types'
 import type { FalRunRequest } from '@shared/ipc'
 import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
@@ -93,6 +93,18 @@ export const useGenerationStore = create<GenerationState>((set) => ({
           images: resolved.value.images,
           videos: resolved.value.videos,
           audios: resolved.value.audios,
+          byHandle: resolved.value.byHandle ?? {},
+        }
+        // A required media port with nothing behind it would go out as an empty URL, and fal
+        // answers that with a 422 "failed to download the file" that says nothing about the cause.
+        const starved = def.inputs.filter(
+          (p) => p.required && mediaFamily(p.kind) && portMedia(def, inputs, p.id).length === 0,
+        )
+        if (starved.length > 0) {
+          return fail(
+            `${def.title} needs ${starved.map((p) => p.label.toLowerCase()).join(' and ')}. ` +
+              'Wire it into the node, or drop the media onto the node itself.',
+          )
         }
         const runParams = { ...frame.params, prompt: resolved.value.prompt ?? '' }
         request = {

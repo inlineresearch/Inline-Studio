@@ -12,8 +12,11 @@
  */
 import type { SystemStatsEvent } from '@shared/types'
 
-export type StarterKey = 'zimage' | 'flux2' | 'krea2' | 'training'
+export type StarterKey = 'zimage' | 'flux2' | 'krea2' | 'api' | 'training'
 export type Tier = 'best' | 'good' | 'ok' | 'heavy'
+
+/** Keys whose model runs on this machine, so VRAM has something to say about them. */
+type LocalKey = Exclude<StarterKey, 'api'>
 
 export type VramReading =
   | { state: 'pending' }
@@ -46,7 +49,7 @@ interface TierRow {
  * A card advertising 16 GB reports slightly under 16 GiB, so the rows sit a little below the round
  * number rather than exactly on it.
  */
-const TIERS: Record<StarterKey, TierRow[]> = {
+const TIERS: Record<LocalKey, TierRow[]> = {
   zimage: [
     { minGb: 23.5, tier: 'best', note: 'Runs fully resident. The fastest option here.' },
     { minGb: 15.5, tier: 'good', note: 'Fits with int8 weights.' },
@@ -77,12 +80,15 @@ const TIERS: Record<StarterKey, TierRow[]> = {
 }
 
 /** Static requirement copy, shown when the hardware cannot be read. */
-const STATIC_NOTE: Record<StarterKey, string> = {
+const STATIC_NOTE: Record<LocalKey, string> = {
   zimage: 'Around 12 GB of VRAM for a comfortable run.',
   flux2: 'Around 16 GB of VRAM for a comfortable run.',
   krea2: 'Around 24 GB of VRAM for a comfortable run.',
   training: 'Around 16 GB of VRAM to train at 512 px.',
 }
+
+/** Hosted models run on fal's hardware, so no reading of this machine applies. */
+const API_NOTE = 'No GPU needed. You bring a fal key and pay per render.'
 
 export interface Advice {
   tier: Tier | null
@@ -90,6 +96,7 @@ export interface Advice {
 }
 
 export function tierFor(key: StarterKey, reading: VramReading): Advice {
+  if (key === 'api') return { tier: null, note: API_NOTE }
   if (reading.state !== 'known') return { tier: null, note: STATIC_NOTE[key] }
   const row = TIERS[key].find((r) => reading.totalGb >= r.minGb)
   // The last row is minGb 0, so this only falls through if a table is mis-edited.
@@ -98,7 +105,8 @@ export function tierFor(key: StarterKey, reading: VramReading): Advice {
 
 const SCORE: Record<Tier, number> = { best: 3, good: 2, ok: 1, heavy: 0 }
 /** Ties break lightest-first, so a new user is pointed at the quickest thing that works. */
-const PREFERENCE: StarterKey[] = ['zimage', 'flux2', 'krea2', 'training']
+// 'api' is deliberately absent: it has no tier to score, and the ribbon is about this machine.
+const PREFERENCE: LocalKey[] = ['zimage', 'flux2', 'krea2', 'training']
 
 /**
  * The one card that gets the ribbon. Without a hardware reading this is Z-Image, labelled as a

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import type { ParamField } from '@shared/nodes/types'
 
 /**
@@ -60,19 +61,14 @@ export function ParamWidget({
   }
   if (field.widget === 'number') {
     return (
-      <label className="flex flex-col gap-1">
-        <span className={labelCls}>{field.label}</span>
-        <input
-          type="number"
-          value={Number(value ?? field.default)}
-          min={field.min}
-          max={field.max}
-          step={field.step}
-          onChange={(e) => onChange(Number(e.target.value))}
-          onBlur={() => onCommit(Number(value ?? field.default))}
-          className={inputCls}
-        />
-      </label>
+      <NumberField
+        field={field}
+        value={value}
+        onChange={onChange}
+        onCommit={onCommit}
+        inputCls={inputCls}
+        labelCls={labelCls}
+      />
     )
   }
   return (
@@ -86,4 +82,83 @@ export function ParamWidget({
       />
     </label>
   )
+}
+
+/**
+ * Number input that keeps a free-form text *draft* while the user types, so the box can be cleared
+ * entirely and edited mid-value (a bare controlled `Number()` snaps an empty box to 0, trapping you
+ * into editing around it). The draft resolves on blur: empty or unparseable falls back to the
+ * field's default, anything else commits parsed and clamped to the declared range.
+ *
+ * Mirrors `CoreParamWidget`'s NumberField; the two panels stay separate because their field schemas
+ * are different types.
+ */
+function NumberField({
+  field,
+  value,
+  onChange,
+  onCommit,
+  inputCls,
+  labelCls,
+}: {
+  field: Extract<ParamField, { widget: 'number' }>
+  value: unknown
+  onChange: (v: number) => void
+  onCommit: (v: number) => void
+  inputCls: string
+  labelCls: string
+}): React.JSX.Element {
+  const external = value ?? field.default
+  const [draft, setDraft] = useState<string>(external == null ? '' : String(external))
+  // Re-seed when the committed value changes from outside (the panel switching to another node),
+  // but never while the user is mid-edit of this same value.
+  const lastExternal = useRef(external)
+  useEffect(() => {
+    if (external !== lastExternal.current) {
+      lastExternal.current = external
+      setDraft(external == null ? '' : String(external))
+    }
+  }, [external])
+
+  // Emit while typing so an outside click that persists the panel picks up the edit. Unclamped
+  // here, so typing "1" on the way to "12" is not yanked up to a minimum of 5.
+  const emit = (raw: string): void => {
+    setDraft(raw)
+    if (raw.trim() === '') return
+    const parsed = Number(raw)
+    if (Number.isFinite(parsed)) {
+      lastExternal.current = parsed
+      onChange(parsed)
+    }
+  }
+
+  const commit = (): void => {
+    const parsed = draft.trim() === '' ? Number(field.default) : Number(draft)
+    const resolved = Number.isFinite(parsed) ? clamp(parsed, field.min, field.max) : field.default
+    lastExternal.current = resolved
+    setDraft(String(resolved))
+    onCommit(resolved)
+  }
+
+  return (
+    <label className="flex flex-col gap-1">
+      <span className={labelCls}>{field.label}</span>
+      <input
+        type="number"
+        value={draft}
+        min={field.min}
+        max={field.max}
+        step={field.step}
+        onChange={(e) => emit(e.target.value)}
+        onBlur={commit}
+        className={inputCls}
+      />
+    </label>
+  )
+}
+
+function clamp(n: number, min?: number, max?: number): number {
+  if (min != null && n < min) return min
+  if (max != null && n > max) return max
+  return n
 }

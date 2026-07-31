@@ -163,7 +163,20 @@ class Flux2Runner(NodeRunner):
                 + ". Download them from the node's model popup (the hint on the node)."
             )
 
-        source = model_ref.file if model_ref else str(reqs.resolve_diffusion(params))
+        if model_ref:
+            source = model_ref.file
+        else:
+            picked = reqs.resolve_diffusion(params)
+            # Never stringify the miss: str(None) reached _identify as the literal "None" and
+            # surfaced as "'None' is not a FLUX.2 diffusion model", which reads like a bad file
+            # rather than a stale pick.
+            if picked is None:
+                raise ComponentError(
+                    f"{_LABEL} cannot find the picked diffusion model on disk. Choose a FLUX.2 "
+                    "checkpoint in the Diffusion model dropdown, or download one from the node's "
+                    "model popup."
+                )
+            source = str(picked)
         variant, config = _identify(source, params)
         vae_file = vae_ref.file if vae_ref else rt.path_or_none(reqs.resolve_vae(params))
         te_file = te_ref.file if te_ref else rt.path_or_none(reqs.resolve_text_encoder(params))

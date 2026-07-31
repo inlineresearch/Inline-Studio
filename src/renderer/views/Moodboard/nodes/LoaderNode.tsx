@@ -52,6 +52,7 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
     assetId,
     sourceFrameId: null,
     position,
+    handle: null,
   }))
   const thumbs = resolveInputThumbs(asInputs, {
     assets,

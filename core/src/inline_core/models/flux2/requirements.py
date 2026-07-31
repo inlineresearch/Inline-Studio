@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 
 from ...config import models_dir
+from ..catalog import resolve_picked
 from ..requirements import ModelComponent
 from . import variants as V
 
@@ -229,10 +230,9 @@ def resolve_diffusion(params: dict[str, object] | None = None) -> Path | None:
     if env:
         path = Path(env)
         return path if path.exists() else None
-    chosen = str((params or {}).get("model") or "").strip()
-    if chosen:
-        picked = _category("diffusion_models") / chosen
-        return picked if picked.exists() else None
+    chosen = (params or {}).get("model")
+    if str(chosen or "").strip():
+        return resolve_picked("diffusion_models", chosen)
     return next((p for p in _weight_files("diffusion_models") if _identify(p) is not None), None)
 
 
@@ -253,10 +253,9 @@ def resolve_vae(params: dict[str, object] | None = None) -> Path | None:
     if env:
         path = Path(env)
         return path if path.exists() else None
-    chosen = str((params or {}).get("vae") or "").strip()
-    if chosen:
-        picked = _category("vae") / chosen
-        return picked if picked.exists() else None
+    chosen = (params or {}).get("vae")
+    if str(chosen or "").strip():
+        return resolve_picked("vae", chosen)
     files = _weight_files("vae")
     exact = _category("vae") / VAE_FILE
     if exact.is_file():
@@ -273,10 +272,9 @@ def resolve_text_encoder(params: dict[str, object] | None = None) -> Path | None
     if env:
         path = Path(env)
         return path if path.exists() else None
-    chosen = str((params or {}).get("text_encoder") or "").strip()
-    if chosen:
-        picked = _category("text_encoders") / chosen
-        return picked if picked.exists() else None
+    chosen = (params or {}).get("text_encoder")
+    if str(chosen or "").strip():
+        return resolve_picked("text_encoders", chosen)
     files = _weight_files("text_encoders")
     if not files:
         return None
@@ -336,7 +334,11 @@ def flux2_requirements(params: dict[str, object] | None = None) -> list[ModelCom
             label="Diffusion model" + (f" ({variant.label})" if variant else ""),
             category="diffusion_models",
             filename=DIFFUSION_FILE,
-            present=variant is not None,
+            # Presence is whether a file resolves, NOT whether a variant does: `variant` defaults to
+            # a concrete build, and resolved_variant honours that param without opening anything. So
+            # keying off it reported a checkpoint present when the picked file was gone, letting the
+            # run past this pre-flight to fail later with an opaque message.
+            present=resolve_diffusion(params) is not None,
             repo=SPLIT_REPO,
             repo_file=_split("diffusion_models", DIFFUSION_FILE),
         ),

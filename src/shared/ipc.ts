@@ -300,6 +300,8 @@ export interface ResolvedFalInputs {
   images: string[]
   videos: string[]
   audios: string[]
+  /** The same URIs keyed by the input port each was wired to; untagged inputs are absent. */
+  byHandle: Record<string, string[]>
   prompt: string | null
 }
 
@@ -379,12 +381,20 @@ export interface InlineStudioApi {
     heroTakes(): Promise<Result<Take[]>>
     /** All frame inputs across the project (group by frameId in the renderer). */
     listInputs(): Promise<Result<FrameInput[]>>
-    /** Append a library asset as an input of the frame. */
-    addInput(frameId: string, assetId: string): Promise<Result<FrameInput>>
+    /** Append a library asset as an input of the frame, optionally tagged with an input port id. */
+    addInput(frameId: string, assetId: string, handle?: string | null): Promise<Result<FrameInput>>
     /** Append several library assets as inputs at once (atomic; skips duplicates). */
-    addInputs(frameId: string, assetIds: string[]): Promise<Result<FrameInput[]>>
+    addInputs(
+      frameId: string,
+      assetIds: string[],
+      handle?: string | null,
+    ): Promise<Result<FrameInput[]>>
     /** Link another frame's output as an input (resolves to its hero take). */
-    addSourceInput(frameId: string, sourceFrameId: string): Promise<Result<FrameInput>>
+    addSourceInput(
+      frameId: string,
+      sourceFrameId: string,
+      handle?: string | null,
+    ): Promise<Result<FrameInput>>
     /** Remove an input by its library asset id (Frame Inspector). */
     removeInput(frameId: string, assetId: string): Promise<Result<void>>
     /** Remove one input by its row id - works for asset AND flow-link inputs. */

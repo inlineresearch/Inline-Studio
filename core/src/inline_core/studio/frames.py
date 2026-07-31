@@ -81,6 +81,7 @@ def _row_to_input(row: sqlite3.Row) -> dict[str, Any]:
         "assetId": row["asset_id"],
         "sourceFrameId": row["source_frame_id"],
         "position": row["position"],
+        "handle": row["handle"],
     }
 
 
@@ -358,27 +359,40 @@ def resolve_frame_file(
     return None
 
 
-def frame_input_media(conn: sqlite3.Connection, frame_id: str) -> list[dict[str, str]]:
-    """A frame's inputs resolved to {filePath, kind}, in order (skipping unresolvable ones)."""
-    out: list[dict[str, str]] = []
+def frame_input_media(conn: sqlite3.Connection, frame_id: str) -> list[dict[str, Any]]:
+    """A frame's inputs resolved to {filePath, kind, handle}, in order (skipping unresolvable ones).
+    ``handle`` is the input port it was wired to, or None when untagged."""
+    out: list[dict[str, Any]] = []
     for inp in _input_rows(conn, frame_id):
         if inp["asset_id"]:
             asset = conn.execute(
                 "SELECT file_path, kind FROM assets WHERE id = ?", (inp["asset_id"],)
             ).fetchone()
             if asset is not None:
-                out.append({"filePath": asset["file_path"], "kind": asset["kind"]})
+                out.append(
+                    {
+                        "filePath": asset["file_path"],
+                        "kind": asset["kind"],
+                        "handle": inp["handle"],
+                    }
+                )
         elif inp["source_frame_id"]:
             up = resolve_frame_file(conn, inp["source_frame_id"])
             if up is not None:
-                out.append(up)
+                out.append({**up, "handle": inp["handle"]})
     return out
 
 
-def add_input(conn: sqlite3.Connection, frame_id: str, asset_id: str) -> dict[str, Any]:
+def add_input(
+    conn: sqlite3.Connection, frame_id: str, asset_id: str, handle: str | None = None
+) -> dict[str, Any]:
     get_frame(conn, frame_id)
     existing = _input_rows(conn, frame_id)
-    dup = next((r for r in existing if r["asset_id"] == asset_id), None)
+    # Dedup per (asset, handle): the same image legitimately feeds two ports (a start and an end
+    # keyframe), so an asset already wired elsewhere must not block this port.
+    dup = next(
+        (r for r in existing if r["asset_id"] == asset_id and r["handle"] == handle), None
+    )
     if dup is not None:
         return _row_to_input(dup)
     row = {
@@ -387,20 +401,22 @@ def add_input(conn: sqlite3.Connection, frame_id: str, asset_id: str) -> dict[st
         "assetId": asset_id,
         "sourceFrameId": None,
         "position": len(existing),
+        "handle": handle,
     }
     conn.execute(
-        "INSERT INTO frame_inputs (id, frame_id, asset_id, position) VALUES (?, ?, ?, ?)",
-        (row["id"], frame_id, asset_id, row["position"]),
+        "INSERT INTO frame_inputs (id, frame_id, asset_id, position, handle) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (row["id"], frame_id, asset_id, row["position"], handle),
     )
     return row
 
 
 def add_inputs(
-    conn: sqlite3.Connection, frame_id: str, asset_ids: list[str]
+    conn: sqlite3.Connection, frame_id: str, asset_ids: list[str], handle: str | None = None
 ) -> list[dict[str, Any]]:
     get_frame(conn, frame_id)
     existing = _input_rows(conn, frame_id)
-    have = {r["asset_id"] for r in existing if r["asset_id"]}
+    have = {r["asset_id"] for r in existing if r["asset_id"] and r["handle"] == handle}
     added: list[dict[str, Any]] = []
     pos = len(existing)
     for asset_id in asset_ids:
@@ -413,10 +429,12 @@ def add_inputs(
             "assetId": asset_id,
             "sourceFrameId": None,
             "position": pos,
+            "handle": handle,
         }
         conn.execute(
-            "INSERT INTO frame_inputs (id, frame_id, asset_id, position) VALUES (?, ?, ?, ?)",
-            (row["id"], frame_id, asset_id, pos),
+            "INSERT INTO frame_inputs (id, frame_id, asset_id, position, handle) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (row["id"], frame_id, asset_id, pos, handle),
         )
         added.append(row)
         pos += 1
@@ -424,14 +442,21 @@ def add_inputs(
 
 
 def add_source_input(
-    conn: sqlite3.Connection, frame_id: str, source_frame_id: str
+    conn: sqlite3.Connection, frame_id: str, source_frame_id: str, handle: str | None = None
 ) -> dict[str, Any]:
     get_frame(conn, frame_id)
     get_frame(conn, source_frame_id)
     if frame_id == source_frame_id:
         raise ValueError("A frame cannot use its own output as input.")
     existing = _input_rows(conn, frame_id)
-    dup = next((r for r in existing if r["source_frame_id"] == source_frame_id), None)
+    dup = next(
+        (
+            r
+            for r in existing
+            if r["source_frame_id"] == source_frame_id and r["handle"] == handle
+        ),
+        None,
+    )
     if dup is not None:
         return _row_to_input(dup)
     row = {
@@ -440,11 +465,12 @@ def add_source_input(
         "assetId": None,
         "sourceFrameId": source_frame_id,
         "position": len(existing),
+        "handle": handle,
     }
     conn.execute(
-        "INSERT INTO frame_inputs (id, frame_id, asset_id, source_frame_id, position) "
-        "VALUES (?, ?, NULL, ?, ?)",
-        (row["id"], frame_id, source_frame_id, row["position"]),
+        "INSERT INTO frame_inputs (id, frame_id, asset_id, source_frame_id, position, handle) "
+        "VALUES (?, ?, NULL, ?, ?, ?)",
+        (row["id"], frame_id, source_frame_id, row["position"], handle),
     )
     return row
 

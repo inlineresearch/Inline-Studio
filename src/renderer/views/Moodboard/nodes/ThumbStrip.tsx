@@ -8,6 +8,8 @@ export interface StripItem {
   kind: 'image' | 'video' | 'audio'
   /** Poster still for a video, so we can render a cheap <img> instead of a heavy <video>. */
   poster?: string
+  /** Which input port this feeds, on models that have more than one of a kind. */
+  label?: string
 }
 
 /**
@@ -51,7 +53,9 @@ export function ThumbStrip({
               onSelect?.(i)
             }}
             title={
-              manage ? `Input ${i + 1} of ${items.length}` : `View ${i + 1} of ${items.length}`
+              manage
+                ? `${it.label ?? 'Input'} ${i + 1} of ${items.length}`
+                : `View ${i + 1} of ${items.length}`
             }
             className={`h-8 w-8 overflow-hidden rounded-md border-2 bg-black/60 transition ${
               i === selected
@@ -69,6 +73,11 @@ export function ThumbStrip({
               <img src={it.poster ?? it.url} alt="" className="h-full w-full object-cover" />
             )}
           </button>
+          {it.label && (
+            <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate rounded-b-md bg-black/80 px-0.5 text-center text-[7px] leading-tight text-zinc-300">
+              {it.label}
+            </span>
+          )}
           {onRemove && (
             <button
               onClick={(e) => {

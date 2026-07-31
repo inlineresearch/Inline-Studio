@@ -10,7 +10,15 @@
  */
 
 /** The common input/output type system. Ports declare what kind of media flows through them. */
-export type PortKind = 'image' | 'image[]' | 'video' | 'audio' | 'text' | 'path'
+export type PortKind =
+  | 'image'
+  | 'image[]'
+  | 'video'
+  | 'video[]'
+  | 'audio'
+  | 'audio[]'
+  | 'text'
+  | 'path'
 
 /** A typed input socket on a node (left side). */
 export interface InputPort {
@@ -69,6 +77,11 @@ export interface ResolvedInputs {
   videos: string[]
   audios: string[]
   texts: string[]
+  /**
+   * The same URIs keyed by the input port each was wired to. Only defs with two ports of one kind
+   * need this - read it through `portMedia`, never directly, so untagged inputs still resolve.
+   */
+  byHandle: Record<string, string[]>
 }
 
 /** An estimated cost for one generation. Models price differently (per image / MP / second / …). */
@@ -137,7 +150,46 @@ export function defaultParams(def: NodeDef): ParamValues {
   return out
 }
 
+/**
+ * The media wired to one of a def's input ports.
+ *
+ * Prefers the explicit per-port routing (`byHandle`, set when the user wires an edge into a specific
+ * dot). Falls back to the kind buckets for untagged inputs - drag-drop, and every input made before
+ * inputs recorded their port - handing the def's Nth port of that kind the Nth untagged item, or the
+ * whole bucket for a list port. For a def with one port of a kind this is exactly the old behaviour.
+ */
+export function portMedia(def: NodeDef, resolved: ResolvedInputs, portId: string): string[] {
+  const explicit = resolved.byHandle[portId]
+  if (explicit?.length) return explicit
+  const port = def.inputs.find((p) => p.id === portId)
+  if (!port) return []
+  const family = mediaFamily(port.kind)
+  if (!family) return []
+  const bucket =
+    family === 'video' ? resolved.videos : family === 'audio' ? resolved.audios : resolved.images
+  // Anything already claimed by an explicit wire is not up for positional fallback.
+  const claimed = new Set(Object.values(resolved.byHandle).flat())
+  const untagged = bucket.filter((uri) => !claimed.has(uri))
+  if (isListPort(port.kind)) return untagged
+  const peers = def.inputs.filter((p) => mediaFamily(p.kind) === family)
+  const picked = untagged[peers.indexOf(port)]
+  return picked === undefined ? [] : [picked]
+}
+
+/** Which resolved-input bucket a port draws from, or null for non-media kinds. */
+export function mediaFamily(kind: PortKind): 'image' | 'video' | 'audio' | null {
+  if (kind === 'image' || kind === 'image[]') return 'image'
+  if (kind === 'video' || kind === 'video[]') return 'video'
+  if (kind === 'audio' || kind === 'audio[]') return 'audio'
+  return null
+}
+
+/** True when a port accepts several wires, so its order carries meaning. */
+export function isListPort(kind: PortKind): boolean {
+  return kind === 'image[]' || kind === 'video[]' || kind === 'audio[]'
+}
+
 /** An empty `ResolvedInputs` (all kinds empty) - a convenience for callers/tests. */
 export function emptyResolvedInputs(): ResolvedInputs {
-  return { images: [], masks: [], videos: [], audios: [], texts: [] }
+  return { images: [], masks: [], videos: [], audios: [], texts: [], byHandle: {} }
 }

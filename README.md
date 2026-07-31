@@ -307,9 +307,19 @@ For the full engineering story (the graph/sampler/device-policy design, the node
 
 **API Nodes** bring hosted, closed models onto the same canvas: no GPU, no setup, instant creative range. Add a Generate node, pick a model, and bring your own provider key (it stays on your machine); you pay the provider per render, and each node estimates the price before you run.
 
-The initial provider is **[fal](https://fal.ai)**, with models across image, video, and audio: **FLUX.2**, **FLUX.2 Edit**, **GPT Image 2**, **Nano Banana**, **Seedance**, **LTX**, **Sonilo**, and many more. Add your [fal.ai key](https://fal.ai/dashboard/keys) in Settings to use them. More providers will follow behind the same API Node surface.
+The initial provider is **[fal](https://fal.ai)**, with models across image, video, and audio: **FLUX.2**, **FLUX.2 Edit**, **GPT Image 2**, **Nano Banana**, **Seedance**, **MiniMax H3**, **LTX**, **Sonilo**, and many more. Add your [fal.ai key](https://fal.ai/dashboard/keys) in Settings to use them. More providers will follow behind the same API Node surface.
 
 However you render, the frame keeps its full, non-destructive take history, so you can mix API Nodes and local generation in the same film without ever losing a good version.
+
+### MiniMax H3
+
+H3 (Hailuo 03) is on the canvas as three nodes, all at 2K, 5 to 15 seconds:
+
+- **Text → Video** for a shot from nothing but a prompt.
+- **Image → Video** for a still you already like. It has two image dots: wire a start frame on its own, or add an end frame and H3 interpolates between the two.
+- **Reference → Video** for consistency across shots. Wire up to nine images, plus reference video and audio, and address them by position in the prompt: "Image 1 is the lead, Image 2 is her dog". Wiring order is the numbering you see on the node.
+
+Video costs $0.26 per second at 2K, so the node's price badge reads about $1.30 for a five second clip. Reference images past the first five and any reference video cost extra on top of that.
 
 ![Inline Studio dashboard with recent AI film projects](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/screenshot-dashboard.png)
 

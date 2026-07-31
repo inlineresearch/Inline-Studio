@@ -27,6 +27,8 @@ import { importFilesToLibrary, importMediaUrlToLibrary } from '@/lib/importFiles
 import { copyText } from '@/lib/clipboard'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
 import { portKindColor, portsSatisfy, type NodeDescriptor, type PortKind } from '@shared/coreNodes'
+import { getNodeDef } from '@shared/nodes/registry'
+import { portIdForHandle } from '@shared/nodes/handles'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useProjectStore } from '../../store/projectStore'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
@@ -304,6 +306,7 @@ function Board(): React.JSX.Element {
   const undo = useMoodboardStore((s) => s.undo)
   const redo = useMoodboardStore((s) => s.redo)
   const addSourceInput = useFrameStore((s) => s.addSourceInput)
+  const addInputs = useFrameStore((s) => s.addInputs)
   const setHero = useFrameStore((s) => s.setHero)
   const genError = useGenerationStore((s) => s.error)
   const setGenError = useGenerationStore((s) => s.setError)
@@ -677,14 +680,24 @@ function Board(): React.JSX.Element {
 
     void connect(c.source, c.target, c.sourceHandle ?? null, c.targetHandle ?? null)
 
-    // Output → Frame/GenNode input ('in', or a GenNode's 'audio' dot): also wire the data flow-link
-    // (the DAG edge). The target frame takes the source's frame - a frame/GenNode directly, or the
-    // frame feeding a Preview - as a live input, resolved to that frame's hero take at generate time.
-    if (
-      tgt?.type === 'frame' &&
-      (c.targetHandle === 'in' || c.targetHandle === 'audio') &&
-      tgt.frameId
-    ) {
+    // Output → Frame/GenNode media input: also wire the data flow-link (the DAG edge). The target
+    // frame takes the source's frame - a frame/GenNode directly, or the frame feeding a Preview - as
+    // a live input, resolved to that frame's hero take at generate time. Everything but the 'prompt'
+    // dot is a media input; the input records which port it landed on, so a model with two ports of
+    // one kind (start vs end keyframe) can tell them apart.
+    if (tgt?.type === 'frame' && c.targetHandle !== 'prompt' && tgt.frameId) {
+      const tgtFrame = frames.find((f) => f.id === tgt.frameId)
+      const tgtDef = tgtFrame?.modelId ? getNodeDef(tgtFrame.modelId) : undefined
+      const handle = tgtDef ? portIdForHandle(tgtDef, c.targetHandle) : null
+      // A library source contributes the assets themselves: a Load Assets node all of its own, a
+      // single asset node itself. Without this the edge drew but no input row was written, so the
+      // node looked wired and generated from nothing.
+      const assetIds =
+        src?.type === 'loader' ? (src.data?.assetIds ?? []) : src?.assetId ? [src.assetId] : []
+      if (assetIds.length > 0) {
+        void addInputs(tgt.frameId, assetIds, handle)
+        return
+      }
       let sourceFrameId: string | undefined
       if (src?.type === 'frame') {
         sourceFrameId = src.frameId ?? undefined
@@ -695,7 +708,7 @@ function Board(): React.JSX.Element {
           : undefined
       }
       if (sourceFrameId && sourceFrameId !== tgt.frameId) {
-        void addSourceInput(tgt.frameId, sourceFrameId)
+        void addSourceInput(tgt.frameId, sourceFrameId, handle)
       }
     }
     // Wiring into a Director node's input handle just persists the connector (above); the

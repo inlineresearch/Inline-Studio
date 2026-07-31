@@ -151,3 +151,29 @@ def test_staging_engages_only_when_encoder_and_transformer_cannot_coexist() -> N
         assert _needs_staged_encode("d", "v", "t", Policy(None)) is False
     finally:
         runner_mod.reqs.footprint_bytes = original
+
+
+def test_a_stale_model_pick_is_reported_missing_not_run(models: Path) -> None:
+    """A dropdown pick whose file is gone must fail the pre-flight, not reach the loader.
+
+    ``variant`` defaults to a concrete build and ``resolved_variant`` honours that param without
+    opening anything, so keying the diffusion component's presence off it reported a checkpoint
+    present when none resolved. The run then got as far as ``str(None)``, and the user saw
+    "'None' is not a FLUX.2 diffusion model" - which reads like a corrupt file rather than a pick
+    pointing at something that is no longer there.
+    """
+    _folder(models / "diffusion_models" / "flux2-dev-nf4", DEV_CONFIG)
+    stale = {"model": "deleted.safetensors", "variant": "klein-4b"}
+
+    assert reqs.resolve_diffusion(stale) is None
+    # The forced variant still resolves, which is what made this look installed.
+    assert reqs.resolved_variant(stale) is V.get("klein-4b")
+
+    diffusion = next(c for c in reqs.flux2_requirements(stale) if c.id == "diffusion")
+    assert not diffusion.present
+
+    # An installed pick, and the folder that is actually there, both still report present.
+    assert next(
+        c for c in reqs.flux2_requirements({"model": "flux2-dev-nf4"}) if c.id == "diffusion"
+    ).present
+    assert next(c for c in reqs.flux2_requirements(None) if c.id == "diffusion").present

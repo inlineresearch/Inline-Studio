@@ -51,18 +51,27 @@ def file_to_data_uri(abs_path: Path) -> str:
 
 def resolve_fal_inputs(conn: Any, folder: Path, frame_id: str) -> dict[str, Any]:
     """A frame's inputs + prompt, resolved for the browser to build the fal request: media inputs as
-    base64 data URIs grouped by kind, and the prompt text from a connected Prompt node."""
+    base64 data URIs grouped by kind, and the prompt text from a connected Prompt node.
+
+    ``byHandle`` additionally groups the same URIs by the input port each was wired to, so a model
+    with two ports of one kind (a start and an end keyframe) can tell them apart. Untagged inputs
+    (drag-drop, and anything predating the handle column) appear only in the kind buckets."""
     images: list[str] = []
     videos: list[str] = []
     audios: list[str] = []
+    by_handle: dict[str, list[str]] = {}
     for media in fr.frame_input_media(conn, frame_id):
         uri = file_to_data_uri(folder / media["filePath"])
         kind = media["kind"]
         (videos if kind == "video" else audios if kind == "audio" else images).append(uri)
+        handle = media.get("handle")
+        if handle:
+            by_handle.setdefault(handle, []).append(uri)
     return {
         "images": images,
         "videos": videos,
         "audios": audios,
+        "byHandle": by_handle,
         "prompt": mb.prompt_text_for_frame(conn, frame_id),
     }
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS project (
@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS frame_inputs (
   frame_id        TEXT NOT NULL,
   asset_id       TEXT,
   source_frame_id TEXT,
-  position       INTEGER NOT NULL
+  position       INTEGER NOT NULL,
+  handle         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS asset_folders (
@@ -246,6 +247,11 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "frame_inputs", "source_frame_id", "TEXT")
 
     _relax_frame_inputs_asset_id(conn)  # v8 -> v9: asset_id must be nullable
+
+    # v16 -> v17: which input port an input was wired to. NULL = untagged (drag-drop, and every
+    # input made before this column existed) - those still resolve by media kind. Must come AFTER
+    # the rebuild above, whose fixed column list would drop it.
+    _add_column_if_missing(conn, "frame_inputs", "handle", "TEXT")
 
     _add_column_if_missing(conn, "assets", "preview_path", "TEXT")
     _add_column_if_missing(conn, "frames", "comfy_workflow_ready", "INTEGER NOT NULL DEFAULT 0")

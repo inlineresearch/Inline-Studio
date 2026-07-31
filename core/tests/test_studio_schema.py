@@ -95,3 +95,22 @@ def test_frame_inputs_asset_id_relaxed_to_nullable() -> None:
     cols = conn.execute("PRAGMA table_info(frame_inputs)").fetchall()
     asset = next(c for c in cols if c[1] == "asset_id")
     assert asset[3] == 0  # notnull flag cleared
+    # The v9 rebuild copies a fixed column list, so `handle` must be added after it, not dropped.
+    assert "handle" in _columns(conn, "frame_inputs")
+
+
+def test_frame_inputs_gain_a_nullable_handle_keeping_existing_rows() -> None:
+    """v16 -> v17: existing inputs survive and read back untagged, so they still resolve by kind."""
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE frame_inputs (id TEXT PRIMARY KEY, frame_id TEXT NOT NULL, asset_id TEXT,
+                                   source_frame_id TEXT, position INTEGER NOT NULL);
+        INSERT INTO frame_inputs (id, frame_id, asset_id, position) VALUES ('i1', 'f1', 'a1', 0);
+        PRAGMA user_version = 16;
+        """
+    )
+    apply_schema(conn)
+    assert "handle" in _columns(conn, "frame_inputs")
+    row = conn.execute("SELECT asset_id, handle FROM frame_inputs WHERE id='i1'").fetchone()
+    assert row == ("a1", None)

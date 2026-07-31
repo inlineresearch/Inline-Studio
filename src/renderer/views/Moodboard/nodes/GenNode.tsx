@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { takeWaveformPath } from '@shared/media'
 import { getNodeDef } from '@shared/nodes/registry'
-import { formatPrice } from '@shared/nodes/types'
+import { dotPorts, handleIdForPort, portIdForHandle } from '@shared/nodes/handles'
+import { formatPrice, mediaFamily } from '@shared/nodes/types'
 import { useFrameStore } from '../../../store/frameStore'
 import { useAssetStore } from '../../../store/assetStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
@@ -149,30 +150,37 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
   // The node's wired/dropped inputs, resolved to thumbnails (same as the Frame node). Shown as a
   // strip at the top so dropping several images one-by-one visibly accumulates and each is removable.
   const inputThumbs = resolveInputThumbs(inputs, { assets, allFrames, takesByFrame, inputsByFrame })
-  // Input dots are driven by the model's API: each only shows when the model actually takes that
-  // kind of input. The media dot is typed to match (image vs video); audio gets its own dot.
-  const imageInput = def.inputs.some((p) => p.kind === 'image' || p.kind === 'image[]')
-  const videoInput = def.inputs.some((p) => p.kind === 'video')
-  const audioInput = def.inputs.some((p) => p.kind === 'audio')
-  const wantsMedia = imageInput || videoInput
-  const mediaIsVideo = videoInput && !imageInput
-  const requiresMedia = def.inputs.some(
-    (p) => p.required && (p.kind === 'image' || p.kind === 'image[]' || p.kind === 'video'),
+  // Caption a thumb with its port only when the model has more than one dot to tell apart.
+  const portLabels = new Map(
+    def.inputs.length > 1
+      ? inputs.flatMap((i) => {
+          const port = def.inputs.find((p) => p.id === i.handle)
+          return port ? [[i.id, port.label] as const] : []
+        })
+      : [],
   )
-  const requiresAudio = def.inputs.some((p) => p.required && p.kind === 'audio')
+  // Input dots are driven by the model's API: one dot per declared input port, so a model with two
+  // image inputs (a start and an end keyframe) gets two dots the user can tell apart.
+  const ports = dotPorts(def)
   const hasPrompt = connectors.some(
     (c) => c.toItemId === id && (c.data?.targetHandle as string | undefined) === 'prompt',
   )
-  // Coarse: inputs aren't tagged by kind, so we only nudge when nothing is wired at all.
-  const requiredKinds = [
-    ...(requiresMedia ? [mediaIsVideo ? 'video' : 'image'] : []),
-    ...(requiresAudio ? ['audio'] : []),
-  ]
+  const wiredHandles = new Set(
+    connectors
+      .filter((c) => c.toItemId === id)
+      .map((c) => portIdForHandle(def, c.data?.targetHandle as string | undefined))
+      .filter((p): p is string => !!p),
+  )
+  // A required port counts as satisfied by anything untagged too: dropped inputs carry no port.
+  const untagged = inputs.some((i) => !i.handle)
+  const unmet = ports.filter(
+    (p) => p.required && !wiredHandles.has(p.id) && !inputs.some((i) => i.handle === p.id),
+  )
   const missing =
     !hasPrompt && !def.promptOptional
       ? 'Connect a Prompt node'
-      : requiredKinds.length > 0 && inputs.length === 0
-        ? `Wire ${requiredKinds.join(' & ')} input${requiredKinds.length > 1 ? 's' : ''}`
+      : unmet.length > 0 && !untagged
+        ? `Wire ${unmet.map((p) => p.label.toLowerCase()).join(' & ')}`
         : null
   const pct = typeof progress === 'number' ? Math.round(progress * 100) : null
   const price = def.estimatePrice?.(frame.params) ?? null
@@ -186,30 +194,22 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
       icon: <span className="text-xs font-bold leading-none">T</span>,
       label: def.promptOptional ? 'Prompt (optional)' : 'Prompt',
     },
-    ...(wantsMedia
-      ? [
-          {
-            id: 'in',
-            colorClass: '!bg-emerald-400',
-            icon: mediaIsVideo ? (
-              <VideoGlyph className="h-3.5 w-3.5" />
-            ) : (
-              <ImageGlyph className="h-3.5 w-3.5" />
-            ),
-            label: mediaIsVideo ? 'Video' : 'Image',
-          },
-        ]
-      : []),
-    ...(audioInput
-      ? [
-          {
-            id: 'audio',
-            colorClass: '!bg-violet-400',
-            icon: <AudioGlyph className="h-3.5 w-3.5" />,
-            label: 'Audio',
-          },
-        ]
-      : []),
+    ...ports.map((p) => {
+      const family = mediaFamily(p.kind)
+      return {
+        id: handleIdForPort(def, p),
+        colorClass: family === 'audio' ? '!bg-violet-400' : '!bg-emerald-400',
+        icon:
+          family === 'audio' ? (
+            <AudioGlyph className="h-3.5 w-3.5" />
+          ) : family === 'video' ? (
+            <VideoGlyph className="h-3.5 w-3.5" />
+          ) : (
+            <ImageGlyph className="h-3.5 w-3.5" />
+          ),
+        label: p.required ? p.label : `${p.label} (optional)`,
+      }
+    }),
   ]
 
   const canDrop = (e: React.DragEvent): boolean =>
@@ -290,6 +290,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
                 url: t.url,
                 kind: t.kind,
                 poster: t.poster,
+                label: portLabels.get(t.id),
               }))}
               onSelect={(i) => {
                 const t = inputThumbs[i]

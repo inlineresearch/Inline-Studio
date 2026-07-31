@@ -23,9 +23,9 @@ interface FrameState {
   load: () => Promise<void>
   importAsFrames: () => Promise<void>
   addFromAssets: (assetIds: string[]) => Promise<void>
-  addInputs: (frameId: string, assetIds: string[]) => Promise<void>
+  addInputs: (frameId: string, assetIds: string[], handle?: string | null) => Promise<void>
   /** Link another frame's output as an input (resolves to its hero take). */
-  addSourceInput: (frameId: string, sourceFrameId: string) => Promise<void>
+  addSourceInput: (frameId: string, sourceFrameId: string, handle?: string | null) => Promise<void>
   removeInput: (frameId: string, assetId: string) => Promise<void>
   /** Remove one input by its row id (works for asset AND flow-link inputs). */
   removeInputById: (frameId: string, inputId: string) => Promise<void>
@@ -104,9 +104,9 @@ export const useFrameStore = create<FrameState>((set, get) => ({
     }
   },
 
-  addInputs: async (frameId, assetIds) => {
+  addInputs: async (frameId, assetIds, handle) => {
     try {
-      const res = await studio().frames.addInputs(frameId, assetIds)
+      const res = await studio().frames.addInputs(frameId, assetIds, handle ?? null)
       if (!res.ok) return set({ error: res.error })
       const added = res.value
       if (added.length === 0) return
@@ -121,9 +121,9 @@ export const useFrameStore = create<FrameState>((set, get) => ({
     }
   },
 
-  addSourceInput: async (frameId, sourceFrameId) => {
+  addSourceInput: async (frameId, sourceFrameId, handle) => {
     try {
-      const res = await studio().frames.addSourceInput(frameId, sourceFrameId)
+      const res = await studio().frames.addSourceInput(frameId, sourceFrameId, handle ?? null)
       if (!res.ok) return set({ error: res.error })
       set((s) => {
         const existing = s.inputsByFrame[frameId] ?? []

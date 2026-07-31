@@ -1,5 +1,6 @@
 /**
- * Build a starter graph on the Studio canvas: a prompt node wired into a model node.
+ * Build a starter graph on the Studio canvas: a prompt node wired into a model node, either an
+ * Inline Core node or a hosted fal one.
  *
  * Mirrors `recipeGraph.ts` deliberately, including `recordHistory: false` on the param writes.
  * Note that `addCoreNode`, `addPrompt` and `connect` each record their own undo entry, so a starter
@@ -20,20 +21,27 @@ import {
  * A partial graph is worse than none, so a failure aborts before wiring and nothing is left dangling.
  */
 export async function buildStarterGraph(recipe: StarterRecipe, centre: Point): Promise<string[]> {
-  if (!recipe.coreType) return []
+  if (!recipe.coreType && !recipe.falModelId) return []
   const store = useMoodboardStore.getState()
   const at = starterLayout(centre)
 
-  const gen = await store.addCoreNode(recipe.coreType, at.gen.x, at.gen.y)
+  const gen = recipe.falModelId
+    ? await store.addGenNode(recipe.falModelId, at.gen.x, at.gen.y)
+    : await store.addCoreNode(recipe.coreType as string, at.gen.x, at.gen.y)
   if (!gen) {
     useGenerationStore.getState().setError('Could not add the model node. Is Inline Core running?')
     return []
   }
-  await store.updateItem(
-    gen.id,
-    { data: { ...gen.data, core: { type: recipe.coreType, params: { ...recipe.params } } } },
-    false,
-  )
+  if (recipe.coreType) {
+    await store.updateItem(
+      gen.id,
+      { data: { ...gen.data, core: { type: recipe.coreType, params: { ...recipe.params } } } },
+      false,
+    )
+  } else if (gen.frameId) {
+    // A fal node's params live on its frame, not in the item's data blob.
+    await useGenerationStore.getState().setParams(gen.frameId, { ...recipe.params })
+  }
 
   const prompt = await store.addPrompt(at.prompt.x, at.prompt.y)
   if (!prompt) {

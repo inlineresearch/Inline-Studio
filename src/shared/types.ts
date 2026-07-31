@@ -74,6 +74,8 @@ export interface FrameInput {
   assetId: string | null
   sourceFrameId: string | null
   position: number
+  /** The model input port this was wired to, or null when untagged (drag-drop / pre-v17 rows). */
+  handle: string | null
 }
 
 /** Every ComfyUI render of a frame becomes an immutable Take. */
