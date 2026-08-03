@@ -424,6 +424,17 @@ def peak_vram_gb() -> float:
     return 0.0
 
 
+def torch_device(placement: Any) -> str:
+    """A placement's device as torch wants it: a string, not Core's `Device` dataclass.
+
+    The sibling of `torch_dtype`. It exists because passing the dataclass straight to `Module.to`
+    raises a TypeError that names neither the argument nor the caller, and it has cost three
+    separate debugging sessions in this module alone.
+    """
+    device = getattr(placement, "device", placement)
+    return str(device)
+
+
 def free_vram() -> None:
     """Release cached-but-unused CUDA blocks. Cuts fragmentation; keeps resident weights."""
     try:

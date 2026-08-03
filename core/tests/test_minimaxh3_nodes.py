@@ -321,3 +321,15 @@ def test_provenance_survives_a_rename(models_root: Path) -> None:
     reqs.record_provenance("ref2va", renamed.name)
 
     assert reqs.resolve_transformer("ref2va") == renamed
+
+
+def test_each_blockset_gets_its_denoiser_under_the_name_it_declares() -> None:
+    """Ref2VA calls it `transformer_ref`, FL2VA calls it `transformer`, and `update_components`
+    only warns about a name it does not know. Pass the wrong one and the pipeline ends up with no
+    denoiser at all, which surfaces much later as a missing attribute part-way into a render."""
+    pytest.importorskip("torch")
+    from inline_core.models.minimaxh3.pipeline import _denoiser_name
+    from inline_core.models.minimaxh3.vendor import MiniMaxH3Blocks, MiniMaxH3Ref2VABlocks
+
+    assert _denoiser_name(MiniMaxH3Blocks()) == "transformer"
+    assert _denoiser_name(MiniMaxH3Ref2VABlocks()) == "transformer_ref"

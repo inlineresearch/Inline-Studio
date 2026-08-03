@@ -312,14 +312,22 @@ def _build(
         MiniMaxH3Ref2VAModularPipeline if partition == "ref2va" else MiniMaxH3ModularPipeline
     )
     pipe = pipeline_class(blocks=blocks)
+    # Ref2VA names its denoiser `transformer_ref`, FL2VA names it `transformer`. `update_components`
+    # only *warns* about a name it does not know, so passing the wrong one leaves the pipeline with
+    # no denoiser at all and the failure surfaces much later as a missing attribute mid-render.
+    denoiser_name = _denoiser_name(blocks)
     pipe.update_components(
-        transformer=transformer,
+        **{denoiser_name: transformer},
         text_encoder=text_encoder,
         tokenizer=AutoTokenizer.from_pretrained(str(processor_dir), local_files_only=True),
         processor=AutoProcessor.from_pretrained(str(processor_dir), local_files_only=True),
         vae=_load_vae(
-            AutoencoderKLMiniMaxH3, video_vae,
-            dtype=rt.torch_dtype(policy.placement("vae")), remap=True,
+            # fp32, not the policy's dtype, and not a preference. The vendored keyframe encoder
+            # builds its pixels in fp32 on purpose - it says the released model's conditioning
+            # cannot be reproduced without that rounding - and unlike the decoder it is not wrapped
+            # in autocast, so a bf16 VAE meets fp32 pixels in a conv3d and raises. Text to video
+            # never touches that block, which is why only the keyframe nodes broke.
+            AutoencoderKLMiniMaxH3, video_vae, dtype=torch.float32, remap=True,
         ),
         # Placed here rather than left to `pipe.to()`: that call is skipped when the denoiser
         # streams, and at 605 MB this one never needs offloading anyway. Without it the decode
@@ -332,6 +340,14 @@ def _build(
         audio_scheduler=MiniMaxH3Scheduler(shift=AUDIO_SIGMA_SHIFT),
     )
 
+    # Leaf offload moves the VAE across the bus per leaf, per call. That is the right trade when
+    # the card is full, and badly wrong when it is not: at 960x544 it turned a 6 minute render into
+    # 32. Staged, the conditioner is on the CPU by decode time, so if the measured free VRAM covers
+    # the VAE plus a working margin it stays resident instead.
+    vae_resident = staged and _vae_fits(video_vae, placement.device)
+    if vae_resident:
+        recipe = _replace(recipe, vae_offload=None)
+
     apply_offload(
         recipe,
         resident_blocks=resident_blocks,
@@ -341,6 +357,9 @@ def _build(
         vae=getattr(pipe, "vae", None),
         device=placement.device,
     )
+    if vae_resident:
+        pipe.vae.to(rt.torch_device(placement))
+    pipe._inline_denoiser = denoiser_name  # noqa: SLF001 - our own attribute on our own pipeline
     if staged:
         # Split once, at build time: the halves share every component object, so this costs nothing
         # but the block graph. `render_staged` below does the swapping.
@@ -359,6 +378,37 @@ def _build(
         # there - is placed once so no forward meets a CPU weight beside a CUDA activation.
         _place_unstreamed(transformer, resident_blocks, placement.device)
     return pipe
+
+
+#: Left free beside a resident VAE: the denoiser is already placed, so this only has to cover the
+#: decode's own activations, which are the largest single allocation of the render.
+_VAE_RESIDENT_MARGIN_GB = 12.0
+
+
+def _vae_fits(path: Path, device: Any) -> bool:
+    """Whether the video VAE can stay on the card rather than streaming leaf by leaf.
+
+    fp32 doubles what the file weighs, and that is what actually has to fit.
+    """
+    free = rt.free_vram_bytes(device)
+    if not free:
+        return False
+    needed = path.stat().st_size * 2 + int(_VAE_RESIDENT_MARGIN_GB * 1e9)
+    fits = free > needed
+    logger.info(
+        "MiniMax H3 video VAE: %s (%.1f GB free, needs %.1f GB with margin)",
+        "resident" if fits else "streamed leaf by leaf", free / 1e9, needed / 1e9,
+    )
+    return fits
+
+
+def _denoiser_name(blocks: Any) -> str:
+    """Whichever name this blockset gives its denoiser. Declared, not guessed by partition."""
+    declared = {getattr(spec, "name", "") for spec in (blocks.expected_components or [])}
+    for candidate in ("transformer", "transformer_ref"):
+        if candidate in declared:
+            return candidate
+    raise ComponentError("This MiniMax H3 blockset declares no denoiser component.")
 
 
 def render_staged(pipe: Any, device: Any, **call: Any) -> Any:
@@ -384,14 +434,15 @@ def render_staged(pipe: Any, device: Any, **call: Any) -> Any:
     state = head(**call)
     # Parked, not released: the next render needs it again, and 19.5 GB across the bus is seconds
     # against the minutes of streaming it buys back.
+    denoiser = getattr(pipe, getattr(pipe, "_inline_denoiser", "transformer"))
     pipe.text_encoder.to("cpu")
     rt.free_vram()
-    pipe.transformer.to(device)
+    denoiser.to(device)
     try:
         return tail(state, **call)
     finally:
         # Give the card back before the next prompt has to be encoded on it.
-        pipe.transformer.to("cpu")
+        denoiser.to("cpu")
         pipe.text_encoder.to(device)
         rt.free_vram()
 

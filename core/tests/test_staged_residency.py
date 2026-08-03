@@ -25,6 +25,18 @@ def _h3_blocks() -> Any:
     return MiniMaxH3Blocks()
 
 
+def test_both_h3_blocksets_split_at_the_same_point() -> None:
+    """FL2VA and Ref2VA differ after the encoder - `vae_encoder` against `reference_encoder` - but
+    staging cuts at `text_encoder`, so both must carry that block under that name. A rename would
+    break staging for one partition only, which is the kind of thing that ships."""
+    from inline_core.models.minimaxh3.vendor import MiniMaxH3Blocks, MiniMaxH3Ref2VABlocks
+
+    for blocks in (MiniMaxH3Blocks(), MiniMaxH3Ref2VABlocks()):
+        head, tail = split_blocks(blocks, through="text_encoder")
+        assert list(head.sub_blocks) == ["setup", "text_encoder"]
+        assert "denoise" in tail.sub_blocks
+
+
 def test_the_conditioner_and_the_denoise_end_up_on_opposite_sides() -> None:
     """The whole point: the encoder can be freed between the two halves."""
     head, tail = split_blocks(_h3_blocks(), through="text_encoder")
