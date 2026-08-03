@@ -149,11 +149,53 @@ def test_too_many_references_is_refused_before_any_load() -> None:
         build_request(BY_TYPE[REF], _defaults(REF), inputs)
 
 
-def test_reference_wiring_order_reaches_the_call() -> None:
-    inputs = {**_prompt(), "references": ["lead", "dog"], "audio": ["voice"]}
+def test_reference_wiring_order_reaches_the_call(tmp_path: Any) -> None:
+    """Order is the numbering the prompt addresses, and the call must carry the type the blocks
+    accept.
+
+    An earlier version of this test asserted `r.value` on our own `Reference` objects, so it passed
+    while the node handed the vendored blocks a type they reject outright. It was asserting the bug.
+    The contract is the vendored `MiniMaxH3Reference`, one medium each, in wiring order.
+    """
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    from inline_core.models.minimaxh3.vendor import MiniMaxH3Reference
+    from inline_core.takes import AssetRef
+
+    lead, dog = tmp_path / "lead.png", tmp_path / "dog.png"
+    for path in (lead, dog):
+        Image.new("RGB", (32, 32), (10, 20, 30)).save(path)
+    # A real, decodable clip: the vendored reference decodes audio when it is built, so a stub
+    # file would only prove that a stub file fails.
+    av = pytest.importorskip("av")
+    voice = tmp_path / "voice.wav"
+    with av.open(str(voice), "w") as out:
+        stream = out.add_stream("pcm_s16le", rate=16000, layout="mono")
+        frame = av.AudioFrame(format="s16", layout="mono", samples=1600)
+        for plane in frame.planes:
+            plane.update(bytes(plane.buffer_size))
+        frame.sample_rate = 16000
+        out.mux(stream.encode(frame))
+        out.mux(stream.encode(None))
+
+    asset = lambda path: AssetRef(ref="path", path=str(path))  # noqa: E731 - reads better inline
+    inputs = {
+        **_prompt(),
+        "references": [asset(lead), asset(dog)],
+        "audio": [asset(voice)],
+    }
     request = build_request(BY_TYPE[REF], _defaults(REF), inputs)
     call = call_kwargs(request, BY_TYPE[REF], inputs)
-    assert [r.value for r in call["references"]] == ["lead", "dog", "voice"]
+
+    assert all(isinstance(r, MiniMaxH3Reference) for r in call["references"])
+    assert [r.image is not None for r in call["references"]] == [True, True, False]
+    # The vendored dataclass decodes at construction: no H3 block opens a media file, so what
+    # arrives is a waveform and the rate that came with it, not a path.
+    audio_ref = call["references"][2]
+    assert audio_ref.image is None and audio_ref.video is None
+    assert audio_ref.sample_rate == 16000
+    assert audio_ref.audio is not None and audio_ref.audio.ndim == 2
 
 
 def test_a_text_to_video_call_carries_no_keyframes() -> None:

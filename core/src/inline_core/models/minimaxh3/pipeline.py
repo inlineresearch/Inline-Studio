@@ -72,7 +72,7 @@ ENCODER_KEEP_PRECISION = (
 
 def load_pipeline(
     policy: DevicePolicy, *, params: dict[str, Any], partition: str,
-    factorise_adaln: bool = False, quantize: bool = True, staged: bool = True,
+    factorise_adaln: bool = True, quantize: bool = True, staged: bool = True,
     transformer: Any = None, video_vae: Any = None, text_encoder: Any = None,
 ) -> Any:
     """Build, place and cache the pipeline for one partition.
@@ -80,6 +80,12 @@ def load_pipeline(
     ``quantize=False`` streams the denoiser in full precision instead of int8, which needs host RAM
     for all 66 GB of it. It exists for the numerics gate, whose whole job is to measure a change
     against weights that nothing else has rounded.
+
+    ``factorise_adaln`` defaults on. It takes the transformer from 66.2 GB to 40.3 GB and cuts 42
+    percent off a streamed step, and it was accepted on the numerical measure rather than the pixel
+    one: the factorisation perturbs the modulation 14x less than one bf16 ulp of re-rounding, which
+    is below the ambiguity the checkpoint's own storage already carries. The gate's pixel tolerance
+    could not decide it either way - an information-free re-rounding fails that tolerance too.
     """
     # A wired handle wins over what is on disk. It flows into the cache key through the path, so
     # two graphs pointing at different checkpoints do not share a loaded pipeline.
@@ -372,6 +378,9 @@ def render_staged(pipe: Any, device: Any, **call: Any) -> Any:
     head, tail = phases
     device = str(device)
 
+    # Every kwarg goes to BOTH halves, not just the first. `set_timesteps` lives in the tail, so a
+    # head-only handoff left it reading the descriptor default: a render that asked for 8 steps
+    # silently took 49. The halves ignore what their own blocks do not declare, so this is safe.
     state = head(**call)
     # Parked, not released: the next render needs it again, and 19.5 GB across the bus is seconds
     # against the minutes of streaming it buys back.
@@ -379,7 +388,7 @@ def render_staged(pipe: Any, device: Any, **call: Any) -> Any:
     rt.free_vram()
     pipe.transformer.to(device)
     try:
-        return tail(state)
+        return tail(state, **call)
     finally:
         # Give the card back before the next prompt has to be encoded on it.
         pipe.transformer.to("cpu")

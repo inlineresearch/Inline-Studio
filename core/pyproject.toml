@@ -34,6 +34,10 @@ runtime = [
   # HED, lineart, MLSD, scribble, normal. DWPose runs its detector on ONNX Runtime.
   "controlnet-aux>=0.0.7",
   "onnxruntime>=1.17",
+  # MiniMax H3's reference node decodes a wired video or audio clip when it builds the reference.
+  # The blocks raise a plain ImportError without it, so the node would advertise two ports it
+  # cannot read. Video output goes out through ffmpeg, not this.
+  "av>=12",
 ]
 server = [
   "fastapi>=0.110",

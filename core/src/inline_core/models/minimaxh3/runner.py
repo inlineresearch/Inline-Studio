@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -223,6 +224,33 @@ def build_request(
     )
 
 
+def _h3_reference(ref: Any, label: str) -> Any:
+    """Adapt one of our `Reference`s into the vendored `MiniMaxH3Reference` the blocks require.
+
+    `models/references.py` is the shared, model-agnostic seam - ordering and numbering are the same
+    problem for any model that reads several media - so the H3-shaped dataclass is built here at the
+    boundary rather than leaking a vendored type into it. Order is preserved because order *is* the
+    numbering the prompt addresses.
+    """
+    from ..references import ReferenceKind
+    from .vendor import MiniMaxH3Reference
+
+    if ref.kind is ReferenceKind.IMAGE:
+        return MiniMaxH3Reference(image=rt.load_image(ref.value, label))
+    if ref.kind is ReferenceKind.VIDEO:
+        return MiniMaxH3Reference(video=_media_path(ref.value, label, "video"))
+    return MiniMaxH3Reference(audio=_media_path(ref.value, label, "audio"))
+
+
+def _media_path(value: Any, label: str, kind: str) -> str:
+    """A path the blocks can open. They decode video and audio themselves, so a path is what they
+    want; anything that is not one is a wiring error worth naming."""
+    path = getattr(value, "path", None) or getattr(value, "uri", None) or value
+    if isinstance(path, str | Path) and Path(str(path)).is_file():
+        return str(path)
+    raise ComponentError(f"{label} could not read the wired {kind} reference.")
+
+
 def call_kwargs(request: Request, variant: Variant, inputs: dict[str, list[Any]]) -> dict[str, Any]:
     """The keyword arguments handed to the blocks.
 
@@ -240,7 +268,7 @@ def call_kwargs(request: Request, variant: Variant, inputs: dict[str, list[Any]]
         "output_type": "pil",
     }
     if variant.references:
-        call["references"] = list(request.references)
+        call["references"] = [_h3_reference(ref, variant.title) for ref in request.references]
     else:
         first = rt.first(inputs.get("image"))
         last = rt.first(inputs.get("last_image"))
