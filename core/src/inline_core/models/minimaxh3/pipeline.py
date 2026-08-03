@@ -246,7 +246,11 @@ def _build(
 
     # With the conditioner placed, whatever VRAM is left decides how much of the denoiser has to
     # live there. Measured now rather than assumed: the conditioner is most of the card.
-    resident_blocks = _plan_residency(recipe, policy, transformer_path, placement.device)
+    resident_blocks = _plan_residency(
+        recipe, policy, transformer_path, placement.device,
+        # The video VAE is loaded after the denoiser and streams leaf by leaf, which means host RAM.
+        later_ram_bytes=video_vae.stat().st_size if recipe.vae_offload else 0,
+    )
 
     # Then the denoiser, into the RAM the conditioner just vacated. Loaded to CPU when the
     # recipe streams: the offload hooks install before placement.
@@ -347,13 +351,34 @@ def _encoder_config(recipe: Any) -> Any:
 #: full-precision path it guards is barely fitting at any canvas.
 _VRAM_RESERVE_GB = 10.0
 
+#: Host RAM the split leaves free, and deliberately much larger than `_RAM_HEADROOM_GB`. That one
+#: covers a load; this one covers the whole render running on top of 50 GB of weights that never
+#: leave RAM. Sized off a failure: at 6 GB the planner left 1.9 GB free at peak, and with no swap
+#: and the page cache already down to 745 MB there was nothing for the kernel to reclaim, so the
+#: box reset rather than killing anything. Aggregate capacity was never the problem, the split was.
+_SPLIT_HEADROOM_GB = 12.0
 
-def _plan_residency(recipe: Any, policy: DevicePolicy, source: Path, device: Any) -> int:
+
+def _plan_residency(
+    recipe: Any, policy: DevicePolicy, source: Path, device: Any, *, later_ram_bytes: int = 0
+) -> int:
     """How many leading blocks to place on the card so the rest fits host RAM.
 
     Zero for a quantised load, which fits RAM with room. The full-precision path is the case this
     exists for: 66 GB of weights against a 64 GB machine has nowhere to sit, and the difference
     between placing the overflow and letting the kernel swap it is minutes per step.
+
+    ``later_ram_bytes`` is what components loaded *after* the denoiser will claim from the same RAM.
+    Free memory read here is not free memory at peak, and the difference is not small: H3's video
+    VAE is leaf-offloaded, so its 5.2 GB lands in host RAM after this decision is made.
+
+    A second correction is folded into ``_SPLIT_HEADROOM_GB`` rather than measured, because it
+    cannot be: while the model streams in, its CPU-side weights are clean file-backed pages from the
+    safetensors mmap, which the kernel can drop and re-read for nothing. The first denoising step
+    ends that. Group offload returns each block with ``module.to("cpu")``, which allocates fresh
+    anonymous memory and drops the file-backed storage, so a footprint that was reclaimable at load
+    is unreclaimable a step later. Anything sizing this from ``available`` is reading a number that
+    is about to stop being true.
     """
     if recipe.quantizes or not recipe.denoiser_offload:
         return 0
@@ -362,11 +387,12 @@ def _plan_residency(recipe: Any, policy: DevicePolicy, source: Path, device: Any
     free_ram = int((policy.free_ram_mb() or 0) / 1024 * 1e9)
     if not block_bytes or not free_ram:
         return 0
+    model_bytes = source.stat().st_size
     needed = blocks_to_place(
-        model_bytes=source.stat().st_size,
+        model_bytes=model_bytes,
         block_bytes=block_bytes,
         free_ram_bytes=free_ram,
-        ram_headroom_bytes=int(_RAM_HEADROOM_GB * 1e9),
+        ram_headroom_bytes=int(_SPLIT_HEADROOM_GB * 1e9) + later_ram_bytes,
     )
     if not needed:
         return 0
@@ -381,9 +407,14 @@ def _plan_residency(recipe: Any, policy: DevicePolicy, source: Path, device: Any
             f"{free_ram / 1e9:.0f} GB of system RAM, and there is room for {affordable}. Run it "
             "quantised, or use a machine with more RAM."
         )
+    # The projected figure is logged because it is the number that decides whether the machine
+    # survives the render, and it is not observable anywhere else until it is too late.
     logger.info(
-        "MiniMax H3 split residency: %d of %d blocks placed on %s, the rest streamed",
-        needed, _num_blocks(source), device,
+        "MiniMax H3 split residency: %d of %d blocks placed on %s (%.1f GB), %.1f GB stays in RAM, "
+        "leaving %.1f GB free",
+        needed, _num_blocks(source), device, needed * block_bytes / 1e9,
+        (model_bytes - needed * block_bytes) / 1e9,
+        (free_ram - (model_bytes - needed * block_bytes)) / 1e9,
     )
     return needed
 

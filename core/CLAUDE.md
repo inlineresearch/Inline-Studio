@@ -288,6 +288,16 @@ uv run pytest -q                          # tests (no GPU; model code is import-
     overflow and those leading blocks go on the accelerator instead, placed as they land rather
     than after the load. It moves the minimum, because every block left resident is VRAM the
     render wanted for activations.
+  - **A group-offloaded model's host footprint is reclaimable at load and unreclaimable one step
+    later, so never size a split from free memory during the load.** Streaming from a safetensors
+    mmap leaves the CPU-side weights as clean file-backed pages the kernel can drop and re-read for
+    free. The first denoising step ends that: group offload returns each block with
+    `module.to("cpu")`, which allocates fresh anonymous memory and drops the file-backed storage.
+    A planner reading `available` mid-load is reading a number that is about to stop being true,
+    and the failure mode is not an exception. It is the machine resetting with the page cache
+    converted out from under it, no OOM message and no shutdown sequence. Budget the full
+    post-conversion footprint, and count what other components will claim from the same RAM
+    afterwards (a leaf-offloaded VAE lands there too).
   - **Ordering, when a load both transforms and quantises:** structural transform first,
     quantisation last, and a prequantized source takes no structural transform at all. The three
     clauses and why they are not negotiable are in `models/offload.py`'s docstring.
