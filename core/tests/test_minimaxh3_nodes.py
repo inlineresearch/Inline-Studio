@@ -56,11 +56,31 @@ def test_every_node_outputs_video_plus_a_separate_audio_port(node_type: str) -> 
     ]
 
 
+#: On every Core node, so a load/* subnode can override the dropdowns. Not part of what a node is
+#: *for*, which is what the media ports below say.
+COMPONENTS = ["model", "vae", "text_encoder"]
+
+
 def test_the_inputs_are_what_each_node_is_for() -> None:
-    assert [p.id for p in DESCRIPTORS[T2V].inputs] == ["prompt"]
-    assert [p.id for p in DESCRIPTORS[I2V].inputs] == ["prompt", "image"]
-    assert [p.id for p in DESCRIPTORS[FLF].inputs] == ["prompt", "image", "last_image"]
-    assert [p.id for p in DESCRIPTORS[REF].inputs] == ["prompt", "references", "video", "audio"]
+    def media(node_type: str) -> list[str]:
+        return [p.id for p in DESCRIPTORS[node_type].inputs if p.id not in COMPONENTS]
+
+    assert media(T2V) == ["prompt"]
+    assert media(I2V) == ["prompt", "image"]
+    assert media(FLF) == ["prompt", "image", "last_image"]
+    assert media(REF) == ["prompt", "references", "video", "audio"]
+
+
+@pytest.mark.parametrize("node_type", [T2V, I2V, FLF, REF])
+def test_every_node_carries_the_component_handles(node_type: str) -> None:
+    """They were missing at first, which left H3 the only model family on the canvas with no way to
+    wire a checkpoint in. Optional, so nothing is required to draw a connection."""
+    ports = {p.id: p for p in DESCRIPTORS[node_type].inputs}
+    for name in COMPONENTS:
+        assert name in ports, f"{node_type} has no {name} handle"
+        assert not ports[name].required
+    # No LoRA handle: H3 has no LoRA path, and a dot that does nothing is worse than no dot.
+    assert "lora" not in ports
 
 
 def test_first_and_last_frame_are_both_optional() -> None:

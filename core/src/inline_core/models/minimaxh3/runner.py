@@ -33,6 +33,9 @@ from ..video_params import VideoGrid, snap_canvas, snap_frames, video_param_fiel
 
 logger = logging.getLogger("inline_core.minimaxh3")
 
+#: Names this node in the error a mis-wired handle raises.
+_LABEL = "MiniMax H3"
+
 #: 24 fps, decodable in blocks of 17 frames plus 5, between 5 and 15 seconds: 124 to 345 frames.
 GRID = VideoGrid(fps=24.0, grid=17, offset=5, min_seconds=5.0, max_seconds=15.0)
 
@@ -121,7 +124,15 @@ def _params(variant: Variant) -> tuple[ParamField, ...]:
 
 
 def _inputs(variant: Variant) -> tuple[Port, ...]:
-    ports = [Port("prompt", "Prompt", PortKind.TEXT, required=True)]
+    ports = [
+        Port("prompt", "Prompt", PortKind.TEXT, required=True),
+        # The same component handles every other Core node carries: wire a load/* subnode to
+        # override the dropdown. No `lora` port, unlike Z-Image and FLUX.2, because H3 has no LoRA
+        # path yet and a handle that silently does nothing is worse than an absent one.
+        Port("model", "Diffusion model", PortKind.MODEL, required=False),
+        Port("vae", "Video VAE", PortKind.VAE, required=False),
+        Port("text_encoder", "Text encoder", PortKind.TEXT_ENCODER, required=False),
+    ]
     if variant.first_frame:
         ports.append(Port("image", "First frame", PortKind.IMAGE, required=False))
     if variant.last_frame:
@@ -258,7 +269,7 @@ class MiniMaxH3Runner(NodeRunner):
         self._variant = variant
 
     def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
-        from .pipeline import load_pipeline  # deferred: pulls in the vendored blocks
+        from .pipeline import load_pipeline, render_staged  # deferred: vendored blocks
 
         params = {**DESCRIPTORS[self._variant.node_type].defaults(), **node.params}
         request = build_request(self._variant, params, inputs)
@@ -271,13 +282,20 @@ class MiniMaxH3Runner(NodeRunner):
 
         rt.raise_if_cancelled(ctx)
         ctx.emitter.emit(rt.progress_event(ctx, node, Phase.LOADING, 0.0, status="Loading model…"))
-        pipe = load_pipeline(self._policy, params=params, partition=request.partition)
+        # Wired component handles from load/* subnodes override the dropdowns, exactly as they do
+        # on the image nodes. Overrides reach the cache key through the paths themselves.
+        pipe = load_pipeline(
+            self._policy, params=params, partition=request.partition,
+            transformer=rt.component_ref(inputs, "model", "diffusion", _LABEL),
+            video_vae=rt.component_ref(inputs, "vae", "vae", _LABEL),
+            text_encoder=rt.component_ref(inputs, "text_encoder", "text_encoder", _LABEL),
+        )
 
         call = call_kwargs(request, self._variant, inputs)
         call["generator"] = torch.Generator(device="cpu").manual_seed(request.seed)
         started = time.perf_counter()
         try:
-            state = pipe(**call)
+            state = render_staged(pipe, self._policy.placement('denoiser').device, **call)
         except CancelledError:
             rt.free_vram()
             raise

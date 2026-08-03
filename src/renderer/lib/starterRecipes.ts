@@ -29,6 +29,24 @@ export interface StarterRecipe {
  */
 export const STARTER_RECIPES: readonly StarterRecipe[] = [
   {
+    key: 'minimaxh3',
+    coreType: 'minimax/h3-text-to-video',
+    title: 'MiniMax H3',
+    tag: 'Open weights',
+    kind: 'video',
+    blurb: 'Video and its 32 kHz soundtrack in one pass, on your own GPU. A 144 GB download.',
+    // 960x544 rather than the node's 1344x768 default, and it is not a taste call: the conditioner
+    // is resident at 19.5 GB, so the trained canvas projects to about 65 GB of VRAM at ten seconds
+    // and does not fit a 45 GB card. 20 steps matches the reference templates.
+    params: { width: 960, height: 544, duration: 5.17, num_inference_steps: 20, seed: -1 },
+    // Video prompts read as prose, not the comma-separated fragments the image cards use: the scene
+    // first, then the camera move and the light. That is how MiniMax's own examples are written.
+    // The soundtrack is described too, because H3 denoises it alongside the picture rather than
+    // dubbing it afterwards, and a prompt that says nothing about sound gets sound anyway.
+    promptText:
+      'A photoreal city street in the late afternoon, where the buildings and pedestrians are live action but every tree and parked car is a blocky voxel object built from visible cubes with low-resolution textures. The camera tracks slowly along the pavement, warm low sun, real shadows falling across the filmed and the voxel elements alike. Audio: street ambience, distant traffic, footsteps on pavement.',
+  },
+  {
     key: 'zimage',
     coreType: 'alibaba/z-image-turbo',
     title: 'Z-Image Turbo',
@@ -61,22 +79,6 @@ export const STARTER_RECIPES: readonly StarterRecipe[] = [
     params: { width: 1024, height: 1024, steps: 8, guidance: 0, seed: -1 },
     promptText:
       'Close-up portrait in soft window light, natural skin texture, 85mm lens, shallow depth of field',
-  },
-  {
-    key: 'api',
-    coreType: null,
-    // MiniMax H3 text-to-video: nothing to wire but a prompt, so the card is one click from a clip.
-    falModelId: 'minimax/h3/text-to-video',
-    title: 'Try MiniMax H3',
-    tag: 'New',
-    kind: 'video',
-    blurb: 'Hosted text to video, no GPU. The first of the API Nodes.',
-    params: { resolution: '2K', duration: 5, aspect_ratio: '16:9' },
-    // Video prompts read as prose, not the comma-separated fragments the image cards use: the scene
-    // first, then the camera move and the light. That is how MiniMax's own examples are written.
-    // Text-to-video has no reference ports, so the look is described rather than pointed at.
-    promptText:
-      'A photoreal city street in the late afternoon, where the buildings and pedestrians are live action but every tree and parked car is a blocky voxel object built from visible cubes with low-resolution textures. The camera tracks slowly along the pavement, warm low sun, real shadows falling across the filmed and the voxel elements alike.',
   },
   {
     key: 'training',

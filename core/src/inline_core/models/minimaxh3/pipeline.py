@@ -72,7 +72,8 @@ ENCODER_KEEP_PRECISION = (
 
 def load_pipeline(
     policy: DevicePolicy, *, params: dict[str, Any], partition: str,
-    factorise_adaln: bool = False, quantize: bool = True,
+    factorise_adaln: bool = False, quantize: bool = True, staged: bool = True,
+    transformer: Any = None, video_vae: Any = None, text_encoder: Any = None,
 ) -> Any:
     """Build, place and cache the pipeline for one partition.
 
@@ -80,14 +81,20 @@ def load_pipeline(
     for all 66 GB of it. It exists for the numerics gate, whose whole job is to measure a change
     against weights that nothing else has rounded.
     """
-    transformer_path = _require(reqs.resolve_transformer(partition), f"the {partition} transformer")
-    encoder_dir = _require(
+    # A wired handle wins over what is on disk. It flows into the cache key through the path, so
+    # two graphs pointing at different checkpoints do not share a loaded pipeline.
+    transformer_path = _wired(transformer) or _require(
+        reqs.resolve_transformer(partition), f"the {partition} transformer"
+    )
+    encoder_dir = _wired(text_encoder) or _require(
         reqs.resolve("text_encoders", "MiniMax-H3-text-encoder"), "the Qwen3-VL text encoder"
     )
     processor_dir = _require(
         reqs.resolve("text_encoders", "MiniMax-H3-processor"), "the tokenizer and processor"
     )
-    video_vae = _require(reqs.resolve("vae", reqs.VIDEO_VAE_FILE), "the video VAE")
+    video_vae_path = _wired(video_vae) or _require(
+        reqs.resolve("vae", reqs.VIDEO_VAE_FILE), "the video VAE"
+    )
     audio_vae = _require(reqs.resolve("vae", reqs.AUDIO_VAE_FILE), "the audio VAE")
 
     # Hand the policy the on-disk sizes so it fits dtype and quantisation to THIS card, then refuse
@@ -108,13 +115,15 @@ def load_pipeline(
     key = rt.PipelineKey(
         arch="minimax-h3",
         diffusion=str(transformer_path),
-        vae=str(video_vae),
+        vae=str(video_vae_path),
         text_encoder=str(encoder_dir),
         # The two partitions are structurally identical, so without this they would share a cache
         # entry and the second load would silently reuse the first partition's weights.
         variant=partition,
         quant=(policy.quantization().value if quantize else "bf16")
-        + ("+adaln" if factorise_adaln else ""),
+        + ("+adaln" if factorise_adaln else "")
+        # Part of the key because it changes where the weights are placed, not just how they run.
+        + ("+staged" if staged else ""),
     )
     with rt.PIPELINES.lock:
         cached = rt.PIPELINES.get(key)
@@ -127,10 +136,11 @@ def load_pipeline(
             partition=partition,
             factorise_adaln=factorise_adaln,
             quantize=quantize,
+            staged=staged,
             transformer_path=transformer_path,
             encoder_dir=encoder_dir,
             processor_dir=processor_dir,
-            video_vae=video_vae,
+            video_vae=video_vae_path,
             audio_vae=audio_vae,
         )
         rt.PIPELINES.put(key, pipe)
@@ -176,6 +186,12 @@ def _check_host_ram(
         )
 
 
+def _wired(ref: Any) -> Path | None:
+    """The file behind a wired component handle, or None when the port is unwired."""
+    file = getattr(ref, "file", None)
+    return Path(file) if file else None
+
+
 def _require(path: Path | None, what: str) -> Path:
     if path is None:
         raise ComponentError(
@@ -190,6 +206,7 @@ def _build(
     partition: str,
     factorise_adaln: bool = False,
     quantize: bool = True,
+    staged: bool = False,
     transformer_path: Path,
     encoder_dir: Path,
     processor_dir: Path,
@@ -214,7 +231,11 @@ def _build(
     # The conditioner is a 32B model that has to be resident alongside, so the denoiser
     # streams: 39 GB of int8 denoiser plus a 19 GB NF4 conditioner exceeds any single card.
     keep = KEEP_PRECISION + (ADALN_KEEP_PRECISION if factorise_adaln else ())
-    recipe = recipe_for(policy, keep_precision=keep, stream_denoiser=True, quantize=quantize)
+    # `stream_denoiser` asks one question: is the conditioner co-resident during the denoise?
+    # Staged, it is not, so the denoiser keeps the card instead of crossing the bus every step.
+    recipe = recipe_for(
+        policy, keep_precision=keep, stream_denoiser=not staged, quantize=quantize
+    )
     # Streaming pins the offloaded weights in host RAM, and pinning 39 GB beside a 21 GB
     # conditioner staging area does not fit a 64 GB machine. Give up the overlap, keep the fit.
     from dataclasses import replace as _replace
@@ -259,7 +280,10 @@ def _build(
     transformer = load_transformer(
         transformer_path,
         dtype=dtype,
-        device="cpu" if recipe.denoiser_offload else device,
+        # Staged, the denoiser must land in host RAM: the conditioner still holds the card until the
+        # prompt is encoded, and 36 GB of int8 weights beside its 19.5 GB fits neither of them.
+        # `render_staged` moves it across once the conditioner is parked.
+        device="cpu" if (recipe.denoiser_offload or staged) else device,
         shrink=_block_shrinker(
             recipe,
             transformer_path if factorise_adaln else None,
@@ -311,13 +335,56 @@ def _build(
         vae=getattr(pipe, "vae", None),
         device=placement.device,
     )
-    if not recipe.denoiser_offload:
+    if staged:
+        # Split once, at build time: the halves share every component object, so this costs nothing
+        # but the block graph. `render_staged` below does the swapping.
+        pipe._inline_phases = tuple(  # noqa: SLF001 - our own attribute on our own pipeline
+            pipeline_class(blocks=half)
+            for half in rt.split_blocks(blocks, through="text_encoder")
+        )
+        for half in pipe._inline_phases:  # noqa: SLF001
+            half.update_components(**dict(pipe.components))
+        transformer.to("cpu")  # the conditioner has the card until the prompt is encoded
+        rt.free_vram()
+    elif not recipe.denoiser_offload:
         pipe.to(device)
     elif resident_blocks:
         # The streamed tail carries its own hooks; everything else - the head blocks are already
         # there - is placed once so no forward meets a CPU weight beside a CUDA activation.
         _place_unstreamed(transformer, resident_blocks, placement.device)
     return pipe
+
+
+def render_staged(pipe: Any, device: Any, **call: Any) -> Any:
+    """Encode the prompt, get the conditioner off the card, then denoise with the card to itself.
+
+    H3's conditioner is a 32B model that rivals its denoiser, and holding both means the denoiser
+    streams every block of every step. Encoding is one pass per prompt, so the two never actually
+    need the card at the same time - but the convenience call runs all eight blocks together, which
+    is what makes it look as though they do.
+
+    Falls back to the single call when the pipeline was not built staged, so a caller never has to
+    ask which kind it holds.
+    """
+    phases = getattr(pipe, "_inline_phases", None)
+    if phases is None:
+        return pipe(**call)
+    head, tail = phases
+    device = str(device)
+
+    state = head(**call)
+    # Parked, not released: the next render needs it again, and 19.5 GB across the bus is seconds
+    # against the minutes of streaming it buys back.
+    pipe.text_encoder.to("cpu")
+    rt.free_vram()
+    pipe.transformer.to(device)
+    try:
+        return tail(state)
+    finally:
+        # Give the card back before the next prompt has to be encoded on it.
+        pipe.transformer.to("cpu")
+        pipe.text_encoder.to(device)
+        rt.free_vram()
 
 
 def _reclaim() -> None:

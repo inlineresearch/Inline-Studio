@@ -25,7 +25,7 @@ function stub(over: Partial<Store> = {}) {
 }
 
 const ZIMAGE = recipeFor('zimage')!
-const API = recipeFor('api')!
+const H3 = recipeFor('minimaxh3')!
 
 describe('buildStarterGraph', () => {
   beforeEach(() => {
@@ -84,12 +84,15 @@ describe('buildStarterGraph', () => {
     expect(s.addGenNode).not.toHaveBeenCalled()
   })
 
-  it('builds the API card as a fal node and wires the same prompt handle', async () => {
+  // No starter card is hosted since MiniMax H3 became the open-weights one, but `buildStarterGraph`
+  // still has the fal branch, so it gets a fixture rather than losing its coverage with the card.
+  it('builds a fal recipe as a fal node and wires the same prompt handle', async () => {
     const setParams = vi.fn(async () => undefined)
     useGenerationStore.setState({ setParams })
     const s = stub()
 
-    const ids = await buildStarterGraph(API, { x: 0, y: 0 })
+    const hosted = { ...H3, coreType: null, falModelId: 'minimax/h3/text-to-video' }
+    const ids = await buildStarterGraph(hosted, { x: 0, y: 0 })
 
     expect(ids).toEqual(['prompt', 'gen'])
     expect(s.addGenNode).toHaveBeenCalledWith(
@@ -99,7 +102,7 @@ describe('buildStarterGraph', () => {
     )
     expect(s.addCoreNode).not.toHaveBeenCalled()
     // A fal node's params live on its frame, so they must not be written into the item's data.
-    expect(setParams).toHaveBeenCalledWith('frame-1', API.params)
+    expect(setParams).toHaveBeenCalledWith('frame-1', hosted.params)
     expect(s.updateItem.mock.calls.map((c) => c[0])).toEqual(['prompt'])
     expect(s.connect).toHaveBeenCalledWith('prompt', 'gen', 'out', 'prompt')
   })
