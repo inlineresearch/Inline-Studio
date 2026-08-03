@@ -165,6 +165,18 @@ class PipelineCache:
     def put(self, key: PipelineKey, pipe: Any) -> None:
         self._entries[key] = pipe
 
+    def clear(self) -> None:
+        """Drop everything and free the components behind it. For a caller that needs the card and
+        the RAM empty before its next load, rather than merely not stacking."""
+        import gc
+
+        from . import loaders
+
+        self._entries.clear()
+        loaders.unload_components(keep_files=set(), keep_loras=(), keep_quant="")
+        gc.collect()
+        free_vram()
+
     def evict_stale(self, key: PipelineKey) -> None:
         """Drop every pipeline that is not this key's (arch, files, LoRA stack, ControlNet, quant),
         then free the components behind them. Only ``variant`` is allowed to differ, so an i2i build
@@ -366,6 +378,18 @@ def free_vram() -> None:
             torch.cuda.empty_cache()
     except Exception:  # noqa: BLE001
         pass
+
+
+def free_vram_bytes(device: Any = None) -> int:
+    """What the driver says is unallocated right now, which is the only honest number once another
+    model is already placed. 0 when there is no CUDA device to ask."""
+    try:
+        if not torch.cuda.is_available():
+            return 0
+        free_vram()
+        return int(torch.cuda.mem_get_info(torch.device(str(device)) if device else None)[0])
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 # --- user-facing errors ----------------------------------------------------------------------

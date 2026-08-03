@@ -305,10 +305,12 @@ class MiniMaxH3Runner(NodeRunner):
         videos = state.get("videos")
         audio = state.get("audio")
         sample_rate = state.get("sampling_rate")
-        if not videos:
+        if videos is None or not len(videos):
             raise ComponentError("MiniMax H3 returned no video.")
         frames = videos[0]
-        waveform = audio[0] if audio else None
+        # `if audio` is ambiguous when the blocks hand back a tensor rather than a list, so
+        # the emptiness check is explicit.
+        waveform = audio[0] if audio is not None and len(audio) else None
         meta = {
             "model": f"minimax-h3-{request.partition}",
             "prompt": request.prompt,

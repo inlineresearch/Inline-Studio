@@ -8,7 +8,14 @@ from typing import Any
 import pytest
 
 from inline_core.device.policy import FitEstimate, OffloadMode, Profile, Quantization
-from inline_core.models.offload import BLOCK_LEVEL, LEAF_LEVEL, describe, recipe_for
+from inline_core.models.offload import (
+    BLOCK_LEVEL,
+    LEAF_LEVEL,
+    blocks_that_fit,
+    blocks_to_place,
+    describe,
+    recipe_for,
+)
 from inline_core.models.prepared import PreparedKey, lookup, prepared_dir, prune, publish
 
 #: Read off the published int8 build rather than guessed: only these four families were quantised.
@@ -84,6 +91,53 @@ def test_describe_names_the_plan_for_the_run_log() -> None:
     assert "plan=int8" in line and "resident" in line
 
 
+# --- split residency ------------------------------------------------------------------------------
+
+GB = 1_000_000_000
+
+
+def test_a_model_that_fits_ram_places_nothing_on_the_card() -> None:
+    """The split costs VRAM the render wants, so it only happens when RAM leaves no choice."""
+    assert blocks_to_place(
+        model_bytes=20 * GB, block_bytes=GB, free_ram_bytes=64 * GB, ram_headroom_bytes=6 * GB
+    ) == 0
+
+
+def test_only_the_overflow_moves() -> None:
+    """66 GB of weights plus 6 GB of headroom against 56 GB free: 16 GB has nowhere to sit."""
+    placed = blocks_to_place(
+        model_bytes=66 * GB, block_bytes=2 * GB, free_ram_bytes=56 * GB, ram_headroom_bytes=6 * GB
+    )
+    assert placed == 8  # 16 GB over, in 2 GB blocks - not the 33 the card could have held
+
+
+def test_a_partial_block_still_costs_a_whole_one() -> None:
+    assert blocks_to_place(
+        model_bytes=61 * GB, block_bytes=2 * GB, free_ram_bytes=60 * GB, ram_headroom_bytes=6 * GB
+    ) == 4  # 7 GB over, rounded up
+
+
+def test_the_card_reserves_room_for_the_render_before_holding_any_blocks() -> None:
+    fits = blocks_that_fit(free_vram_bytes=30 * GB, block_bytes=2 * GB, reserve_bytes=10 * GB)
+    assert fits == 10
+    assert blocks_that_fit(free_vram_bytes=8 * GB, block_bytes=2 * GB, reserve_bytes=10 * GB) == 0
+
+
+# --- full precision, for a machine with the RAM ---------------------------------------------------
+
+
+def test_precision_only_streams_instead_of_quantising() -> None:
+    """The numerics gate needs weights nothing has rounded. The fit ladder never picks this, so the
+    caller asks for it and pays for it in host RAM."""
+    recipe = recipe_for(_Policy("int8"), keep_precision=H3_KEEP, quantize=False)
+    assert not recipe.quantizes
+    assert recipe.denoiser_offload == BLOCK_LEVEL and recipe.vae_offload == LEAF_LEVEL
+
+
+def test_precision_only_does_not_override_a_plan_that_already_fits() -> None:
+    assert recipe_for(_Policy("resident"), quantize=False).denoiser_offload is None
+
+
 # --- the prepared cache ---------------------------------------------------------------------------
 
 
@@ -124,6 +178,21 @@ def test_changing_a_model_flag_changes_the_identity(models_root: Path) -> None:
     """Switching between the pruned and unpruned paths must not serve the other one's bytes."""
     source = _source(models_root)
     assert prepared_dir(_key(source, adaln=False)) != prepared_dir(_key(source, adaln=True))
+
+
+def test_the_exclusion_list_is_part_of_the_identity(models_root: Path) -> None:
+    """Not redundant with the flags: a structural transform can change which layers are safe to
+    quantise, so two artifacts can share a flag set and still hold differently rounded weights."""
+    source = _source(models_root)
+    wider = PreparedKey(
+        source=source, plan_version="h3-v1", quantization="int8",
+        flags={"adaln": True}, keep_precision=("proj_in", "adaln_proj"),
+    )
+    narrower = PreparedKey(
+        source=source, plan_version="h3-v1", quantization="int8",
+        flags={"adaln": True}, keep_precision=("proj_in",),
+    )
+    assert prepared_dir(wider) != prepared_dir(narrower)
 
 
 def test_changing_the_plan_version_changes_the_identity(models_root: Path) -> None:

@@ -37,9 +37,14 @@ class PreparedKey:
     source: Path
     plan_version: str
     quantization: str
-    #: Model-specific switches: the AdaLN table flag, a derived-table identity, anything that
-    #: changes the weights rather than how they are run.
+    #: Model-specific switches: a structural-transform flag, a derived-basis identity, anything
+    #: that changes the weights rather than how they are run.
     flags: Mapping[str, Any]
+    #: The exclusion list quantisation actually ran with. This is **not** redundant with ``flags``:
+    #: a structural transform can change which layers are safe to quantise (MiniMax H3's factorised
+    #: AdaLN moves to full precision because eight columns carry what 2688 used to), so two
+    #: artifacts can share a flag set and still be quantised under different assumptions.
+    keep_precision: tuple[str, ...] = ()
 
     def digest(self) -> str:
         stat = self.source.stat() if self.source.exists() else None
@@ -52,6 +57,7 @@ class PreparedKey:
             "plan": self.plan_version,
             "quant": self.quantization,
             "flags": dict(sorted(self.flags.items())),
+            "keep_precision": sorted(self.keep_precision),
             "torchao": _torchao_version(),
         }
         blob = json.dumps(payload, sort_keys=True, default=str)

@@ -289,7 +289,7 @@ core/models/
 
 Worth knowing before you start a download this size:
 
-- **This is a big model.** 144 GB for the first three nodes, 210 GB with the reference node. The prompt is encoded and the encoder freed before the transformer loads, so the weights that have to be resident at once come to around 44 GB at int8, which wants roughly 64 GB of system RAM beside a 24 GB card. If that is out of reach, the same model is available as an API node with no setup at all.
+- **This is a big model.** 144 GB for the first three nodes, 210 GB with the reference node. A 33B transformer runs beside a 32B conditioner, and the two cannot take turns the way FLUX.2 dev's can: H3 encodes the prompt inside the pipeline's own call, so both are loaded for the whole render. The conditioner goes to 4 bit and sits on the card, the transformer goes to 8 bit and streams its blocks from system RAM. Measured on a 45 GB card with 66 GB of RAM: **24.8 GB VRAM and 52.7 GB RAM at peak**, so system RAM is the binding constraint, not the card. Plan on 64 GB of RAM beside a 24 GB card. If that is out of reach, the same model is available as an API node with no setup at all.
 - **Canvas is the biggest speed lever.** 960x544 renders about 2.3x faster per step than the trained 1344x768, and the difference is far larger than any other setting.
 - **Only the bf16 builds load.** The `int8_convrot` and `pruned` files carry scale tensors and a reworked modulation branch that only ComfyUI reads, the same story as the Krea 2 files above. The node's model picker lists them with the reason rather than hiding them, so a wasted download at least explains itself. Memory saving is the device policy's job here.
 

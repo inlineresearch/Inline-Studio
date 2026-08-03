@@ -22,7 +22,14 @@ import torch
 from ...device.policy import DevicePolicy
 from ...errors import ComponentError
 from .. import pipeline_runtime as rt
-from ..offload import apply_offload, describe, encoder_quantization_config, recipe_for
+from ..offload import (
+    apply_offload,
+    blocks_that_fit,
+    blocks_to_place,
+    describe,
+    encoder_quantization_config,
+    recipe_for,
+)
 from . import requirements as reqs
 from .load import load_transformer
 
@@ -46,6 +53,14 @@ KEEP_PRECISION = (
     "proj_out",
     "audio_proj_out",
 )
+#: **Conditional on factorisation.** The list above came off the published int8 build, where
+#: `adaln_proj.linear` is quantised - but that describes the unfactorised `[96768, 2688]` module,
+#: where int8 error averages over 2688 columns. Factorised, the same module is `[96768, 8]` and
+#: carries the entire modulation signal through eight columns, so the error concentrates instead of
+#: averaging. At 1.5 MB per block and 75 MB across all 50 the saving is not worth that risk, so the
+#: factorised projection stays in precision until a measurement says otherwise.
+ADALN_KEEP_PRECISION = ("adaln_proj",)
+
 #: The conditioner's own exclusions: its vision tower, embeddings and final norm.
 ENCODER_KEEP_PRECISION = (
     "model.visual",
@@ -55,8 +70,16 @@ ENCODER_KEEP_PRECISION = (
 )
 
 
-def load_pipeline(policy: DevicePolicy, *, params: dict[str, Any], partition: str) -> Any:
-    """Build, place and cache the pipeline for one partition."""
+def load_pipeline(
+    policy: DevicePolicy, *, params: dict[str, Any], partition: str,
+    factorise_adaln: bool = False, quantize: bool = True,
+) -> Any:
+    """Build, place and cache the pipeline for one partition.
+
+    ``quantize=False`` streams the denoiser in full precision instead of int8, which needs host RAM
+    for all 66 GB of it. It exists for the numerics gate, whose whole job is to measure a change
+    against weights that nothing else has rounded.
+    """
     transformer_path = _require(reqs.resolve_transformer(partition), f"the {partition} transformer")
     encoder_dir = _require(
         reqs.resolve("text_encoders", "MiniMax-H3-text-encoder"), "the Qwen3-VL text encoder"
@@ -80,7 +103,7 @@ def load_pipeline(policy: DevicePolicy, *, params: dict[str, Any], partition: st
     fit = policy.fit_estimate()
     if fit is not None and not fit.fits:
         raise ComponentError(rt.wont_fit_message(fit))
-    _check_host_ram(policy, sizes, fit)
+    _check_host_ram(policy, sizes, fit, quantize=quantize)
 
     key = rt.PipelineKey(
         arch="minimax-h3",
@@ -90,7 +113,8 @@ def load_pipeline(policy: DevicePolicy, *, params: dict[str, Any], partition: st
         # The two partitions are structurally identical, so without this they would share a cache
         # entry and the second load would silently reuse the first partition's weights.
         variant=partition,
-        quant=policy.quantization().value,
+        quant=(policy.quantization().value if quantize else "bf16")
+        + ("+adaln" if factorise_adaln else ""),
     )
     with rt.PIPELINES.lock:
         cached = rt.PIPELINES.get(key)
@@ -101,6 +125,8 @@ def load_pipeline(policy: DevicePolicy, *, params: dict[str, Any], partition: st
         pipe = _build(
             policy,
             partition=partition,
+            factorise_adaln=factorise_adaln,
+            quantize=quantize,
             transformer_path=transformer_path,
             encoder_dir=encoder_dir,
             processor_dir=processor_dir,
@@ -115,7 +141,9 @@ def load_pipeline(policy: DevicePolicy, *, params: dict[str, Any], partition: st
 _RAM_HEADROOM_GB = 6.0
 
 
-def _check_host_ram(policy: DevicePolicy, sizes: dict[str, int], fit: Any) -> None:
+def _check_host_ram(
+    policy: DevicePolicy, sizes: dict[str, int], fit: Any, *, quantize: bool = True
+) -> None:
     """Refuse a load that would be killed by the kernel rather than being killed by it.
 
     ``core/CLAUDE.md`` requires this: a host-RAM OOM does not raise, it takes the whole server down
@@ -130,8 +158,14 @@ def _check_host_ram(policy: DevicePolicy, sizes: dict[str, int], fit: Any) -> No
         return  # unmeasurable; better to attempt the load than to refuse on no evidence
     free_gb = free_mb / 1024
     resident = sizes["diffusion_bytes"] / 1e9
-    if fit is not None and fit.plan in ("int8", "offload"):
+    if quantize and fit is not None and fit.plan in ("int8", "offload"):
         resident *= 0.55  # int8 weights plus the high-precision layers the exclusion list keeps
+    if not quantize:
+        # The split-residency planner in `_build` puts whatever will not fit RAM on the card, so the
+        # unquantised path is checked against RAM plus VRAM. It still refuses, in `_build`, if the
+        # card has no room for the overflow.
+        card = (fit.total_vram_gb or 0.0) if fit is not None else 0.0
+        resident -= min(resident, max(0.0, card - _VRAM_RESERVE_GB))
     needed = resident + _RAM_HEADROOM_GB
     if free_gb < needed:
         raise ComponentError(
@@ -154,6 +188,8 @@ def _build(
     policy: DevicePolicy,
     *,
     partition: str,
+    factorise_adaln: bool = False,
+    quantize: bool = True,
     transformer_path: Path,
     encoder_dir: Path,
     processor_dir: Path,
@@ -177,7 +213,8 @@ def _build(
     device = "cpu" if placement.offload else str(placement.device)
     # The conditioner is a 32B model that has to be resident alongside, so the denoiser
     # streams: 39 GB of int8 denoiser plus a 19 GB NF4 conditioner exceeds any single card.
-    recipe = recipe_for(policy, keep_precision=KEEP_PRECISION, stream_denoiser=True)
+    keep = KEEP_PRECISION + (ADALN_KEEP_PRECISION if factorise_adaln else ())
+    recipe = recipe_for(policy, keep_precision=keep, stream_denoiser=True, quantize=quantize)
     # Streaming pins the offloaded weights in host RAM, and pinning 39 GB beside a 21 GB
     # conditioner staging area does not fit a 64 GB machine. Give up the overlap, keep the fit.
     from dataclasses import replace as _replace
@@ -207,6 +244,10 @@ def _build(
     # own, and the denoiser needs that space. Forcing a collection here is what actually frees it.
     _reclaim()
 
+    # With the conditioner placed, whatever VRAM is left decides how much of the denoiser has to
+    # live there. Measured now rather than assumed: the conditioner is most of the card.
+    resident_blocks = _plan_residency(recipe, policy, transformer_path, placement.device)
+
     # Then the denoiser, into the RAM the conditioner just vacated. Loaded to CPU when the
     # recipe streams: the offload hooks install before placement.
     # Each block is quantised the moment its tensors land, so the full 66 GB bf16 model never
@@ -215,7 +256,14 @@ def _build(
         transformer_path,
         dtype=dtype,
         device="cpu" if recipe.denoiser_offload else device,
-        shrink=_block_shrinker(recipe) if recipe.quantizes else None,
+        shrink=_block_shrinker(
+            recipe,
+            transformer_path if factorise_adaln else None,
+            resident_blocks=resident_blocks,
+            resident_device=str(placement.device),
+        )
+        if (recipe.quantizes or factorise_adaln or resident_blocks)
+        else None,
     )
     rt.free_vram()
 
@@ -239,8 +287,12 @@ def _build(
             AutoencoderKLMiniMaxH3, video_vae,
             dtype=rt.torch_dtype(policy.placement("vae")), remap=True,
         ),
+        # Placed here rather than left to `pipe.to()`: that call is skipped when the denoiser
+        # streams, and at 605 MB this one never needs offloading anyway. Without it the decode
+        # meets CUDA latents with CPU weights, 20 minutes into a render.
         audio_vae=_load_vae(
             AutoencoderKLMiniMaxH3Audio, audio_vae, dtype=torch.float32, remap="audio",
+            device=str(placement.device),
         ),
         scheduler=MiniMaxH3Scheduler(shift=VIDEO_SIGMA_SHIFT),
         audio_scheduler=MiniMaxH3Scheduler(shift=AUDIO_SIGMA_SHIFT),
@@ -248,6 +300,7 @@ def _build(
 
     apply_offload(
         recipe,
+        resident_blocks=resident_blocks,
         denoiser=transformer,
         # Already placed and quantised by from_pretrained when a config was supplied.
         encoder=None if encoder_quant is not None else getattr(text_encoder, "model", text_encoder),
@@ -256,6 +309,10 @@ def _build(
     )
     if not recipe.denoiser_offload:
         pipe.to(device)
+    elif resident_blocks:
+        # The streamed tail carries its own hooks; everything else - the head blocks are already
+        # there - is placed once so no forward meets a CPU weight beside a CUDA activation.
+        _place_unstreamed(transformer, resident_blocks, placement.device)
     return pipe
 
 
@@ -268,14 +325,120 @@ def _reclaim() -> None:
 
 
 def _encoder_config(recipe: Any) -> Any:
-    """The conditioner's quantisation, with its own exclusion list rather than the denoiser's."""
+    """The conditioner's quantisation, decided independently of the denoiser's.
+
+    Its own exclusion list, and its own rung: at 66.7 GB in bf16 this conditioner is larger than the
+    denoiser it conditions and larger than any card this node targets, so 4-bit is not a step on a
+    ladder here, it is the only way it loads at all. A caller running the denoiser in full precision
+    still gets a 4-bit conditioner, and since both sides of a comparison share it, it tilts neither.
+    """
     from dataclasses import replace
 
-    return encoder_quantization_config(replace(recipe, keep_precision=ENCODER_KEEP_PRECISION))
+    from ...device.policy import Quantization
+
+    return encoder_quantization_config(
+        replace(recipe, quantize=Quantization.INT8, keep_precision=ENCODER_KEEP_PRECISION)
+    )
+
+
+#: Left free on the card beside any resident blocks: activations, the streamed block in flight, and
+#: fragmentation. The measured peak at 608x352 was 5.8 GB above the resident conditioner, so this is
+#: that with margin. It only caps the split, which moves the host overflow and never more, and the
+#: full-precision path it guards is barely fitting at any canvas.
+_VRAM_RESERVE_GB = 10.0
+
+
+def _plan_residency(recipe: Any, policy: DevicePolicy, source: Path, device: Any) -> int:
+    """How many leading blocks to place on the card so the rest fits host RAM.
+
+    Zero for a quantised load, which fits RAM with room. The full-precision path is the case this
+    exists for: 66 GB of weights against a 64 GB machine has nowhere to sit, and the difference
+    between placing the overflow and letting the kernel swap it is minutes per step.
+    """
+    if recipe.quantizes or not recipe.denoiser_offload:
+        return 0
+    block_bytes = _block_bytes(source)
+    # `free_ram_mb` is GB-times-1024, not mebibytes, which is how `_check_host_ram` reads it too.
+    free_ram = int((policy.free_ram_mb() or 0) / 1024 * 1e9)
+    if not block_bytes or not free_ram:
+        return 0
+    needed = blocks_to_place(
+        model_bytes=source.stat().st_size,
+        block_bytes=block_bytes,
+        free_ram_bytes=free_ram,
+        ram_headroom_bytes=int(_RAM_HEADROOM_GB * 1e9),
+    )
+    if not needed:
+        return 0
+    affordable = blocks_that_fit(
+        free_vram_bytes=rt.free_vram_bytes(device),
+        block_bytes=block_bytes,
+        reserve_bytes=int(_VRAM_RESERVE_GB * 1e9),
+    )
+    if needed > affordable:
+        raise ComponentError(
+            f"MiniMax H3 in full precision needs {needed} of its blocks on the accelerator to fit "
+            f"{free_ram / 1e9:.0f} GB of system RAM, and there is room for {affordable}. Run it "
+            "quantised, or use a machine with more RAM."
+        )
+    logger.info(
+        "MiniMax H3 split residency: %d of %d blocks placed on %s, the rest streamed",
+        needed, _num_blocks(source), device,
+    )
+    return needed
+
+
+def _place_unstreamed(transformer: Any, resident: int, device: Any) -> None:
+    """Place everything the offload hooks are not responsible for: the head blocks and the
+    embedders, norms and projections around them."""
+    from ..offload import block_stack
+
+    # Core's `Device` is not torch's, and `Module.to` takes no interest in the difference.
+    device = str(device)
+    stack = block_stack(transformer)
+    for child in transformer.children():
+        if child is not stack:
+            child.to(device)
+    for block in list(stack)[:resident]:
+        block.to(device)
+    for tensor in (
+        *transformer.parameters(recurse=False),
+        *transformer.buffers(recurse=False),
+    ):
+        tensor.data = tensor.data.to(device)
+
+
+def _header(path: Path) -> dict[str, Any]:
+    """A safetensors header, without reading a byte of the tensors."""
+    import json
+    import struct
+
+    try:
+        with path.open("rb") as handle:
+            size = struct.unpack("<Q", handle.read(8))[0]
+            parsed = json.loads(handle.read(size))
+    except (OSError, ValueError, struct.error):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _block_bytes(path: Path) -> int:
+    """What one transformer block weighs on disk, summed from the header's byte offsets."""
+    total = 0
+    for key, info in _header(path).items():
+        if key.startswith("blocks.0.") and isinstance(info, dict):
+            start, end = info.get("data_offsets", (0, 0))
+            total += end - start
+    return total
+
+
+def _num_blocks(path: Path) -> int:
+    return len({k.split(".")[1] for k in _header(path) if k.startswith("blocks.") and "." in k[7:]})
 
 
 def _load_vae(
-    cls: Any, path: Path, *, dtype: torch.dtype, remap: str | bool = False
+    cls: Any, path: Path, *, dtype: torch.dtype, remap: str | bool = False,
+    device: Any = None,
 ) -> Any:
     """A VAE from a single consolidated file.
 
@@ -307,7 +470,8 @@ def _load_vae(
         )
     if unexpected:
         logger.warning("%s carries %d tensors the VAE does not use", path.name, len(unexpected))
-    return model.to(dtype=dtype).eval()
+    model = model.to(dtype=dtype) if device is None else model.to(dtype=dtype, device=device)
+    return model.eval()
 
 
 def _self_computed(key: str) -> bool:
@@ -358,13 +522,56 @@ def _metadata_config(path: Path) -> dict[str, Any]:
     return {}
 
 
-def _block_shrinker(recipe: Any) -> Any:
-    """A callback that int8s one transformer block as soon as its weights have landed."""
+def _adaln_basis(source: Path) -> Any:
+    """The low-rank basis for the AdaLN branch, read straight from the checkpoint.
+
+    Derived before the model streams, because the shrink callback needs it while the first block
+    lands and ``time_embedder.*`` sorts after ``blocks.*``. Only the two timestep-embedding tensors
+    are read, about 60 MB of a 66 GB file.
+    """
+    from diffusers.models.embeddings import TimestepEmbedding, Timesteps
+    from safetensors import safe_open
+
+    from . import adaln as adaln_mod
+
+    with safe_open(str(source), framework="pt") as handle:
+        get = handle.get_tensor
+        proj_in = get("time_embedder.proj_in.weight")
+        proj_out = get("time_embedder.proj_out.weight")
+        embedder = TimestepEmbedding(
+            in_channels=proj_in.shape[1], time_embed_dim=proj_in.shape[0], out_dim=proj_out.shape[0]
+        )
+        embedder.linear_1.weight.data = proj_in.float()
+        embedder.linear_1.bias.data = get("time_embedder.proj_in.bias").float()
+        embedder.linear_2.weight.data = proj_out.float()
+        embedder.linear_2.bias.data = get("time_embedder.proj_out.bias").float()
+    proj = Timesteps(num_channels=proj_in.shape[1], flip_sin_to_cos=True, downscale_freq_shift=0)
+    return adaln_mod.derive_basis(proj, embedder)
+
+
+def _block_shrinker(
+    recipe: Any,
+    factorise_source: Path | None = None,
+    *,
+    resident_blocks: int = 0,
+    resident_device: str = "",
+) -> Any:
+    """Shrink one transformer block as soon as its weights land, and place it if it is a resident.
+
+    Order matters and is the rule in ``models/offload.py``: the structural transform runs on
+    the unquantised weights, and quantisation is last. Reversed, the factorisation would try to
+    matrix-multiply an ``Int8Tensor`` and raise inside torchao. Placement comes after both, and
+    happens here rather than after the load for the same reason the shrinking does: a block moved to
+    the card as it lands is a block that never has to fit host RAM alongside the other forty-nine.
+    """
+    basis = _adaln_basis(factorise_source) if factorise_source is not None else None
     try:
         from torchao.quantization import Int8WeightOnlyConfig, quantize_
     except ImportError:
-        logger.warning("torchao is absent; MiniMax H3 stays in full precision.")
-        return None
+        if factorise_source is None:
+            logger.warning("torchao is absent; MiniMax H3 stays in full precision.")
+            return None
+        Int8WeightOnlyConfig = quantize_ = None  # type: ignore[assignment]
 
     def keep(module: Any, name: str) -> bool:
         # Linear only: torchao asserts the module has a `weight`, so a norm or a container reaching
@@ -375,10 +582,18 @@ def _block_shrinker(recipe: Any) -> Any:
         return not any(part in name for part in recipe.keep_precision)
 
     def shrink(model: Any, prefix: str) -> None:
+        from . import adaln as adaln_mod
+
         module = model
         for part in prefix.split("."):
             module = module[int(part)] if part.isdigit() else getattr(module, part)
         module.requires_grad_(False)
-        quantize_(module, Int8WeightOnlyConfig(version=2), filter_fn=keep)
+        if basis is not None:            # clause 1: structural transform, unquantised weights
+            module.adaln_proj = adaln_mod.factorise_block(module, basis)
+        if recipe.quantizes:             # clause 2: quantisation last
+            quantize_(module, Int8WeightOnlyConfig(version=2), filter_fn=keep)
+        index = prefix.rsplit(".", 1)[-1]
+        if resident_blocks and index.isdigit() and int(index) < resident_blocks:
+            module.to(resident_device)
 
     return shrink
