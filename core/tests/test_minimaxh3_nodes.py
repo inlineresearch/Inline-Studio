@@ -1,0 +1,261 @@
+"""The four H3 nodes: their descriptors, how a request resolves, and what the provider offers."""
+
+from __future__ import annotations
+
+import json
+import struct
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+pytest.importorskip("torch")
+
+from inline_core.errors import ComponentError  # noqa: E402
+from inline_core.graph.schema import PortKind  # noqa: E402
+from inline_core.media import MediaKind  # noqa: E402
+from inline_core.models.minimaxh3 import requirements as reqs  # noqa: E402
+from inline_core.models.minimaxh3.provider import MiniMaxH3Provider  # noqa: E402
+from inline_core.models.minimaxh3.runner import (  # noqa: E402
+    DESCRIPTORS,
+    GRID,
+    VARIANTS,
+    build_request,
+    call_kwargs,
+)
+
+BY_TYPE = {v.node_type: v for v in VARIANTS}
+T2V = "minimax/h3-text-to-video"
+I2V = "minimax/h3-image-to-video"
+FLF = "minimax/h3-first-last-frame"
+REF = "minimax/h3-reference-to-video"
+
+
+def _defaults(node_type: str) -> dict[str, Any]:
+    return DESCRIPTORS[node_type].defaults()
+
+
+def _prompt(text: str = "a fox in snow") -> dict[str, list[Any]]:
+    return {"prompt": [text]}
+
+
+# --- descriptors ----------------------------------------------------------------------------------
+
+
+def test_there_are_four_separate_nodes_not_one_with_a_mode() -> None:
+    assert set(DESCRIPTORS) == {T2V, I2V, FLF, REF}
+
+
+@pytest.mark.parametrize("node_type", [T2V, I2V, FLF, REF])
+def test_every_node_outputs_video_plus_a_separate_audio_port(node_type: str) -> None:
+    descriptor = DESCRIPTORS[node_type]
+    assert descriptor.output_kind is MediaKind.VIDEO
+    assert [(p.id, p.kind) for p in descriptor.outputs] == [
+        ("video", PortKind.VIDEO),
+        ("audio", PortKind.AUDIO),
+    ]
+
+
+def test_the_inputs_are_what_each_node_is_for() -> None:
+    assert [p.id for p in DESCRIPTORS[T2V].inputs] == ["prompt"]
+    assert [p.id for p in DESCRIPTORS[I2V].inputs] == ["prompt", "image"]
+    assert [p.id for p in DESCRIPTORS[FLF].inputs] == ["prompt", "image", "last_image"]
+    assert [p.id for p in DESCRIPTORS[REF].inputs] == ["prompt", "references", "video", "audio"]
+
+
+def test_first_and_last_frame_are_both_optional() -> None:
+    """The partition supports either alone or both, so neither may be required."""
+    ports = {p.id: p for p in DESCRIPTORS[FLF].inputs}
+    assert not ports["image"].required and not ports["last_image"].required
+
+
+def test_references_is_a_list_port_so_wiring_order_survives() -> None:
+    ports = {p.id: p for p in DESCRIPTORS[REF].inputs}
+    assert ports["references"].kind is PortKind.IMAGE_LIST
+
+
+@pytest.mark.parametrize("node_type", [T2V, I2V, FLF, REF])
+def test_no_guidance_and_no_negative_prompt_exist(node_type: str) -> None:
+    """The checkpoints are guidance-distilled, so these must be absent rather than ignored."""
+    keys = {p.key for p in DESCRIPTORS[node_type].params}
+    assert not keys & {"guidance", "guidance_scale", "cfg", "negative_prompt"}
+
+
+@pytest.mark.parametrize("node_type", [T2V, I2V, FLF, REF])
+def test_fps_is_not_editable(node_type: str) -> None:
+    """A model constant. Editing it only desyncs it from the 17n+5 frame grid."""
+    assert "fps" not in {p.key for p in DESCRIPTORS[node_type].params}
+
+
+def test_only_the_reference_node_offers_reference_detail() -> None:
+    assert "ref_image_size" in {p.key for p in DESCRIPTORS[REF].params}
+    assert "ref_image_size" not in {p.key for p in DESCRIPTORS[T2V].params}
+
+
+def test_the_default_duration_is_a_real_grid_point() -> None:
+    duration = next(p for p in DESCRIPTORS[T2V].params if p.key == "duration")
+    frames = round(float(duration.default) * GRID.fps)
+    assert (frames - GRID.offset) % GRID.grid == 0
+
+
+# --- building a request ---------------------------------------------------------------------------
+
+
+def test_a_duration_snaps_onto_the_frame_grid() -> None:
+    params = {**_defaults(T2V), "duration": 14.9}
+    request = build_request(BY_TYPE[T2V], params, _prompt())
+    assert request.num_frames == 345 and request.seconds == pytest.approx(14.375)
+
+
+def test_a_canvas_snaps_to_the_multiple() -> None:
+    params = {**_defaults(T2V), "width": 1000, "height": 500}
+    request = build_request(BY_TYPE[T2V], params, _prompt())
+    assert (request.width, request.height) == (992, 512)
+
+
+def test_a_missing_prompt_is_refused_by_name() -> None:
+    with pytest.raises(ComponentError, match="needs a prompt"):
+        build_request(BY_TYPE[T2V], _defaults(T2V), {})
+
+
+def test_the_reference_node_needs_at_least_one_reference() -> None:
+    with pytest.raises(ComponentError, match="at least one reference"):
+        build_request(BY_TYPE[REF], _defaults(REF), _prompt())
+
+
+def test_too_many_references_is_refused_before_any_load() -> None:
+    inputs = {**_prompt(), "references": [f"img{i}" for i in range(10)]}
+    with pytest.raises(ComponentError, match="at most 9"):
+        build_request(BY_TYPE[REF], _defaults(REF), inputs)
+
+
+def test_reference_wiring_order_reaches_the_call() -> None:
+    inputs = {**_prompt(), "references": ["lead", "dog"], "audio": ["voice"]}
+    request = build_request(BY_TYPE[REF], _defaults(REF), inputs)
+    call = call_kwargs(request, BY_TYPE[REF], inputs)
+    assert [r.value for r in call["references"]] == ["lead", "dog", "voice"]
+
+
+def test_a_text_to_video_call_carries_no_keyframes() -> None:
+    request = build_request(BY_TYPE[T2V], _defaults(T2V), _prompt())
+    call = call_kwargs(request, BY_TYPE[T2V], _prompt())
+    assert "image" not in call and "last_image" not in call and "references" not in call
+    assert call["output_type"] == "pil"
+    assert set(call) >= {"prompt", "num_frames", "height", "width", "num_inference_steps"}
+
+
+def test_the_seed_is_resolved_to_a_concrete_value() -> None:
+    """-1 means random, but the take has to record what was actually used."""
+    request = build_request(BY_TYPE[T2V], {**_defaults(T2V), "seed": -1}, _prompt())
+    assert request.seed >= 0
+    fixed = build_request(BY_TYPE[T2V], {**_defaults(T2V), "seed": 99}, _prompt())
+    assert fixed.seed == 99
+
+
+# --- recognising checkpoints ----------------------------------------------------------------------
+
+
+def _fake_checkpoint(path: Path, keys: dict[str, list[int]]) -> Path:
+    header = {
+        name: {"dtype": "BF16", "shape": shape, "data_offsets": [0, 0]}
+        for name, shape in keys.items()
+    }
+    blob = json.dumps(header).encode()
+    path.write_bytes(struct.pack("<Q", len(blob)) + blob)
+    return path
+
+
+_H3_PROBE = {"blocks.0.attn.qkv_proj.weight": [21504, 5376]}
+
+
+@pytest.fixture()
+def models_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("INLINE_MODELS_DIR", str(tmp_path))
+    reqs._inspect_cached.cache_clear()
+    (tmp_path / "diffusion_models").mkdir(parents=True)
+    return tmp_path
+
+
+def test_an_h3_checkpoint_is_recognised_by_header_not_name(models_root: Path) -> None:
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / "renamed_by_a_user.safetensors", _H3_PROBE
+    )
+    assert reqs.inspect_file(path).usable
+
+
+def test_another_architecture_is_not_offered(models_root: Path) -> None:
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / "minimax_h3_looking_name.safetensors",
+        {"blocks.0.attn.qkv_proj.weight": [9216, 3072]},
+    )
+    assert not reqs.inspect_file(path).is_h3
+
+
+def test_the_pruned_build_is_rejected_with_a_reason(models_root: Path) -> None:
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        {**_H3_PROBE, "adaln_t_table": [1025, 8]},
+    )
+    candidate = reqs.inspect_file(path)
+    assert candidate.is_h3 and not candidate.usable
+    assert "rank-8 lookup table" in candidate.reason
+
+
+def test_the_comfy_int8_build_is_rejected_with_a_reason(models_root: Path) -> None:
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / "minimax_h3_fl2va_int8_convrot.safetensors",
+        {**_H3_PROBE, "blocks.0.attn.qkv_proj.comfy_quant": [72]},
+    )
+    candidate = reqs.inspect_file(path)
+    assert candidate.is_h3 and not candidate.usable
+    assert "only ComfyUI" in candidate.reason
+
+
+def test_the_picker_offers_the_usable_file_and_explains_the_rest(models_root: Path) -> None:
+    _fake_checkpoint(models_root / "diffusion_models" / "good.safetensors", _H3_PROBE)
+    _fake_checkpoint(
+        models_root / "diffusion_models" / "pruned.safetensors",
+        {**_H3_PROBE, "adaln_t_table": [1025, 8]},
+    )
+    provider = MiniMaxH3Provider("fl2va")
+
+    assert provider.catalog_options("diffusion_models") == ["good.safetensors"]
+    assert [r["file"] for r in provider.rejected()] == ["pruned.safetensors"]
+    assert provider.catalog_options("loras") is None  # not ours to filter
+
+
+def test_header_reads_are_cached_against_size_and_mtime(models_root: Path) -> None:
+    path = _fake_checkpoint(models_root / "diffusion_models" / "a.safetensors", _H3_PROBE)
+    assert reqs.inspect_file(path).usable
+
+    _fake_checkpoint(path, {"something.else": [4, 4]})
+    # Same path, different bytes: the cache key includes size, so this is re-read rather than stale.
+    assert not reqs.inspect_file(path).is_h3
+
+
+# --- the provider ---------------------------------------------------------------------------------
+
+
+def test_the_reference_node_requires_the_other_partition(models_root: Path) -> None:
+    fl2va = {c.id: c for c in MiniMaxH3Provider("fl2va").components()}
+    ref2va = {c.id: c for c in MiniMaxH3Provider("ref2va").components()}
+    assert fl2va["h3-ref2va"].optional and not fl2va["h3-fl2va"].optional
+    assert ref2va["h3-fl2va"].optional and not ref2va["h3-ref2va"].optional
+
+
+def test_the_folder_components_declare_a_repo_folder(models_root: Path) -> None:
+    by_id = {c.id: c for c in MiniMaxH3Provider().components()}
+    assert by_id["h3-text-encoder"].is_folder and by_id["h3-processor"].is_folder
+    assert not by_id["h3-fl2va"].is_folder and by_id["h3-fl2va"].repo_file.endswith(".safetensors")
+
+
+def test_provenance_survives_a_rename(models_root: Path) -> None:
+    """The two partitions are indistinguishable by inspection, so this is the only record."""
+    renamed = _fake_checkpoint(
+        models_root / "diffusion_models" / "my_ref_model.safetensors", _H3_PROBE
+    )
+    assert reqs.resolve_transformer("ref2va") is None
+
+    reqs.record_provenance("ref2va", renamed.name)
+
+    assert reqs.resolve_transformer("ref2va") == renamed

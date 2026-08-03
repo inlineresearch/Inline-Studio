@@ -34,7 +34,7 @@ from .recipe import build_recipe
 
 logger = logging.getLogger("inline_core.studio.generation")
 
-_EXT = {"image": ".png", "video": ".mp4", "audio": ".mp3"}
+_EXT = {"image": ".png", "video": ".mp4", "audio": ".wav"}
 
 
 def _kind_str(kind: Any) -> str:
@@ -168,6 +168,11 @@ class CoreGeneration:
                 logger.warning("Recipe embed failed for %s; copying without metadata", take.id)
         if not embedded:
             shutil.copyfile(src, dst)
+        # A node can produce more than one take (MiniMax H3 returns the muxed video and its
+        # soundtrack), and each one is persisted above - but only the node's declared output_kind
+        # claims the canvas slot, or the last take saved would silently become what the card shows.
+        if not self._is_primary_output(take.node_id, kind):
+            return
         # Stamp createdAt (ms) so the Outputs gallery interleaves these with frame takes.
         mb.set_core_node_output(
             conn,
@@ -181,3 +186,22 @@ class CoreGeneration:
                 "prompt": recipe.get("prompt", ""),
             },
         )
+
+    def _is_primary_output(self, item_id: str, kind: str) -> bool:
+        """Whether this take's kind is the one the node's card shows.
+
+        Defaults to True whenever the answer is not knowable - no registry, an unregistered type, a
+        descriptor with no ``output_kind`` - so a single-take node behaves exactly as it did before
+        this gate existed. ``tests/test_output_kind_contract.py`` keeps the declarations honest.
+        """
+        if self._registry is None:
+            return True
+        try:
+            item = mb.get_item(self._store.conn(), item_id)
+            node_type = str(((item.get("data") or {}).get("core") or {}).get("type") or "")
+        except Exception:  # noqa: BLE001 - a lookup failure must not lose the take
+            return True
+        if not node_type or not self._registry.has(node_type):
+            return True
+        output_kind = self._registry.get(node_type).output_kind
+        return output_kind is None or _kind_str(output_kind) == kind
