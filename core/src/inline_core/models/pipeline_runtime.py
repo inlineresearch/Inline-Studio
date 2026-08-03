@@ -12,7 +12,7 @@ import inspect
 import logging
 import math
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import Lock
@@ -261,6 +261,59 @@ def text_encoder_detached(pipe: Any, active: bool) -> Iterator[None]:
         yield
     finally:
         pipe.text_encoder = saved
+
+
+def split_blocks(blocks: Any, *, through: str) -> tuple[Any, Any]:
+    """Split a modular blockset in two after the named block.
+
+    Same purpose as the classic path below, different shape. A `DiffusionPipeline` exposes
+    `encode_prompt`, so the encoder is run, freed, and `prompt_embeds` handed back into the call. A
+    modular pipeline has no such method because its phases **are** named blocks, so the split is by
+    name and the handoff is the `PipelineState` the first half returns and the second resumes from.
+
+    This is what lets a conditioner's GB go to the denoise instead of idling on the card for the
+    whole render, which for a model whose conditioner rivals its denoiser is the difference between
+    streaming every block every step and not streaming at all.
+    """
+    from diffusers.modular_pipelines import SequentialPipelineBlocks
+
+    names = list(blocks.sub_blocks)
+    if through not in names:
+        raise ValueError(f"{through!r} is not a block of this pipeline: {names}")
+    cut = names.index(through) + 1
+    if cut == len(names):
+        raise ValueError(f"splitting after {through!r} leaves nothing to run afterwards")
+
+    def part(chosen: list[str]) -> Any:
+        return SequentialPipelineBlocks.from_blocks_dict(
+            {name: blocks.sub_blocks[name] for name in chosen}
+        )
+
+    return part(names[:cut]), part(names[cut:])
+
+
+def release_components(pipe: Any, names: Sequence[str]) -> None:
+    """Drop named components from a modular pipeline and reclaim what they held.
+
+    Unregistering matters as much as dereferencing: the pipeline keeps its own component map, so a
+    module still listed there is still alive however many local names have gone out of scope. That
+    is the failure this exists to avoid, because it looks like the release simply did nothing.
+    """
+    import gc
+
+    for name in names:
+        if getattr(pipe, name, None) is None:
+            continue
+        try:
+            pipe.update_components(**{name: None})
+        except Exception:  # noqa: BLE001 - a pipeline that refuses still gets the attribute cleared
+            logger.debug("could not unregister %s; clearing the attribute instead", name)
+        try:
+            setattr(pipe, name, None)
+        except AttributeError:
+            pass
+    gc.collect()
+    free_vram()
 
 
 def encoded_prompt_kwargs(

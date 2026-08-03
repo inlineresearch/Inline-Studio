@@ -19,4 +19,4 @@ Inline-Studio.code-workspace
 
 # Local generation sweeps (LoRA regression renders, contact sheets)
 outputs/
-core/scripts/skin*
+core/scripts/*
