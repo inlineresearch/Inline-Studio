@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest'
 
-import { getNodeDef } from '@shared/nodes/registry'
-import { defaultParams } from '@shared/nodes/types'
 import {
   PROMPT_SOURCE_HANDLE,
   PROMPT_TARGET_HANDLE,
@@ -15,6 +13,10 @@ const KNOWN_PARAM_KEYS = new Set([
   'width',
   'height',
   'steps',
+  // H3 spells its own two differently: a video node counts seconds, and it inherited
+  // `num_inference_steps` from the vendored blocks rather than the image nodes' `steps`.
+  'duration',
+  'num_inference_steps',
   'guidance',
   'seed',
   'negative_prompt',
@@ -35,10 +37,10 @@ const withPrompt = STARTER_RECIPES.filter((r) => r.coreType !== null || r.falMod
 describe('starter recipes', () => {
   it('covers the five cards with unique keys', () => {
     expect(STARTER_RECIPES.map((r) => r.key)).toEqual([
+      'minimaxh3',
       'zimage',
       'flux2',
       'krea2',
-      'api',
       'training',
     ])
     expect(new Set(STARTER_RECIPES.map((r) => r.key)).size).toBe(STARTER_RECIPES.length)
@@ -51,6 +53,7 @@ describe('starter recipes', () => {
 
   it('names real Core node types', () => {
     expect(gen.map((r) => r.coreType)).toEqual([
+      'minimax/h3-text-to-video',
       'alibaba/z-image-turbo',
       'black-forest-labs/flux-2',
       'krea/krea-2-turbo',
@@ -83,35 +86,35 @@ describe('starter recipes', () => {
       expect(recipeFor(key)?.params).toMatchObject({ steps: 8, guidance: 0 })
   })
 
-  it('starts the API card on MiniMax H3 text to video, with the model’s own defaults', () => {
-    const api = recipeFor('api')
-    const def = getNodeDef(api?.falModelId ?? '')
-    expect(def?.id).toBe('minimax/h3/text-to-video')
-    // Writing literals that drift from the def would send the wrong body on the very first run.
-    expect(api?.params).toEqual(defaultParams(def!))
-    // Text-to-video takes no wired media, so the card is one click from a clip.
-    expect(def?.inputs).toEqual([])
+  it('starts MiniMax H3 on the local node, not the hosted one', () => {
+    const h3 = recipeFor('minimaxh3')
+    expect(h3?.coreType).toBe('minimax/h3-text-to-video')
+    expect(h3?.falModelId).toBeUndefined()
+  })
+
+  it('asks H3 for a canvas that fits a real card', () => {
+    // Not the node's 1344x768 default: the conditioner is resident at 19.5 GB, so the trained
+    // canvas projects past 60 GB of VRAM at ten seconds. A first click must not open with an OOM.
+    const h3 = recipeFor('minimaxh3')
+    expect(h3?.params).toMatchObject({ width: 960, height: 544 })
+    expect(Number(h3?.params.width) * Number(h3?.params.height)).toBeLessThan(1344 * 768)
   })
 
   it('labels each card with what it generates, which drives the colour coding', () => {
     expect(Object.fromEntries(STARTER_RECIPES.map((r) => [r.key, r.kind]))).toEqual({
+      minimaxh3: 'video',
       zimage: 'image',
       flux2: 'image',
       krea2: 'image',
-      api: 'video',
       training: 'training',
     })
   })
 
-  it('matches the fal card’s kind to the model’s real output', () => {
-    const api = recipeFor('api')
-    expect(getNodeDef(api?.falModelId ?? '')?.outputKind).toBe(api?.kind)
-  })
-
-  it('tags only the two newest models', () => {
+  it('tags the newest models, and says which kind of new H3 is', () => {
     const tagged = STARTER_RECIPES.filter((r) => r.tag).map((r) => r.key)
-    expect(tagged).toEqual(['flux2', 'api'])
-    for (const key of tagged) expect(recipeFor(key)?.tag).toBe('New')
+    expect(tagged).toEqual(['minimaxh3', 'flux2'])
+    expect(recipeFor('minimaxh3')?.tag).toBe('Open weights')
+    expect(recipeFor('flux2')?.tag).toBe('New')
   })
 
   it('ships a usable prompt with every generation card', () => {

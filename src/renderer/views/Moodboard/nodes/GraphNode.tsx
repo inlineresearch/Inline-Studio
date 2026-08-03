@@ -13,6 +13,7 @@ import { useExtensionsStore } from '../../../store/extensionsStore'
 import { useLightboxStore } from '../../../store/lightboxStore'
 import { matchControlAspect } from '../../../lib/matchControlAspect'
 import { resolveCoreInputThumbs } from './coreInputThumbs'
+import { CoreOutputPreview, CoreOutputThumb } from './CoreOutputPreview'
 import { NodeFrame } from './NodeFrame'
 import { ReferenceStrip } from './ReferenceStrip'
 import { NodeRunToolbar } from './NodeRunToolbar'
@@ -460,20 +461,19 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           {/* Edge-to-edge output preview. */}
           <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
             {references.length > 0 && <ReferenceStrip references={references} />}
-            {core.output?.kind === 'image' ? (
-              <img
-                src={resolveMedia(core.output.filePath)}
-                alt=""
-                title="Double-click to expand"
-                onDoubleClick={() =>
+            {core.output ? (
+              <CoreOutputPreview
+                filePath={core.output.filePath}
+                kind={core.output.kind}
+                name={core.output.prompt || descriptor.title}
+                onExpand={(kind) =>
                   core.output &&
                   openLightbox({
                     src: resolveMedia(core.output.filePath),
-                    kind: 'image',
+                    kind,
                     name: core.output.prompt || descriptor.title,
                   })
                 }
-                className="h-full w-full cursor-zoom-in object-cover"
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center px-4">
@@ -540,17 +540,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       : 'border-border hover:border-zinc-500'
                   }`}
                 >
-                  {o.kind === 'image' ? (
-                    <img
-                      src={resolveMedia(o.filePath)}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-black text-[9px] uppercase tracking-wide text-zinc-500">
-                      {o.kind}
-                    </div>
-                  )}
+                  <CoreOutputThumb filePath={o.filePath} kind={o.kind} />
                 </button>
               ))}
             </div>

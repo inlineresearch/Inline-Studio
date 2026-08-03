@@ -12,7 +12,7 @@ import inspect
 import logging
 import math
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import Lock
@@ -165,6 +165,18 @@ class PipelineCache:
     def put(self, key: PipelineKey, pipe: Any) -> None:
         self._entries[key] = pipe
 
+    def clear(self) -> None:
+        """Drop everything and free the components behind it. For a caller that needs the card and
+        the RAM empty before its next load, rather than merely not stacking."""
+        import gc
+
+        from . import loaders
+
+        self._entries.clear()
+        loaders.unload_components(keep_files=set(), keep_loras=(), keep_quant="")
+        gc.collect()
+        free_vram()
+
     def evict_stale(self, key: PipelineKey) -> None:
         """Drop every pipeline that is not this key's (arch, files, LoRA stack, ControlNet, quant),
         then free the components behind them. Only ``variant`` is allowed to differ, so an i2i build
@@ -249,6 +261,59 @@ def text_encoder_detached(pipe: Any, active: bool) -> Iterator[None]:
         yield
     finally:
         pipe.text_encoder = saved
+
+
+def split_blocks(blocks: Any, *, through: str) -> tuple[Any, Any]:
+    """Split a modular blockset in two after the named block.
+
+    Same purpose as the classic path below, different shape. A `DiffusionPipeline` exposes
+    `encode_prompt`, so the encoder is run, freed, and `prompt_embeds` handed back into the call. A
+    modular pipeline has no such method because its phases **are** named blocks, so the split is by
+    name and the handoff is the `PipelineState` the first half returns and the second resumes from.
+
+    This is what lets a conditioner's GB go to the denoise instead of idling on the card for the
+    whole render, which for a model whose conditioner rivals its denoiser is the difference between
+    streaming every block every step and not streaming at all.
+    """
+    from diffusers.modular_pipelines import SequentialPipelineBlocks
+
+    names = list(blocks.sub_blocks)
+    if through not in names:
+        raise ValueError(f"{through!r} is not a block of this pipeline: {names}")
+    cut = names.index(through) + 1
+    if cut == len(names):
+        raise ValueError(f"splitting after {through!r} leaves nothing to run afterwards")
+
+    def part(chosen: list[str]) -> Any:
+        return SequentialPipelineBlocks.from_blocks_dict(
+            {name: blocks.sub_blocks[name] for name in chosen}
+        )
+
+    return part(names[:cut]), part(names[cut:])
+
+
+def release_components(pipe: Any, names: Sequence[str]) -> None:
+    """Drop named components from a modular pipeline and reclaim what they held.
+
+    Unregistering matters as much as dereferencing: the pipeline keeps its own component map, so a
+    module still listed there is still alive however many local names have gone out of scope. That
+    is the failure this exists to avoid, because it looks like the release simply did nothing.
+    """
+    import gc
+
+    for name in names:
+        if getattr(pipe, name, None) is None:
+            continue
+        try:
+            pipe.update_components(**{name: None})
+        except Exception:  # noqa: BLE001 - a pipeline that refuses still gets the attribute cleared
+            logger.debug("could not unregister %s; clearing the attribute instead", name)
+        try:
+            setattr(pipe, name, None)
+        except AttributeError:
+            pass
+    gc.collect()
+    free_vram()
 
 
 def encoded_prompt_kwargs(
@@ -359,6 +424,17 @@ def peak_vram_gb() -> float:
     return 0.0
 
 
+def torch_device(placement: Any) -> str:
+    """A placement's device as torch wants it: a string, not Core's `Device` dataclass.
+
+    The sibling of `torch_dtype`. It exists because passing the dataclass straight to `Module.to`
+    raises a TypeError that names neither the argument nor the caller, and it has cost three
+    separate debugging sessions in this module alone.
+    """
+    device = getattr(placement, "device", placement)
+    return str(device)
+
+
 def free_vram() -> None:
     """Release cached-but-unused CUDA blocks. Cuts fragmentation; keeps resident weights."""
     try:
@@ -366,6 +442,18 @@ def free_vram() -> None:
             torch.cuda.empty_cache()
     except Exception:  # noqa: BLE001
         pass
+
+
+def free_vram_bytes(device: Any = None) -> int:
+    """What the driver says is unallocated right now, which is the only honest number once another
+    model is already placed. 0 when there is no CUDA device to ask."""
+    try:
+        if not torch.cuda.is_available():
+            return 0
+        free_vram()
+        return int(torch.cuda.mem_get_info(torch.device(str(device)) if device else None)[0])
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 # --- user-facing errors ----------------------------------------------------------------------

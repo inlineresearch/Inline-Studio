@@ -121,6 +121,11 @@ between nodes and are never takes.
 
 ### Storage & configuration (all env, see `config.py`)
 
+- **Never put weights on an instance's ephemeral/scratch disk.** On cloud GPU boxes (`/opt/dlami/nvme`,
+  `/mnt/resource`, and anything else labelled ephemeral or instance-store) the volume is **wiped on
+  every stop/start**, taking the models and leaving dangling symlinks in `models/`. This has cost two
+  full re-downloads of MiniMax H3 at ~130 GB each. Weights go on the persistent root volume, or on an
+  attached volume that survives a restart. Scratch is fine for logs and temporary output only.
 - **Models root** - `INLINE_MODELS_DIR`, else `./models`. **Bring your own weights; nothing is
   downloaded.** ComfyUI-style category subfolders (`diffusion_models/`, `vae/`, `text_encoders/`,
   `loras/`, `controlnet/`, `checkpoints/`, `clip_vision/`, `upscale_models/`, `embeddings/`). The
@@ -256,6 +261,53 @@ uv run pytest -q                          # tests (no GPU; model code is import-
 
 ## Where to add things
 
+- **New video model** → do **not** rediscover the plumbing; it exists as shared seams, and
+  `models/minimaxh3/` is the reference caller:
+  - `runtime/video_encode.py` + `TakeStore.save_video` / `save_audio` - frames plus a waveform to one
+    playable MP4. A model that generates video and its soundtrack jointly returns **both** takes;
+    only the one matching the descriptor's `output_kind` claims the node's canvas slot (see
+    `studio/generation._save_take`, and `tests/test_output_kind_contract.py` which keeps the
+    declarations honest).
+  - `models/video_params.py` - `VideoGrid` + `video_param_fields(...)`, the way
+    `sampling_param_fields(...)` already works. A duration snaps **up** onto the model's frame grid
+    and is then clamped into the model's window, which is what both reference implementations do:
+    asking H3 for 10 seconds gives 10.125, not 9.417. **fps is a model constant, never a param**,
+    or it desyncs from the grid.
+  - `models/references.py` - wired image/video/audio ports as one ordered, numbered list. Wiring
+    order is what the prompt addresses, so it is meaning, not decoration.
+  - `models/keymap.py` - load a checkpoint written for another implementation. Declare a key plan
+    (rename / split / swap halves / drop / assert-equal) and apply it while weights stream in. The
+    transforms it performs are the ones that fail **silently**, so a plan declares its expected row
+    layout and the detector measures the real one. It needs the **whole tensor**: one head's worth of
+    rows cannot tell the layouts apart, and it raises rather than guessing.
+  - `models/prepared.py` - cache a quantised model once. Everything that changes the bytes goes in
+    the hash, including model-specific flags, or switching a flag serves a stale artifact.
+  - `models/offload.py` - the device policy's plan to a concrete torchao + group-offload recipe,
+    plus **split residency**: group offload holds the whole model in host RAM, so a model bigger
+    than the RAM available has nowhere to sit and the kernel swaps it. `blocks_to_place` sizes the
+    overflow and those leading blocks go on the accelerator instead, placed as they land rather
+    than after the load. It moves the minimum, because every block left resident is VRAM the
+    render wanted for activations.
+  - **A group-offloaded model's host footprint is reclaimable at load and unreclaimable one step
+    later, so never size a split from free memory during the load.** Streaming from a safetensors
+    mmap leaves the CPU-side weights as clean file-backed pages the kernel can drop and re-read for
+    free. The first denoising step ends that: group offload returns each block with
+    `module.to("cpu")`, which allocates fresh anonymous memory and drops the file-backed storage.
+    A planner reading `available` mid-load is reading a number that is about to stop being true,
+    and the failure mode is not an exception. It is the machine resetting with the page cache
+    converted out from under it, no OOM message and no shutdown sequence. Budget the full
+    post-conversion footprint, and count what other components will claim from the same RAM
+    afterwards (a leaf-offloaded VAE lands there too).
+  - **Ordering, when a load both transforms and quantises:** structural transform first,
+    quantisation last, and a prequantized source takes no structural transform at all. The three
+    clauses and why they are not negotiable are in `models/offload.py`'s docstring.
+- **Vendoring unreleased upstream code** → `models/<name>/vendor/`, **verbatim, import rewrites
+  only**. Put a provenance header in its `__init__.py` naming the repo, PR, branch, commit sha and
+  date. `models/*/vendor/` is already excluded from ruff and pyright by a glob, because editing it to
+  satisfy our linters destroys the one property that makes a re-sync reviewable. Never patch
+  installed diffusers: construct components directly and pass them in, so nothing resolves a class by
+  name through a registry we do not own. Pin, don't floor, any dependency whose experimental surface
+  the vendored code imports from.
 - **New model runner** → a subpackage `models/<name>/` with `runner.py` (a `NodeDescriptor` + a
   `NodeRunner` + `register_<name>(registry, store, policy)`) and an `__init__.py` re-exporting it;
   add a `try/except ImportError` block in `server/bootstrap.py`; add an optional-deps extra in

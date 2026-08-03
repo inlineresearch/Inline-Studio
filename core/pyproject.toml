@@ -1,7 +1,7 @@
 [project]
 # PyPI name; the import package is `inline_core` (src/inline_core).
 name = "inline-core"
-version = "1.2.6"
+version = "1.2.61"
 description = "The generation engine behind Inline Studio."
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -18,7 +18,9 @@ runtime = [
   # A bare `torch` is CPU-only on Windows; see [tool.uv] below and requirements.txt.
   "torch>=2.2",
   # Krea 2 needs diffusers >= 0.39 (Krea2Pipeline); Z-Image needs >= 0.36 (ZImagePipeline).
-  "diffusers>=0.39",
+  # Pinned, not floored: MiniMax H3 is vendored from an unmerged PR and imports six symbols
+  # from the experimental Modular Diffusers surface, which a minor release may rename.
+  "diffusers==0.39.0",
   "transformers>=4.44",
   "accelerate>=0.30",
   "safetensors>=0.4",
@@ -32,6 +34,10 @@ runtime = [
   # HED, lineart, MLSD, scribble, normal. DWPose runs its detector on ONNX Runtime.
   "controlnet-aux>=0.0.7",
   "onnxruntime>=1.17",
+  # MiniMax H3's reference node decodes a wired video or audio clip when it builds the reference.
+  # The blocks raise a plain ImportError without it, so the node would advertise two ports it
+  # cannot read. Video output goes out through ffmpeg, not this.
+  "av>=12",
 ]
 server = [
   "fastapi>=0.110",
@@ -71,7 +77,7 @@ dev = [
 all = [
   # runtime
   "torch>=2.2",
-  "diffusers>=0.39",
+  "diffusers==0.39.0",
   "transformers>=4.44",
   "accelerate>=0.30",
   "safetensors>=0.4",
@@ -116,12 +122,16 @@ packages = ["src/inline_core"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Vendored upstream code (see models/minimaxh3/vendor/__init__.py). Editing it to satisfy our
+# linters would destroy the one property that makes a re-sync reviewable: it is verbatim.
+extend-exclude = ["src/inline_core/models/*/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pyright]
 include = ["src", "tests"]
+exclude = ["**/models/*/vendor"]
 pythonVersion = "3.11"
 typeCheckingMode = "strict"
 

@@ -189,3 +189,88 @@ def test_drain_translates_error_event(tmp_path) -> None:
     assert "events:generationError" in channels
     err = next(p for c, p in events.sent if c == "events:generationError")
     assert err["error"] == "boom"
+
+
+# --- multi-take nodes: which take claims the node's canvas output --------------------------------
+
+
+class _Registry:
+    """Just enough registry for `_is_primary_output`: a type and the media kind it declares."""
+
+    def __init__(self, node_type: str, output_kind) -> None:  # type: ignore[no-untyped-def]
+        self._type = node_type
+        self._kind = output_kind
+
+    def has(self, node_type: str) -> bool:
+        return node_type == self._type
+
+    def get(self, node_type: str):  # type: ignore[no-untyped-def]
+        from inline_core.graph.descriptor import NodeDescriptor
+
+        return NodeDescriptor(
+            type=self._type, title="X", category="Generate", output_kind=self._kind
+        )
+
+
+def _video_and_audio(tmp_path, item_id: str):  # type: ignore[no-untyped-def]
+    video_src = tmp_path / "clip.mp4"
+    video_src.write_bytes(b"mp4 bytes")
+    audio_src = tmp_path / "clip.wav"
+    audio_src.write_bytes(b"wav bytes")
+    return [
+        _Take("tk_v", item_id, str(video_src), "video"),
+        _Take("tk_a", item_id, str(audio_src), "audio"),
+    ]
+
+
+def test_both_takes_persist_but_only_the_declared_kind_claims_the_card(tmp_path) -> None:
+    """H3 returns the muxed video and its soundtrack. Both must land in the project, and the video
+    must stay what the card shows - before the gate, the audio take saved last and won the slot."""
+    from inline_core.media import MediaKind
+
+    store = _store(tmp_path)
+    node = mb.add_core_node(store.conn(), "minimax/h3-text-to-video", 0, 0)
+    takes = _video_and_audio(tmp_path, node["id"])
+    gen = CoreGeneration(
+        store, manager=None, events=_Events(),
+        registry=_Registry("minimax/h3-text-to-video", MediaKind.VIDEO),
+    )
+
+    asyncio.run(gen._drain(node["id"], _Record(takes, done=True)))
+
+    output = mb.get_item(store.conn(), node["id"])["data"]["core"]["output"]
+    assert output["kind"] == "video" and output["takeId"] == "tk_v"
+    # Both takes were copied in, so the soundtrack survives the run rather than only existing in it.
+    written = sorted(p.suffix for p in (store.folder() / "takes").iterdir())
+    assert written == [".mp4", ".wav"]
+
+
+def test_without_a_registry_the_last_take_still_wins(tmp_path) -> None:
+    """The gate must be inert when the answer is unknowable, or a torch-less install regresses."""
+    store = _store(tmp_path)
+    node = mb.add_core_node(store.conn(), "minimax/h3-text-to-video", 0, 0)
+    takes = _video_and_audio(tmp_path, node["id"])
+    gen = CoreGeneration(store, manager=None, events=_Events())
+
+    asyncio.run(gen._drain(node["id"], _Record(takes, done=True)))
+
+    output = mb.get_item(store.conn(), node["id"])["data"]["core"]["output"]
+    assert output["takeId"] == "tk_a"  # unchanged pre-gate behaviour
+
+
+def test_single_take_image_node_is_unaffected_by_the_gate(tmp_path) -> None:
+    from inline_core.media import MediaKind
+
+    store = _store(tmp_path)
+    z = mb.add_core_node(store.conn(), "alibaba/z-image-turbo", 0, 0)
+    src = tmp_path / "render.png"
+    src.write_bytes(b"\x89PNG image bytes")
+    gen = CoreGeneration(
+        store, manager=None, events=_Events(),
+        registry=_Registry("alibaba/z-image-turbo", MediaKind.IMAGE),
+    )
+
+    asyncio.run(gen._drain(z["id"], _Record([_Take("tk1", z["id"], str(src), "image")], done=True)))
+
+    output = mb.get_item(store.conn(), z["id"])["data"]["core"]["output"]
+    assert output["kind"] == "image" and output["takeId"] == "tk1"

@@ -12,11 +12,11 @@
  */
 import type { SystemStatsEvent } from '@shared/types'
 
-export type StarterKey = 'zimage' | 'flux2' | 'krea2' | 'api' | 'training'
+export type StarterKey = 'minimaxh3' | 'zimage' | 'flux2' | 'krea2' | 'training'
 export type Tier = 'best' | 'good' | 'ok' | 'heavy'
 
-/** Keys whose model runs on this machine, so VRAM has something to say about them. */
-type LocalKey = Exclude<StarterKey, 'api'>
+/** Every starter now runs on this machine, so VRAM has something to say about all of them. */
+type LocalKey = StarterKey
 
 export type VramReading =
   | { state: 'pending' }
@@ -72,6 +72,19 @@ const TIERS: Record<LocalKey, TierRow[]> = {
       note: 'Will run, but this is the heaviest model here. Expect long renders.',
     },
   ],
+  // Never 'best', and the notes lead with system RAM rather than the card, because that is what
+  // actually decides: the 4-bit conditioner alone sits resident at 19.5 GB, and the measured peak
+  // on an L40S was 24.8 GB of VRAM against 52.7 GB of RAM. A card that clears the VRAM bar on a
+  // 32 GB machine still will not run this.
+  minimaxh3: [
+    { minGb: 39.5, tier: 'good', note: 'Runs. 64 GB of system RAM matters more than the card.' },
+    { minGb: 23.5, tier: 'ok', note: 'Tight: 19.5 GB goes to the conditioner before any frames.' },
+    {
+      minGb: 0,
+      tier: 'heavy',
+      note: 'Expect long renders. Needs 64 GB of RAM and 144 GB on disk.',
+    },
+  ],
   training: [
     { minGb: 23.5, tier: 'best', note: 'Comfortable for LoRA training.' },
     { minGb: 15.5, tier: 'ok', note: 'Trainable at 512 to 768 px with a small batch.' },
@@ -81,14 +94,12 @@ const TIERS: Record<LocalKey, TierRow[]> = {
 
 /** Static requirement copy, shown when the hardware cannot be read. */
 const STATIC_NOTE: Record<LocalKey, string> = {
+  minimaxh3: '64 GB of system RAM and 144 GB on disk. The RAM is the binding constraint.',
   zimage: 'Around 12 GB of VRAM for a comfortable run.',
   flux2: 'Around 16 GB of VRAM for a comfortable run.',
   krea2: 'Around 24 GB of VRAM for a comfortable run.',
   training: 'Around 16 GB of VRAM to train at 512 px.',
 }
-
-/** Hosted models run on fal's hardware, so no reading of this machine applies. */
-const API_NOTE = 'No GPU needed. You bring a fal key and pay per render.'
 
 export interface Advice {
   tier: Tier | null
@@ -96,7 +107,6 @@ export interface Advice {
 }
 
 export function tierFor(key: StarterKey, reading: VramReading): Advice {
-  if (key === 'api') return { tier: null, note: API_NOTE }
   if (reading.state !== 'known') return { tier: null, note: STATIC_NOTE[key] }
   const row = TIERS[key].find((r) => reading.totalGb >= r.minGb)
   // The last row is minGb 0, so this only falls through if a table is mis-edited.
@@ -105,7 +115,8 @@ export function tierFor(key: StarterKey, reading: VramReading): Advice {
 
 const SCORE: Record<Tier, number> = { best: 3, good: 2, ok: 1, heavy: 0 }
 /** Ties break lightest-first, so a new user is pointed at the quickest thing that works. */
-// 'api' is deliberately absent: it has no tier to score, and the ribbon is about this machine.
+// 'minimaxh3' is deliberately absent. It can score a tier, but the ribbon points a new user at
+// their first render, and no first render should begin with a 144 GB download.
 const PREFERENCE: LocalKey[] = ['zimage', 'flux2', 'krea2', 'training']
 
 /**

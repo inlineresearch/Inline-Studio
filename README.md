@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.6-blue?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.61-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -264,6 +264,35 @@ Worth knowing:
 - **Only the Base klein checkpoints take a negative prompt.** The distilled builds run no classifier-free guidance and dev is guidance-distilled, so a negative prompt is logged and ignored there rather than silently pretending to apply.
 - **dev and every 9B build are non-commercial.** klein 4B, its Base build, and the VAE are Apache 2.0.
 
+### MiniMax H3
+
+[MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) is the first video model in Inline Core, and the first model here that generates a soundtrack rather than a silent clip. One transformer denoises the video and its 32 kHz stereo audio in a single pass, so a take is one MP4 with sound in it, ready to drop straight into the timeline.
+
+Four nodes, because the inputs genuinely differ and a node should say what it takes:
+
+- **Text → Video** for a shot from nothing but a prompt.
+- **Image → Video** to bring a still you already like into motion.
+- **First and Last Frame** to pin the opening frame, the closing frame, or both, and let the model fill in between.
+- **Reference → Video** for consistency across shots. Wire up to nine images, three video clips and three audio clips, and address them by position in the prompt. Wiring order is the numbering you see on the node.
+
+Output is 24 fps between 5 and 15 seconds at a 768 pixel short edge. Duration snaps to the frame grid the video decoder works in, so asking for 14.9 seconds renders 14.4 rather than failing. There is no guidance slider and no negative prompt, because the released checkpoints are guidance-distilled and neither exists.
+
+```
+core/models/
+  diffusion_models/  minimax_h3_fl2va_bf16.safetensors   <- text, image, and first/last frame
+                     minimax_h3_ref2va_bf16.safetensors  <- the reference node
+  text_encoders/     MiniMax-H3-text-encoder/            <- Qwen3-VL-32B, a folder
+                     MiniMax-H3-processor/               <- tokenizer and processor
+  vae/               minimax_h3_video_vae_fp16.safetensors
+                     minimax_h3_audio_vae_fp32.safetensors
+```
+
+Worth knowing before you start a download this size:
+
+- **This is a big model.** 144 GB for the first three nodes, 210 GB with the reference node. A 33B transformer runs beside a 32B conditioner, but not at the same time: the prompt is encoded first, the conditioner then steps off the card, and the denoiser takes it for the whole denoise. Two things make that fit. The modulation weights, 40% of the transformer, are factorised at load and take it from 66.3 GB to 40.3 GB. The video VAE stays resident when the card has room, rather than streaming leaf by leaf. Measured on a 45 GB card: **a 10 second clip at 960x544 takes about 7.2 minutes, peaking at 38.9 GB VRAM and 46.7 GB of system RAM that cannot be reclaimed**, so plan on 64 GB of RAM. Smaller cards stream more and are slower. If that is out of reach, the same model is available as an API node with no setup at all.
+- **Canvas is the biggest speed lever.** 960x544 renders about 2.3x faster per step than the trained 1344x768, and the difference is far larger than any other setting.
+- **Only the bf16 builds load.** The `int8_convrot` and `pruned` files carry scale tensors and a reworked modulation branch that only ComfyUI reads, the same story as the Krea 2 files above. The node's model picker lists them with the reason rather than hiding them, so a wasted download at least explains itself. Memory saving is the device policy's job here.
+
 ### ControlNet
 
 Steer a local render with a pose, depth, or edge map. Wire a control map into a gen node's **Control** input and pick a ControlNet in the node's Adjust sidebar.
@@ -313,7 +342,7 @@ However you render, the frame keeps its full, non-destructive take history, so y
 
 ### MiniMax H3
 
-H3 (Hailuo 03) is on the canvas as three nodes, all at 2K, 5 to 15 seconds:
+H3 (Hailuo 03) is on the canvas as three API nodes, all at 2K, 5 to 15 seconds. The open weights also run locally on the Inline Core engine, as [four nodes with no per-render cost](#minimax-h3) if you have the hardware for them.
 
 - **Text → Video** for a shot from nothing but a prompt.
 - **Image → Video** for a still you already like. It has two image dots: wire a start frame on its own, or add an end frame and H3 interpolates between the two.

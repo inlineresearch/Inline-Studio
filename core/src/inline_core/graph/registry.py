@@ -41,6 +41,10 @@ class Registry:
     def has(self, node_type: str) -> bool:
         return node_type in self._descriptors
 
+    def has_runner(self, node_type: str) -> bool:
+        """Whether this type can execute. A descriptor may be served with no runner behind it."""
+        return node_type in self._runners
+
     def runner(self, node_type: str) -> NodeRunner:
         runner = self._runners.get(node_type)
         if runner is None:

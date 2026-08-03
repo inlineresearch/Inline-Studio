@@ -24,17 +24,25 @@ class ModelComponent:
     label: str
     category: str  # models/ subfolder it belongs to
     present: bool
-    filename: str  # the single file that lands flat in models/<category>/ (a dropdown entry)
+    filename: str  # the file, or folder, that lands in models/<category>/ (a dropdown entry)
     repo: str  # HF repo the popup downloads from
     repo_file: str  # exact repo-relative path fetched from ``repo``
+    # A repo-relative *folder* to fetch instead of a single file, for a model whose component is a
+    # directory: a sharded text encoder, a tokenizer, a diffusers-format checkpoint. Mutually
+    # exclusive with ``repo_file``; when set, ``filename`` is the folder name it lands under.
+    repo_folder: str = ""
     # A suggested (not required) component - e.g. the opt-in ControlNet. It never counts toward
     # "models missing" or "Download all"; the UI offers it as a separate suggestion.
     optional: bool = False
 
     @property
     def local_path(self) -> str:
-        """Where this file lives / lands, relative to the models root (flat in its category)."""
+        """Where this lands, relative to the models root (flat in its category)."""
         return f"{self.category}/{self.filename}"
+
+    @property
+    def is_folder(self) -> bool:
+        return bool(self.repo_folder)
 
 
 @runtime_checkable

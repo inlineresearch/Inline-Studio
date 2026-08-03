@@ -83,6 +83,16 @@ def _register_builtins(
     except ImportError:
         pass
     try:
+        from ..models.minimaxh3.provider import MiniMaxH3Provider
+        from ..models.minimaxh3.runner import VARIANTS, register_minimax_h3
+
+        register_minimax_h3(registry, store, policy)
+        for variant in VARIANTS:
+            requirements.register(variant.node_type, MiniMaxH3Provider(variant.partition))
+            registered.append(variant.node_type)
+    except ImportError:
+        pass
+    try:
         from ..models.zimage.primitives import register_zimage_primitives
 
         register_zimage_primitives(registry, store, policy)

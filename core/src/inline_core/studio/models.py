@@ -15,12 +15,15 @@ The blocking Hugging Face calls run off the event loop, so progress is marshalle
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from ..models.requirements import RequirementsProvider, RequirementsRegistry
+
+logger = logging.getLogger("inline_core.studio.models")
 
 
 class ModelDownloads:
@@ -145,15 +148,27 @@ class ModelDownloads:
         Progress comes from huggingface_hub's own download counter via ``tqdm_class`` - real
         per-chunk motion, and it still resumes a partial file. (XET is disabled at process start so
         the plain HTTP path is used; XET reports nothing to tqdm.)"""
-        from huggingface_hub import hf_hub_download
+        from huggingface_hub import hf_hub_download, snapshot_download
         from huggingface_hub.utils import HfHubHTTPError
 
         category_dir: Path = provider.download_target(comp)
         staging = category_dir / (comp.filename + ".part")
         on_progress(0.0, f"Downloading {comp.label}…")
         tqdm_class = _progress_tqdm(on_progress, comp.label)
+        folder = getattr(comp, "repo_folder", "")
 
         def _fetch(token: bool | None) -> str:
+            if folder:
+                # A component that is a directory - a sharded encoder, a tokenizer, a diffusers
+                # checkpoint. Same staging and resume behaviour; only the fetch differs.
+                root = snapshot_download(
+                    comp.repo,
+                    allow_patterns=f"{folder}/*",
+                    local_dir=str(staging),
+                    token=token,
+                    tqdm_class=tqdm_class,
+                )
+                return str(Path(root) / folder)
             return hf_hub_download(
                 comp.repo,
                 comp.repo_file,
@@ -173,8 +188,23 @@ class ModelDownloads:
             path = _fetch(False)
 
         category_dir.mkdir(parents=True, exist_ok=True)
-        shutil.move(path, str(category_dir / comp.filename))
+        destination = category_dir / comp.filename
+        # shutil.move drops a directory *inside* an existing destination rather than replacing it,
+        # so a re-download would nest folders. Clear the target first, for files and folders alike.
+        if destination.is_dir():
+            shutil.rmtree(destination, ignore_errors=True)
+        elif destination.exists():
+            destination.unlink()
+        shutil.move(path, str(destination))
         shutil.rmtree(staging, ignore_errors=True)
+        # Optional hook: a provider that needs to remember something about what just landed. H3
+        # uses it to record which file is which partition, since the two are indistinguishable.
+        after = getattr(provider, "after_download", None)
+        if after is not None:
+            try:
+                after(comp, destination)
+            except Exception:  # noqa: BLE001 - bookkeeping must never fail a completed download
+                logger.warning("after_download hook failed for %s", comp.id)
         on_progress(1.0, f"{comp.label} ready")
 
     def _rescan(self) -> None:
