@@ -109,7 +109,7 @@ def load_pipeline(
     # the encoder is deliberately not counted: it is freed before the denoiser loads.
     from ...device.policy import ModelFootprint
 
-    sizes = reqs.footprint_bytes(partition)
+    sizes = reqs.footprint_bytes(partition, factorised=factorise_adaln)
     policy.set_footprint(
         ModelFootprint(diffusion_bytes=sizes["diffusion_bytes"], vae_bytes=sizes["vae_bytes"])
     )
@@ -256,12 +256,14 @@ def _build(
     # heavier compression while the denoiser keeps int8. That asymmetry is what lets the pair sit
     # beside each other; at int8 on both they need more host RAM than a 64 GB machine has.
     encoder_quant = _encoder_config(recipe)
+    _placement_kwargs = _encoder_placement(placement) if encoder_quant is not None else {}
+    _encoder_on_card = _placement_kwargs.get("device_map", {}).get("") not in (None, "cpu")
     text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
         str(encoder_dir),
         dtype=dtype,
         local_files_only=True,
         **(
-            {"quantization_config": encoder_quant, "device_map": {"": str(placement.device)}}
+            {"quantization_config": encoder_quant, **_placement_kwargs}
             if encoder_quant is not None
             else {}
         ),
@@ -352,14 +354,18 @@ def _build(
         recipe,
         resident_blocks=resident_blocks,
         denoiser=transformer,
-        # Already placed and quantised by from_pretrained when a config was supplied.
-        encoder=None if encoder_quant is not None else getattr(text_encoder, "model", text_encoder),
+        # Skipped only when `from_pretrained` already put it on the card. Left on the CPU because
+        # it did not fit, it needs the hooks like anything else.
+        encoder=None if _encoder_on_card else getattr(text_encoder, "model", text_encoder),
         vae=getattr(pipe, "vae", None),
         device=placement.device,
     )
     if vae_resident:
         pipe.vae.to(rt.torch_device(placement))
     pipe._inline_denoiser = denoiser_name  # noqa: SLF001 - our own attribute on our own pipeline
+    # Whether the phase swap may hand the denoiser the whole card. False on the offload plan, where
+    # it carries streaming hooks and is far larger than the card: moving it wholesale is an OOM.
+    pipe._inline_resident_denoiser = recipe.denoiser_offload is None  # noqa: SLF001
     if staged:
         # Split once, at build time: the halves share every component object, so this costs nothing
         # but the block graph. `render_staged` below does the swapping.
@@ -435,14 +441,19 @@ def render_staged(pipe: Any, device: Any, **call: Any) -> Any:
     # Parked, not released: the next render needs it again, and 19.5 GB across the bus is seconds
     # against the minutes of streaming it buys back.
     denoiser = getattr(pipe, getattr(pipe, "_inline_denoiser", "transformer"))
+    resident = getattr(pipe, "_inline_resident_denoiser", True)
+
+    # Parking the conditioner is worth doing either way: it frees the card for activations even when
+    # the denoiser is too big to take it. Moving the denoiser across is only right when it fits.
     pipe.text_encoder.to("cpu")
     rt.free_vram()
-    denoiser.to(device)
+    if resident:
+        denoiser.to(device)
     try:
         return tail(state, **call)
     finally:
-        # Give the card back before the next prompt has to be encoded on it.
-        denoiser.to("cpu")
+        if resident:
+            denoiser.to("cpu")
         pipe.text_encoder.to(device)
         rt.free_vram()
 
@@ -453,6 +464,33 @@ def _reclaim() -> None:
 
     gc.collect()
     rt.free_vram()
+
+
+def _encoder_placement(placement: Any) -> dict[str, Any]:
+    """Where the conditioner goes.
+
+    Pinned to the card when it fits, which is the fast path every large card takes. When it does not
+    - the 4-bit conditioner is about 20 GB - it goes to host RAM instead and the offload recipe's
+    leaf hooks stream it a module at a time. Splitting it across both was tried and is a dead end:
+    bitsandbytes will not dispatch a 4-bit model to CPU without keeping that share in fp32, and
+    accelerate's own dispatch then trips over parameters left on meta.
+
+    The conditioner runs once per prompt, so streaming it is a far better trade than it would be for
+    the denoiser, which is read every step.
+    """
+    free = rt.free_vram_bytes(placement.device)
+    needed = int(_ENCODER_RESIDENT_GB * 1e9)
+    if free and free < needed:
+        logger.info(
+            "MiniMax H3 conditioner: streamed from host RAM (%.1f GB free, wants %.1f GB)",
+            free / 1e9, needed / 1e9,
+        )
+        return {"device_map": {"": "cpu"}}
+    return {"device_map": {"": str(placement.device)}}
+
+
+#: What the 4-bit conditioner occupies once placed, measured on an L40S.
+_ENCODER_RESIDENT_GB = 20.5
 
 
 def _encoder_config(recipe: Any) -> Any:

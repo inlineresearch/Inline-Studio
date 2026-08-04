@@ -229,8 +229,15 @@ def _folder(
     )
 
 
-def footprint_bytes(partition: str = "fl2va") -> dict[str, int]:
-    """On-disk sizes for the fit estimate, for whatever is actually present."""
+#: The AdaLN branch is 40 percent of the checkpoint and is factorised away at load, so the file on
+#: disk is not the model the policy has to place. Reporting the raw size makes the fit ladder refuse
+#: machines that would have run: a 16 GB card was told it needed 72 GB when the real figure is well
+#: under half that.
+ADALN_SHARE = 0.392
+
+
+def footprint_bytes(partition: str = "fl2va", *, factorised: bool = True) -> dict[str, int]:
+    """Sizes for the fit estimate: what will actually be placed, not what is on disk."""
 
     def size(path: Path | None) -> int:
         try:
@@ -242,8 +249,11 @@ def footprint_bytes(partition: str = "fl2va") -> dict[str, int]:
     encoder_bytes = sum(f.stat().st_size for f in encoder.rglob("*") if f.is_file()) if (
         encoder.is_dir()
     ) else 0
+    diffusion = size(resolve_transformer(partition))
+    if factorised:
+        diffusion = int(diffusion * (1 - ADALN_SHARE))
     return {
-        "diffusion_bytes": size(resolve_transformer(partition)),
+        "diffusion_bytes": diffusion,
         "text_encoder_bytes": encoder_bytes,
         "vae_bytes": size(resolve("vae", VIDEO_VAE_FILE)) + size(resolve("vae", AUDIO_VAE_FILE)),
     }

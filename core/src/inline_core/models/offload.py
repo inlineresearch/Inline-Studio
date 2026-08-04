@@ -202,6 +202,10 @@ def encoder_quantization_config(recipe: OffloadRecipe) -> Any:
         # extra unpack cost is paid once per prompt rather than once per step.
         bnb_4bit_use_double_quant=True,
         llm_int8_skip_modules=list(recipe.keep_precision) or None,
+        # bitsandbytes refuses to dispatch a 4-bit model across CPU without this, and what it buys
+        # is not free: whatever lands on the CPU stays in fp32, so the host pays 8x per parameter
+        # for that share. Only worth it when the card cannot hold the model at all.
+        llm_int8_enable_fp32_cpu_offload=True,
     )
 
 
