@@ -2,8 +2,12 @@
 
 The claim is that ``silu(temb)`` is low-rank, so each block's ``[96768, 2688]`` projection can be
 replaced by ``[96768, 8]`` without changing what the model computes. That is a numerical claim, so
-it is tested numerically: on a synthetic timestep map here, and against the real weights and
-MiniMax's own published tables in the network-gated test at the bottom.
+it is tested numerically: on a synthetic timestep map here, and against the real weights in the
+gated test at the bottom. MiniMax's published tables are not part of any of it.
+
+None of this is end-to-end evidence. These cover one block's modulation, never a forward pass, so
+they cannot see an error that compounds across blocks or steps. That is what
+``scripts/minimax_h3_adaln_gate.py`` is for.
 """
 
 from __future__ import annotations
@@ -126,9 +130,12 @@ def test_a_map_that_is_not_low_rank_is_refused() -> None:
     not os.environ.get("INLINE_H3_WEIGHTS"),
     reason="set INLINE_H3_WEIGHTS=1 with the real checkpoint present",
 )
-def test_against_the_real_weights_and_the_published_tables() -> None:
-    """The claim, on the actual model: our factorisation reproduces the full-precision modulation
-    at least as well as MiniMax's own pruned build does."""
+def test_block_zero_modulation_against_the_real_weights() -> None:
+    """Block 0's modulation on the actual checkpoint, factorised against full precision.
+
+    Deliberately narrow: one block, no forward pass, and no comparison against MiniMax's published
+    tables, which nothing in this repo reads.
+    """
     from pathlib import Path
 
     from diffusers.models.embeddings import TimestepEmbedding, Timesteps

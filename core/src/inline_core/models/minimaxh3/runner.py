@@ -310,8 +310,9 @@ class MiniMaxH3Runner(NodeRunner):
 
         rt.raise_if_cancelled(ctx)
         ctx.emitter.emit(rt.progress_event(ctx, node, Phase.LOADING, 0.0, status="Loading model…"))
-        # Wired component handles from load/* subnodes override the dropdowns, exactly as they do
-        # on the image nodes. Overrides reach the cache key through the paths themselves.
+        # Wired component handles from load/* subnodes override the dropdowns, which in turn
+        # override the default filenames, as on the image nodes. All of it reaches the cache key
+        # through the resolved paths themselves.
         pipe = load_pipeline(
             self._policy, params=params, partition=request.partition,
             transformer=rt.component_ref(inputs, "model", "diffusion", _LABEL),

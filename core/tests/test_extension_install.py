@@ -556,6 +556,14 @@ def test_every_channel_uses_the_installers_root_not_the_environment(
     versions = asyncio.run(call("ext:manage:versions", ["root-extension"]))
     assert versions["versions"], "versions must be read from the installer's own root"
 
-    # The registry cache must land under the installer's root, never the process default.
+    # The registry cache must land under the installer's root, never the process default. Assert
+    # against the *configured* default, not just the cwd: conftest points that default at a tmp dir,
+    # so a handler reading the environment would now write there and a cwd-only check would miss it.
+    from inline_core.config import extensions_dir
+
     asyncio.run(call("ext:manage:registryIndex", []))
-    assert not (Path.cwd() / "extensions").exists(), "wrote to the default root instead"
+    default_root = extensions_dir()
+    leaked = sorted(default_root.rglob("registry.json")) if default_root.exists() else []
+    assert not leaked, f"wrote the registry cache to the process default: {leaked}"
+    assert not (Path.cwd() / "extensions").exists(), "wrote to the checkout's ./extensions"
+    assert (installer.paths.cache / "registry.json").is_file(), "not under the installer's root"

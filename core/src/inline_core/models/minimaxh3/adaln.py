@@ -17,9 +17,17 @@ factorisation from the bf16 weights instead, which means:
   needs snapping or interpolation. Projecting a continuous ``t`` through the basis is exact for any
   timestep, so the sampler is unconstrained.
 
-Verified against their published tables: our factorisation reproduces the full-precision modulation
-to 1.1e-4 relative error, theirs to 2e-4, and the two span the same subspace (principal angles 1.0
-for the seven directions that carry any energy).
+Their tables are **not** compared against; nothing here reads their ``convrot`` build. What is
+measured is this factorisation against the unfactorised weights: it perturbs the modulation by
+1.095e-4 relative, where one bf16 ulp of re-rounding moves it 1.530e-3, so the change sits a factor
+of fourteen below the ambiguity the checkpoint's own storage already carries.
+``scripts/minimax_h3_adaln_gate.py`` computes both and renders the same seed each way; its numbers
+land in ``outputs/minimax-h3-bench/adaln-gate/``.
+
+Note the pixel measure disagrees in direction and is not settled: the rendered clips differ by
+0.0385 mean absolute against 0.0258 for that same one-ulp perturbation. Low-rank truncation is
+systematic where rounding is not, so it can compound across the 50 blocks and every step in a way
+the modulation figure does not capture. The gate ran at 8 steps against production's 20.
 
 The vendored port is **not** edited for this. The factorised module is swapped in after the model is
 built, so ``vendor/`` stays verbatim.

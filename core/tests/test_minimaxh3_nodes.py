@@ -286,6 +286,52 @@ def test_the_picker_offers_the_usable_file_and_explains_the_rest(models_root: Pa
     assert provider.catalog_options("loras") is None  # not ours to filter
 
 
+def test_a_picked_transformer_wins_over_the_default_name(models_root: Path) -> None:
+    """The dropdown is the recovery path for a renamed checkpoint, so an explicit pick beats the
+    expected filename even when that filename is sitting right there."""
+    default = _fake_checkpoint(
+        models_root / "diffusion_models" / reqs.FL2VA_FILE, _H3_PROBE
+    )
+    picked = _fake_checkpoint(
+        models_root / "diffusion_models" / "renamed_by_a_user.safetensors", _H3_PROBE
+    )
+
+    assert reqs.resolve_transformer("fl2va") == default
+    assert reqs.resolve_transformer("fl2va", "renamed_by_a_user.safetensors") == picked
+
+
+def test_a_pick_that_is_not_there_falls_back_rather_than_failing(models_root: Path) -> None:
+    default = _fake_checkpoint(
+        models_root / "diffusion_models" / reqs.FL2VA_FILE, _H3_PROBE
+    )
+    assert reqs.resolve_transformer("fl2va", "no_such_file.safetensors") == default
+    assert reqs.resolve_transformer("fl2va", "") == default
+    assert reqs.resolve_transformer("fl2va", None) == default
+
+
+def test_a_picked_transformer_is_what_gets_sized(models_root: Path) -> None:
+    """A footprint taken from the default name would be zero once the pick is a renamed file, and a
+    zero footprint makes the fit ladder wave through a model that cannot load."""
+    picked = _fake_checkpoint(
+        models_root / "diffusion_models" / "renamed_by_a_user.safetensors", _H3_PROBE
+    )
+    assert reqs.footprint_bytes("fl2va", factorised=False)["diffusion_bytes"] == 0
+
+    raw = reqs.footprint_bytes("fl2va", factorised=False, transformer=picked)["diffusion_bytes"]
+    assert raw == picked.stat().st_size > 0
+
+
+def test_the_factorised_share_comes_off_whichever_file_was_picked(models_root: Path) -> None:
+    """The two knobs compose: the pick decides *which* file is sized, ``factorised`` decides how
+    much of it the policy is told to place."""
+    picked = _fake_checkpoint(
+        models_root / "diffusion_models" / "renamed_by_a_user.safetensors", _H3_PROBE
+    )
+    raw = reqs.footprint_bytes("fl2va", factorised=False, transformer=picked)["diffusion_bytes"]
+    placed = reqs.footprint_bytes("fl2va", factorised=True, transformer=picked)["diffusion_bytes"]
+    assert placed == int(raw * (1 - reqs.ADALN_SHARE)) < raw
+
+
 def test_header_reads_are_cached_against_size_and_mtime(models_root: Path) -> None:
     path = _fake_checkpoint(models_root / "diffusion_models" / "a.safetensors", _H3_PROBE)
     assert reqs.inspect_file(path).usable

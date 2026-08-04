@@ -5,9 +5,11 @@ name: the vendored port defines classes installed diffusers has never heard of, 
 through diffusers' own registry would fail. ``init_pipeline()`` is called with no repository for the
 same reason.
 
-**Unverified against real weights.** Everything up to and including the transformer load is covered
-by tests; the component assembly below needs 144 GB on disk and a GPU, so it is written from the
-upstream documentation and waits on the numerics gate.
+Verified against real weights: the assembly below has rendered end to end on an L40S, and the runs
+are recorded in ``outputs/minimax-h3-bench/`` (``scripts/minimax_h3_bench.py`` for throughput,
+``scripts/minimax_h3_adaln_gate.py`` for the factorisation gate). The unit tests still stop at the
+transformer load, because the assembly needs 144 GB on disk and a GPU, so a change here is only
+proven by rendering something and looking at it.
 """
 
 from __future__ import annotations
@@ -87,19 +89,23 @@ def load_pipeline(
     is below the ambiguity the checkpoint's own storage already carries. The gate's pixel tolerance
     could not decide it either way - an information-free re-rounding fails that tolerance too.
     """
-    # A wired handle wins over what is on disk. It flows into the cache key through the path, so
-    # two graphs pointing at different checkpoints do not share a loaded pipeline.
+    # Precedence, matching the image nodes: a wired handle beats the node's dropdown, which beats
+    # the default filename on disk. The pick is what lets a user point at a hand-placed or renamed
+    # checkpoint. All three flow into the cache key through the path, so two graphs on different
+    # checkpoints never share a loaded pipeline.
     transformer_path = _wired(transformer) or _require(
-        reqs.resolve_transformer(partition), f"the {partition} transformer"
+        reqs.resolve_transformer(partition, params.get("model")),
+        f"the {partition} transformer",
     )
     encoder_dir = _wired(text_encoder) or _require(
-        reqs.resolve("text_encoders", "MiniMax-H3-text-encoder"), "the Qwen3-VL text encoder"
+        reqs.resolve("text_encoders", "MiniMax-H3-text-encoder", params.get("text_encoder")),
+        "the Qwen3-VL text encoder",
     )
     processor_dir = _require(
         reqs.resolve("text_encoders", "MiniMax-H3-processor"), "the tokenizer and processor"
     )
     video_vae_path = _wired(video_vae) or _require(
-        reqs.resolve("vae", reqs.VIDEO_VAE_FILE), "the video VAE"
+        reqs.resolve("vae", reqs.VIDEO_VAE_FILE, params.get("vae")), "the video VAE"
     )
     audio_vae = _require(reqs.resolve("vae", reqs.AUDIO_VAE_FILE), "the audio VAE")
 
@@ -109,7 +115,12 @@ def load_pipeline(
     # the encoder is deliberately not counted: it is freed before the denoiser loads.
     from ...device.policy import ModelFootprint
 
-    sizes = reqs.footprint_bytes(partition, factorised=factorise_adaln)
+    sizes = reqs.footprint_bytes(
+        partition,
+        factorised=factorise_adaln,
+        transformer=transformer_path,
+        video_vae=video_vae_path,
+    )
     policy.set_footprint(
         ModelFootprint(diffusion_bytes=sizes["diffusion_bytes"], vae_bytes=sizes["vae_bytes"])
     )

@@ -3,6 +3,11 @@ the /v1 API still winning. No torch/models needed."""
 
 from __future__ import annotations
 
+import builtins
+import sys
+import types
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from inline_core.server.app import create_app
@@ -31,9 +36,50 @@ def test_resolve_none_when_dir_has_no_index(monkeypatch, tmp_path):
     assert resolve_frontend_root() is None
 
 
+def _without_frontend_package(monkeypatch):
+    """Make ``import inline_studio_frontend`` fail, whether or not it is installed here.
+
+    The package ships in the published wheel and is absent from a bare dev checkout, so asserting
+    on the ambient environment tests the machine rather than the resolver.
+    """
+    real_import = builtins.__import__
+
+    def _blocked(name, *args, **kwargs):
+        if name == "inline_studio_frontend":
+            raise ModuleNotFoundError(f"No module named {name!r}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.delitem(sys.modules, "inline_studio_frontend", raising=False)
+    monkeypatch.setattr(builtins, "__import__", _blocked)
+
+
+def _with_frontend_package(monkeypatch, static: Path):
+    """Stand in for the installed package, rooted at ``static``'s parent."""
+    module = types.ModuleType("inline_studio_frontend")
+    module.__file__ = str(static.parent / "__init__.py")
+    monkeypatch.setitem(sys.modules, "inline_studio_frontend", module)
+
+
 def test_resolve_none_when_unset_and_package_absent(monkeypatch):
     monkeypatch.delenv("INLINE_FRONTEND_ROOT", raising=False)
-    # inline_studio_frontend isn't installed in this env, so it resolves to None (API only).
+    _without_frontend_package(monkeypatch)
+    assert resolve_frontend_root() is None
+
+
+def test_resolve_falls_back_to_the_installed_package(monkeypatch, tmp_path):
+    monkeypatch.delenv("INLINE_FRONTEND_ROOT", raising=False)
+    static = tmp_path / "pkg" / "static"
+    static.mkdir(parents=True)
+    (static / "index.html").write_text("<!doctype html><title>Inline Studio</title>")
+    _with_frontend_package(monkeypatch, static)
+    assert resolve_frontend_root() == str(static)
+
+
+def test_resolve_none_when_the_installed_package_has_no_index(monkeypatch, tmp_path):
+    monkeypatch.delenv("INLINE_FRONTEND_ROOT", raising=False)
+    static = tmp_path / "pkg" / "static"
+    static.mkdir(parents=True)
+    _with_frontend_package(monkeypatch, static)
     assert resolve_frontend_root() is None
 
 

@@ -143,14 +143,38 @@ def rejected_transformers() -> list[Candidate]:
     return [c for c in found if c.is_h3 and not c.usable]
 
 
-def resolve(category: str, filename: str) -> Path | None:
-    path = models_dir() / category / filename
+def _picked(category: str, chosen: object) -> Path | None:
+    """A dropdown selection, if it names something that is actually there."""
+    name = str(chosen).strip() if chosen else ""
+    if not name:
+        return None
+    path = models_dir() / category / name
     return path if path.exists() else None
 
 
-def resolve_transformer(partition: str) -> Path | None:
-    """The file for a partition. Provenance is a manifest keyed by content, because the two
-    partitions are structurally identical and cannot be told apart by inspection."""
+def resolve(category: str, filename: str, chosen: object = None) -> Path | None:
+    """The file for a category, with an explicit dropdown pick winning over the default name."""
+    return _picked(category, chosen) or (
+        models_dir() / category / filename
+        if (models_dir() / category / filename).exists()
+        else None
+    )
+
+
+def resolve_transformer(partition: str, chosen: object = None) -> Path | None:
+    """The file for a partition.
+
+    An explicit pick wins, because it is the only way to point the node at a hand-placed or renamed
+    checkpoint, and it is trusted exactly as the image nodes trust theirs.
+
+    Failing that: the expected filename, then the download manifest, which records
+    ``partition -> filename`` at fetch time (see ``_provenance``). The two partitions are
+    structurally identical, so a file in neither is not guessed at; it resolves to None and the node
+    raises.
+    """
+    picked = _picked("diffusion_models", chosen)
+    if picked is not None:
+        return picked
     wanted = FL2VA_FILE if partition == "fl2va" else REF2VA_FILE
     direct = resolve("diffusion_models", wanted)
     if direct is not None:
@@ -236,8 +260,19 @@ def _folder(
 ADALN_SHARE = 0.392
 
 
-def footprint_bytes(partition: str = "fl2va", *, factorised: bool = True) -> dict[str, int]:
-    """Sizes for the fit estimate: what will actually be placed, not what is on disk."""
+def footprint_bytes(
+    partition: str = "fl2va",
+    *,
+    factorised: bool = True,
+    transformer: Path | None = None,
+    video_vae: Path | None = None,
+) -> dict[str, int]:
+    """Sizes for the fit estimate: what will actually be placed, not what is on disk.
+
+    ``transformer`` and ``video_vae`` take the paths the caller already resolved. Without them a
+    node pointed at a picked file would be sized from the default name instead, which is zero when
+    that default is absent, and a zero footprint makes the fit ladder meaningless.
+    """
 
     def size(path: Path | None) -> int:
         try:
@@ -249,11 +284,12 @@ def footprint_bytes(partition: str = "fl2va", *, factorised: bool = True) -> dic
     encoder_bytes = sum(f.stat().st_size for f in encoder.rglob("*") if f.is_file()) if (
         encoder.is_dir()
     ) else 0
-    diffusion = size(resolve_transformer(partition))
+    diffusion = size(transformer if transformer is not None else resolve_transformer(partition))
     if factorised:
         diffusion = int(diffusion * (1 - ADALN_SHARE))
+    video = video_vae if video_vae is not None else resolve("vae", VIDEO_VAE_FILE)
     return {
         "diffusion_bytes": diffusion,
         "text_encoder_bytes": encoder_bytes,
-        "vae_bytes": size(resolve("vae", VIDEO_VAE_FILE)) + size(resolve("vae", AUDIO_VAE_FILE)),
+        "vae_bytes": size(video) + size(resolve("vae", AUDIO_VAE_FILE)),
     }
