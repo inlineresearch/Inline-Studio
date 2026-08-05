@@ -108,8 +108,9 @@ The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader
 | FLUX.2     | Base (klein 4B) | 1024 | **4-bit**      | 9.9GB         | not measured  |
 | MiniMax H3 | FL2VA           | 512  | **4-bit**      | **20.6GB**    | not measured  |
 | MiniMax H3 | FL2VA           | 768  | **4-bit**      | **20.6GB**    | not measured  |
+| MiniMax H3 | FL2VA           | 1024 | **4-bit**      | **20.6GB**    | not measured  |
 
-**MiniMax H3's peak is set before training starts, which is why both resolutions read the same.** The run has three phases that never overlap, and the tallest one is not the one doing the learning:
+**MiniMax H3's peak is set before training starts, which is why every resolution reads the same.** The run has three phases that never overlap, and the tallest one is not the one doing the learning:
 
 | Phase                      | Peak   | What is resident                               |
 | -------------------------- | ------ | ---------------------------------------------- |
@@ -119,7 +120,9 @@ The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader
 
 So 20.6GB is what a card has to survive, and the caption pass sets it. Training itself sits at 11.7GB, and a 512px still is only 310 rows of packed sequence against 630 at 768px, which is why the resolution barely moves anything: on H3 the weights are the cost, not the activations. The AdaLN factorisation is what makes the base figure possible at all, taking the transformer from 62GB on disk to 40GB before quantisation and 11.7GB after. Host RAM stays near 1.1GB throughout, because each block is shrunk as its tensors land rather than after the whole model is read.
 
-A 16GB card cannot train H3: the caption pass alone needs 20.5GB. Below about 24GB there is no configuration that fits.
+**16GB is untested and may work.** The 20.6GB figure is the caption pass with the conditioner on the card, and it already falls back to system RAM when there is not enough VRAM for it, at the cost of speed. That leaves training itself as the real floor: 11.7GB of base plus about 0.5GB of adapter, gradients and 8-bit optimiser state, so roughly 13GB. Nobody has run it on a 16GB card yet, so this is arithmetic rather than a measurement.
+
+Going much below that needs the base streamed block by block during training the way generation already does. The machinery is in `models/offload.py`, but surviving a backward pass is real work rather than a flag. Narrowing the LoRA does not help: at rank 16 the whole adapter is 87M parameters, and dropping to attention-only at rank 8 saves 0.4GB out of 13GB. The base is roughly 90 percent of the budget.
 
 A training adapter is free: it is fused into the base before training starts, so Turbo-plus-adapter and the undistilled base peak identically.
 
@@ -129,12 +132,12 @@ Which card fits what (24GB and 32GB are interpolated, not measured, as are the F
 
 | Card | Z-Image 512 | Z-Image 1024 | Krea 2 512 | Krea 2 1024 | FLUX.2 512 | FLUX.2 1024 | MiniMax H3 |
 | ---- | ----------- | ------------ | ---------- | ----------- | ---------- | ----------- | ---------- |
-| 16GB | yes         | no           | yes, 4-bit | no          | yes        | yes         | no         |
+| 16GB | yes         | no           | yes, 4-bit | no          | yes        | yes         | untested   |
 | 24GB | yes         | yes          | yes        | no          | yes        | yes         | yes        |
 | 32GB | yes         | yes          | yes        | yes, 4-bit  | yes        | yes         | yes        |
 | 48GB | yes         | yes          | yes        | 4-bit only  | yes        | yes         | yes        |
 
-H3 has one column because 512 and 768 cost the same: its high-water mark is the caption pass, not the resolution. The 24GB entry is interpolated from the measured 20.6GB peak, not measured on a 24GB card.
+H3 has one column because resolution barely moves it: 512, 768 and 1024 all peak at 20.6GB, since the high-water mark is the caption pass rather than the activations. The 24GB entry is interpolated from that peak, not measured on a 24GB card, and 16GB is marked untested for the reason above rather than because it is known to fail.
 
 Fitting and being usable are different questions. Turing has no native bf16, so a T4 runs the same work about 4x slower:
 
