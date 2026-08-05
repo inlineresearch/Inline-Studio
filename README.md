@@ -2,12 +2,12 @@
 
 <h3 align="center">AI filmmaking on a node canvas</h3>
 
-<p align="center">Inline Studio is a free, open-source app for AI filmmakers. Build a whole visual pipeline on a free-form node canvas, from moodboard to final cut, with local diffusion models (the built-in Inline Core engine) and hosted fal models. Train your own LoRAs on the same canvas. Every render is kept as a versioned, non-destructive take.</p>
+<p align="center">Inline Studio is a free, open-source app for AI filmmakers. Generate locally on your own GPU and train your own LoRAs on the same node canvas, with the built-in Inline Core engine and hosted fal models. Build a whole visual pipeline from moodboard to final cut, and every render is kept as a versioned, non-destructive take.</p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.61-blue?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.62-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -15,12 +15,19 @@
 
 [**New here? Check out our getting started guide →**](https://inlinestudio.art/getting-started)
 
+**Contents:** [What is Inline Studio?](#what-is-inline-studio) · [Get Started](#get-started) ·
+[Features](#features) · [LoRA training](#lora-training) · [How it works](#how-it-works) ·
+[Two ways to generate](#two-ways-to-generate) · [Inline Core engine](#inline-core-generation-engine)
+([Krea 2](#krea-2), [FLUX.2](#flux2), [MiniMax H3](#minimax-h3), [ControlNet](#controlnet)) ·
+[API Nodes](#api-nodes) · [FAQ](#faq) · [Contributing](#contributing)
+
 ## What is Inline Studio?
 
 Inline Studio is a free, open-source app for **AI filmmaking on a node canvas**, powered by the built-in **Inline Core** engine (local diffusion models) and hosted [fal](https://fal.ai) models. It gives AI filmmakers a free-form canvas to build a whole visual pipeline, from moodboard to final cut.
 
 - **Non-destructive by default** - every render is kept as a versioned take; generating again adds one, nothing is overwritten.
-- **Local diffusion generation engine** - the built-in Inline Core engine runs popular diffusion models on your own GPU from a single model file, no external server. Currently supported: **Z-Image Turbo**, **Krea 2** (RAW + Turbo), **FLUX.2**, and **MiniMax H3** for video with sound.
+- **Local diffusion generation engine** - the built-in Inline Core engine runs popular diffusion models locally, on your own GPU, from a single model file, no external server. Currently supported: **Z-Image Turbo**, **Krea 2** (RAW + Turbo), **FLUX.2**, and **MiniMax H3** for video with sound.
+- **Train LoRAs locally** - the Trainer canvas fine-tunes Z-Image, Krea 2, FLUX.2 or MiniMax H3 on your own images, on your own GPU. With a 4-bit base, Krea 2 trains at 512px inside about 12GB, so a 16GB card can train a LoRA for a 26GB model. See [LoRA training](#lora-training).
 - **Hosted models via API Nodes** - reach for closed models with no GPU and no setup for instant creative range; see [API Nodes](#api-nodes).
 - **Mix both in the same film** - Inline Studio handles everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
 
@@ -100,7 +107,7 @@ Three gotchas:
 **Known limits, so you can judge before installing:**
 
 - **Local model coverage is Z-Image Turbo, Krea 2 and FLUX.2** today. SDXL and others are planned; hosted models via [API Nodes](#api-nodes) need no GPU at all.
-- **Krea 2 is a 12.9B model and needs a big card to generate.** The bf16 checkpoint is 26 GB on disk, and generation peaks around 36 GB at 1024 with guidance on, so a 40 GB+ GPU is the practical floor for inference. **Training is cheaper than generating**, because the 4-bit base path puts Krea 2 LoRA training at 512 inside 12 GB - see [Benchmark results](#benchmark-results). Z-Image remains the low-VRAM path for generation.
+- **Krea 2 is a 12.9B model and needs a big card to generate.** The bf16 checkpoint is 26 GB on disk, and generation peaks around 36 GB at 1024 with guidance on, so a 40 GB+ GPU is the practical floor for inference. **Training is cheaper than generating**, because the 4-bit base path puts Krea 2 LoRA training at 512 inside 12 GB - see [Benchmark results](TRAINING.md#benchmark-results). Z-Image remains the low-VRAM path for generation.
 - **1024² with Guidance (CFG) above 0 needs more than 16 GB.** CFG runs the prompt and negative prompt together, doubling the denoise. Z-Image Turbo is distilled to run CFG-free - at Guidance 0, 1024² fits in ~11.5 GB. FLUX.2 klein 4B peaks near 17.9 GB at bf16, so 24 GB holds it resident and a 16 GB card runs it quantized instead.
 
 </details>
@@ -165,14 +172,52 @@ The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` envir
 - **Versioned, non-destructive takes** - every render is kept. Generating again adds a new take; nothing is overwritten. Star the keeper and it flows downstream.
 - **Chain frames into a generative pipeline** - wire one frame's output into the next frame's input. Refine a shot, feed it forward, regenerate the source, and everything downstream follows.
 - **Video editing on the canvas** - the **Video Director node** is a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export; the **Trim Video/Audio node** lets you drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
-- **Local generation, built in** - the Inline Core engine runs diffusion models on your own GPU. Z-Image Turbo, Krea 2, FLUX.2, and MiniMax H3 video from single model files (or a diffusers folder for a prequantized build), no external server to set up.
+- **Local generation, built in** - the Inline Core engine runs diffusion models locally, on your own GPU. Z-Image Turbo, Krea 2, FLUX.2, and MiniMax H3 video from single model files (or a diffusers folder for a prequantized build), no external server to set up.
 - **Multi-reference composition** - with **FLUX.2**, wire several images into one node and compose from them: "the character from image 1 wearing the jacket from image 2". The node numbers the references on its face so the prompt can address them by position. One image edits it, several combine them. See [FLUX.2](#flux2).
-- **Train your own LoRAs** - the Trainer tab is a second canvas where the dataset, captioning, training run, and loss curve are all nodes. The finished LoRA drops into `models/loras/` and shows up in the LoRA loader node, ready to generate with. See [LoRA training](#lora-training).
+- **Train your own LoRAs locally** - the Trainer tab is a second canvas where the dataset, captioning, training run, and loss curve are all nodes. Training runs on your own GPU, the finished LoRA drops into `models/loras/`, and it shows up in the LoRA loader node ready to generate with. See [LoRA training](#lora-training).
 - **API Nodes for hosted models** - run closed models right on the canvas with no GPU. Add a Generate node, pick a model, and bring your own provider key. See [API Nodes](#api-nodes).
 - **Community extensions** - install custom nodes from a GitHub repo in one click, security-reviewed and dependency-isolated. Browse the [registry](https://github.com/inlineresearch/Inline-Registry) or [build your own](https://github.com/inlineresearch/Inline-Studio-Extension-Guide).
 - **Free & open source (GPL-3.0)** - one process (Python + a browser); runs on macOS, Windows, and Linux.
 
 [**Follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
+
+## LoRA training
+
+Train a LoRA on your own images without leaving the app, on your own GPU, with no cloud step. The **Trainer** tab is a second canvas: wire up the nodes, press Start, and watch it run. When the run finishes, the `.safetensors` lands in `models/loras/`, where the LoRA loader node picks it up automatically, so you can generate with it over in the Studio tab straight away.
+
+![Inline Studio Trainer tab showing the LoRA training node graph with a dataset, live logs, and a loss curve](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/lora-trainer.png)
+
+Five nodes, wired left to right, with the hyperparameters behind an Adjust button so the node face stays a status surface:
+
+```
+[ Load Dataset ] --> [ Caption ] --> [ Train LoRA ] --> [ Graph ]
+                                          |
+                                          +--> Resources (VRAM monitor)
+```
+
+### Does my card fit?
+
+Peak VRAM at 512px, 12 steps, rank 16, batch 1, gradient checkpointing on:
+
+| Architecture              | 512px peak | 16GB card      |
+| ------------------------- | ---------- | -------------- |
+| FLUX.2 (klein Base 4B)    | ~8.6GB     | yes            |
+| Krea 2 (4-bit base)       | ~11.9GB    | yes            |
+| Z-Image                   | ~13.4GB    | yes            |
+| MiniMax H3 (4-bit, video) | ~20.6GB    | no, needs 24GB |
+
+Training is cheaper than generating, and a LoRA trained at 512 applies at any generation resolution. Full per-card matrix, both resolutions and the timings: [Benchmark results](TRAINING.md#benchmark-results).
+
+If you installed with `--extra all` from [Get Started](#get-started), the trainer is ready. Otherwise:
+
+```bash
+cd core
+./webui.sh --install --extra training   # Windows: .\webui.bat --install --extra training
+```
+
+For a worked example, see [`inlineresearch/skin-lora-krea-2-raw`](https://huggingface.co/inlineresearch/skin-lora-krea-2-raw), a photorealistic skin LoRA trained here on the Krea 2 RAW base from the 26 image and caption pairs published as [`inlineresearch/krea2-skin-lora`](https://huggingface.co/datasets/inlineresearch/krea2-skin-lora).
+
+**[TRAINING.md](TRAINING.md) is the full reference:** [which base to train on](TRAINING.md#architecture-and-base-model-modes) · [measured benchmarks](TRAINING.md#benchmark-results) · [datasets and outputs](TRAINING.md#datasets-and-outputs) · [stop and resume](TRAINING.md#stop-and-resume) · [trigger words](TRAINING.md#trigger-words) · [base precision](TRAINING.md#base-precision)
 
 ## How it works
 
@@ -186,10 +231,10 @@ From the home screen, **Export** zips a project into one archive. Import it on t
 
 Pick whatever fits the shot, and mix both in one film. However you render, the frame keeps its full take history, so you never lose a good version.
 
-| How you render                          | What it's like                                                                                                                                                                                                                                                                                                                                                                                        | What you need                                                                                                                                                                                             |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Local GPU: Inline Core** _(built in)_ | Drop a **Z-Image Turbo**, **Krea 2**, **FLUX.2**, or **MiniMax H3** node, wire a prompt, hit Run: one node, no loader/sampler wiring. A single `.safetensors` is usually all you bring (a prequantized build can be a diffusers folder); the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Your own GPU. No account, no external server. Low-VRAM friendly: it auto-fits the model to your card (streaming weights, int8, then NF4) so a model too big for full precision still runs, with no flags. |
-| **Hosted: API Nodes**                   | Add a Generate node and pick a model: hosted, closed models across image, video, and audio. No GPU, instant range. See [API Nodes](#api-nodes) for the model list and providers.                                                                                                                                                                                                                      | A provider key (currently [fal](https://fal.ai/dashboard/keys)); it stays on your machine, and you pay per render (each node estimates the price first).                                                  |
+| How you render                          | What it's like                                                                                                                                                                                                                                                                                                                                                                                        | What you need                                                                                                                                                                                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Local GPU: Inline Core** _(built in)_ | Drop a **Z-Image Turbo**, **Krea 2**, **FLUX.2**, or **MiniMax H3** node, wire a prompt, hit Run: one node, no loader/sampler wiring. A single `.safetensors` is usually all you bring (a prequantized build can be a diffusers folder); the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Runs locally on your own GPU. No account, no external server. Low-VRAM friendly: it auto-fits the model to your card (streaming weights, int8, then NF4) so a model too big for full precision still runs, with no flags. |
+| **Hosted: API Nodes**                   | Add a Generate node and pick a model: hosted, closed models across image, video, and audio. No GPU, instant range. See [API Nodes](#api-nodes) for the model list and providers.                                                                                                                                                                                                                      | A provider key (currently [fal](https://fal.ai/dashboard/keys)); it stays on your machine, and you pay per render (each node estimates the price first).                                                                  |
 
 For local generation, either drop a `.safetensors` into `core/models/diffusion_models/`, or add a model node and use its **model popup** (a blinking hint shows up when something's missing) to download the diffusion model, VAE, and text-encoder into `core/models/`, with visible progress. The canvas and planning work with no models at all. See [Krea 2](#krea-2) and [FLUX.2](#flux2) for those models' files and VRAM.
 
@@ -353,160 +398,6 @@ Video costs $0.26 per second at 2K, so the node's price badge reads about $1.30 
 
 ![Inline Studio dashboard with recent AI film projects](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/screenshot-dashboard.png)
 
-## LoRA training
-
-Train a LoRA on your own images without leaving the app. The **Trainer** tab is a second canvas: wire up the nodes, press Start, and watch it run. When the run finishes, the `.safetensors` lands in `models/loras/`, where the LoRA loader node picks it up automatically, so you can generate with it over in the Studio tab straight away.
-
-![Inline Studio Trainer tab showing the LoRA training node graph with a dataset, live logs, and a loss curve](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/lora-trainer.png)
-
-### The graph
-
-Five nodes, wired left to right:
-
-- **Load Dataset** picks a training dataset and feeds it downstream. The node face stays a preview (thumbnails, image and caption counts); the images and captions themselves are edited in the side panel.
-- **Caption** runs a local captioner over the images that need one, with per-image progress. Captions stay editable afterwards, and a wired dataset overrides the node's own picker.
-- **Train LoRA** runs the job. Hyperparameters live behind the Adjust button, off the node face, so the node stays a status surface: a live step counter, the trainer's streaming logs, and a progress bar. The run control is a single chip that reads Start, Stop, or Resume depending on where the run is.
-- **Graph** plots the loss curve for whichever run is wired into it, with loss values on the y axis and the step range on the x axis.
-- **Resources** is a read-only readout of CPU, RAM, and VRAM as circular gauges. It takes no connections, and you can drop it on the Studio canvas too.
-
-<details>
-<summary><b>Datasets, resuming, trigger words, and base model modes</b></summary>
-
-### Datasets and outputs
-
-The sidebar has two tabs. **Datasets** is where you create a dataset, give it a trigger word, add images (drag and drop from your file manager works), and edit captions. **Outputs** lists what training has produced: finished LoRAs with their rank, step count, and resolution, plus any run that stopped early, each with a Resume button.
-
-For a worked example, see [`inlineresearch/skin-lora-krea-2-raw`](https://huggingface.co/inlineresearch/skin-lora-krea-2-raw) - a photorealistic skin LoRA trained here on the Krea 2 RAW base from the 26 image and caption pairs published as [`inlineresearch/krea2-skin-lora`](https://huggingface.co/datasets/inlineresearch/krea2-skin-lora).
-
-### Stop and resume
-
-Changing a setting in the Adjust panel stages it behind an **Update** button rather than applying as you type. A checkpoint encodes the rank, LoRA targets and base it was built with, so if the node has a run you could resume, applying asks first and then discards that run's checkpoints. Finished runs' LoRA files are never touched.
-
-Stopping a run flushes a checkpoint before the process exits, so Resume continues from the step it left off instead of starting over. A checkpoint holds the adapter weights, the optimiser state, the RNG state, and the step number, which is what makes a resumed run a continuation rather than a restart. Runs cut short by a crash or a server restart are recovered the same way and show up under Outputs ready to resume.
-
-### Trigger words
-
-A dataset's trigger word is prepended to every caption during training, so the model sees captions in the form `mytoken, a photo of ...`. Put the same token at the front of your prompt to pull the LoRA in. It is worth matching the phrasing of your captions too: if they all say "an oil painting of", a prompt written the same way will hit the trained style far more reliably than the trigger word alone.
-
-### Architecture and base model modes
-
-The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FLUX.2, or MiniMax H3), then a base within it. Training directly on a step-distilled checkpoint breaks the distillation down (turbo drift), so each architecture offers a way around that.
-
-**Krea 2** avoids the problem outright, which is why it is the recommended path:
-
-- **Krea 2 RAW** trains on the undistilled base. Nothing to fuse, nothing to drift. Put `krea2_raw_bf16.safetensors` in `models/diffusion_models/`, train, then generate with the **Krea 2 Turbo** node - the LoRA carries over unchanged.
-- **Krea 2 Turbo + training adapter** exists for people who only hold Turbo. Put [ostris/krea2_turbo_training_adapter](https://huggingface.co/ostris/krea2_turbo_training_adapter) in `models/loras/`, or point `INLINE_KREA2_TRAIN_ADAPTER` at it.
-
-**FLUX.2** works like Krea 2, with no adapter to download:
-
-- **FLUX.2 Base** is the only option, and the trainer refuses a distilled checkpoint rather than letting a run produce a bad adapter hours later. Put `flux-2-klein-base-4b.safetensors` in `models/diffusion_models/`, train, then generate with the distilled **klein 4B** checkpoint. The LoRA carries over unchanged.
-
-**MiniMax H3** is the video model, and it trains on **still images**:
-
-- **FL2VA** is the only base, and it is undistilled, so there is no adapter and nothing to drift. Put `minimax_h3_fl2va_bf16.safetensors` in `models/diffusion_models/`, train on stills, then wire the LoRA into any of the four H3 nodes. It loads on the Reference to Video node too, which uses a different checkpoint file: the two partitions are the same architecture.
-- **What it learns** is appearance - look, style, character, lighting. It does not learn motion or sound, because it never sees any. This is how image LoRAs for video models are normally trained, and it is the same thing every other H3 trainer does today.
-- **The base is 4-bit, always.** H3 is 40GB after the AdaLN factorisation, before activations or the adapter, so full precision is refused rather than offered and then failing. There is no base-precision control for H3 for the same reason.
-- **Bring a big card and a lot of patience.** The download alone is about 124GB, and the run encodes latents and captions in two separate passes before the base loads, because H3's video VAE and its 32B conditioner cannot be resident at the same time.
-
-**Z-Image** is distilled either way:
-
-- **Turbo + training adapter** fuses a de-distillation adapter into the base for the duration of training and drops it when the LoRA is saved, which preserves the 8-step speed. Put [ostris/zimage_turbo_training_adapter](https://huggingface.co/ostris/zimage_turbo_training_adapter) in `models/loras/`; any filename containing `adapter` is detected automatically, or point `INLINE_ZIMAGE_TRAIN_ADAPTER` at a specific file. Keep runs short, since the adapter slows the breakdown rather than preventing it.
-- **De-Turbo** trains without an adapter and needs no extra download.
-
-</details>
-
-### Install
-
-If you installed with `--extra all` from [Get Started](#get-started), the trainer is already set up - nothing more to do. To add it to a leaner install, its dependencies (PEFT, 8-bit Adam, the captioner) sit behind the `training` extra:
-
-```bash
-cd core
-./webui.sh --install --extra training   # Windows: .\webui.bat --install --extra training
-```
-
-Nothing is downloaded behind your back. Training has no downloader of its own: it reuses whatever is already in `models/diffusion_models/`, `models/vae/` and `models/text_encoders/` for the architecture you pick, which is normally what a generate node's model popup fetched for you. If a file is missing, the run stops and names it.
-
-Two things the model popup does not cover, so you fetch them yourself:
-
-- **Training adapters** for the Turbo base modes: [Z-Image](https://huggingface.co/ostris/zimage_turbo_training_adapter) or [Krea 2](https://huggingface.co/ostris/krea2_turbo_training_adapter), dropped in `models/loras/`.
-- **The captioner**, fetched once into the Hugging Face cache the first time you press Auto-caption.
-
-The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader node straight away, so you can wire it into a generate node and try it without leaving the app.
-
-### Benchmark results
-
-12 steps at rank 16, batch 1, gradient checkpointing on. The number is `torch.cuda.max_memory_allocated`, so leave headroom for the CUDA context and allocator slack.
-
-| Model   | Base mode       | Res  | Base precision | L40S (46GB)   | T4 (15GB)     |
-| ------- | --------------- | ---- | -------------- | ------------- | ------------- |
-| Z-Image | De-Turbo        | 512  | bf16           | 13.1GB        | 13.4GB        |
-| Z-Image | De-Turbo        | 1024 | bf16           | 14.9GB        | out of memory |
-| Z-Image | Turbo + adapter | 512  | bf16           | 13.1GB        | 13.4GB        |
-| Z-Image | Turbo + adapter | 1024 | bf16           | 14.9GB        | out of memory |
-| Krea 2  | RAW             | 512  | bf16           | 30.4GB        | out of memory |
-| Krea 2  | RAW             | 512  | **4-bit**      | 11.7GB        | **11.9GB**    |
-| Krea 2  | RAW             | 1024 | bf16           | out of memory | out of memory |
-| Krea 2  | RAW             | 1024 | **4-bit**      | **27.8GB**    | out of memory |
-| Krea 2  | Turbo + adapter | 512  | bf16           | 30.4GB        | out of memory |
-| Krea 2  | Turbo + adapter | 512  | **4-bit**      | 11.7GB        | **11.9GB**    |
-| Krea 2  | Turbo + adapter | 1024 | bf16           | out of memory | out of memory |
-| Krea 2  | Turbo + adapter | 1024 | **4-bit**      | **27.8GB**    | out of memory |
-| FLUX.2  | Base (klein 4B) | 512  | bf16           | 8.6GB         | not measured  |
-| FLUX.2  | Base (klein 4B) | 512  | **4-bit**      | 8.6GB         | not measured  |
-| FLUX.2  | Base (klein 4B) | 1024 | bf16           | 9.9GB         | not measured  |
-| FLUX.2  | Base (klein 4B) | 1024 | **4-bit**      | 9.9GB         | not measured  |
-
-**MiniMax H3 is not in the table yet.** Its training path is built and tested, but the peak-VRAM sweep has not been run, and putting an estimate in a column full of measurements would be worse than the gap. What is known from the component sizes rather than from a run: the base is 40GB after the AdaLN factorisation and roughly a quarter of that at 4-bit, the 32B conditioner is about 19GB during the caption pass, and the two never overlap. A 16GB card is out regardless, since the conditioner pass alone exceeds it. The numbers land here once the sweep has run.
-
-A training adapter is free: it is fused into the base before training starts, so Turbo-plus-adapter and the undistilled base peak identically.
-
-**FLUX.2 is the cheapest of the three to train, and 4-bit does nothing for it.** Both precisions peak at the same number because the peak is not the transformer: klein's base is 7.4GB while its Qwen3-4B text encoder is 7.5GB, so the caption and latent caching pass at the start of the run costs more than training itself does. Dropping the frozen base to 4-bit shrinks a part of the run that was never the high-water mark, and the step gets slower for nothing. Leave base precision on Auto for FLUX.2, which is what it already picks. The rows above are klein Base 4B, the only checkpoint the trainer accepts for this architecture.
-
-Which card fits what (24GB and 32GB are interpolated, not measured, as are the FLUX.2 columns on 16GB: those peaks were measured on an L40S and leave room on a smaller card, but no 16GB run has been done):
-
-| Card | Z-Image 512 | Z-Image 1024 | Krea 2 512 | Krea 2 1024 | FLUX.2 512 | FLUX.2 1024 |
-| ---- | ----------- | ------------ | ---------- | ----------- | ---------- | ----------- |
-| 16GB | yes         | no           | yes, 4-bit | no          | yes        | yes         |
-| 24GB | yes         | yes          | yes        | no          | yes        | yes         |
-| 32GB | yes         | yes          | yes        | yes, 4-bit  | yes        | yes         |
-| 48GB | yes         | yes          | yes        | 4-bit only  | yes        | yes         |
-
-Fitting and being usable are different questions. Turing has no native bf16, so a T4 runs the same work about 4x slower:
-
-| Configuration                     | L40S | T4   |
-| --------------------------------- | ---- | ---- |
-| Krea 2 RAW 512, 4-bit             | 192s | 824s |
-| Krea 2 Turbo + adapter 512, 4-bit | 219s | 872s |
-| Z-Image 512                       | 85s  | 285s |
-
-A 1500-step Krea 2 run is roughly 40 minutes on an L40S and 3 hours on a T4.
-
-FLUX.2 is quicker than either. On an L40S, klein Base 4B trains at about 0.3s a step at 512 and 1.0s a step at 1024, so a 1500-step run comes in around 8 minutes at 512 and 25 minutes at 1024. Forcing the 4-bit base costs about 10 percent a step at both resolutions. FLUX.2 has not been timed on a T4.
-
-**Krea 2 at 512 with the 4-bit base is the configuration to reach for on a small card.** 1024 needs about 32GB and no setting closes that gap: activations scale with image tokens, and gradient checkpointing and memory-efficient attention are already on. Train at 512 instead, since a LoRA trained at 512 applies at any generation resolution.
-
-System RAM matters as well. Checkpoints are read tensor by tensor rather than mapped whole, so Krea 2 trains in about 3GB of host RAM. Without that, Linux refuses to map a file larger than physical RAM when there is no swap, and a 26GB checkpoint cannot be opened on a 16GB machine at all.
-
-### Dataset and adapter options
-
-Three settings shape what the adapter learns rather than what it costs:
-
-- **LoRA scope.** _Full_ adapts the attention and feed-forward layers, which is stronger on short style runs. _Attention only_ is the Krea 2 authors' advice for long runs, where adapting everything starts to cost prompt adherence.
-- **Caption dropout** (default 0.05) trains a fraction of steps against an empty caption, so the LoRA still holds when a prompt does not repeat the trigger word verbatim.
-- **Flip images** mirrors every image, doubling a small dataset. Both orientations are encoded from pixels rather than by flipping cached latents, so the mirrored copy is exact. Leave it off for anything with text or a deliberate asymmetry.
-
-### Base precision
-
-Krea 2's base is 26GB at bf16, which is what makes it expensive to fine-tune. The Trainer's **Base precision** setting freezes that base at 4-bit (NF4) while the LoRA itself stays full precision - the QLoRA arrangement - so only the frozen base loses fidelity:
-
-- **Auto** (default) sizes the base _plus its activations at your chosen resolution_ against your GPU and picks for you. Weights alone are not enough to decide: a 48GB card holds Krea 2's 26GB base comfortably and then runs out at 1024.
-- **Full precision (bf16)** forces the unquantized base.
-- **4-bit (NF4)** forces the quantized base.
-
-The setting appears for Krea 2 and FLUX.2, but it only pays off on Krea 2. Z-Image has no 4-bit path and does not need one: it trains in about 15 GB at 1024, so bf16 already fits the cards people have. FLUX.2 has the path and gains nothing from it, because klein 4B is smaller than its own text encoder and the peak sits in the caching pass either way, so Auto leaves it at bf16. See [Benchmark results](#benchmark-results).
-
-To keep the peak down, the VAE and text encoder are loaded first, used to cache latents and captions, then freed before the transformer loads, so the two never stack. Which half then owns the peak depends on the model: for Z-Image and Krea 2 it is the transformer, for FLUX.2 klein it is the caching pass. If you do hit an out-of-memory error, lower the training resolution before changing anything else.
-
 ## FAQ
 
 ### Is Inline Studio free?
@@ -517,9 +408,13 @@ Yes. Inline Studio is free and open source under the [GPL-3.0 license](LICENSE).
 
 Only for **local** generation. The built-in Inline Core engine renders on the GPU of whatever machine runs it (you can also run it on a remote GPU box and open the UI from your laptop). Hosted **fal** models need no GPU at all, and the canvas + planning work with no GPU either.
 
+### Can I train a LoRA locally?
+
+Yes, that is what the [Trainer tab](#lora-training) is for, and it runs entirely on your own GPU with no cloud step. It trains LoRAs for Z-Image, Krea 2, FLUX.2, and MiniMax H3. Training is cheaper than generating: FLUX.2 klein Base trains at 512px in about 8.6GB, Z-Image in about 13GB, and Krea 2 with a 4-bit base in about 12GB, so a 16GB card handles all three. See [Benchmark results](TRAINING.md#benchmark-results) for the measured table.
+
 ### What models can I run?
 
-See [Two ways to generate](#two-ways-to-generate): local Z-Image, [Krea 2](#krea-2), [FLUX.2](#flux2), or [MiniMax H3](#minimax-h3) on your own GPU, or hosted fal models. Adding a new local model is a Core change (a model runner), no UI release.
+See [Two ways to generate](#two-ways-to-generate): Z-Image, [Krea 2](#krea-2), [FLUX.2](#flux2), or [MiniMax H3](#minimax-h3) locally on your own GPU, or hosted fal models. You can train a LoRA locally for any of the four as well, see [LoRA training](#lora-training). Adding a new local model is a Core change (a model runner), no UI release.
 
 ## Contributing
 

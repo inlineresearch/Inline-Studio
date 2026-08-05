@@ -302,8 +302,9 @@ class MemoryPolicy(DevicePolicy):
 
         **int8 overrides the fp16 preference to bf16.** torchao weight-only int8 only supports a
         bf16 compute dtype - with fp16 the quantization silently no-ops, so the "int8" weights load
-        at *full* fp16 size and blow the VRAM budget (a T4 then OOMs mid-load). The int8 matmul still
-        runs on the card's int8 tensor cores; only the residual bf16 activations pay the slow path.
+        at *full* fp16 size and blow the VRAM budget (a T4 then OOMs mid-load). The int8 matmul
+        still runs on the card's int8 tensor cores; only the residual bf16 activations pay the
+        slow path.
         bf16 also has fp32's exponent range, so the VAE no longer needs the fp32 anti-overflow
         upcast - it rides along at bf16."""
         if self.quantization() is Quantization.INT8:

@@ -5,17 +5,24 @@ The generation engine behind Inline. It takes a typed node graph (JSON) and retu
 low-VRAM laptops up to multi-GPU machines that split a single image's sampling across GPUs (via
 xDiT). It is Inline Studio's built-in render backend.
 
-Models today: **Z-Image** (Alibaba Tongyi), a 6B rectified-flow diffusion transformer and the model
-xDiT already supports, so the multi-GPU split works on it from the start; and **Krea 2** (Krea AI),
-a 12.9B single-stream MMDiT released as an undistilled RAW base plus an 8-step distilled Turbo.
+Models today, all running locally on your own GPU: **Z-Image** (Alibaba Tongyi), a 6B rectified-flow
+diffusion transformer and the model xDiT already supports, so the multi-GPU split works on it from the
+start; **Krea 2** (Krea AI), a 12.9B single-stream MMDiT released as an undistilled RAW base plus an
+8-step distilled Turbo; **FLUX.2** (Black Forest Labs); and **MiniMax H3**, which generates video and
+its soundtrack in a single pass.
 
-> Status: early, and running end to end against a stub engine. In place and tested: the graph engine,
-> the typed `/v1` HTTP + websocket API (durable runs, streamed progress, coalescing), the model-dir
-> scan, the device + memory policy (profiles, dtype, offload, int8), the low-level primitive node
-> vocabulary. The Z-Image loader is written and validates on a GPU.
-> Cross-request batching, single-image multi-GPU (an xDiT worker group behind the sampler seam, with
-> the policy and IPC round-trip tested), and out-of-process custom nodes are built as seams but not
-> yet running on real hardware.
+Core also runs the **LoRA trainer** behind Inline Studio's Trainer canvas, so the same engine that
+generates can fine-tune Z-Image, Krea 2, FLUX.2 and MiniMax H3 on your own images without a cloud
+step. Training is cheaper than generating: Krea 2 fits a 16GB card at 512px with a 4-bit base. Its
+dependencies sit behind the `training` extra. See the
+[LoRA training guide](https://inlinestudio.art/lora-training) for the measured VRAM table.
+
+> Status: the graph engine, the typed `/v1` HTTP + websocket API (durable runs, streamed progress,
+> coalescing), the model-dir scan, the device + memory policy (profiles, dtype, offload, int8), the
+> low-level primitive node vocabulary, the model runners above, and the LoRA trainer all run on real
+> hardware. Cross-request batching, single-image multi-GPU (an xDiT worker group behind the sampler
+> seam, with the policy and IPC round-trip tested), and out-of-process custom nodes are built as
+> seams but are not yet exercised on real hardware.
 
 ## Engine design
 

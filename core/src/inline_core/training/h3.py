@@ -24,6 +24,14 @@ logger = logging.getLogger("inline_core.training.h3")
 PATCH = (1, 2, 2)
 AUDIO_LATENT_CHANNELS = 32
 
+#: What an absent caption becomes. H3 tokenises with ``add_special_tokens=False`` and has no BOS,
+#: so the empty string is genuinely zero tokens and the conditioner reshapes a (1, 0) sequence into
+#: an attention head and raises. A single space is one real token and the closest thing this model
+#: has to no caption: it is guidance-distilled, so inference never encodes an unconditional prompt
+#: and there is no established unconditional embedding to match. Covers caption dropout and an
+#: image whose ``.txt`` is missing or blank.
+_EMPTY_CAPTION = " "
+
 
 def precache(
     dataset_dir: str,
@@ -112,6 +120,7 @@ def _encode_captions(
     out: list[tuple[Any, Any]] = []
     try:
         for caption in captions:
+            caption = caption or _EMPTY_CAPTION
             with torch.no_grad():
                 # The staticmethod rather than the block, so nothing needs a PipelineState. `dtype`
                 # is not optional here: it defaults to `components.transformer.dtype`, and this
