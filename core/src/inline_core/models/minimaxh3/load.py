@@ -21,6 +21,7 @@ import torch
 from safetensors import safe_open
 
 from ...errors import ComponentError
+from .. import lora as lora_module
 from ..keymap import (
     AssertEqual,
     Rename,
@@ -108,18 +109,28 @@ def load_transformer(
     device: str = "cpu",
     layout: RowLayout | None = None,
     shrink: Any = None,
+    loras: tuple[Any, ...] = (),
 ) -> MiniMaxH3Transformer3DModel:
     """Build the port and stream ``path`` into it through the key plan.
 
     ``layout`` overrides the measurement, which is only useful in tests; leave it None so the file
     decides. ``shrink(model, prefix)`` is called as each transformer block finishes, which is how a
     64 GB machine loads a model whose bf16 footprint is 66 GB.
+
+    ``loras`` are fused into each block as it lands, **before** ``shrink`` factorises or quantises
+    it, because a fuse adds a full-precision delta that quantized weights cannot accept in place.
     """
     if not path.is_file():
         raise ComponentError(f"MiniMax H3 transformer not found: {path}")
     config = read_config(path)
     with torch.device("meta"):
         model = MiniMaxH3Transformer3DModel(**transformer_kwargs(config))
+
+    # Resolved against module names on the meta model, so a LoRA trained for another architecture
+    # is refused before the 62 GB read rather than a block into it.
+    lora_plan = lora_module.plan_loras(model, loras) if loras else {}
+    fused: set[str] = set()
+    shrink = _fusing_shrink(lora_plan, fused, shrink) if lora_plan else shrink
 
     with safe_open(str(path), framework="pt") as handle:
         source_keys = list(handle.keys())  # noqa: SIM118 - safe_open has no __contains__
@@ -144,9 +155,62 @@ def load_transformer(
             model, handle, plan, dtype=dtype, device=device, shrink=shrink
         )
 
+    if lora_plan:
+        _finish_fuse(model, lora_plan, fused)
     _assert_nothing_left_on_meta(model, filled)
     model.eval()
     return model
+
+
+def _fusing_shrink(plan: Any, fused: set[str], inner: Any) -> Any:
+    """Fuse a block's share of the LoRA stack the moment it lands, then hand off to ``shrink``.
+
+    Order matters both ways: after the stream the block's weights exist, and before ``shrink`` they
+    are still unquantised, which is the only window in which a full-precision delta can be added
+    in place.
+    """
+
+    def shrink(model: Any, prefix: str) -> None:
+        module = model
+        for part in prefix.split("."):
+            module = module[int(part)] if part.isdigit() else getattr(module, part)
+        fused.update(_fuse_subtree(module, plan, f"{prefix}."))
+        if inner is not None:
+            inner(model, prefix)
+
+    return shrink
+
+
+def _fuse_subtree(module: Any, plan: Any, prefix: str) -> set[str]:
+    """Apply the plan's share for one subtree, reporting which of its targets were covered."""
+    hit = {
+        path
+        for name, _child in module.named_modules()
+        if (path := f"{prefix}{name}" if prefix else name) in plan
+    }
+    lora_module.apply_plan(module, plan, prefix)
+    return hit
+
+
+def _finish_fuse(model: Any, plan: Any, fused: set[str]) -> None:
+    """Fuse what the block callback never saw, then prove nothing was missed.
+
+    The callback only fires for ``transformer_blocks.N``, so ``context_embedder``, the token
+    refiner and the output heads would silently keep their base weights - and silently is the whole
+    problem. ``plan_loras`` only raises when a key matches *no* module in the model, and these
+    modules do exist, so a partial fuse validates clean and then degrades the output without ever
+    erroring. The residual pass covers them and the check makes any remaining gap loud.
+    """
+    residual = {name: deltas for name, deltas in plan.items() if name not in fused}
+    if residual:
+        fused |= _fuse_subtree(model, residual, "")
+    missed = sorted(set(plan) - fused)
+    if missed:
+        raise ComponentError(
+            f"{len(missed)} LoRA layers resolved to modules that were never fused, starting with "
+            f"{missed[0]}. Applying only part of a LoRA degrades output without erroring, so this "
+            "is refused instead."
+        )
 
 
 def _source_for(layout: RowLayout) -> str:

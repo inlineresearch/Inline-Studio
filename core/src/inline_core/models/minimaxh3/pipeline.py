@@ -23,6 +23,7 @@ import torch
 
 from ...device.policy import DevicePolicy
 from ...errors import ComponentError
+from .. import loaders
 from .. import pipeline_runtime as rt
 from ..offload import (
     apply_offload,
@@ -74,8 +75,10 @@ ENCODER_KEEP_PRECISION = (
 
 def load_pipeline(
     policy: DevicePolicy, *, params: dict[str, Any], partition: str,
-    factorise_adaln: bool = True, quantize: bool = True, staged: bool = True,
+    factorise_adaln: bool = True, adaln_rank: int | None = None,
+    quantize: bool = True, staged: bool = True,
     transformer: Any = None, video_vae: Any = None, text_encoder: Any = None,
+    loras: tuple[Any, ...] = (),
 ) -> Any:
     """Build, place and cache the pipeline for one partition.
 
@@ -88,6 +91,10 @@ def load_pipeline(
     one: the factorisation perturbs the modulation 14x less than one bf16 ulp of re-rounding, which
     is below the ambiguity the checkpoint's own storage already carries. The gate's pixel tolerance
     could not decide it either way - an information-free re-rounding fails that tolerance too.
+
+    ``adaln_rank`` overrides the rank that factorisation keeps, for sweeping it against the gate.
+    It is part of the cache key: two ranks are two different sets of weights, and sharing an entry
+    would serve whichever loaded first while the log claimed the rank that was asked for.
     """
     # Precedence, matching the image nodes: a wired handle beats the node's dropdown, which beats
     # the default filename on disk. The pick is what lets a user point at a hand-placed or renamed
@@ -138,9 +145,11 @@ def load_pipeline(
         # entry and the second load would silently reuse the first partition's weights.
         variant=partition,
         quant=(policy.quantization().value if quantize else "bf16")
-        + ("+adaln" if factorise_adaln else "")
+        + (f"+adaln{_adaln_rank(adaln_rank)}" if factorise_adaln else "")
         # Part of the key because it changes where the weights are placed, not just how they run.
         + ("+staged" if staged else ""),
+        # Order- and strength-sensitive: adapters are fused, and fusing does not commute.
+        loras=loaders.lora_cache_key(loras),
     )
     with rt.PIPELINES.lock:
         cached = rt.PIPELINES.get(key)
@@ -152,6 +161,7 @@ def load_pipeline(
             policy,
             partition=partition,
             factorise_adaln=factorise_adaln,
+            adaln_rank=adaln_rank,
             quantize=quantize,
             staged=staged,
             transformer_path=transformer_path,
@@ -159,6 +169,7 @@ def load_pipeline(
             processor_dir=processor_dir,
             video_vae=video_vae_path,
             audio_vae=audio_vae,
+            loras=loras,
         )
         rt.PIPELINES.put(key, pipe)
         return pipe
@@ -222,6 +233,7 @@ def _build(
     *,
     partition: str,
     factorise_adaln: bool = False,
+    adaln_rank: int | None = None,
     quantize: bool = True,
     staged: bool = False,
     transformer_path: Path,
@@ -229,6 +241,7 @@ def _build(
     processor_dir: Path,
     video_vae: Path,
     audio_vae: Path,
+    loras: tuple[Any, ...] = (),
 ) -> Any:
     from transformers import AutoProcessor, AutoTokenizer, Qwen3VLForConditionalGeneration
 
@@ -303,9 +316,11 @@ def _build(
         # prompt is encoded, and 36 GB of int8 weights beside its 19.5 GB fits neither of them.
         # `render_staged` moves it across once the conditioner is parked.
         device="cpu" if (recipe.denoiser_offload or staged) else device,
+        loras=loras,
         shrink=_block_shrinker(
             recipe,
             transformer_path if factorise_adaln else None,
+            factorise_rank=adaln_rank,
             resident_blocks=resident_blocks,
             resident_device=str(placement.device),
         )
@@ -729,7 +744,14 @@ def _metadata_config(path: Path) -> dict[str, Any]:
     return {}
 
 
-def _adaln_basis(source: Path) -> Any:
+def _adaln_rank(rank: int | None) -> int:
+    """The rank factorisation will keep. Its own module owns the default."""
+    from . import adaln as adaln_mod
+
+    return adaln_mod.RANK if rank is None else int(rank)
+
+
+def _adaln_basis(source: Path, rank: int | None = None) -> Any:
     """The low-rank basis for the AdaLN branch, read straight from the checkpoint.
 
     Derived before the model streams, because the shrink callback needs it while the first block
@@ -753,13 +775,14 @@ def _adaln_basis(source: Path) -> Any:
         embedder.linear_2.weight.data = proj_out.float()
         embedder.linear_2.bias.data = get("time_embedder.proj_out.bias").float()
     proj = Timesteps(num_channels=proj_in.shape[1], flip_sin_to_cos=True, downscale_freq_shift=0)
-    return adaln_mod.derive_basis(proj, embedder)
+    return adaln_mod.derive_basis(proj, embedder, rank=_adaln_rank(rank))
 
 
 def _block_shrinker(
     recipe: Any,
     factorise_source: Path | None = None,
     *,
+    factorise_rank: int | None = None,
     resident_blocks: int = 0,
     resident_device: str = "",
 ) -> Any:
@@ -771,7 +794,9 @@ def _block_shrinker(
     happens here rather than after the load for the same reason the shrinking does: a block moved to
     the card as it lands is a block that never has to fit host RAM alongside the other forty-nine.
     """
-    basis = _adaln_basis(factorise_source) if factorise_source is not None else None
+    basis = (
+        _adaln_basis(factorise_source, factorise_rank) if factorise_source is not None else None
+    )
     try:
         from torchao.quantization import Int8WeightOnlyConfig, quantize_
     except ImportError:

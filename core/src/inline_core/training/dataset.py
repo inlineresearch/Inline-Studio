@@ -29,22 +29,26 @@ def _pairs(dataset_dir: Path) -> list[tuple[Path, str]]:
     return out
 
 
-def _to_tensor(image: Any, resolution: int, flip: bool = False) -> Any:
-    import numpy as np
-    import torch
+def _square(image: Any, resolution: int, flip: bool = False) -> Any:
+    """Center-crop to square and resize to the training resolution. Shared with the archs that do
+    not normalize to [-1, 1] - MiniMax H3 wants ImageNet statistics - so the crop cannot drift."""
     from PIL import Image
 
     img = image.convert("RGB")
-    # Center-crop to square, then resize to the training resolution; pixels normalized to [-1, 1].
     short = min(img.size)
     left = (img.width - short) // 2
     top = (img.height - short) // 2
     img = img.crop((left, top, left + short, top + short)).resize(
         (resolution, resolution), Image.LANCZOS
     )
-    if flip:
-        img = img.transpose(Image.FLIP_LEFT_RIGHT)
-    arr = np.asarray(img, dtype="float32") / 127.5 - 1.0
+    return img.transpose(Image.FLIP_LEFT_RIGHT) if flip else img
+
+
+def _to_tensor(image: Any, resolution: int, flip: bool = False) -> Any:
+    import numpy as np
+    import torch
+
+    arr = np.asarray(_square(image, resolution, flip), dtype="float32") / 127.5 - 1.0
     return torch.from_numpy(arr).permute(2, 0, 1)  # CHW
 
 

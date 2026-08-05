@@ -1,7 +1,33 @@
 {
   "name": "inline-studio",
-  "version": "1.2.61",
-  "description": "An experimentation layer for visual artists: a node canvas for building generative pipelines, served by the Inline Core engine.",
+  "version": "1.2.62",
+  "description": "AI filmmaking on a node canvas. Generate locally on your own GPU and train your own LoRAs on the same canvas, with the built-in Inline Core engine and hosted models. Every render is kept as a versioned take.",
+  "keywords": [
+    "ai-filmmaking",
+    "node-canvas",
+    "lora",
+    "lora-training",
+    "train-lora-locally",
+    "local-ai",
+    "diffusion",
+    "text-to-image",
+    "text-to-video",
+    "z-image",
+    "krea-2",
+    "flux2",
+    "minimax-h3",
+    "stable-diffusion",
+    "generative-ai",
+    "open-source"
+  ],
+  "homepage": "https://inlinestudio.art",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/inlineresearch/Inline-Studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/inlineresearch/Inline-Studio/issues"
+  },
   "author": "Inline Studio",
   "license": "GPL-3.0-or-later",
   "type": "module",
