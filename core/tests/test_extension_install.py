@@ -565,5 +565,8 @@ def test_every_channel_uses_the_installers_root_not_the_environment(
     default_root = extensions_dir()
     leaked = sorted(default_root.rglob("registry.json")) if default_root.exists() else []
     assert not leaked, f"wrote the registry cache to the process default: {leaked}"
-    assert not (Path.cwd() / "extensions").exists(), "wrote to the checkout's ./extensions"
+    # Assert on the artifact, not on the directory existing: a checkout where someone ran the server
+    # (or a restored machine image) already has an empty ./extensions, and that is not this bug.
+    stray = sorted((Path.cwd() / "extensions").rglob("registry.json"))
+    assert not stray, f"wrote to the checkout's ./extensions: {stray}"
     assert (installer.paths.cache / "registry.json").is_file(), "not under the installer's root"

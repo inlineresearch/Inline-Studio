@@ -1,13 +1,13 @@
 """What differs between the architectures we train LoRAs for.
 
-Z-Image and Krea 2 share the whole harness - dataset export, precache-then-free, PEFT adapter,
-checkpoint/resume, the JSON-line protocol - and differ in only four things: which Linears to adapt,
-how a noise level maps to a timestep, what the model is asked to predict, and how one forward call
-is shaped. Those four live here so ``trainer.py`` stays one loop.
+Every arch shares the whole harness - dataset export, precache-then-free, PEFT adapter,
+checkpoint/resume, the JSON-line protocol - and they differ in only four things: which Linears to
+adapt, how a noise level maps to a timestep, what the model is asked to predict, and how one forward
+call is shaped. Those four live here so ``trainer.py`` stays one loop.
 
-Both are rectified flow, but with **opposite conventions**, which is exactly the kind of detail a
-test should pin: Z-Image predicts ``clean - noise`` at timestep ``1 - sigma``, Krea 2 predicts
-``noise - clean`` at timestep ``sigma``.
+All four are rectified flow, but with **opposite conventions**, which is exactly the kind of detail
+a test should pin: Z-Image and MiniMax H3 predict ``clean - noise`` at timestep ``1 - sigma``, while
+Krea 2 and FLUX.2 predict ``noise - clean`` at timestep ``sigma``.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from typing import Any
 Z_IMAGE = "z-image"
 KREA2 = "krea2"
 FLUX2 = "flux2"
+MINIMAX_H3 = "minimax-h3"
 
 #: Z-Image: every ZImageTransformerBlock's attention + SwiGLU feed-forward Linears, confirmed
 #: against ZImageTransformer2DModel.named_modules() (34 blocks, 238 Linears).
@@ -72,6 +73,32 @@ _FLUX2_TARGETS = [
     "x_embedder",
     "context_embedder",
     "proj_out",
+]
+
+
+#: MiniMax H3: the attention and SwiGLU feed-forward Linears of all 50 blocks, plus the text
+#: projection. Confirmed against MiniMaxH3Transformer3DModel.named_modules(): a block's Linears are
+#: exactly to_q/to_k/to_v/to_out.0, ff.net.0.proj, ff.net.2 and adaln_proj.linear.
+#:
+#: ``adaln_proj.linear`` is deliberately absent. It is replaced at load by the rank-8 factorisation
+#: (``minimaxh3/adaln.py``) that takes the checkpoint from 66GB to 40GB, so the module a LoRA would
+#: attach to carries the whole modulation signal through eight columns - the same reason
+#: ``minimaxh3/pipeline.py`` refuses to quantize it.
+#:
+#: The fp32-pinned modules are absent for a different reason: H3 ships a mixed-precision checkpoint
+#: where the patch projections, the timestep MLP and the two output heads stay float32
+#: (``_keep_in_fp32_modules``), and adapting those fights the precision split, not the model.
+#:
+#: PEFT matches by name suffix, so this also adapts the two token-refiner blocks. That is wanted,
+#: and it is why the loader must fuse outside the block stack too - see ``minimaxh3/load.py``.
+_MINIMAX_H3_TARGETS = [
+    "to_q",
+    "to_k",
+    "to_v",
+    "to_out.0",
+    "ff.net.0.proj",
+    "ff.net.2",
+    "context_embedder",
 ]
 
 
@@ -234,6 +261,49 @@ def _flux2_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, 
 
 
 
+# --- MiniMax H3 -----------------------------------------------------------------------------------
+
+#: H3's (t, h, w) patch. A still is one latent frame, so only the spatial half ever bites.
+_H3_PATCH = (1, 2, 2)
+
+
+def _h3_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, Any]) -> Any:
+    """One prediction from MiniMaxH3Transformer3DModel, mirroring the vendored denoise block.
+
+    H3 runs one packed 1-D sequence holding text, audio and video rows rather than separate streams,
+    and the caller owns that layout. The precache builds it once per image (it only depends on the
+    caption length and the latent grid) and caches the tensors, so a step just patchifies, assigns
+    every row this step's timestep, and selects the video rows back out.
+
+    A still is one latent frame with no audio rows at all, which the model accepts: the audio head
+    runs over an empty index and returns empty.
+    """
+    from ..models.minimaxh3.vendor.packing import patchify_video_latents, unpatchify_video_tokens
+
+    channels, frames, height, width = noisy.shape
+    rows = patchify_video_latents(noisy.unsqueeze(0), _H3_PATCH)
+
+    # One distinct noise level, so every row indexes timestep 0. Training pins no conditioning rows
+    # and a still has no audio rows, which is what collapses the vendored (timestep, index) plan to
+    # this; ``timestep_indices`` comes from the precache, which derives it from build_row_timesteps
+    # rather than assuming the collapse.
+    video, _audio = transformer(
+        hidden_states=rows.unsqueeze(0),
+        audio_hidden_states=item["audio"].unsqueeze(0),
+        encoder_hidden_states=item["embed"].unsqueeze(0),
+        timestep=timestep.reshape(1),
+        timestep_indices=item["timestep_indices"],
+        token_tags=item["token_tags"],
+        position_ids=item["position_ids"],
+        video_indices=item["video_indices"],
+        audio_indices=item["audio_indices"],
+        text_indices=item["text_indices"],
+        return_dict=False,
+    )
+    unpacked = unpatchify_video_tokens(video[0], frames, height, width, channels, _H3_PATCH)
+    return unpacked[0]
+
+
 ARCHS: dict[str, TrainingArch] = {
     Z_IMAGE: TrainingArch(
         key=Z_IMAGE,
@@ -262,6 +332,21 @@ ARCHS: dict[str, TrainingArch] = {
         timestep=lambda sigma: sigma,
         target=lambda clean, noise: noise - clean,
         forward=_flux2_forward,
+    ),
+    MINIMAX_H3: TrainingArch(
+        key=MINIMAX_H3,
+        target_modules=_MINIMAX_H3_TARGETS,
+        # H3's shift is the same expression Z-Image uses, at the scheduler's video shift of 12.0
+        # (MiniMaxH3Scheduler builds its grid as shift * s / (1 + (shift - 1) * s)), so the
+        # generic sigma applies unchanged.
+        sigma=_zimage_sigma,
+        # Z-Image's convention exactly, and worth a test rather than a comment because Krea 2 and
+        # FLUX.2 use the opposite one: MiniMaxH3Scheduler.scale_noise is
+        # x_t = t * clean + (1 - t) * noise at t = 1 - sigma, and its step reconstructs
+        # x0 = x_t + sigma * v, so the velocity the model predicts is clean - noise.
+        timestep=lambda sigma: 1.0 - sigma,
+        target=lambda clean, noise: clean - noise,
+        forward=_h3_forward,
     ),
 }
 

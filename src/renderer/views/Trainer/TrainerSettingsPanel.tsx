@@ -54,9 +54,16 @@ const BASES: Record<TrainingArch, { value: TrainingBaseMode; label: string }[]> 
   // FLUX.2 has no de-distillation adapter: you train on a Base checkpoint and the adapter still
   // loads on the distilled build for generation, which is both faster and better.
   flux2: [{ value: 'raw', label: 'FLUX.2 Base (required)' }],
+  // H3 ships one undistilled build per partition, and only fl2va trains. The LoRA loads on all four
+  // H3 nodes afterwards, ref2va included - the two partitions are the same architecture.
+  'minimax-h3': [{ value: 'raw', label: 'MiniMax H3 FL2VA (required)' }],
 }
 
-/** Krea 2 and FLUX.2 have a 4-bit base path; the control is hidden for Z-Image rather than lying. */
+/**
+ * Which archs offer a base-precision choice. Z-Image is absent because it trains in bf16 on the
+ * cards people have; MiniMax H3 is absent for the opposite reason - it is 4-bit only, and a picker
+ * with one option is a lie. Both are hidden rather than shown and then refused.
+ */
 const QUANTIZABLE: TrainingArch[] = ['krea2', 'flux2']
 
 const QUANTS: { value: TrainingBaseQuant; label: string }[] = [
@@ -81,6 +88,7 @@ const ARCHS: { value: TrainingArch; label: string }[] = [
   { value: 'z-image', label: 'Z-Image' },
   { value: 'krea2', label: 'Krea 2' },
   { value: 'flux2', label: 'FLUX.2' },
+  { value: 'minimax-h3', label: 'MiniMax H3 (video)' },
 ]
 
 function NumberField({
@@ -261,6 +269,13 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
         {arch === 'flux2' && (
           <span className="text-[10px] text-zinc-600">
             Train on Base, then generate with the distilled build - the LoRA carries over.
+          </span>
+        )}
+        {arch === 'minimax-h3' && (
+          <span className="text-[10px] text-zinc-600">
+            Trains on still images and applies to video. Learns look, style and character, not
+            motion. Wire the result into any H3 node's LoRA input. 4-bit base, so it needs a big
+            card.
           </span>
         )}
       </label>

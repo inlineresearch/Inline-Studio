@@ -424,8 +424,11 @@ export interface ModelDownloadErrorEvent {
 // LoRA training ------------------------------------------------------------
 
 /** Turbo needs a training adapter to avoid "turbo drift"; a de-turbo base trains without one. */
-/** The model family a LoRA is trained for. */
-export type TrainingArch = 'z-image' | 'krea2' | 'flux2'
+/**
+ * The model family a LoRA is trained for. `minimax-h3` is the video model: it trains on stills and
+ * the adapter applies to every H3 node at generation time.
+ */
+export type TrainingArch = 'z-image' | 'krea2' | 'flux2' | 'minimax-h3'
 
 /**
  * Which base checkpoint a run trains against. `raw` is Krea 2's undistilled base (the recommended

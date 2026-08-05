@@ -38,6 +38,12 @@ _ENV = {
         "text_encoders": "INLINE_FLUX2_TEXT_ENCODER",
         "adapter": "INLINE_FLUX2_TRAIN_ADAPTER",
     },
+    archs.MINIMAX_H3: {
+        "diffusion_models": "INLINE_MINIMAXH3_MODEL",
+        "vae": "INLINE_MINIMAXH3_VIDEO_VAE",
+        "text_encoders": "INLINE_MINIMAXH3_TEXT_ENCODER",
+        "adapter": "INLINE_MINIMAXH3_TRAIN_ADAPTER",
+    },
 }
 
 
@@ -75,6 +81,17 @@ def _require(root: Path, arch: str, category: str) -> str:
 
 def _resolve(arch: str, category: str) -> Any:
     """The arch's own answer for a component, so training and generation pick the same file."""
+    if arch == archs.MINIMAX_H3:
+        from ..models.minimaxh3 import requirements as h3_reqs
+
+        if category == "vae":
+            return h3_reqs.resolve("vae", h3_reqs.VIDEO_VAE_FILE)
+        if category == "text_encoders":
+            return h3_reqs.resolve("text_encoders", "MiniMax-H3-text-encoder")
+        # Only fl2va trains: ref2va is the same architecture reached through reference conditioning,
+        # so a LoRA learned on one loads on the other.
+        return h3_reqs.resolve_transformer("fl2va")
+
     if arch == archs.FLUX2:
         from ..models.flux2 import requirements as flux2_reqs
 
@@ -261,6 +278,17 @@ def resolve_quant(
     fine, then OOMs at 1024 where the activations alone want ~21GB."""
     from ..device.policy import Quantization
 
+    if arch == archs.MINIMAX_H3:
+        # 4-bit is not a rung on a ladder for H3, it is the only way it loads: 40GB of base after
+        # the AdaLN factorisation, before activations or the adapter, does not leave room on any
+        # card this trains on. Refused rather than offered and then failing hours in.
+        if base_quant == "none":
+            raise RuntimeError(
+                "MiniMax H3 has no full-precision training path. Its base is 40GB after the AdaLN "
+                "factorisation, so it trains in 4-bit. Set the base precision back to auto."
+            )
+        return Quantization.NF4
+
     if base_quant == "none":
         return Quantization.NONE
     if base_quant == "nf4":
@@ -341,6 +369,14 @@ def load_transformer(
     from ..models import loaders
 
     quant = quant or Quantization.NONE
+
+    if arch == archs.MINIMAX_H3:
+        from . import h3
+
+        # No de-distillation adapter and no base-mode branch: H3 ships one undistilled build per
+        # partition, and only fl2va trains.
+        del base_mode
+        return h3.load_base(models_dir, device, dtype, quant)
 
     root = Path(models_dir)
     adapter = _adapter_path(root, arch, base_mode)

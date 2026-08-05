@@ -128,11 +128,13 @@ def _inputs(variant: Variant) -> tuple[Port, ...]:
     ports = [
         Port("prompt", "Prompt", PortKind.TEXT, required=True),
         # The same component handles every other Core node carries: wire a load/* subnode to
-        # override the dropdown. No `lora` port, unlike Z-Image and FLUX.2, because H3 has no LoRA
-        # path yet and a handle that silently does nothing is worse than an absent one.
+        # override the dropdown.
         Port("model", "Diffusion model", PortKind.MODEL, required=False),
         Port("vae", "Video VAE", PortKind.VAE, required=False),
         Port("text_encoder", "Text encoder", PortKind.TEXT_ENCODER, required=False),
+        # Adapters fuse into each block as it streams, before factorisation and quantisation. A
+        # LoRA trained on either partition loads on both: they are the same architecture.
+        Port("lora", "LoRA", PortKind.LORA, required=False),
     ]
     if variant.first_frame:
         ports.append(Port("image", "First frame", PortKind.IMAGE, required=False))
@@ -318,6 +320,7 @@ class MiniMaxH3Runner(NodeRunner):
             transformer=rt.component_ref(inputs, "model", "diffusion", _LABEL),
             video_vae=rt.component_ref(inputs, "vae", "vae", _LABEL),
             text_encoder=rt.component_ref(inputs, "text_encoder", "text_encoder", _LABEL),
+            loras=rt.lora_stack(inputs, _LABEL),
         )
 
         call = call_kwargs(request, self._variant, inputs)

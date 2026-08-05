@@ -58,7 +58,7 @@ def test_every_node_outputs_video_plus_a_separate_audio_port(node_type: str) -> 
 
 #: On every Core node, so a load/* subnode can override the dropdowns. Not part of what a node is
 #: *for*, which is what the media ports below say.
-COMPONENTS = ["model", "vae", "text_encoder"]
+COMPONENTS = ["model", "vae", "text_encoder", "lora"]
 
 
 def test_the_inputs_are_what_each_node_is_for() -> None:
@@ -79,8 +79,9 @@ def test_every_node_carries_the_component_handles(node_type: str) -> None:
     for name in COMPONENTS:
         assert name in ports, f"{node_type} has no {name} handle"
         assert not ports[name].required
-    # No LoRA handle: H3 has no LoRA path, and a dot that does nothing is worse than no dot.
-    assert "lora" not in ports
+    # The LoRA handle is on every variant, including ref2va: the two partitions are structurally
+    # identical, so an adapter trained on one loads on the other.
+    assert ports["lora"].kind is PortKind.LORA
 
 
 def test_first_and_last_frame_are_both_optional() -> None:

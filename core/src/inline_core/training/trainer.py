@@ -18,8 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from . import arch as archs
-from . import dataset as ds
-from . import models, protocol
+from . import cache, models, protocol
 
 
 class _Stop:
@@ -133,19 +132,27 @@ def _activation_offload(enabled: bool) -> Any:
     return torch.autograd.graph.save_on_cpu(pin_memory=True)
 
 
+#: The cached-item keys that carry activations and take the compute dtype. Everything else moves to
+#: the device unchanged: a boolean mask would become weights, integer row tags and index tensors
+#: would stop addressing anything, and H3's float64 rotary position grid would lose most of its
+#: mantissa - none of which raises, they just train against the wrong thing.
+_ACTIVATION_KEYS = frozenset({"latent", "embed", "audio"})
+
+
 def _to_device(item: dict[str, Any], device: Any, dtype: Any) -> dict[str, Any]:
-    """A cached item on the training device. The attention mask stays boolean - casting it to the
-    compute dtype would turn a mask into weights."""
-    out: dict[str, Any] = {}
-    for key, value in item.items():
-        out[key] = value.to(device) if key == "mask" else value.to(device, dtype)
-    return out
+    """A cached item on the training device, casting only its activations."""
+    return {
+        key: value.to(device, dtype) if key in _ACTIVATION_KEYS else value.to(device)
+        for key, value in item.items()
+    }
 
 
 def train(manifest: dict[str, Any]) -> str | None:
     import torch
     from accelerate import Accelerator
     from peft import LoraConfig
+
+    from ..device.policy import Quantization
 
     arch = archs.get(manifest.get("arch"))
     hp = manifest["hyperparams"]
@@ -161,19 +168,12 @@ def train(manifest: dict[str, Any]) -> str | None:
 
     # Two phases, never overlapping: encoders -> precache -> free, THEN the transformer. Held
     # together they add the text encoder's several GB to the base; apart, peak is just the base.
-    protocol.progress(0, steps, status="loading encoders")
-    encoders = models.load_encoders(manifest["modelsDir"], arch.key, str(device), dtype)
-
     protocol.progress(0, steps, status="caching latents")
-    data = ds.precache(
-        manifest["datasetDir"], encoders, arch.key, str(device), dtype, resolution,
-        flip=bool(hp.get("flipAugment")),
-    )
-    # Encoded while the text encoder is still loaded; caption dropout swaps it in per step.
     dropout = max(0.0, min(1.0, float(hp.get("captionDropout") or 0.0)))
-    unconditional = ds.precache_empty(encoders, arch.key, str(device)) if dropout > 0 else None
-    shift = float(encoders.scheduler.config.get("shift", 1.0) or 1.0)
-    models.free_encoders(encoders)
+    data, unconditional, shift = cache.build(
+        manifest["datasetDir"], manifest["modelsDir"], arch.key, str(device), dtype, resolution,
+        flip=bool(hp.get("flipAugment")), dropout=dropout,
+    )
 
     quant = models.resolve_quant(
         str(hp.get("baseQuant") or "auto"),
@@ -196,6 +196,11 @@ def train(manifest: dict[str, Any]) -> str | None:
         manifest["modelsDir"], arch.key, manifest["baseMode"], str(device), dtype, quant
     )
     transformer.requires_grad_(False)
+    # PEFT picks its bitsandbytes-aware LoRA layer off this one attribute. Without it, and because
+    # bnb's Linear4bit subclasses nn.Linear, the generic dispatcher matches instead: grads still
+    # flow, so it looks fine, but it is not the path peft tests and merging would be wrong.
+    if quant is Quantization.NF4:
+        transformer.is_loaded_in_4bit = True
     transformer.add_adapter(
         LoraConfig(
             r=int(hp["rank"]),
