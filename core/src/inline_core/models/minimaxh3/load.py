@@ -165,9 +165,8 @@ def load_transformer(
 def _fusing_shrink(plan: Any, fused: set[str], inner: Any) -> Any:
     """Fuse a block's share of the LoRA stack the moment it lands, then hand off to ``shrink``.
 
-    Order matters both ways: after the stream the block's weights exist, and before ``shrink`` they
-    are still unquantised, which is the only window in which a full-precision delta can be added
-    in place.
+    The only window that works: after the stream the weights exist, before ``shrink`` they are
+    still unquantised, and a full-precision delta cannot be added to a quantised weight.
     """
 
     def shrink(model: Any, prefix: str) -> None:
@@ -195,11 +194,9 @@ def _fuse_subtree(module: Any, plan: Any, prefix: str) -> set[str]:
 def _finish_fuse(model: Any, plan: Any, fused: set[str]) -> None:
     """Fuse what the block callback never saw, then prove nothing was missed.
 
-    The callback only fires for ``transformer_blocks.N``, so ``context_embedder``, the token
-    refiner and the output heads would silently keep their base weights - and silently is the whole
-    problem. ``plan_loras`` only raises when a key matches *no* module in the model, and these
-    modules do exist, so a partial fuse validates clean and then degrades the output without ever
-    erroring. The residual pass covers them and the check makes any remaining gap loud.
+    The callback fires only for ``transformer_blocks.N``, so ``context_embedder`` and the token
+    refiner would keep their base weights. ``plan_loras`` raises only when a key matches *no*
+    module, and these exist, so a partial fuse validates clean and then degrades output silently.
     """
     residual = {name: deltas for name, deltas in plan.items() if name not in fused}
     if residual:

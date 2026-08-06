@@ -132,10 +132,9 @@ def _activation_offload(enabled: bool) -> Any:
     return torch.autograd.graph.save_on_cpu(pin_memory=True)
 
 
-#: The cached-item keys that carry activations and take the compute dtype. Everything else moves to
-#: the device unchanged: a boolean mask would become weights, integer row tags and index tensors
-#: would stop addressing anything, and H3's float64 rotary position grid would lose most of its
-#: mantissa - none of which raises, they just train against the wrong thing.
+#: The cached-item keys that carry activations and take the compute dtype. Everything else moves
+#: unchanged: a bool mask would become weights, index tensors would stop addressing anything, and
+#: H3's float64 rotary grid would lose its mantissa. None of it raises.
 _ACTIVATION_KEYS = frozenset({"latent", "embed", "audio"})
 
 

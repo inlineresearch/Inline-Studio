@@ -178,6 +178,13 @@ _ADAPTER_SOURCE = {
 
 
 def compute_dtype() -> Any:
+    """bf16 wherever torch will take it, deliberately including Turing.
+
+    The device policy prefers fp16 below compute 8.0, where bf16 has no tensor cores. That argument
+    is about GPU matmuls and does not transfer here: this dtype also reaches the caption pass, which
+    runs on the CPU when the text encoder will not fit the card, and CPU fp16 upcasts. Switching a
+    T4 to fp16 hung the machine mid-caption. Narrow it to the GPU compute before revisiting.
+    """
     import torch
 
     if torch.cuda.is_available():

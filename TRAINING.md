@@ -59,7 +59,7 @@ The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FL
 - **FL2VA** is the only base, and it is undistilled, so there is no adapter and nothing to drift. Put `minimax_h3_fl2va_bf16.safetensors` in `models/diffusion_models/`, train on stills, then wire the LoRA into any of the four H3 nodes. It loads on the Reference to Video node too, which uses a different checkpoint file: the two partitions are the same architecture.
 - **What it learns** is appearance - look, style, character, lighting. It does not learn motion or sound, because it never sees any. This is how image LoRAs for video models are normally trained, and it is the same thing every other H3 trainer does today.
 - **The base is 4-bit, always.** H3 is 40GB after the AdaLN factorisation and 11.7GB after quantisation, so full precision is refused rather than offered and then failing. There is no base-precision control for H3 for the same reason.
-- **It needs about 21GB and roughly seven minutes of startup.** The run encodes latents and captions in two passes that never overlap, because H3's fp32 video VAE and its 32B conditioner cannot be resident together, and the conditioner pass is what sets the peak. See [Benchmark results](#benchmark-results) for the phase-by-phase split. The download is about 124GB before any of that.
+- **A 24GB card is comfortable and a 16GB card works, slowly.** The run encodes latents and captions in two passes that never overlap, because H3's fp32 video VAE and its 32B conditioner cannot be resident together. On a card that holds the conditioner it peaks at 20.6GB; on one that does not, the conditioner runs on the CPU and the peak drops to 12.7GB while a step goes from 0.6s to 16s. Either way there is about seven minutes of startup, and 64GB of system RAM for the smaller card. See [Benchmark results](#benchmark-results) for the split. The download is about 124GB before any of that.
 
 **Z-Image** is distilled either way:
 
@@ -106,23 +106,35 @@ The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader
 | FLUX.2     | Base (klein 4B) | 512  | **4-bit**      | 8.6GB         | not measured  |
 | FLUX.2     | Base (klein 4B) | 1024 | bf16           | 9.9GB         | not measured  |
 | FLUX.2     | Base (klein 4B) | 1024 | **4-bit**      | 9.9GB         | not measured  |
-| MiniMax H3 | FL2VA           | 512  | **4-bit**      | **20.6GB**    | not measured  |
+| MiniMax H3 | FL2VA           | 512  | **4-bit**      | **20.6GB**    | **12.7GB**    |
 | MiniMax H3 | FL2VA           | 768  | **4-bit**      | **20.6GB**    | not measured  |
 | MiniMax H3 | FL2VA           | 1024 | **4-bit**      | **20.6GB**    | not measured  |
 
-**MiniMax H3's peak is set before training starts, which is why every resolution reads the same.** The run has three phases that never overlap, and the tallest one is not the one doing the learning:
+**MiniMax H3 costs less on a smaller card, which is not a typo.** The run has three phases that never overlap, and the tallest is not the one doing the learning:
 
-| Phase                      | Peak   | What is resident                               |
-| -------------------------- | ------ | ---------------------------------------------- |
-| Latent caching (video VAE) | 10.8GB | The fp32 video VAE, then dropped               |
-| Caption caching (Qwen3-VL) | 20.5GB | The 32B conditioner at 4-bit, then dropped     |
-| Training                   | 11.7GB | The 4-bit base, 62GB on disk, plus activations |
+| Phase                      | Peak on an L40S | What is resident                               |
+| -------------------------- | --------------- | ---------------------------------------------- |
+| Latent caching (video VAE) | 10.8GB          | The fp32 video VAE, then dropped               |
+| Caption caching (Qwen3-VL) | 20.5GB          | The 32B conditioner at 4-bit, then dropped     |
+| Training                   | 11.7GB          | The 4-bit base, 62GB on disk, plus activations |
 
-So 20.6GB is what a card has to survive, and the caption pass sets it. Training itself sits at 11.7GB, and a 512px still is only 310 rows of packed sequence against 630 at 768px, which is why the resolution barely moves anything: on H3 the weights are the cost, not the activations. The AdaLN factorisation is what makes the base figure possible at all, taking the transformer from 62GB on disk to 40GB before quantisation and 11.7GB after. Host RAM stays near 1.1GB throughout, because each block is shrunk as its tensors land rather than after the whole model is read.
+The caption pass sets the peak, so on a card that can hold the conditioner the answer is 20.6GB whatever the resolution: 512, 768 and 1024 all read the same, because a 512px still is 310 rows of packed sequence against 630 at 768px and the weights are the cost, not the activations. The AdaLN factorisation is what makes the base figure possible at all, taking the transformer from 62GB on disk to 40GB before quantisation and 11.7GB after. Host RAM stays near 1.1GB during that load, because each block is shrunk as its tensors land.
 
-**16GB is untested and may work.** The 20.6GB figure is the caption pass with the conditioner on the card, and it already falls back to system RAM when there is not enough VRAM for it, at the cost of speed. That leaves training itself as the real floor: 11.7GB of base plus about 0.5GB of adapter, gradients and 8-bit optimiser state, so roughly 13GB. Nobody has run it on a 16GB card yet, so this is arithmetic rather than a measurement.
+On a card too small for the conditioner it never goes there at all, so the peak drops to the training phase: **12.7GB, measured on a Tesla T4**. A 16GB card therefore trains H3 where a 24GB card is merely comfortable.
 
-Going much below that needs the base streamed block by block during training the way generation already does. The machinery is in `models/offload.py`, but surviving a backward pass is real work rather than a flag. Narrowing the LoRA does not help: at rank 16 the whole adapter is 87M parameters, and dropping to attention-only at rank 8 saves 0.4GB out of 13GB. The base is roughly 90 percent of the budget.
+**The bill arrives as time instead.** The conditioner runs on the CPU, and bitsandbytes only quantises on the move to CUDA, so it runs unquantised:
+
+|                         | L40S (46GB) | T4 (16GB, 64GB RAM) |
+| ----------------------- | ----------- | ------------------- |
+| Peak VRAM               | 20.6GB      | 12.7GB              |
+| Seconds per step        | 0.63        | 16.2                |
+| Caption pass, 26 images | 1 min       | 19 min              |
+
+A 1500-step run is about 16 minutes on the L40S and closer to seven hours on the T4. Some of that is the T4 being a T4, and some is the caption pass being on the wrong processor.
+
+**It also wants a lot of system RAM.** The unquantised conditioner pages roughly 63GB through the page cache, and on a 64GB machine that sits at 59GB resident, close enough to the edge that the caption pass is the riskiest part of the run. A T4 with only 16GB of RAM has room in neither VRAM nor RAM and is refused before anything loads, because a host-RAM overrun is killed by the kernel rather than raising.
+
+Narrowing the LoRA will not buy the difference: at rank 16 the whole adapter is 87M parameters, and dropping to attention-only at rank 8 saves 0.4GB out of 13GB. The base is roughly 90 percent of the budget. The fix that would matter is streaming the conditioner to the card in 4-bit slices, the way the generation path already does, which is not built for training yet.
 
 A training adapter is free: it is fused into the base before training starts, so Turbo-plus-adapter and the undistilled base peak identically.
 
@@ -130,14 +142,14 @@ A training adapter is free: it is fused into the base before training starts, so
 
 Which card fits what (24GB and 32GB are interpolated, not measured, as are the FLUX.2 columns on 16GB: those peaks were measured on an L40S and leave room on a smaller card, but no 16GB run has been done):
 
-| Card | Z-Image 512 | Z-Image 1024 | Krea 2 512 | Krea 2 1024 | FLUX.2 512 | FLUX.2 1024 | MiniMax H3 |
-| ---- | ----------- | ------------ | ---------- | ----------- | ---------- | ----------- | ---------- |
-| 16GB | yes         | no           | yes, 4-bit | no          | yes        | yes         | untested   |
-| 24GB | yes         | yes          | yes        | no          | yes        | yes         | yes        |
-| 32GB | yes         | yes          | yes        | yes, 4-bit  | yes        | yes         | yes        |
-| 48GB | yes         | yes          | yes        | 4-bit only  | yes        | yes         | yes        |
+| Card | Z-Image 512 | Z-Image 1024 | Krea 2 512 | Krea 2 1024 | FLUX.2 512 | FLUX.2 1024 | MiniMax H3  |
+| ---- | ----------- | ------------ | ---------- | ----------- | ---------- | ----------- | ----------- |
+| 16GB | yes         | no           | yes, 4-bit | no          | yes        | yes         | yes, slowly |
+| 24GB | yes         | yes          | yes        | no          | yes        | yes         | yes         |
+| 32GB | yes         | yes          | yes        | yes, 4-bit  | yes        | yes         | yes         |
+| 48GB | yes         | yes          | yes        | 4-bit only  | yes        | yes         | yes         |
 
-H3 has one column because resolution barely moves it: 512, 768 and 1024 all peak at 20.6GB, since the high-water mark is the caption pass rather than the activations. The 24GB entry is interpolated from that peak, not measured on a 24GB card, and 16GB is marked untested for the reason above rather than because it is known to fail.
+H3 has one column because resolution barely moves it. The 16GB entry is measured on a T4 with 64GB of RAM, where the conditioner spills to the CPU: it fits in 12.7GB of VRAM but costs 16.2s a step and a 19 minute caption pass. The 24GB entry is interpolated from the 20.6GB peak, not measured on a 24GB card. A 16GB card with only 16GB of RAM is refused up front.
 
 Fitting and being usable are different questions. Turing has no native bf16, so a T4 runs the same work about 4x slower:
 
@@ -151,7 +163,7 @@ A 1500-step Krea 2 run is roughly 40 minutes on an L40S and 3 hours on a T4.
 
 FLUX.2 is quicker than either. On an L40S, klein Base 4B trains at about 0.3s a step at 512 and 1.0s a step at 1024, so a 1500-step run comes in around 8 minutes at 512 and 25 minutes at 1024. Forcing the 4-bit base costs about 10 percent a step at both resolutions. FLUX.2 has not been timed on a T4.
 
-**MiniMax H3's steps are fast and its startup is not.** On an L40S a step is about 0.63s at 512 and 0.77s at 768, so a 1500-step run is roughly 16 to 19 minutes of actual training. Getting there takes about 7 minutes first: the 62GB checkpoint streams block by block while each one is factorised and quantised, and the two caching passes run before it. Startup is per run and does not scale with steps, so it hurts a short run far more than a long one. H3 has not been timed on a T4, and would not fit one.
+**MiniMax H3's steps are fast and its startup is not.** On an L40S a step is about 0.63s at 512 and 0.77s at 768, so a 1500-step run is roughly 16 to 19 minutes of actual training. Getting there takes about 7 minutes first: the 62GB checkpoint streams block by block while each one is factorised and quantised, and the two caching passes run before it. Startup is per run and does not scale with steps, so it hurts a short run far more than a long one. On a T4 a step is 16.2s, and the caption pass adds 19 minutes on top, because the conditioner runs unquantised on the CPU there.
 
 **Krea 2 at 512 with the 4-bit base is the configuration to reach for on a small card.** 1024 needs about 32GB and no setting closes that gap: activations scale with image tokens, and gradient checkpointing and memory-efficient attention are already on. Train at 512 instead, since a LoRA trained at 512 applies at any generation resolution.
 

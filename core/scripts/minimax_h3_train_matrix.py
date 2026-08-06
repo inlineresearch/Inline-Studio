@@ -34,7 +34,9 @@ _STEPS = 12
 _RANK = 16
 
 
-def _manifest(work: Path, dataset: Path, models: Path, resolution: int) -> Path:
+def _manifest(
+    work: Path, dataset: Path, models: Path, resolution: int, steps: int = _STEPS
+) -> Path:
     """The same manifest shape `studio/training.py::_prepare` writes."""
     checkpoints = work / "checkpoints"
     checkpoints.mkdir(parents=True, exist_ok=True)
@@ -62,8 +64,8 @@ def _manifest(work: Path, dataset: Path, models: Path, resolution: int) -> Path:
             "alpha": _RANK,
             "learningRate": 1e-4,
             "batchSize": 1,
-            "steps": _STEPS,
-            "saveEvery": _STEPS,
+            "steps": steps,
+            "saveEvery": steps,
             "resolution": resolution,
         },
         "gpuIds": [],
@@ -152,6 +154,7 @@ def main() -> int:
     parser.add_argument("--python", default=str(_CORE / ".venv" / "bin" / "python"))
     parser.add_argument("--gpu", default="", help="label for the results file, e.g. 'L40S (46GB)'")
     parser.add_argument("--only", default="", help="one resolution, to redo a single row")
+    parser.add_argument("--steps", type=int, default=_STEPS, help="override for a smoke run")
     args = parser.parse_args()
 
     if not args.dataset.is_dir():
@@ -186,7 +189,7 @@ def main() -> int:
             continue
         work = args.out / cell_id
         work.mkdir(parents=True, exist_ok=True)
-        manifest = _manifest(work, args.dataset, args.models, resolution)
+        manifest = _manifest(work, args.dataset, args.models, resolution, args.steps)
         print(f"--- {cell_id}px, 4-bit base ---", flush=True)
         result = _run_cell(args.python, manifest, args.out / f"{cell_id}.log")
         result.update({"resolution": resolution, "base_quant": "nf4"})

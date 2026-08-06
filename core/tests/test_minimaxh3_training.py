@@ -8,6 +8,8 @@ scheduler is ever re-synced from upstream and its convention moves, these fail.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from inline_core.training import arch as archs
@@ -208,6 +210,59 @@ def test_the_swap_keeps_biases_and_frozen_base_weights() -> None:
     # The base is frozen; only the adapter on top learns.
     assert not module.proj.weight.requires_grad
     assert not module.proj.bias.requires_grad
+
+
+class _Placement:
+    device = "cuda:0"
+
+
+def _fit_check(
+    monkeypatch: pytest.MonkeyPatch, vram_gb: float, ram_gb: float, encoder_gb: float = 63.0
+) -> None:
+    from inline_core.device import memory
+    from inline_core.models import pipeline_runtime as rt
+    from inline_core.training import h3
+
+    monkeypatch.setattr(rt, "free_vram_bytes", lambda _d: int(vram_gb * 1e9))
+    monkeypatch.setattr(memory.MemoryPolicy, "free_ram_mb", lambda _s: int(ram_gb * 1024))
+    monkeypatch.setattr(h3, "_folder_bytes", lambda _p: int(encoder_gb * 1e9))
+
+
+def test_the_conditioner_fits_on_a_big_card(monkeypatch: pytest.MonkeyPatch) -> None:
+    from inline_core.training import h3
+
+    _fit_check(monkeypatch, vram_gb=45.0, ram_gb=8.0)
+    h3._check_conditioner_fits(_Placement(), Path("/enc"))  # card holds it, RAM is moot
+
+
+def test_the_conditioner_may_stream_from_host_ram(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 16GB card is fine given RAM for the spill. Only 64GB has been measured, so the
+    guard's floor is half the folder rather than a fit."""
+    from inline_core.training import h3
+
+    _fit_check(monkeypatch, vram_gb=15.0, ram_gb=64.0)
+    h3._check_conditioner_fits(_Placement(), Path("/enc"))
+
+
+def test_a_machine_with_room_in_neither_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The failure this prevents is a host-RAM OOM, which kills the process rather than raising."""
+    from inline_core.training import h3
+
+    _fit_check(monkeypatch, vram_gb=15.0, ram_gb=15.0)
+    with pytest.raises(RuntimeError, match="larger GPU or more RAM"):
+        h3._check_conditioner_fits(_Placement(), Path("/enc"))
+
+
+def test_an_unmeasurable_machine_is_attempted_rather_than_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inline_core.device import memory
+    from inline_core.models import pipeline_runtime as rt
+    from inline_core.training import h3
+
+    monkeypatch.setattr(rt, "free_vram_bytes", lambda _d: 0)
+    monkeypatch.setattr(memory.MemoryPolicy, "free_ram_mb", lambda _s: None)
+    h3._check_conditioner_fits(_Placement(), Path("/enc"))  # no evidence is not evidence
 
 
 def test_the_residual_fuse_reaches_modules_outside_the_block_stack() -> None:

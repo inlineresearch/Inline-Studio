@@ -25,11 +25,8 @@ PATCH = (1, 2, 2)
 AUDIO_LATENT_CHANNELS = 32
 
 #: What an absent caption becomes. H3 tokenises with ``add_special_tokens=False`` and has no BOS,
-#: so the empty string is genuinely zero tokens and the conditioner reshapes a (1, 0) sequence into
-#: an attention head and raises. A single space is one real token and the closest thing this model
-#: has to no caption: it is guidance-distilled, so inference never encodes an unconditional prompt
-#: and there is no established unconditional embedding to match. Covers caption dropout and an
-#: image whose ``.txt`` is missing or blank.
+#: so an empty string is zero tokens and the conditioner raises on the (1, 0) sequence. Covers both
+#: caption dropout and an image whose ``.txt`` is missing.
 _EMPTY_CAPTION = " "
 
 
@@ -117,6 +114,12 @@ def _encode_captions(
     from ..models.minimaxh3.vendor.encoders import MiniMaxH3TextEncoderStep
 
     pipeline = _load_conditioner(root, device, dtype)
+    # Encode wherever it landed. It spills to host RAM on a card too small for 20.5GB, and the
+    # vendored step builds its input ids on the device it is handed, so CUDA ids against a
+    # CPU-resident encoder fail in `index_select`.
+    where = next(pipeline.text_encoder.parameters()).device
+    if where.type != torch.device(device).type:
+        logger.info("MiniMax H3: conditioner is on %s, encoding captions there", where)
     out: list[tuple[Any, Any]] = []
     try:
         for caption in captions:
@@ -126,7 +129,7 @@ def _encode_captions(
                 # is not optional here: it defaults to `components.transformer.dtype`, and this
                 # pipeline deliberately has no transformer.
                 embeds, tags = MiniMaxH3TextEncoderStep.encode_prompt(
-                    pipeline, caption, None, device=torch.device(device), dtype=dtype
+                    pipeline, caption, None, device=where, dtype=dtype
                 )
             out.append((embeds[0].cpu(), tags.cpu()))
     finally:
@@ -151,10 +154,8 @@ def _conditioning(embed: Any, tags: Any, latent: Any) -> dict[str, Any]:
         patch_size=PATCH,
         keyframe_anchors=(),
     )
-    # Training pins no conditioning rows and a still has no audio rows, so every row shares one
-    # noise level and this vector is constant across steps. Derived from the vendored planner and
-    # then checked, so a change upstream is caught here rather than silently mis-addressing the
-    # AdaLN table.
+    # Every row shares one noise level here, so this vector is constant across steps. Derived from
+    # the vendored planner and checked, or a change upstream would mis-address the AdaLN table.
     unique, indices = build_row_timesteps(layout, 1.0, 1.0, 1.0, 1.0)
     if unique.numel() != 1 or bool(indices.any()):
         raise RuntimeError(
@@ -212,7 +213,7 @@ def _load_conditioner(root: Path, device: str, dtype: Any) -> Any:
             "popup; the conditioner cannot tokenise a caption without them."
         )
 
-    quant, placement = _conditioner_plan(device)
+    quant, placement = _conditioner_plan(device, encoder_dir)
     text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
         str(encoder_dir),
         dtype=dtype,
@@ -228,7 +229,54 @@ def _load_conditioner(root: Path, device: str, dtype: Any) -> Any:
     return pipeline
 
 
-def _conditioner_plan(device: str) -> tuple[Any, dict[str, Any]]:
+#: What the 4-bit conditioner occupies wherever it lands, measured on an L40S.
+_CONDITIONER_GB = 20.5
+
+#: Left free for the process, the page cache and everything else on the box.
+_RAM_HEADROOM_GB = 4.0
+
+
+def _check_conditioner_fits(placement: Any, encoder_dir: Path) -> None:
+    """Refuse a caption pass with nowhere to put the conditioner, and warn when it will crawl.
+
+    The 4-bit figure only holds on the card: bitsandbytes quantises during the move to CUDA, so a
+    CPU placement pages the full bf16 folder instead, measured at 59GB and 42s a caption on a T4.
+    Those pages are evictable, so a short machine thrashes rather than raising.
+    """
+    from ..device.memory import MemoryPolicy
+    from ..models import pipeline_runtime as rt
+
+    free_vram = (rt.free_vram_bytes(placement.device) or 0) / 1e9
+    if free_vram >= _CONDITIONER_GB:
+        return
+    free_ram_mb = MemoryPolicy().free_ram_mb()
+    if not free_ram_mb:
+        return  # unmeasurable; better to attempt the load than to refuse on no evidence
+    free_ram = free_ram_mb / 1024
+    on_disk = _folder_bytes(encoder_dir) / 1e9
+    # Half the folder is a floor, not a fit: only 64 GB has actually been measured, and the pages
+    # are evictable, so less RAM buys thrashing rather than a clean failure.
+    floor = max(on_disk * 0.5, _CONDITIONER_GB + _RAM_HEADROOM_GB)
+    if free_ram < floor:
+        raise RuntimeError(
+            f"MiniMax H3 conditions on a 32B text encoder. It needs about {_CONDITIONER_GB:.0f} GB "
+            f"on the card, or roughly {on_disk:.0f} GB paged through system RAM when the card "
+            f"cannot hold it. This machine has {free_vram:.0f} GB free on the card and "
+            f"{free_ram:.0f} GB of free RAM, which is not enough for either. Training H3 needs a "
+            "larger GPU or more RAM."
+        )
+    logger.warning(
+        "MiniMax H3: the conditioner does not fit %0.0f GB of VRAM, so the caption pass runs "
+        "unquantised on the CPU. Expect roughly 40 seconds a caption instead of 2.",
+        free_vram,
+    )
+
+
+def _folder_bytes(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def _conditioner_plan(device: str, encoder_dir: Path) -> tuple[Any, dict[str, Any]]:
     """4-bit, and on the card only if it fits, reusing the generation path's own decision."""
     from ..device.memory import MemoryPolicy
     from ..models.minimaxh3.pipeline import _encoder_config, _encoder_placement
@@ -240,6 +288,7 @@ def _conditioner_plan(device: str) -> tuple[Any, dict[str, Any]]:
     quant = _encoder_config(recipe)
     if quant is None:  # bitsandbytes absent: nothing to place, and the load will speak for itself
         return None, {}
+    _check_conditioner_fits(placement, encoder_dir)
     del device
     return quant, _encoder_placement(placement)
 
@@ -305,10 +354,8 @@ def _shrinker(basis: Any, quant: Any, device: str, dtype: Any) -> Any:
 def _keeps_precision(path: str) -> bool:
     """Whether a Linear is spared the 4-bit swap.
 
-    Only the factorised AdaLN projection. Unfactorised it is [96768, 2688] and quantising it is
-    ordinary; factorised it is [96768, 8] and those eight columns carry the entire modulation
-    signal, so the error concentrates instead of averaging. It is 1.5 MB a block, 75 MB across the
-    stack, which is not worth that.
+    Only the factorised AdaLN projection: at rank 8 its eight columns carry the whole modulation
+    signal, so quantisation error concentrates rather than averaging, for 75MB across the stack.
     """
     return "adaln_proj" in path
 
@@ -316,12 +363,8 @@ def _keeps_precision(path: str) -> bool:
 def _swap_to_4bit(module: Any, keep: Any = None, prefix: str = "") -> None:
     """Replace every ``nn.Linear`` under ``module`` with a bitsandbytes NF4 layer.
 
-    The QLoRA arrangement: the base is frozen and 4-bit, gradients still flow through it to the
-    adapter on top, and quantization itself happens when the layer moves to CUDA.
-
-    Deliberately not ``loaders._swap_to_4bit``, which takes no keep-predicate and would convert the
-    factorised AdaLN projection along with everything else. Kept local rather than widening the
-    shared loader, so the two shipping architectures that use it are untouched.
+    Deliberately not ``loaders._swap_to_4bit``: that takes no keep-predicate and would convert the
+    factorised AdaLN projection too. Local rather than widening a loader two other archs use.
     """
     import bitsandbytes as bnb
     import torch
@@ -349,9 +392,8 @@ def _swap_to_4bit(module: Any, keep: Any = None, prefix: str = "") -> None:
 def _place_unstreamed(model: Any, device: str) -> None:
     """Move what the block callback never sees.
 
-    ``load.py`` fires ``shrink`` only for ``transformer_blocks.N``, so the embedders, the token
-    refiner, the norms and the two output heads are still wherever the stream staged them. Left on
-    the CPU they meet CUDA activations in the first forward.
+    ``load.py`` fires ``shrink`` only for ``transformer_blocks.N``, so the embedders, refiner and
+    output heads are still wherever the stream staged them, and meet CUDA activations if left.
     """
     stack = model.transformer_blocks
     for child in model.children():
@@ -362,9 +404,8 @@ def _place_unstreamed(model: Any, device: str) -> None:
 
 
 def _sample(moments: Any) -> Any:
-    """Sample the posterior. Unlike the conditioning path this takes no fixed seed and no fp16
-    round trip: those exist to make a *reference* reproducible, and baking them into training
-    latents would narrow what the LoRA ever sees."""
+    """Sample the posterior, without the conditioning path's fixed seed and fp16 round trip: those
+    make a *reference* reproducible and would narrow what the LoRA sees."""
     from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 
     return DiagonalGaussianDistribution(moments).sample()

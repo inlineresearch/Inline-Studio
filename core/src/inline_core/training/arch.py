@@ -76,21 +76,12 @@ _FLUX2_TARGETS = [
 ]
 
 
-#: MiniMax H3: the attention and SwiGLU feed-forward Linears of all 50 blocks, plus the text
-#: projection. Confirmed against MiniMaxH3Transformer3DModel.named_modules(): a block's Linears are
-#: exactly to_q/to_k/to_v/to_out.0, ff.net.0.proj, ff.net.2 and adaln_proj.linear.
+#: MiniMax H3: every Linear in a block except ``adaln_proj``, plus the text projection.
 #:
-#: ``adaln_proj.linear`` is deliberately absent. It is replaced at load by the rank-8 factorisation
-#: (``minimaxh3/adaln.py``) that takes the checkpoint from 66GB to 40GB, so the module a LoRA would
-#: attach to carries the whole modulation signal through eight columns - the same reason
-#: ``minimaxh3/pipeline.py`` refuses to quantize it.
-#:
-#: The fp32-pinned modules are absent for a different reason: H3 ships a mixed-precision checkpoint
-#: where the patch projections, the timestep MLP and the two output heads stay float32
-#: (``_keep_in_fp32_modules``), and adapting those fights the precision split, not the model.
-#:
-#: PEFT matches by name suffix, so this also adapts the two token-refiner blocks. That is wanted,
-#: and it is why the loader must fuse outside the block stack too - see ``minimaxh3/load.py``.
+#: ``adaln_proj`` is out because the load factorises it to rank 8, so a LoRA would attach to eight
+#: columns carrying the whole modulation signal. The fp32-pinned heads are out because adapting them
+#: fights the checkpoint's precision split. PEFT matches by suffix, so this also reaches the two
+#: token-refiner blocks, which is why the loader has to fuse outside the block stack.
 _MINIMAX_H3_TARGETS = [
     "to_q",
     "to_k",
@@ -270,13 +261,8 @@ _H3_PATCH = (1, 2, 2)
 def _h3_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, Any]) -> Any:
     """One prediction from MiniMaxH3Transformer3DModel, mirroring the vendored denoise block.
 
-    H3 runs one packed 1-D sequence holding text, audio and video rows rather than separate streams,
-    and the caller owns that layout. The precache builds it once per image (it only depends on the
-    caption length and the latent grid) and caches the tensors, so a step just patchifies, assigns
-    every row this step's timestep, and selects the video rows back out.
-
-    A still is one latent frame with no audio rows at all, which the model accepts: the audio head
-    runs over an empty index and returns empty.
+    H3 packs text, audio and video into one 1-D sequence and the caller owns that layout, so the
+    precache builds it per image and a step only patchifies and selects the video rows back out.
     """
     from ..models.minimaxh3.vendor.packing import patchify_video_latents, unpatchify_video_tokens
 
@@ -336,14 +322,10 @@ ARCHS: dict[str, TrainingArch] = {
     MINIMAX_H3: TrainingArch(
         key=MINIMAX_H3,
         target_modules=_MINIMAX_H3_TARGETS,
-        # H3's shift is the same expression Z-Image uses, at the scheduler's video shift of 12.0
-        # (MiniMaxH3Scheduler builds its grid as shift * s / (1 + (shift - 1) * s)), so the
-        # generic sigma applies unchanged.
+        # Same shift expression as Z-Image, at the scheduler's video shift of 12.0.
         sigma=_zimage_sigma,
-        # Z-Image's convention exactly, and worth a test rather than a comment because Krea 2 and
-        # FLUX.2 use the opposite one: MiniMaxH3Scheduler.scale_noise is
-        # x_t = t * clean + (1 - t) * noise at t = 1 - sigma, and its step reconstructs
-        # x0 = x_t + sigma * v, so the velocity the model predicts is clean - noise.
+        # Z-Image's convention, opposite to Krea 2 and FLUX.2, and pinned against the vendored
+        # scheduler in test_minimaxh3_training.py rather than restated here.
         timestep=lambda sigma: 1.0 - sigma,
         target=lambda clean, noise: clean - noise,
         forward=_h3_forward,

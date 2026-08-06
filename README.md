@@ -199,12 +199,12 @@ Five nodes, wired left to right, with the hyperparameters behind an Adjust butto
 
 Peak VRAM at 512px, 12 steps, rank 16, batch 1, gradient checkpointing on:
 
-| Architecture              | 512px peak | 16GB card |
-| ------------------------- | ---------- | --------- |
-| FLUX.2 (klein Base 4B)    | ~8.6GB     | yes       |
-| Krea 2 (4-bit base)       | ~11.9GB    | yes       |
-| Z-Image                   | ~13.4GB    | yes       |
-| MiniMax H3 (4-bit, video) | ~20.6GB    | untested  |
+| Architecture              | 512px peak | 16GB card   |
+| ------------------------- | ---------- | ----------- |
+| FLUX.2 (klein Base 4B)    | ~8.6GB     | yes         |
+| Krea 2 (4-bit base)       | ~11.9GB    | yes         |
+| Z-Image                   | ~13.4GB    | yes         |
+| MiniMax H3 (4-bit, video) | ~20.6GB    | yes, slowly |
 
 Training is cheaper than generating, and a LoRA trained at 512 applies at any generation resolution. Full per-card matrix, both resolutions and the timings: [Benchmark results](TRAINING.md#benchmark-results).
 
