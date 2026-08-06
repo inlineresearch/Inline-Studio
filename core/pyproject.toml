@@ -82,6 +82,8 @@ all = [
   "accelerate>=0.30",
   "safetensors>=0.4",
   "torchao>=0.14",
+  # Clip decode for MiniMax H3 LoRA training, and H3's reference node.
+  "av>=12",
   "scipy>=1.11",
   "huggingface_hub>=0.23",
   "controlnet-aux>=0.0.7",

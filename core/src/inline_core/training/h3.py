@@ -38,16 +38,17 @@ def precache(
     resolution: int,
     flip: bool,
     want_unconditional: bool,
+    clip_frames: int = 1,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Every image as a latent and every caption as conditioning, as CPU tensors."""
     from . import dataset as ds
 
-    pairs = ds._pairs(Path(dataset_dir))
+    pairs = ds._pairs(Path(dataset_dir), ds._IMAGE_SUFFIXES + ds._VIDEO_SUFFIXES)
     if not pairs:
         raise RuntimeError("The exported dataset is empty.")
 
     root = Path(models_dir)
-    latents = _encode_pixels(root, pairs, device, resolution, flip)
+    latents = _encode_pixels(root, pairs, device, resolution, flip, clip_frames)
     captions = [caption for _img, caption in pairs for _ in ((False, True) if flip else (False,))]
     if want_unconditional:
         captions.append("")
@@ -57,19 +58,24 @@ def precache(
         {"latent": latent, **_conditioning(embed, tags, latent)}
         for latent, (embed, tags) in zip(latents, embeds, strict=False)
     ]
-    unconditional = None
     if want_unconditional:
+        # Dropout swaps a different text length in, which moves every row after it, so the whole
+        # layout travels with the embedding. It also depends on the latent grid, and a dataset
+        # mixing stills with clips has more than one, so each item carries its own rather than
+        # sharing the first item's and mis-sizing every clip.
         embed, tags = embeds[-1]
-        # Caption dropout swaps in a different text length, which moves every row after it, so the
-        # whole layout travels with the embedding rather than just the embedding.
-        unconditional = _conditioning(embed, tags, latents[0])
-    return items, unconditional
+        for item in items:
+            item["uncond"] = _conditioning(embed, tags, item["latent"])
+    # The per-item copies are what dropout uses; the loop keeps the global slot for the image archs.
+    return items, None
 
 
 def _encode_pixels(
-    root: Path, pairs: list[tuple[Path, str]], device: str, resolution: int, flip: bool
+    root: Path, pairs: list[tuple[Path, str]], device: str, resolution: int, flip: bool,
+    clip_frames: int = 1,
 ) -> list[Any]:
     """Pass one: the video VAE, then dropped."""
+    import numpy
     import torch
     from PIL import Image
 
@@ -85,24 +91,52 @@ def _encode_pixels(
 
     out: list[Any] = []
     try:
-        for img_path, _caption in pairs:
+        for path, _caption in pairs:
+            clip = ds.is_video(path)
+            frames = _clip_frames(path, clip_frames) if clip else [Image.open(path)]
             for mirrored in (False, True) if flip else (False,):
-                square = ds._square(Image.open(img_path), resolution, mirrored)
-                # H3 normalises with ImageNet statistics, not to [-1, 1] like the image archs, and
-                # a still is one frame: (1, 3, 1, H, W).
-                raw = torch.from_numpy(_as_array(square)).to(device)
-                pixels = raw.permute(2, 0, 1)[None, :, None]
+                stack = [_as_array(ds._square(f, resolution, mirrored)) for f in frames]
+                # ImageNet statistics, not the [-1, 1] the image archs use, and always 5D:
+                # (1, 3, F, H, W).
+                raw = torch.from_numpy(numpy.stack(stack)).to(device)
+                pixels = raw.permute(3, 0, 1, 2)[None]
                 pixels = (pixels.to(torch.float32).div(255.0) - pixel_mean) / pixel_std
                 with torch.no_grad():
-                    # The spatial encoder alone, the path inference uses for a single frame; the
-                    # temporal chunking is for 17n+5 clips.
-                    latent = _sample(vae._encode_clip(pixels))
+                    # A single frame takes the spatial encoder; a 17n+5 clip takes the temporal
+                    # chunking. Mirrors the split the vendored reference encoder makes.
+                    moments = vae._encode(pixels) if clip else vae._encode_clip(pixels)
+                    latent = _sample(moments)
                 out.append(((latent.cpu() - mean) / std)[0])
     finally:
         del vae
         _reclaim()
     logger.info("MiniMax H3: cached %d latents, video VAE released", len(out))
     return out
+
+
+def _clip_frames(path: Path, clip_frames: int) -> list[Any]:
+    """A clip as PIL frames on H3's 24fps, 17n+5 grid, taken from the start.
+
+    Trimmed rather than sampled: a fixed window keeps the precache to one encode per clip, and
+    re-encoding a different window every step would defeat caching the latents at all.
+    """
+    from PIL import Image
+
+    from ..models.minimaxh3.vendor.packing_ref2va import (
+        decode_reference_video,
+        resample_reference_frames,
+        trim_reference_num_frames,
+    )
+
+    decoded, fps, _audio = decode_reference_video(str(path))
+    frames = resample_reference_frames(decoded, fps)
+    keep = trim_reference_num_frames(min(frames.shape[0], clip_frames))
+    if keep > frames.shape[0]:
+        raise RuntimeError(
+            f"{path.name} is {frames.shape[0]} frames once resampled to 24fps, and H3's shortest "
+            f"encodable clip is {keep}. Use a longer clip, or drop this one from the dataset."
+        )
+    return [Image.fromarray(frame) for frame in frames[:keep]]
 
 
 def _encode_captions(

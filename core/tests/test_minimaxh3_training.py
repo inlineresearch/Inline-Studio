@@ -359,3 +359,61 @@ def test_h3_forward_packs_and_unpacks_back_to_the_latent_grid() -> None:
     assert tuple(transformer.seen["hidden_states"].shape) == (1, 16, 96)
     assert tuple(transformer.seen["audio_hidden_states"].shape) == (1, 0, 32)
     assert tuple(transformer.seen["timestep"].shape) == (1,)
+
+
+def test_clip_length_snaps_to_the_frame_grid() -> None:
+    """H3's VAE encodes 17n+5 frames, so a request lands on the grid or not at all."""
+    h3 = archs.get(archs.MINIMAX_H3)
+
+    # Its floor is a whole 17-frame chunk plus the 5-frame head: 22 frames, 0.92s. Anything
+    # shorter rounds up rather than being refused, because the VAE cannot encode less.
+    assert archs.clip_frames(h3, 0.1) == 22
+    assert archs.clip_frames(h3, 1.0) == 22
+    assert archs.clip_frames(h3, 2.0) == 39
+    assert archs.clip_frames(h3, 5.0) == 107
+    for frames in (22, 39, 107):
+        assert (frames - 5) % 17 == 0
+
+
+def test_an_arch_without_clips_always_reports_one_frame() -> None:
+    for key in (archs.Z_IMAGE, archs.KREA2, archs.FLUX2):
+        assert archs.clip_frames(archs.get(key), 5.0) == 1
+
+
+def test_unset_clip_length_still_gives_an_encodable_clip() -> None:
+    """A dataset can hold a clip with no clip length set, and 1 frame is not encodable."""
+    assert archs.clip_frames(archs.get(archs.MINIMAX_H3), None) == 22
+
+
+def test_a_clip_packs_more_rows_than_a_still_at_the_same_resolution() -> None:
+    """The reason clip training costs what it does: rows scale with latent frames."""
+    still = _layout(text_tokens=5, latent=8)
+    clip = packing.build_packed_sequence(
+        text_token_tags=torch.full((5,), packing.MINIMAX_H3_TEXT_TAG, dtype=torch.long),
+        num_latent_frames=packing.video_latent_num_frames(22),
+        latent_height=8,
+        latent_width=8,
+        num_audio_latents=0,
+        patch_size=PATCH,
+        keyframe_anchors=(),
+    )
+
+    assert packing.video_latent_num_frames(22) == 7
+    assert clip.video_indices.numel() == 7 * still.video_indices.numel()
+    assert clip.audio_indices.numel() == 0
+
+
+def test_only_the_video_archs_see_clips_in_a_dataset(tmp_path: object) -> None:
+    """An image arch handed an mp4 would reach PIL and raise, so the filter is opt-in."""
+    from pathlib import Path
+
+    from inline_core.training import dataset as ds
+
+    root = Path(str(tmp_path))
+    (root / "0000.jpg").write_bytes(b"")
+    (root / "0001.mp4").write_bytes(b"")
+
+    assert [p.name for p, _c in ds._pairs(root)] == ["0000.jpg"]
+    both = ds._pairs(root, ds._IMAGE_SUFFIXES + ds._VIDEO_SUFFIXES)
+    assert [p.name for p, _c in both] == ["0000.jpg", "0001.mp4"]
+    assert ds.is_video(root / "0001.mp4") and not ds.is_video(root / "0000.jpg")

@@ -28,13 +28,14 @@ def build(
     *,
     flip: bool = False,
     dropout: float = 0.0,
+    clip_frames: int = 1,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, float]:
     """Return ``(items, unconditional, shift)``, all as CPU tensors, with the encoders freed."""
     if arch == archs.MINIMAX_H3:
         from . import h3
 
         items, unconditional = h3.precache(
-            dataset_dir, models_dir, device, dtype, resolution, flip, dropout > 0
+            dataset_dir, models_dir, device, dtype, resolution, flip, dropout > 0, clip_frames
         )
         return items, unconditional, _H3_SHIFT
 

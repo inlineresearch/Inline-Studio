@@ -39,6 +39,7 @@ const DEFAULTS: TrainingHyperparams = {
   loraScope: 'full',
   captionDropout: 0.05,
   flipAugment: false,
+  clipSeconds: 1,
 }
 
 /** Base checkpoints per architecture, recommended first. */
@@ -273,12 +274,28 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
         )}
         {arch === 'minimax-h3' && (
           <span className="text-[10px] text-zinc-600">
-            Trains on still images and applies to video. Learns look, style and character, not
-            motion. Wire the result into any H3 node's LoRA input. 4-bit base, so it needs a big
-            card.
+            Trains on stills, or on short clips if the dataset has any. Wire the result into any H3
+            node's LoRA input. 4-bit base, so it needs a big card.
           </span>
         )}
       </label>
+
+      {arch === 'minimax-h3' && (
+        <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
+          Clip length (seconds)
+          <NumberField
+            label=""
+            value={hp.clipSeconds ?? 1}
+            step={0.5}
+            onChange={(v) => set('clipSeconds', v)}
+          />
+          <span className="text-[10px] text-zinc-600">
+            How much of each video clip to train on, snapped to H3&apos;s frame grid. Its floor is
+            0.92s. Stills ignore this. A longer clip costs far more memory: a second of video is
+            about six times a still, and five seconds is thirty.
+          </span>
+        </label>
+      )}
 
       {QUANTIZABLE.includes(arch) && (
         <label className="flex flex-col gap-1 text-[11px] text-zinc-400">

@@ -139,10 +139,14 @@ _ACTIVATION_KEYS = frozenset({"latent", "embed", "audio"})
 
 
 def _to_device(item: dict[str, Any], device: Any, dtype: Any) -> dict[str, Any]:
-    """A cached item on the training device, casting only its activations."""
+    """A cached item on the training device, casting only its activations.
+
+    Anything that is not a tensor is dropped: an arch may stash its own bookkeeping on the item
+    (H3 keeps a per-item unconditional layout there) and the model never sees it."""
     return {
         key: value.to(device, dtype) if key in _ACTIVATION_KEYS else value.to(device)
         for key, value in item.items()
+        if hasattr(value, "to")
     }
 
 
@@ -172,6 +176,7 @@ def train(manifest: dict[str, Any]) -> str | None:
     data, unconditional, shift = cache.build(
         manifest["datasetDir"], manifest["modelsDir"], arch.key, str(device), dtype, resolution,
         flip=bool(hp.get("flipAugment")), dropout=dropout,
+        clip_frames=archs.clip_frames(arch, hp.get("clipSeconds")),
     )
 
     quant = models.resolve_quant(
@@ -227,10 +232,14 @@ def train(manifest: dict[str, Any]) -> str | None:
         if stop.flagged:
             break
         source = data[step % len(data)]
-        if unconditional is not None and random.random() < dropout:
-            source = {**source, **unconditional}
+        if dropout and random.random() < dropout:
+            # An arch whose layout depends on the item carries its own unconditional; the rest
+            # share one. H3 needs the per-item form because a clip and a still pack differently.
+            swap = source.get("uncond") or unconditional
+            if swap is not None:
+                source = {**source, **swap}
         item = _to_device(source, device, dtype)
-        clean = item["latent"]  # (C, H, W)
+        clean = item["latent"]  # (C, H, W) for the image archs, (C, F, H, W) for H3
         noise = torch.randn_like(clean)
         sigma = arch.sigma(device, shift)  # scalar noise fraction in (0, 1)
         noisy = (1 - sigma) * clean + sigma * noise

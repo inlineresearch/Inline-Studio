@@ -12,7 +12,7 @@ resolution.
 **Contents:** [The graph](#the-graph) · [Datasets and outputs](#datasets-and-outputs) ·
 [Stop and resume](#stop-and-resume) · [Trigger words](#trigger-words) ·
 [Architecture and base model modes](#architecture-and-base-model-modes) · [Install](#install) ·
-[**Benchmark results**](#benchmark-results) ·
+[Training on clips](#training-on-clips) · [**Benchmark results**](#benchmark-results) ·
 [Dataset and adapter options](#dataset-and-adapter-options) · [Base precision](#base-precision)
 
 ## The graph
@@ -57,7 +57,7 @@ The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FL
 **MiniMax H3** is the video model, and it trains on **still images**:
 
 - **FL2VA** is the only base, and it is undistilled, so there is no adapter and nothing to drift. Put `minimax_h3_fl2va_bf16.safetensors` in `models/diffusion_models/`, train on stills, then wire the LoRA into any of the four H3 nodes. It loads on the Reference to Video node too, which uses a different checkpoint file: the two partitions are the same architecture.
-- **What it learns** is appearance - look, style, character, lighting. It does not learn motion or sound, because it never sees any. This is how image LoRAs for video models are normally trained, and it is the same thing every other H3 trainer does today.
+- **Stills or short clips.** Drop images and it learns appearance: look, style, character, lighting. Drop video and it learns motion too. Sound is never learned either way, because the audio rows are empty. See [Training on clips](#training-on-clips).
 - **The base is 4-bit, always.** H3 is 40GB after the AdaLN factorisation and 11.7GB after quantisation, so full precision is refused rather than offered and then failing. There is no base-precision control for H3 for the same reason.
 - **A 24GB card is comfortable and a 16GB card works, slowly.** The run encodes latents and captions in two passes that never overlap, because H3's fp32 video VAE and its 32B conditioner cannot be resident together. On a card that holds the conditioner it peaks at 20.6GB; on one that does not, the conditioner runs on the CPU and the peak drops to 12.7GB while a step goes from 0.6s to 16s. Either way there is about seven minutes of startup, and 64GB of system RAM for the smaller card. See [Benchmark results](#benchmark-results) for the split. The download is about 124GB before any of that.
 
@@ -65,6 +65,42 @@ The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FL
 
 - **Turbo + training adapter** fuses a de-distillation adapter into the base for the duration of training and drops it when the LoRA is saved, which preserves the 8-step speed. Put [ostris/zimage_turbo_training_adapter](https://huggingface.co/ostris/zimage_turbo_training_adapter) in `models/loras/`; any filename containing `adapter` is detected automatically, or point `INLINE_ZIMAGE_TRAIN_ADAPTER` at a specific file. Keep runs short, since the adapter slows the breakdown rather than preventing it.
 - **De-Turbo** trains without an adapter and needs no extra download.
+
+## Training on clips
+
+The H3 trainer takes video as well as stills. Drop clips into a dataset the same way, set **Clip
+length** in the Adjust panel, and each clip trains as a short piece of motion rather than a frame.
+Mixed datasets are fine: a still is simply a one-frame clip.
+
+**It costs no extra VRAM.** Measured on an L4, every clip length peaks at the same 20.4GB as a
+still, because the high-water mark is the caption pass rather than the training:
+
+| Clip length | Frames | Latent frames | Packed rows at 512px | Peak VRAM |
+| ----------- | ------ | ------------- | -------------------- | --------- |
+| still       | 1      | 1             | 293                  | 20.55GB   |
+| 0.92s       | 22     | 7             | 1,832                | 20.4GB    |
+| 1.6s        | 39     | 12            | 3,112                | 20.4GB    |
+| 4.5s        | 107    | 32            | 8,232                | 20.4GB    |
+
+Rows are what a longer clip actually buys you, and they cost time rather than memory. That only
+holds while the conditioner is resident; on a card too small for it the peak is the training phase
+instead, and a long clip will push that up.
+
+**Lengths snap to H3's frame grid.** The VAE encodes `17n + 5` frames at 24fps, so a request lands
+on the nearest grid point at or below it. The floor is a whole chunk plus the five-frame head: 22
+frames, **0.92 seconds**. Asking for less rounds up rather than being refused, because the VAE has
+no way to encode a shorter clip.
+
+**Each clip is trimmed from its start, once.** The window is fixed at precache time so every clip is
+encoded exactly once. Sampling a different window each step would mean re-encoding through the VAE
+every step, which is the thing the precache exists to avoid. A clip shorter than the grid floor is
+refused by name rather than silently padded.
+
+**Captions work the same.** A clip is auto-captioned from its middle frame, which describes the shot
+better than the first frame usually does. Write them by hand if you would rather.
+
+Audio is not trained. H3 generates video and its soundtrack jointly, but the trainer packs zero
+audio rows, so an adapter changes what a clip looks like and never what it sounds like.
 
 ## Install
 
@@ -109,6 +145,7 @@ The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader
 | MiniMax H3 | FL2VA           | 512  | **4-bit**      | **20.6GB**    | **12.7GB**    |
 | MiniMax H3 | FL2VA           | 768  | **4-bit**      | **20.6GB**    | not measured  |
 | MiniMax H3 | FL2VA           | 1024 | **4-bit**      | **20.6GB**    | not measured  |
+| MiniMax H3 | FL2VA, clips    | 512  | **4-bit**      | **20.4GB**    | not measured  |
 
 **MiniMax H3 costs less on a smaller card, which is not a typo.** The run has three phases that never overlap, and the tallest is not the one doing the learning:
 
@@ -124,13 +161,14 @@ On a card too small for the conditioner it never goes there at all, so the peak 
 
 **The bill arrives as time instead.** The conditioner runs on the CPU, and bitsandbytes only quantises on the move to CUDA, so it runs unquantised:
 
-|                         | L40S (46GB) | T4 (16GB, 64GB RAM) |
-| ----------------------- | ----------- | ------------------- |
-| Peak VRAM               | 20.6GB      | 12.7GB              |
-| Seconds per step        | 0.63        | 16.2                |
-| Caption pass, 26 images | 1 min       | 19 min              |
+|                         | L40S (46GB) | L4 (24GB) | T4 (16GB, 64GB RAM) |
+| ----------------------- | ----------- | --------- | ------------------- |
+| Peak VRAM, 512px        | 20.6GB      | 20.55GB   | 12.7GB              |
+| Seconds per step, 512px | 0.63        | 1.81      | 16.2                |
+| Seconds per step, 768px | 0.77        | 2.73      | not measured        |
+| Caption pass, 26 images | 1 min       | 1 min     | 19 min              |
 
-A 1500-step run is about 16 minutes on the L40S and closer to seven hours on the T4. Some of that is the T4 being a T4, and some is the caption pass being on the wrong processor.
+A 1500-step run at 512px is about 16 minutes on the L40S, 45 on the L4, and closer to seven hours on the T4. The L4 holds the conditioner, so it looks like a slower L40S rather than a faster T4: the 9x gap to the T4 is mostly the caption pass being on the wrong processor, not the cards themselves.
 
 **It also wants a lot of system RAM.** The unquantised conditioner pages roughly 63GB through the page cache, and on a 64GB machine that sits at 59GB resident, close enough to the edge that the caption pass is the riskiest part of the run. A T4 with only 16GB of RAM has room in neither VRAM nor RAM and is refused before anything loads, because a host-RAM overrun is killed by the kernel rather than raising.
 
