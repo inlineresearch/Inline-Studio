@@ -41,9 +41,12 @@ export function ThumbStrip({
     edge === 'top'
       ? 'top-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent pt-1.5 pb-5'
       : 'bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent pb-1.5 pt-5'
+  // Wraps rather than scrolling sideways: a single row fits about six thumbnails at the default node
+  // width, which hid the rest of a large input set behind a scrollbar nobody found. Rows grow as the
+  // node is resized, capped so the strip never swallows the preview it floats over.
   return (
     <div
-      className={`nodrag nowheel absolute inset-x-0 z-10 flex gap-1 overflow-x-auto px-1.5 ${scrim}`}
+      className={`nodrag nowheel absolute inset-x-0 z-10 flex max-h-[55%] flex-wrap gap-1 overflow-y-auto px-1.5 ${scrim}`}
     >
       {items.map((it, i) => (
         <div key={it.id} className="group/thumb relative shrink-0">
@@ -68,7 +71,14 @@ export function ThumbStrip({
                 <AudioGlyph className="h-4 w-4" />
               </span>
             ) : it.kind === 'video' && !it.poster ? (
-              <video src={it.url} muted preload="metadata" className="h-full w-full object-cover" />
+              // The `#t=` fragment seeks the browser to one frame and paints it. Without it,
+              // preload="metadata" decodes nothing and an un-postered clip renders as a black tile.
+              <video
+                src={`${it.url}#t=0.1`}
+                muted
+                preload="metadata"
+                className="h-full w-full object-cover"
+              />
             ) : (
               <img src={it.poster ?? it.url} alt="" className="h-full w-full object-cover" />
             )}

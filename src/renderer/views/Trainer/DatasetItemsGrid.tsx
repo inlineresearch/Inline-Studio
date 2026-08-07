@@ -1,12 +1,12 @@
 /** The dataset editor: a grid of images with per-image captions, plus add + auto-caption controls. */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Asset, TrainingDatasetItem } from '@shared/types'
 import { resolveMedia } from '@/lib/media'
 import { uploadFiles } from '@/lib/importFiles'
 import { Modal } from '../../components/Modal'
-import { VideoPreview } from '../../components/VideoPreview'
 import { useAssetStore } from '../../store/assetStore'
 import { useTrainingStore } from '../../store/trainingStore'
+import { useLightboxStore } from '../../store/lightboxStore'
 import { ipcErrorMessage } from '../../lib/ipcError'
 
 function CaptionBox({
@@ -61,12 +61,52 @@ const isMedia = (f: File): boolean =>
   /\.(png|jpe?g|webp|bmp|mp4|mov|webm|mkv|avi)$/i.test(f.name)
 
 /** A dataset tile. Video needs a real <video>: the Library defers poster generation, so a clip has
- *  no thumbPath and an <img> pointed at an mp4 renders nothing. */
+ *  no thumbPath and an <img> pointed at an mp4 renders nothing. The `#t=` fragment seeks the browser
+ *  to one frame and paints it; autoplaying instead leaves a large dataset black, because
+ *  preload="metadata" decodes nothing and Chromium caps concurrent playback well below a few hundred. */
 function Thumb({ asset, src }: { asset?: Asset; src: string }): React.JSX.Element {
+  const openLightbox = useLightboxStore((s) => s.open)
+  const ref = useRef<HTMLVideoElement>(null)
+
   if (asset?.kind === 'video') {
-    return <VideoPreview src={src} className="h-full w-full object-cover" />
+    return (
+      <video
+        ref={ref}
+        src={`${src}#t=0.1`}
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        onMouseEnter={() => void ref.current?.play().catch(() => {})}
+        onMouseLeave={() => {
+          const v = ref.current
+          if (!v) return
+          v.pause()
+          v.currentTime = 0.1
+        }}
+        // previewPath is the transcode for codecs Chromium cannot decode; the original otherwise.
+        onDoubleClick={() =>
+          openLightbox({
+            src: resolveMedia(asset.previewPath ?? asset.filePath),
+            kind: 'video',
+            name: asset.name,
+          })
+        }
+        className="h-full w-full cursor-pointer object-cover"
+      />
+    )
   }
-  return <img src={src} alt="" className="h-full w-full object-cover" />
+  return (
+    <img
+      src={src}
+      alt=""
+      onDoubleClick={() =>
+        asset &&
+        openLightbox({ src: resolveMedia(asset.filePath), kind: 'image', name: asset.name })
+      }
+      className="h-full w-full cursor-pointer object-cover"
+    />
+  )
 }
 
 /**
@@ -256,12 +296,16 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
   // `?? []` outside the selector: returning a fresh [] from the selector loops the store (Object.is).
   const items = useTrainingStore((s) => s.itemsByDataset[datasetId]) ?? []
   const addItems = useTrainingStore((s) => s.addItems)
+  const addFromPath = useTrainingStore((s) => s.addFromPath)
   const setCaption = useTrainingStore((s) => s.setCaption)
   const removeItem = useTrainingStore((s) => s.removeItem)
   const assets = useAssetStore((s) => s.assets)
   const loadAssets = useAssetStore((s) => s.load)
   const setError = useTrainingStore((s) => s.setError)
   const [busy, setBusy] = useState(false)
+  const [fromPath, setFromPath] = useState(false)
+  const [path, setPath] = useState('')
+  const [pathError, setPathError] = useState<string | null>(null)
   // Highlight while OS files are dragged over the grid.
   const [fileOver, setFileOver] = useState(false)
 
@@ -274,6 +318,23 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
    * same basename as an image (`1.png` + `1.txt`) is read as that image's caption, matching the
    * ComfyUI/kohya dataset convention. Auto-caption then skips anything that already has a caption.
    */
+  const loadPath = async (): Promise<void> => {
+    const target = path.trim()
+    if (!target) return
+    setBusy(true)
+    setPathError(null)
+    try {
+      const failure = await addFromPath(datasetId, target)
+      if (failure) setPathError(failure)
+      else {
+        setPath('')
+        setFromPath(false)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const attachFiles = async (files: File[]): Promise<void> => {
     setBusy(true)
     try {
@@ -382,8 +443,45 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
         >
           Captioning
         </button>
+        <button
+          onClick={() => setFromPath((v) => !v)}
+          className="rounded-md border border-border px-3 py-1.5 text-sm text-zinc-200 hover:bg-panel"
+        >
+          Load from path
+        </button>
         <span className="text-[11px] text-zinc-500">{items.length} items</span>
       </div>
+
+      {fromPath && (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2">
+            <input
+              value={path}
+              onChange={(e) => {
+                setPath(e.target.value)
+                setPathError(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void loadPath()
+              }}
+              placeholder="/path/to/a/folder of images or clips"
+              spellCheck={false}
+              className="flex-1 rounded-md border border-border bg-black/30 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-zinc-500"
+            />
+            <button
+              onClick={() => void loadPath()}
+              disabled={busy || !path.trim()}
+              className="rounded-md border border-border px-3 py-1.5 text-sm text-zinc-200 hover:bg-panel disabled:opacity-40"
+            >
+              {busy ? 'Importing…' : 'Import'}
+            </button>
+          </div>
+          <span className={`text-[10px] ${pathError ? 'text-red-400' : 'text-zinc-600'}`}>
+            {pathError ??
+              'A folder on the machine running Inline Studio, not your browser. Copies every image and clip in it, and reads any matching .txt as the caption.'}
+          </span>
+        </div>
+      )}
 
       {items.length === 0 ? (
         <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border px-6 text-center text-sm text-zinc-500">

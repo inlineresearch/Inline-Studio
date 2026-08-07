@@ -73,6 +73,7 @@ export const IpcChannels = {
     openZip: 'project:openZip',
     listRecent: 'project:listRecent',
     current: 'project:current',
+    close: 'project:close',
     mediaDirs: 'project:mediaDirs',
     export: 'project:export',
   },
@@ -130,6 +131,7 @@ export const IpcChannels = {
     createDataset: 'training:createDataset',
     listItems: 'training:listItems',
     addItems: 'training:addItems',
+    addFromPath: 'training:addFromPath',
     removeItem: 'training:removeItem',
     setCaption: 'training:setCaption',
     autoCaption: 'training:autoCaption',
@@ -331,6 +333,8 @@ export interface InlineStudioApi {
     openZip(): Promise<Result<Project | null>>
     listRecent(): Promise<Result<RecentProject[]>>
     current(): Promise<Result<Project | null>>
+    /** Close the open project, so Core does not reopen it on its next start. */
+    close(): Promise<Result<void>>
     /** Absolute input/output dirs of the open project, for sharing with ComfyUI. */
     mediaDirs(): Promise<Result<ProjectMediaDirs>>
     /** Zip a project folder (by path) into a portable .zip; null if the save dialog is cancelled. */
@@ -438,6 +442,11 @@ export interface InlineStudioApi {
     listItems(datasetId: string): Promise<Result<TrainingDatasetItem[]>>
     /** Append library assets as dataset items (skips duplicates). */
     addItems(datasetId: string, assetIds: string[]): Promise<Result<TrainingDatasetItem[]>>
+    /**
+     * Import every image and clip in a folder on the machine running Core, with any
+     * `NNNN.txt` sidecar as that item's caption. Returns the dataset's full item list.
+     */
+    addFromPath(datasetId: string, path: string): Promise<Result<TrainingDatasetItem[]>>
     removeItem(itemId: string): Promise<Result<void>>
     setCaption(itemId: string, caption: string): Promise<Result<TrainingDatasetItem>>
     /**

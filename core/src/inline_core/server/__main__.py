@@ -79,6 +79,9 @@ def main() -> None:
         studio_config.workspace_dir(),
         default_core_url=studio_config.DEFAULT_CORE_URL,
     )
+    # Reopen whatever was open before the restart, so a browser tab left open across it keeps
+    # working instead of failing every call with "No project is open."
+    store.restore_last_project()
     app = create_app(
         registry=registry,
         cache=InMemoryCache(),

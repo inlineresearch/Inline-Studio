@@ -88,6 +88,7 @@ def register_studio_handlers(
     reg("project:openZip", lambda: None)
     reg("project:listRecent", store.list_recent)
     reg("project:current", store.current_project)
+    reg("project:close", store.close_project)
     reg("project:mediaDirs", store.media_dirs)
     reg("project:export", lambda _path: None)  # zip export: pending (see plan)
     reg("dialog:pickDirectory", lambda *_: str(cfg.workspace_dir()))
@@ -264,6 +265,7 @@ def register_studio_handlers(
         reg("training:createDataset", lambda inp: training.create_dataset(inp))
         reg("training:listItems", lambda did: training.list_items(did))
         reg("training:addItems", lambda did, aids: training.add_items(did, aids))
+        reg("training:addFromPath", lambda did, path: training.add_from_path(did, path))
         reg("training:removeItem", lambda iid: training.remove_item(iid))
         reg("training:setCaption", lambda iid, cap: training.set_caption(iid, cap))
         reg("training:autoCaption",

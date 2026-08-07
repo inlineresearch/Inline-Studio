@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -104,3 +105,34 @@ def test_settings_defaults_and_overrides(tmp_path) -> None:
     assert store.get_settings()["coreUrl"] == "http://127.0.0.1:9999"
     # Blank falls back to the default.
     assert store.set_core_url("  ")["coreUrl"] == "http://core"
+
+
+def test_restart_reopens_the_last_project(tmp_path) -> None:
+    """Core holds the open project in memory, so without this a restart left a still-open browser
+    tab failing every call with "No project is open."."""
+    created = _store(tmp_path).create_project("My Film")
+
+    restarted = _store(tmp_path)
+    assert restarted.current_project()["id"] == created["id"]
+    assert restarted.conn() is not None
+
+
+def test_closing_a_project_stops_the_reopen(tmp_path) -> None:
+    store = _store(tmp_path)
+    store.create_project("My Film")
+    store.close_project()
+
+    assert store.current_project() is None
+    assert _store(tmp_path).current_project() is None
+
+
+def test_restore_forgets_a_project_that_moved(tmp_path) -> None:
+    store = _store(tmp_path)
+    project = store.create_project("My Film")
+    store.close()
+    Path(project["path"]).rename(tmp_path / "workspace" / "elsewhere.inlinestudio")
+
+    restarted = _store(tmp_path)
+    assert restarted.current_project() is None
+    # Forgotten, not retried on every call.
+    assert not (tmp_path / "appdata" / "last_project").exists()

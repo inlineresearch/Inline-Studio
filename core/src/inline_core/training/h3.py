@@ -29,6 +29,10 @@ AUDIO_LATENT_CHANNELS = 32
 #: caption dropout and an image whose ``.txt`` is missing.
 _EMPTY_CAPTION = " "
 
+#: H3's fixed frame rate, and the shortest clip its video VAE encodes (the first ``17n + 5``).
+_H3_FPS = 24
+_MIN_CLIP_FRAMES = 22
+
 
 def precache(
     dataset_dir: str,
@@ -48,8 +52,16 @@ def precache(
         raise RuntimeError("The exported dataset is empty.")
 
     root = Path(models_dir)
-    latents = _encode_pixels(root, pairs, device, resolution, flip, clip_frames)
-    captions = [caption for _img, caption in pairs for _ in ((False, True) if flip else (False,))]
+    # Only the clips that survived encoding carry captions, or every caption after the first skip
+    # would be paired with the wrong latent.
+    latents, kept = _encode_pixels(root, pairs, device, resolution, flip, clip_frames)
+    if not kept:
+        raise RuntimeError(
+            f"None of the {len(pairs)} dataset items could be encoded. For clips, each must be at "
+            f"least {_MIN_CLIP_FRAMES} frames at {_H3_FPS}fps "
+            f"({_MIN_CLIP_FRAMES / _H3_FPS:.2f}s)."
+        )
+    captions = [caption for _img, caption in kept for _ in ((False, True) if flip else (False,))]
     if want_unconditional:
         captions.append("")
     embeds = _encode_captions(root, captions, device, dtype)
@@ -73,8 +85,8 @@ def precache(
 def _encode_pixels(
     root: Path, pairs: list[tuple[Path, str]], device: str, resolution: int, flip: bool,
     clip_frames: int = 1,
-) -> list[Any]:
-    """Pass one: the video VAE, then dropped."""
+) -> tuple[list[Any], list[tuple[Path, str]]]:
+    """Pass one: the video VAE, then dropped. Returns the latents and the pairs they came from."""
     import numpy
     import torch
     from PIL import Image
@@ -90,10 +102,25 @@ def _encode_pixels(
     from . import dataset as ds
 
     out: list[Any] = []
+    kept: list[tuple[Path, str]] = []
+    skipped: list[str] = []
+    total = len(pairs)
+    logger.info(
+        "MiniMax H3: encoding %d dataset items at %dpx through the video VAE", total, resolution
+    )
     try:
-        for path, _caption in pairs:
+        for index, (path, _caption) in enumerate(pairs, start=1):
             clip = ds.is_video(path)
-            frames = _clip_frames(path, clip_frames) if clip else [Image.open(path)]
+            try:
+                frames = _clip_frames(path, clip_frames) if clip else [Image.open(path)]
+            except ShortClipError as exc:
+                skipped.append(path.name)
+                logger.warning("MiniMax H3: %s", exc)
+                continue
+            # A long precache is otherwise silent for many minutes, so report often enough that it
+            # reads as progress rather than a hang.
+            if index == 1 or index % 10 == 0 or index == total:
+                logger.info("MiniMax H3: encoding item %d/%d (%s)", index, total, path.name)
             for mirrored in (False, True) if flip else (False,):
                 stack = [_as_array(ds._square(f, resolution, mirrored)) for f in frames]
                 # ImageNet statistics, not the [-1, 1] the image archs use, and always 5D:
@@ -107,11 +134,24 @@ def _encode_pixels(
                     moments = vae._encode(pixels) if clip else vae._encode_clip(pixels)
                     latent = _sample(moments)
                 out.append(((latent.cpu() - mean) / std)[0])
+            kept.append((path, _caption))
     finally:
         del vae
         _reclaim()
-    logger.info("MiniMax H3: cached %d latents, video VAE released", len(out))
-    return out
+    if skipped:
+        logger.warning(
+            "MiniMax H3: skipped %d of %d items as too short to encode: %s",
+            len(skipped), total, ", ".join(skipped),
+        )
+    logger.info(
+        "MiniMax H3: cached %d latents from %d items, video VAE released", len(out), len(kept)
+    )
+    return out, kept
+
+
+class ShortClipError(RuntimeError):
+    """A clip below H3's frame floor. Skipped, never fatal: one bad file in a large dataset must
+    not throw away a precache that takes many minutes."""
 
 
 def _clip_frames(path: Path, clip_frames: int) -> list[Any]:
@@ -132,9 +172,9 @@ def _clip_frames(path: Path, clip_frames: int) -> list[Any]:
     frames = resample_reference_frames(decoded, fps)
     keep = trim_reference_num_frames(min(frames.shape[0], clip_frames))
     if keep > frames.shape[0]:
-        raise RuntimeError(
-            f"{path.name} is {frames.shape[0]} frames once resampled to 24fps, and H3's shortest "
-            f"encodable clip is {keep}. Use a longer clip, or drop this one from the dataset."
+        raise ShortClipError(
+            f"{path.name} is {frames.shape[0]} frames once resampled to {_H3_FPS}fps, below H3's "
+            f"{keep}-frame minimum ({keep / _H3_FPS:.2f}s). Skipped."
         )
     return [Image.fromarray(frame) for frame in frames[:keep]]
 
@@ -155,8 +195,11 @@ def _encode_captions(
     if where.type != torch.device(device).type:
         logger.info("MiniMax H3: conditioner is on %s, encoding captions there", where)
     out: list[tuple[Any, Any]] = []
+    logger.info("MiniMax H3: encoding %d captions through the 4-bit conditioner", len(captions))
     try:
-        for caption in captions:
+        for index, caption in enumerate(captions, start=1):
+            if index == 1 or index % 25 == 0 or index == len(captions):
+                logger.info("MiniMax H3: caption %d/%d", index, len(captions))
             caption = caption or _EMPTY_CAPTION
             with torch.no_grad():
                 # The staticmethod rather than the block, so nothing needs a PipelineState. `dtype`

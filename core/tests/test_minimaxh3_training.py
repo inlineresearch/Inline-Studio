@@ -417,3 +417,38 @@ def test_only_the_video_archs_see_clips_in_a_dataset(tmp_path: object) -> None:
     both = ds._pairs(root, ds._IMAGE_SUFFIXES + ds._VIDEO_SUFFIXES)
     assert [p.name for p, _c in both] == ["0000.jpg", "0001.mp4"]
     assert ds.is_video(root / "0001.mp4") and not ds.is_video(root / "0000.jpg")
+
+
+def _write_clip(path: Path, frames: int, fps: int = 24) -> Path:
+    """A tiny valid mp4 with an exact frame count."""
+    av = pytest.importorskip("av")
+    numpy = pytest.importorskip("numpy")
+    container = av.open(str(path), mode="w")
+    stream = container.add_stream("libx264", rate=fps)
+    stream.width, stream.height, stream.pix_fmt = 64, 64, "yuv420p"
+    for i in range(frames):
+        arr = numpy.full((64, 64, 3), i * 4 % 256, dtype=numpy.uint8)
+        container.mux(stream.encode(av.VideoFrame.from_ndarray(arr, format="rgb24")))
+    container.mux(stream.encode())
+    container.close()
+    return path
+
+
+def test_short_clip_raises_the_skippable_error(tmp_path) -> None:
+    """One clip under H3's 22-frame floor must be skippable, not fatal: a hard failure threw away a
+    precache that can take many minutes on a large dataset."""
+    from inline_core.training import h3
+
+    clip = _write_clip(tmp_path / "tooshort.mp4", frames=6)
+    with pytest.raises(h3.ShortClipError) as caught:
+        h3._clip_frames(clip, clip_frames=24)
+    assert "tooshort.mp4" in str(caught.value)
+
+
+def test_long_enough_clip_encodes_on_the_frame_grid(tmp_path) -> None:
+    from inline_core.training import h3
+
+    clip = _write_clip(tmp_path / "ok.mp4", frames=40)
+    frames = h3._clip_frames(clip, clip_frames=24)
+    # Snapped down onto H3's 17n+5 grid rather than taking all 40.
+    assert len(frames) == 22

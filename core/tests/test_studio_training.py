@@ -7,6 +7,7 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+
 from inline_core.models import lora
 from inline_core.studio import training_store as ts
 from inline_core.studio.schema import apply_schema
@@ -79,3 +80,72 @@ def test_peft_adapter_keys_are_fuser_compatible() -> None:
 
     # The fuser strips the PEFT `base_model.model.` prefix, yielding the real module path.
     assert "transformer_blocks.0.attn.to_q" in lora._candidates(stem)
+
+
+class _Store:
+    """The two things `Training` asks a store for."""
+
+    def __init__(self, conn: sqlite3.Connection, folder: object) -> None:
+        self._conn, self._folder = conn, folder
+
+    def conn(self) -> sqlite3.Connection:
+        return self._conn
+
+    def folder(self) -> object:
+        return self._folder
+
+
+def test_add_from_path_imports_a_folder_with_its_sidecar_captions(
+    conn: sqlite3.Connection, tmp_path: object
+) -> None:
+    """The clip case: pointing at a folder beats pushing gigabytes through the browser."""
+    from pathlib import Path
+
+    from inline_core.studio.training import Training
+
+    src = Path(str(tmp_path)) / "src"
+    src.mkdir()
+    (src / "0000.png").write_bytes(b"x")
+    (src / "0000.txt").write_text("a red car")
+    (src / "0001.mp4").write_bytes(b"x")  # a clip, no caption
+    (src / "notes.md").write_text("ignored")  # not media
+
+    project = Path(str(tmp_path)) / "project"
+    project.mkdir()
+    dataset = ts.create_dataset(conn, "d", "")
+    items = Training(_Store(conn, project), events=None).add_from_path(dataset["id"], str(src))
+
+    assert len(items) == 2, "the .md is not media and must not be imported"
+    captions = {i["caption"] for i in items}
+    assert captions == {"a red car", ""}
+    # The files are copied into the project rather than referenced in place.
+    assert len(list((project / "assets").iterdir())) == 2
+
+
+def test_add_from_path_rejects_a_folder_that_is_not_one(
+    conn: sqlite3.Connection, tmp_path: object
+) -> None:
+    from pathlib import Path
+
+    from inline_core.studio.training import Training
+
+    dataset = ts.create_dataset(conn, "d", "")
+    training = Training(_Store(conn, Path(str(tmp_path))), events=None)
+    with pytest.raises(ValueError, match="Not a folder"):
+        training.add_from_path(dataset["id"], str(Path(str(tmp_path)) / "nope"))
+
+
+def test_add_from_path_says_so_when_a_folder_holds_no_media(
+    conn: sqlite3.Connection, tmp_path: object
+) -> None:
+    from pathlib import Path
+
+    from inline_core.studio.training import Training
+
+    empty = Path(str(tmp_path)) / "empty"
+    empty.mkdir()
+    (empty / "readme.txt").write_text("just captions, no images")
+    dataset = ts.create_dataset(conn, "d", "")
+    training = Training(_Store(conn, Path(str(tmp_path))), events=None)
+    with pytest.raises(ValueError, match="No images or clips"):
+        training.add_from_path(dataset["id"], str(empty))

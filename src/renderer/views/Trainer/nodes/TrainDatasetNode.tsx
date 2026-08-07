@@ -3,7 +3,7 @@
  * preview (thumbnails + counts); the images/captions themselves are edited in the side panel that
  * opens when the node is selected - keeping heavy editing off the card, like every other node.
  */
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { resolveMedia } from '@/lib/media'
 import { useAssetStore } from '../../../store/assetStore'
@@ -40,8 +40,30 @@ export function TrainDatasetNode({ id, selected }: NodeProps): React.JSX.Element
   }, [selected, datasetId, selectDataset])
 
   const byId = new Map(assets.map((a) => [a.id, a]))
-  const thumbs = items.slice(0, 6)
   const captioned = items.filter((it) => it.caption.trim()).length
+  const clips = items.filter((it) => byId.get(it.assetId)?.kind === 'video').length
+  const noun = clips === 0 ? 'images' : clips === items.length ? 'clips' : 'items'
+
+  // The face is a preview, so it draws only what fits and grows as the node is resized. A fixed
+  // count both wasted a large card and, on a clip dataset, would open a video decoder per hidden
+  // tile. The footer always reports the true total, so this never reads as the whole dataset.
+  const gridRef = useRef<HTMLDivElement>(null)
+  const [capacity, setCapacity] = useState(6)
+  useEffect(() => {
+    const el = gridRef.current
+    if (!el) return
+    const CELL = 40 // 36px tile + 4px gap
+    const measure = (): void =>
+      setCapacity(
+        Math.max(1, Math.floor(el.clientWidth / CELL)) *
+          Math.max(1, Math.floor(el.clientHeight / CELL)),
+      )
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+  const thumbs = items.slice(0, capacity)
 
   return (
     <>
@@ -69,13 +91,16 @@ export function TrainDatasetNode({ id, selected }: NodeProps): React.JSX.Element
               ))}
             </select>
           </div>
-          <div className="flex-1 overflow-hidden bg-black p-1">
-            {thumbs.length === 0 ? (
+          <div ref={gridRef} className="flex-1 overflow-hidden bg-black p-1">
+            {items.length === 0 ? (
               <div className="flex h-full items-center justify-center text-[11px] text-zinc-600">
-                {datasetId ? 'No images yet' : 'Pick a dataset'}
+                {datasetId ? 'No items yet' : 'Pick a dataset'}
               </div>
             ) : (
-              <div className="grid grid-cols-3 gap-1">
+              <div
+                className="grid gap-1"
+                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(36px, 1fr))' }}
+              >
                 {thumbs.map((it) => {
                   const asset = byId.get(it.assetId)
                   const src = asset ? resolveMedia(asset.thumbPath ?? asset.filePath) : ''
@@ -84,7 +109,19 @@ export function TrainDatasetNode({ id, selected }: NodeProps): React.JSX.Element
                       key={it.id}
                       className="aspect-square overflow-hidden rounded-sm bg-zinc-900"
                     >
-                      {src && <img src={src} alt="" className="h-full w-full object-cover" />}
+                      {src &&
+                        (asset?.kind === 'video' ? (
+                          // Poster generation is deferred, so a clip has no thumbPath and an <img>
+                          // pointed at an mp4 renders broken. `#t=` seeks the browser to a frame.
+                          <video
+                            src={`${src}#t=0.1`}
+                            muted
+                            preload="metadata"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <img src={src} alt="" className="h-full w-full object-cover" />
+                        ))}
                     </div>
                   )
                 })}
@@ -93,7 +130,7 @@ export function TrainDatasetNode({ id, selected }: NodeProps): React.JSX.Element
           </div>
           <div className="flex items-center justify-between border-t border-border bg-surface/90 px-2 py-1">
             <span className="text-[10px] text-zinc-500">
-              {items.length} images · {captioned} captioned
+              {items.length} {noun} · {captioned} captioned
             </span>
           </div>
         </div>
