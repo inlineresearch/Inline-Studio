@@ -101,13 +101,18 @@ all = [
 ]
 
 # PyPI ships CPU-only torch on Windows; pin the CUDA index there (pip: see requirements.txt).
+# cu126 rather than a newer index because it is the last one still built for sm_50..sm_70 (Maxwell
+# through Volta), so it is the safe default for a card we know nothing about. Blackwell (sm_120) has
+# no wheel here at all - webui.sh/.bat detect the compute capability and pass the matching index.
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
+# Launcher installs pass `--no-sources-package torch` so their detected index wins over this pin;
+# anything else added to this table would still apply to them.
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu124", marker = "sys_platform == 'win32'" }]
+torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'win32'" }]
 
 [project.scripts]
 inline-studio = "inline_core.server.__main__:main"
