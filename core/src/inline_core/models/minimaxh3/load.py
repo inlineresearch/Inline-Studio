@@ -157,6 +157,14 @@ def load_transformer(
 
     if lora_plan:
         _finish_fuse(model, lora_plan, fused)
+        # Announced because a fused LoRA is otherwise invisible: it changes the weights and nothing
+        # else, so a run with no adapter and a run with one that never arrived look identical in
+        # the log, and the only way to tell them apart was to render twice and compare.
+        logger.info(
+            "MiniMax H3: fused %d LoRA layer(s) from %s",
+            len(lora_plan),
+            ", ".join(f"{Path(ref.file).name}@{ref.strength:g}" for ref in loras),
+        )
     _assert_nothing_left_on_meta(model, filled)
     model.eval()
     return model
