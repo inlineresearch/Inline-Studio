@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import gc
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,10 @@ AUDIO_LATENT_CHANNELS = 32
 #: caption dropout and an image whose ``.txt`` is missing.
 _EMPTY_CAPTION = " "
 
+#: H3's fixed frame rate, and the shortest clip its video VAE encodes (the first ``17n + 5``).
+_H3_FPS = 24
+_MIN_CLIP_FRAMES = 22
+
 
 def precache(
     dataset_dir: str,
@@ -38,38 +43,55 @@ def precache(
     resolution: int,
     flip: bool,
     want_unconditional: bool,
+    clip_frames: int = 1,
+    on_status: Callable[[str], None] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Every image as a latent and every caption as conditioning, as CPU tensors."""
     from . import dataset as ds
 
-    pairs = ds._pairs(Path(dataset_dir))
+    say = on_status or (lambda _text: None)
+    pairs = ds._pairs(Path(dataset_dir), ds._IMAGE_SUFFIXES + ds._VIDEO_SUFFIXES)
     if not pairs:
         raise RuntimeError("The exported dataset is empty.")
 
     root = Path(models_dir)
-    latents = _encode_pixels(root, pairs, device, resolution, flip)
-    captions = [caption for _img, caption in pairs for _ in ((False, True) if flip else (False,))]
+    # Only the clips that survived encoding carry captions, or every caption after the first skip
+    # would be paired with the wrong latent.
+    latents, kept = _encode_pixels(root, pairs, device, resolution, flip, clip_frames, say)
+    if not kept:
+        raise RuntimeError(
+            f"None of the {len(pairs)} dataset items could be encoded. For clips, each must be at "
+            f"least {_MIN_CLIP_FRAMES} frames at {_H3_FPS}fps "
+            f"({_MIN_CLIP_FRAMES / _H3_FPS:.2f}s)."
+        )
+    captions = [caption for _img, caption in kept for _ in ((False, True) if flip else (False,))]
     if want_unconditional:
         captions.append("")
-    embeds = _encode_captions(root, captions, device, dtype)
+    embeds = _encode_captions(root, captions, device, dtype, say)
+    say(f"cached {len(latents)} latents and {len(embeds)} captions")
 
     items = [
         {"latent": latent, **_conditioning(embed, tags, latent)}
         for latent, (embed, tags) in zip(latents, embeds, strict=False)
     ]
-    unconditional = None
     if want_unconditional:
+        # Dropout swaps a different text length in, which moves every row after it, so the whole
+        # layout travels with the embedding. It also depends on the latent grid, and a dataset
+        # mixing stills with clips has more than one, so each item carries its own rather than
+        # sharing the first item's and mis-sizing every clip.
         embed, tags = embeds[-1]
-        # Caption dropout swaps in a different text length, which moves every row after it, so the
-        # whole layout travels with the embedding rather than just the embedding.
-        unconditional = _conditioning(embed, tags, latents[0])
-    return items, unconditional
+        for item in items:
+            item["uncond"] = _conditioning(embed, tags, item["latent"])
+    # The per-item copies are what dropout uses; the loop keeps the global slot for the image archs.
+    return items, None
 
 
 def _encode_pixels(
-    root: Path, pairs: list[tuple[Path, str]], device: str, resolution: int, flip: bool
-) -> list[Any]:
-    """Pass one: the video VAE, then dropped."""
+    root: Path, pairs: list[tuple[Path, str]], device: str, resolution: int, flip: bool,
+    clip_frames: int = 1, say: Callable[[str], None] = lambda _text: None,
+) -> tuple[list[Any], list[tuple[Path, str]]]:
+    """Pass one: the video VAE, then dropped. Returns the latents and the pairs they came from."""
+    import numpy
     import torch
     from PIL import Image
 
@@ -84,45 +106,98 @@ def _encode_pixels(
     from . import dataset as ds
 
     out: list[Any] = []
+    kept: list[tuple[Path, str]] = []
+    skipped: list[str] = []
+    total = len(pairs)
+    say(f"encoding {total} items at {resolution}px through the video VAE")
     try:
-        for img_path, _caption in pairs:
+        for index, (path, _caption) in enumerate(pairs, start=1):
+            clip = ds.is_video(path)
+            try:
+                frames = _clip_frames(path, clip_frames) if clip else [Image.open(path)]
+            except ShortClipError as exc:
+                skipped.append(path.name)
+                say(f"skipped {exc}")
+                continue
+            # A long precache is otherwise silent for many minutes, so report often enough that it
+            # reads as progress rather than a hang.
+            if index == 1 or index % 5 == 0 or index == total:
+                say(f"caching latents {index}/{total}")
             for mirrored in (False, True) if flip else (False,):
-                square = ds._square(Image.open(img_path), resolution, mirrored)
-                # H3 normalises with ImageNet statistics, not to [-1, 1] like the image archs, and
-                # a still is one frame: (1, 3, 1, H, W).
-                raw = torch.from_numpy(_as_array(square)).to(device)
-                pixels = raw.permute(2, 0, 1)[None, :, None]
+                stack = [_as_array(ds._square(f, resolution, mirrored)) for f in frames]
+                # ImageNet statistics, not the [-1, 1] the image archs use, and always 5D:
+                # (1, 3, F, H, W).
+                raw = torch.from_numpy(numpy.stack(stack)).to(device)
+                pixels = raw.permute(3, 0, 1, 2)[None]
                 pixels = (pixels.to(torch.float32).div(255.0) - pixel_mean) / pixel_std
                 with torch.no_grad():
-                    # The spatial encoder alone, the path inference uses for a single frame; the
-                    # temporal chunking is for 17n+5 clips.
-                    latent = _sample(vae._encode_clip(pixels))
+                    # A single frame takes the spatial encoder; a 17n+5 clip takes the temporal
+                    # chunking. Mirrors the split the vendored reference encoder makes.
+                    moments = vae._encode(pixels) if clip else vae._encode_clip(pixels)
+                    latent = _sample(moments)
                 out.append(((latent.cpu() - mean) / std)[0])
+            kept.append((path, _caption))
     finally:
         del vae
         _reclaim()
-    logger.info("MiniMax H3: cached %d latents, video VAE released", len(out))
-    return out
+    if skipped:
+        say(f"skipped {len(skipped)} of {total} items as too short: {', '.join(skipped)}")
+    say(f"cached {len(out)} latents from {len(kept)} items, video VAE released")
+    return out, kept
+
+
+class ShortClipError(RuntimeError):
+    """A clip below H3's frame floor. Skipped, never fatal: one bad file in a large dataset must
+    not throw away a precache that takes many minutes."""
+
+
+def _clip_frames(path: Path, clip_frames: int) -> list[Any]:
+    """A clip as PIL frames on H3's 24fps, 17n+5 grid, taken from the start.
+
+    Trimmed rather than sampled: a fixed window keeps the precache to one encode per clip, and
+    re-encoding a different window every step would defeat caching the latents at all.
+    """
+    from PIL import Image
+
+    from ..models.minimaxh3.vendor.packing_ref2va import (
+        decode_reference_video,
+        resample_reference_frames,
+        trim_reference_num_frames,
+    )
+
+    decoded, fps, _audio = decode_reference_video(str(path))
+    frames = resample_reference_frames(decoded, fps)
+    keep = trim_reference_num_frames(min(frames.shape[0], clip_frames))
+    if keep > frames.shape[0]:
+        raise ShortClipError(
+            f"{path.name} is {frames.shape[0]} frames once resampled to {_H3_FPS}fps, below H3's "
+            f"{keep}-frame minimum ({keep / _H3_FPS:.2f}s). Skipped."
+        )
+    return [Image.fromarray(frame) for frame in frames[:keep]]
 
 
 def _encode_captions(
-    root: Path, captions: list[str], device: str, dtype: Any
+    root: Path, captions: list[str], device: str, dtype: Any,
+    say: Callable[[str], None] = lambda _text: None,
 ) -> list[tuple[Any, Any]]:
     """Pass two: the 4-bit conditioner, then dropped."""
     import torch
 
     from ..models.minimaxh3.vendor.encoders import MiniMaxH3TextEncoderStep
 
+    say("loading the 4-bit text conditioner (20.5GB)")
     pipeline = _load_conditioner(root, device, dtype)
     # Encode wherever it landed. It spills to host RAM on a card too small for 20.5GB, and the
     # vendored step builds its input ids on the device it is handed, so CUDA ids against a
     # CPU-resident encoder fail in `index_select`.
     where = next(pipeline.text_encoder.parameters()).device
     if where.type != torch.device(device).type:
-        logger.info("MiniMax H3: conditioner is on %s, encoding captions there", where)
+        say(f"conditioner spilled to {where}, encoding captions there (slower)")
     out: list[tuple[Any, Any]] = []
     try:
-        for caption in captions:
+        for index, caption in enumerate(captions, start=1):
+            if index == 1 or index % 10 == 0 or index == len(captions):
+                say(f"encoding captions {index}/{len(captions)}")
             caption = caption or _EMPTY_CAPTION
             with torch.no_grad():
                 # The staticmethod rather than the block, so nothing needs a PipelineState. `dtype`
@@ -134,7 +209,7 @@ def _encode_captions(
             out.append((embeds[0].cpu(), tags.cpu()))
     finally:
         _drop_conditioner(pipeline)
-    logger.info("MiniMax H3: cached %d captions, conditioner released", len(out))
+    say(f"cached {len(out)} captions, conditioner released")
     return out
 
 

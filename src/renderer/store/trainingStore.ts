@@ -54,6 +54,8 @@ interface TrainingState {
   loadItems: (datasetId: string) => Promise<void>
   /** Returns the created items, so a caller can pair captions to the assets it just added. */
   addItems: (datasetId: string, assetIds: string[]) => Promise<TrainingDatasetItem[]>
+  /** Import a folder on the Core machine, sidecar captions included. Returns an error string. */
+  addFromPath: (datasetId: string, path: string) => Promise<string | null>
   removeItem: (datasetId: string, itemId: string) => Promise<void>
   /** Remove every image from a dataset in one go, refetching once when done. */
   removeAll: (datasetId: string) => Promise<void>
@@ -129,6 +131,18 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     }
     await get().loadItems(datasetId)
     return res.value
+  },
+
+  addFromPath: async (datasetId, path) => {
+    const res = await studio().training.addFromPath(datasetId, path)
+    if (!res.ok) {
+      // Returned rather than only stored: a bad path is the common case here and the field wants
+      // to show it inline, next to what the reader typed.
+      set({ error: res.error })
+      return ipcErrorMessage(res.error)
+    }
+    await get().loadItems(datasetId)
+    return null
   },
 
   removeItem: async (datasetId, itemId) => {
@@ -233,10 +247,12 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
 
   applyLog: (e) =>
     set((s) => ({
-      // Capped so a long run can't grow the buffer without bound; the node shows the tail.
+      // Capped so a long run can't grow the buffer without bound; the node shows the tail. Deep
+      // enough to still hold the setup and precache lines once a few hundred steps have streamed
+      // in, since those are what a "Copy logs" for a failed run needs to include.
       logsByRun: {
         ...s.logsByRun,
-        [e.runId]: [...(s.logsByRun[e.runId] ?? []), e.line].slice(-400),
+        [e.runId]: [...(s.logsByRun[e.runId] ?? []), e.line].slice(-3000),
       },
     })),
 

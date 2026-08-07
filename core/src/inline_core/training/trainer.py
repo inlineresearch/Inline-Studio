@@ -139,10 +139,14 @@ _ACTIVATION_KEYS = frozenset({"latent", "embed", "audio"})
 
 
 def _to_device(item: dict[str, Any], device: Any, dtype: Any) -> dict[str, Any]:
-    """A cached item on the training device, casting only its activations."""
+    """A cached item on the training device, casting only its activations.
+
+    Anything that is not a tensor is dropped: an arch may stash its own bookkeeping on the item
+    (H3 keeps a per-item unconditional layout there) and the model never sees it."""
     return {
         key: value.to(device, dtype) if key in _ACTIVATION_KEYS else value.to(device)
         for key, value in item.items()
+        if hasattr(value, "to")
     }
 
 
@@ -167,11 +171,20 @@ def train(manifest: dict[str, Any]) -> str | None:
 
     # Two phases, never overlapping: encoders -> precache -> free, THEN the transformer. Held
     # together they add the text encoder's several GB to the base; apart, peak is just the base.
+    # Before the precache, never after: this costs milliseconds and precaching costs twenty
+    # minutes, and the failure it catches only surfaces once the base finally loads.
+    models.check_base_mappable(manifest["modelsDir"], arch.key, manifest["baseMode"])
+
     protocol.progress(0, steps, status="caching latents")
     dropout = max(0.0, min(1.0, float(hp.get("captionDropout") or 0.0)))
+    # Precache is minutes of silence on a large dataset, so its phases are reported as progress
+    # statuses. The orchestrator turns each new status into a log line, which is the only channel
+    # that reaches the UI: this subprocess installs no logging handler.
     data, unconditional, shift = cache.build(
         manifest["datasetDir"], manifest["modelsDir"], arch.key, str(device), dtype, resolution,
         flip=bool(hp.get("flipAugment")), dropout=dropout,
+        clip_frames=archs.clip_frames(arch, hp.get("clipSeconds")),
+        on_status=lambda text: protocol.progress(0, steps, status=text),
     )
 
     quant = models.resolve_quant(
@@ -227,10 +240,14 @@ def train(manifest: dict[str, Any]) -> str | None:
         if stop.flagged:
             break
         source = data[step % len(data)]
-        if unconditional is not None and random.random() < dropout:
-            source = {**source, **unconditional}
+        if dropout and random.random() < dropout:
+            # An arch whose layout depends on the item carries its own unconditional; the rest
+            # share one. H3 needs the per-item form because a clip and a still pack differently.
+            swap = source.get("uncond") or unconditional
+            if swap is not None:
+                source = {**source, **swap}
         item = _to_device(source, device, dtype)
-        clean = item["latent"]  # (C, H, W)
+        clean = item["latent"]  # (C, H, W) for the image archs, (C, F, H, W) for H3
         noise = torch.randn_like(clean)
         sigma = arch.sigma(device, shift)  # scalar noise fraction in (0, 1)
         noisy = (1 - sigma) * clean + sigma * noise

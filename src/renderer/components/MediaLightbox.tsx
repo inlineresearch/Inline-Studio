@@ -4,9 +4,10 @@ import { useLightboxStore } from '../store/lightboxStore'
 import { CloseIcon } from './icons'
 
 /**
- * Fullscreen media viewer, opened by double-clicking a node's image/video. Portaled to
- * document.body so it sits above the canvas and all panels. Click the backdrop or press Escape
- * to close.
+ * Fullscreen media viewer, opened by double-clicking a node's or dataset tile's image/video.
+ * Portaled to document.body so it sits above the canvas and all panels. Its z-index must stay
+ * above every modal (the Captioning modal is z-200), since it can be opened from inside one.
+ * Click the backdrop or press Escape to close.
  */
 export function MediaLightbox(): React.JSX.Element | null {
   const media = useLightboxStore((s) => s.media)
@@ -25,7 +26,7 @@ export function MediaLightbox(): React.JSX.Element | null {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-8 backdrop-blur-sm"
+      className="fixed inset-0 z-[300] flex items-center justify-center bg-black/85 p-8 backdrop-blur-sm"
       onClick={close}
     >
       {media.kind === 'video' ? (

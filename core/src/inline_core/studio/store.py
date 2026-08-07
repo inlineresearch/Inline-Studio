@@ -131,6 +131,7 @@ class StudioStore:
         project = {"id": pid, "name": name, "path": str(folder), "createdAt": now, "updatedAt": now}
         self._current = project
         self.record_recent(name, str(folder))
+        self._remember_last_project(str(folder))
         return project
 
     def open_project(self, selected: str) -> dict[str, Any]:
@@ -143,6 +144,7 @@ class StudioStore:
         project = self._load_project_row(folder)
         self._current = project
         self.record_recent(project["name"], str(folder))
+        self._remember_last_project(str(folder))
         return project
 
     def _load_project_row(self, folder: Path) -> dict[str, Any]:
@@ -160,7 +162,44 @@ class StudioStore:
         }
 
     def current_project(self) -> dict[str, Any] | None:
-        return self._current
+        return self._current or self.restore_last_project()
+
+    def close_project(self) -> None:
+        self.close()
+        self._current = None
+        self._remember_last_project(None)
+
+    # --- last opened project ----------------------------------------------------------------------
+    # The open project is otherwise only in memory, so restarting Core left a still-open browser tab
+    # failing every call with "No project is open." Kept in its own file rather than settings.json,
+    # because _save_settings rewrites that from get_settings() and would drop any key it omits.
+
+    def _last_project_file(self) -> Path:
+        return self._app_data / "last_project"
+
+    def _remember_last_project(self, path: str | None) -> None:
+        file = self._last_project_file()
+        try:
+            if path:
+                file.write_text(path, encoding="utf-8")
+            elif file.exists():
+                file.unlink()
+        except OSError:
+            pass  # never fail an open just because the marker could not be written
+
+    def restore_last_project(self) -> dict[str, Any] | None:
+        """Reopen the project left open at shutdown. Best-effort: a moved or deleted one is
+        forgotten and the launcher shows instead."""
+        if self._conn is not None:
+            return self._current
+        file = self._last_project_file()
+        if not file.exists():
+            return None
+        try:
+            return self.open_project(file.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError, sqlite3.Error):
+            self._remember_last_project(None)
+            return None
 
     def media_dirs(self) -> dict[str, str]:
         if self._folder is None:

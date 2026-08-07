@@ -17,15 +17,25 @@ from . import arch as archs
 
 _IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 
+#: Only the video archs pass these to ``_pairs``. An image arch handed a clip would reach PIL and
+#: raise, so the default stays images and each caller opts in.
+_VIDEO_SUFFIXES = (".mp4", ".mov", ".webm", ".mkv", ".avi")
 
-def _pairs(dataset_dir: Path) -> list[tuple[Path, str]]:
+
+def is_video(path: Path) -> bool:
+    return path.suffix.lower() in _VIDEO_SUFFIXES
+
+
+def _pairs(
+    dataset_dir: Path, suffixes: tuple[str, ...] = _IMAGE_SUFFIXES
+) -> list[tuple[Path, str]]:
     out: list[tuple[Path, str]] = []
-    for img in sorted(dataset_dir.iterdir()):
-        if img.suffix.lower() not in _IMAGE_SUFFIXES:
+    for media in sorted(dataset_dir.iterdir()):
+        if media.suffix.lower() not in suffixes:
             continue
-        caption_file = img.with_suffix(".txt")
+        caption_file = media.with_suffix(".txt")
         caption = caption_file.read_text(encoding="utf-8").strip() if caption_file.exists() else ""
-        out.append((img, caption))
+        out.append((media, caption))
     return out
 
 

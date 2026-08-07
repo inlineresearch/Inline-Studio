@@ -7,6 +7,7 @@ them (see ``h3.py``). Either way the transformer loads into a card with nothing 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from . import arch as archs
@@ -28,13 +29,21 @@ def build(
     *,
     flip: bool = False,
     dropout: float = 0.0,
+    clip_frames: int = 1,
+    on_status: Callable[[str], None] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, float]:
-    """Return ``(items, unconditional, shift)``, all as CPU tensors, with the encoders freed."""
+    """Return ``(items, unconditional, shift)``, all as CPU tensors, with the encoders freed.
+
+    ``on_status`` reports phase progress to the caller, which forwards it over the JSON protocol.
+    Precaching a large dataset takes minutes, and a logger call would be dropped here: the trainer
+    subprocess configures no logging handler, so anything below WARNING goes nowhere.
+    """
     if arch == archs.MINIMAX_H3:
         from . import h3
 
         items, unconditional = h3.precache(
-            dataset_dir, models_dir, device, dtype, resolution, flip, dropout > 0
+            dataset_dir, models_dir, device, dtype, resolution, flip, dropout > 0, clip_frames,
+            on_status=on_status,
         )
         return items, unconditional, _H3_SHIFT
 

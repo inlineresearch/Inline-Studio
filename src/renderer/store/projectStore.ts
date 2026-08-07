@@ -11,12 +11,16 @@ interface ProjectState {
   current: Project | null
   recents: RecentProject[]
   loading: boolean
+  /** True until Core has been asked what is open, so boot shows no launcher flash. */
+  restoring: boolean
   error: string | null
   /** A transient success message (e.g. "Exported to …"). */
   notice: string | null
   /** Path of the project currently being exported, if any. */
   exportingPath: string | null
 
+  /** Adopt whatever project Core has open, so a refresh lands back in the workspace. */
+  restore: () => Promise<void>
   loadRecents: () => Promise<void>
   createProject: (name: string) => Promise<void>
   openFromDialog: () => Promise<void>
@@ -31,9 +35,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   current: null,
   recents: [],
   loading: false,
+  restoring: true,
   error: null,
   notice: null,
   exportingPath: null,
+
+  restore: async () => {
+    const res = await studio().project.current()
+    // A failure here just means the launcher shows; it must never block boot behind an error.
+    set({ current: res.ok ? res.value : null, restoring: false })
+  },
 
   loadRecents: async () => {
     const res = await studio().project.listRecent()
@@ -94,5 +105,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  closeProject: () => set({ current: null, error: null, notice: null }),
+  // Tell Core too, or it reopens this project on its next start.
+  closeProject: () => {
+    void studio().project.close()
+    set({ current: null, error: null, notice: null })
+  },
 }))

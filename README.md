@@ -27,7 +27,7 @@ Inline Studio is a free, open-source app for **AI filmmaking on a node canvas**,
 
 - **Non-destructive by default** - every render is kept as a versioned take; generating again adds one, nothing is overwritten.
 - **Local diffusion generation engine** - the built-in Inline Core engine runs popular diffusion models locally, on your own GPU, from a single model file, no external server. Currently supported: **Z-Image Turbo**, **Krea 2** (RAW + Turbo), **FLUX.2**, and **MiniMax H3** for video with sound.
-- **Train LoRAs locally** - the Trainer canvas fine-tunes Z-Image, Krea 2, FLUX.2 or MiniMax H3 on your own images, on your own GPU. With a 4-bit base, Krea 2 trains at 512px inside about 12GB, so a 16GB card can train a LoRA for a 26GB model. See [LoRA training](#lora-training).
+- **Train LoRAs locally** - the Trainer canvas fine-tunes Z-Image, Krea 2, FLUX.2 or MiniMax H3 on your own images, on your own GPU. H3 also trains on short video clips, so a LoRA can learn motion and not just look. With a 4-bit base, Krea 2 trains at 512px inside about 12GB, so a 16GB card can train a LoRA for a 26GB model. See [LoRA training](#lora-training).
 - **Hosted models via API Nodes** - reach for closed models with no GPU and no setup for instant creative range; see [API Nodes](#api-nodes).
 - **Mix both in the same film** - Inline Studio handles everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
 

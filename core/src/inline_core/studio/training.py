@@ -71,6 +71,42 @@ class Training:
     def add_items(self, dataset_id: str, asset_ids: list[str]) -> list[dict[str, Any]]:
         return ts.add_items(self._conn(), dataset_id, asset_ids)
 
+    def add_from_path(self, dataset_id: str, path: str) -> list[dict[str, Any]]:
+        """Import a folder of images and clips into the dataset, captions included.
+
+        The browser cannot hand over a folder, and uploading a clip dataset through it means
+        pushing gigabytes over HTTP to a server that can already see the disk. Paths come from the
+        client here the same way ``assets:importPaths`` already accepts them.
+        """
+        from . import assets as ax
+
+        folder = Path(path).expanduser()
+        if not folder.is_dir():
+            raise ValueError(f"Not a folder: {path}")
+        conn, project = self._conn(), self._store.folder()
+        media = [
+            p
+            for p in sorted(folder.iterdir())
+            if p.is_file() and ax.kind_for_file(str(p)) in ("image", "video")
+        ]
+        if not media:
+            raise ValueError(f"No images or clips in {path}")
+
+        imported = [(p, ax.import_file(conn, project, str(p), None)) for p in media]
+        added = ts.add_items(conn, dataset_id, [a["id"] for _p, a in imported if a])
+
+        # `NNNN.txt` beside `NNNN.png` is the caption, the convention the drag-drop path already
+        # follows. Only newly added items are touched, so re-importing cannot clobber an edit.
+        by_asset = {item["assetId"]: item for item in added}
+        for source, asset in imported:
+            item = by_asset.get(asset["id"]) if asset else None
+            sidecar = source.with_suffix(".txt")
+            if item and sidecar.is_file():
+                caption = sidecar.read_text(encoding="utf-8").strip()
+                if caption:
+                    ts.set_caption(conn, item["id"], caption)
+        return ts.list_items(conn, dataset_id)
+
     def remove_item(self, item_id: str) -> None:
         ts.remove_item(self._conn(), item_id)
 

@@ -105,13 +105,30 @@ def _load_with_fallback(model_id: str) -> tuple[Any, Any, Any]:
             raise first from None
 
 
+def _open(path: str) -> Any:
+    """The frame to caption. A clip is captioned from its middle frame, which is more
+    representative than the first and stops PIL raising on a container it cannot read."""
+    from pathlib import Path
+
+    from PIL import Image
+
+    from . import dataset as ds
+
+    if not ds.is_video(Path(path)):
+        return Image.open(path).convert("RGB")
+
+    from ..models.minimaxh3.vendor.packing_ref2va import decode_reference_video
+
+    frames, _fps, _audio = decode_reference_video(path)
+    return Image.fromarray(frames[len(frames) // 2]).convert("RGB")
+
+
 def _caption_one(model: Any, processor: Any, device: str, path: str) -> str:
     """One caption. Handles both shapes: task-token models (Florence-2, which post-processes a
     tagged string) and plain image-captioning models (BLIP), which just decode the output."""
     import torch
-    from PIL import Image
 
-    image = Image.open(path).convert("RGB")
+    image = _open(path)
     task_style = hasattr(processor, "post_process_generation")
     inputs = (
         processor(text=_TASK, images=image, return_tensors="pt")

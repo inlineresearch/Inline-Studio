@@ -6,10 +6,12 @@
  * `runId` is persisted in the node's data, so the node rebinds to its run after a reload and can
  * still offer Resume. Hyperparameters live in the Adjust sidebar, never on the node face.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { TrainingRun } from '@shared/types'
 import { useTrainingStore } from '../../../store/trainingStore'
+import { copyText } from '../../../lib/clipboard'
+import { CopyIcon } from '../../../components/icons'
 import { useTrainerBoardStore } from '../../../store/trainerBoardStore'
 import { useCoreNodesStore } from '../../../store/coreNodesStore'
 import { activeDownload, useModelRequirementsStore } from '../../../store/modelRequirementsStore'
@@ -92,6 +94,15 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
     const el = logRef.current
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight
   }, [logs.length])
+
+  // Which copy just fired ('all' or 'line-N'), so the button/row can flash confirmation.
+  const [copied, setCopied] = useState<string | null>(null)
+  const copy = async (text: string, key: string): Promise<void> => {
+    if (await copyText(text)) {
+      setCopied(key)
+      setTimeout(() => setCopied((k) => (k === key ? null : k)), 1200)
+    }
+  }
 
   // Another node holding the GPU blocks this one (the backend allows one run at a time).
   const otherRunning = runs.some(
@@ -186,7 +197,7 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
                 const el = e.currentTarget
                 stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
               }}
-              className={`nowheel nodrag h-full overflow-auto px-2 pb-2 font-mono text-[10px] leading-snug text-zinc-300 ${
+              className={`nowheel nodrag h-full cursor-text select-text overflow-auto px-2 pb-2 font-mono text-[10px] leading-snug text-zinc-300 ${
                 busy ? 'pt-8' : 'pt-2'
               }`}
             >
@@ -196,12 +207,29 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
                 </span>
               ) : (
                 logs.slice(-200).map((line, i) => (
-                  <div key={i} className="whitespace-pre">
+                  <div
+                    key={i}
+                    onDoubleClick={() => void copy(line, `line-${i}`)}
+                    title="Double-click to copy this line"
+                    className={`whitespace-pre rounded-sm px-1 -mx-1 hover:bg-white/5 ${
+                      copied === `line-${i}` ? 'bg-emerald-500/25' : ''
+                    }`}
+                  >
                     {line}
                   </div>
                 ))
               )}
             </div>
+            {logs.length > 0 && (
+              <button
+                onClick={() => void copy(logs.join('\n'), 'all')}
+                title="Copy the whole log"
+                className="nodrag absolute right-1.5 top-1.5 z-10 flex items-center gap-1 rounded border border-border bg-black/70 px-1.5 py-0.5 text-[10px] text-zinc-300 backdrop-blur hover:border-zinc-500 hover:text-white"
+              >
+                <CopyIcon className="h-3 w-3" />
+                {copied === 'all' ? 'Copied' : `Copy ${logs.length}`}
+              </button>
+            )}
             {busy && (
               <div className="absolute bottom-0 left-0 h-px w-full bg-zinc-800">
                 <div

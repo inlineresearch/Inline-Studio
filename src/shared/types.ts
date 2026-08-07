@@ -519,6 +519,11 @@ export interface TrainingHyperparams {
   batchSize: number
   /** Square training resolution in px (e.g. 1024). */
   resolution: number
+  /**
+   * Seconds of each video clip to train on, for archs that accept clips. Snapped to the model's
+   * frame grid, and ignored entirely for stills. MiniMax H3's floor is 0.92s.
+   */
+  clipSeconds?: number
   /** Checkpoint every N steps. */
   saveEvery: number
   /** GPU indices to train on; `[]` = auto (first available). */

@@ -367,6 +367,66 @@ def _base_size(models_dir: str, arch: str, base_mode: str) -> int:
         return 0
 
 
+def _proc_int(path: str) -> int | None:
+    try:
+        return int(Path(path).read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _memory_totals() -> tuple[int, int]:
+    """``(RAM, swap)`` in bytes, or ``(0, 0)`` where /proc/meminfo is not readable."""
+    found: dict[str, int] = {}
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, _, rest = line.partition(":")
+            if key in ("MemTotal", "SwapTotal"):
+                found[key] = int(rest.split()[0]) * 1024
+    except (OSError, ValueError, IndexError):
+        return 0, 0
+    return found.get("MemTotal", 0), found.get("SwapTotal", 0)
+
+
+def check_base_mappable(models_dir: str, arch: str, base_mode: str) -> None:
+    """Refuse a run the kernel will not let mmap the base, before the precache rather than after.
+
+    safetensors maps the checkpoint in one call, so a 62GB file asks for a 62GB mapping. Under
+    ``vm.overcommit_memory=0`` the kernel rejects any single mapping larger than RAM plus swap, and
+    the error it raises names the checkpoint, so it reads like a corrupt download. The mapping is
+    virtual and the loader streams through it at roughly one tensor of resident memory, so the
+    limit is bookkeeping rather than a real shortage. Checked here because precaching a large
+    dataset costs twenty minutes and runs first: the cheap failure has to come before the dear one.
+    """
+    mode = _proc_int("/proc/sys/vm/overcommit_memory")
+    # 1 is unrestricted, and a missing knob means this is not Linux.
+    if mode is None or mode == 1:
+        return
+    size = _base_size(models_dir, arch, base_mode)
+    ram, swap = _memory_totals()
+    if size <= 0 or ram <= 0:
+        return
+    if mode == 2:
+        ratio = _proc_int("/proc/sys/vm/overcommit_ratio") or 50
+        allowed = ram * ratio // 100 + swap
+    else:
+        allowed = ram + swap
+    if size <= allowed:
+        return
+
+    gib = 1024**3
+    name = Path(_base_file(Path(models_dir), arch, base_mode)).name
+    raise RuntimeError(
+        f"{name} needs a single {size / gib:.1f}GiB memory mapping, but this machine caps one at "
+        f"{allowed / gib:.1f}GiB (RAM {ram / gib:.0f}GiB plus swap {swap / gib:.0f}GiB) while "
+        f"vm.overcommit_memory={mode}. The mapping is virtual and the weights stream through it, "
+        f"so the memory is never all used at once, but the kernel refuses the request up front. "
+        f"Allow it with:\n"
+        f"    sudo sysctl -w vm.overcommit_memory=1\n"
+        f"and to keep it across reboots:\n"
+        f"    echo 'vm.overcommit_memory = 1' | sudo tee /etc/sysctl.d/99-inline-studio.conf"
+    )
+
+
 def load_transformer(
     models_dir: str, arch: str, base_mode: str, device: str, dtype: Any, quant: Any = None
 ) -> Any:

@@ -333,6 +333,22 @@ ARCHS: dict[str, TrainingArch] = {
 }
 
 
+def clip_frames(arch: TrainingArch, seconds: Any) -> int:
+    """How many frames of a clip to train on, snapped to the arch's frame grid.
+
+    1 for an arch with no clip support, which is what a still costs. For H3 the floor is a whole
+    17-frame chunk plus the 5-frame head, so a shorter request rounds up to 0.92s rather than being
+    refused; the VAE has no way to encode less.
+    """
+    if arch.key != MINIMAX_H3:
+        return 1
+    from ..models.minimaxh3.vendor.packing import MINIMAX_H3_FPS
+    from ..models.minimaxh3.vendor.packing_ref2va import trim_reference_num_frames
+
+    wanted = round(float(seconds) * MINIMAX_H3_FPS) if seconds else 1
+    return trim_reference_num_frames(max(1, wanted))
+
+
 def get(key: str | None) -> TrainingArch:
     """The arch to train. Defaults to Z-Image so a run predating Krea 2 still resumes."""
     arch = ARCHS.get(key or Z_IMAGE)
