@@ -133,3 +133,68 @@ def test_zimage_has_no_four_bit_path_and_says_so(tmp_path) -> None:
     assert models.resolve_quant("auto", str(tmp_path), archs.Z_IMAGE, "deturbo", 1024) is (
         Quantization.NONE
     )
+
+
+# --- mmap preflight -------------------------------------------------------------------------
+#
+# safetensors maps the whole checkpoint in one call, and vm.overcommit_memory=0 refuses a single
+# mapping larger than RAM+swap. The raw kernel error names the checkpoint, so it reads as a corrupt
+# download, and it only fires after the precache has already cost twenty minutes.
+
+
+def _fake_env(monkeypatch, *, mode, ram_gib, swap_gib=0, size_gib=62, ratio=50):
+    values = {
+        "/proc/sys/vm/overcommit_memory": mode,
+        "/proc/sys/vm/overcommit_ratio": ratio,
+    }
+    monkeypatch.setattr(models, "_proc_int", lambda p: values.get(p))
+    monkeypatch.setattr(
+        models, "_memory_totals", lambda: (ram_gib * 1024**3, swap_gib * 1024**3)
+    )
+    monkeypatch.setattr(models, "_base_size", lambda *a: int(size_gib * 1024**3))
+    monkeypatch.setattr(models, "_base_file", lambda *a: "/m/minimax_h3_fl2va_bf16.safetensors")
+
+
+def test_refuses_a_checkpoint_bigger_than_ram_plus_swap(monkeypatch) -> None:
+    _fake_env(monkeypatch, mode=0, ram_gib=30, swap_gib=0, size_gib=62)
+    with pytest.raises(RuntimeError) as caught:
+        models.check_base_mappable("/m", "minimax-h3", "raw")
+    message = str(caught.value)
+    assert "minimax_h3_fl2va_bf16.safetensors" in message
+    # The fix has to be in the message, since this is the whole point of checking early.
+    assert "vm.overcommit_memory=1" in message
+
+
+def test_swap_counts_toward_the_ceiling(monkeypatch) -> None:
+    _fake_env(monkeypatch, mode=0, ram_gib=30, swap_gib=64, size_gib=62)
+    models.check_base_mappable("/m", "minimax-h3", "raw")
+
+
+def test_overcommit_always_is_never_refused(monkeypatch) -> None:
+    """Mode 1 lets any mapping through, however large."""
+    _fake_env(monkeypatch, mode=1, ram_gib=8, swap_gib=0, size_gib=62)
+    models.check_base_mappable("/m", "minimax-h3", "raw")
+
+
+def test_strict_mode_uses_the_overcommit_ratio(monkeypatch) -> None:
+    """Mode 2 allows only ratio% of RAM plus swap, so 50% of 200GB does not fit 62GB... it does,
+    but 50% of 100GB with no swap does not."""
+    _fake_env(monkeypatch, mode=2, ram_gib=100, swap_gib=0, size_gib=62, ratio=50)
+    with pytest.raises(RuntimeError):
+        models.check_base_mappable("/m", "minimax-h3", "raw")
+    _fake_env(monkeypatch, mode=2, ram_gib=100, swap_gib=0, size_gib=40, ratio=50)
+    models.check_base_mappable("/m", "minimax-h3", "raw")
+
+
+def test_fails_open_when_the_machine_cannot_be_read(monkeypatch) -> None:
+    """No /proc (not Linux) or an unmeasurable checkpoint must never block a run that would work."""
+    monkeypatch.setattr(models, "_proc_int", lambda _p: None)
+    models.check_base_mappable("/m", "minimax-h3", "raw")
+
+    _fake_env(monkeypatch, mode=0, ram_gib=30, size_gib=62)
+    monkeypatch.setattr(models, "_memory_totals", lambda: (0, 0))
+    models.check_base_mappable("/m", "minimax-h3", "raw")
+
+    _fake_env(monkeypatch, mode=0, ram_gib=30, size_gib=62)
+    monkeypatch.setattr(models, "_base_size", lambda *a: 0)
+    models.check_base_mappable("/m", "minimax-h3", "raw")

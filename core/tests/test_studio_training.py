@@ -149,3 +149,27 @@ def test_add_from_path_says_so_when_a_folder_holds_no_media(
     training = Training(_Store(conn, Path(str(tmp_path))), events=None)
     with pytest.raises(ValueError, match="No images or clips"):
         training.add_from_path(dataset["id"], str(empty))
+
+
+def test_each_new_precache_status_becomes_a_log_line() -> None:
+    """Precache progress reaches the UI only as a changing progress status. The trainer subprocess
+    installs no logging handler, so a logger.info there is dropped and the pane stays silent for
+    the minutes a large dataset takes."""
+    from inline_core.studio.training import _progress_log_line
+
+    last = ""
+    lines = []
+    for status in ("caching latents 5/173", "caching latents 10/173", "caching latents 10/173"):
+        line = _progress_log_line({"status": status}, last)
+        if line is not None:
+            lines.append(line)
+            last = status
+    # The first two are new phases and get a line; the repeat is suppressed.
+    assert lines == ["caching latents 5/173", "caching latents 10/173"]
+
+
+def test_a_step_with_a_loss_still_wins_over_the_status() -> None:
+    from inline_core.studio.training import _progress_log_line
+
+    line = _progress_log_line({"status": "training", "step": 7, "total": 500, "loss": 0.1234}, "")
+    assert line == "step 7/500 · loss 0.1234"

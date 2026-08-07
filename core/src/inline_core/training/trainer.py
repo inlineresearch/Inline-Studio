@@ -171,12 +171,20 @@ def train(manifest: dict[str, Any]) -> str | None:
 
     # Two phases, never overlapping: encoders -> precache -> free, THEN the transformer. Held
     # together they add the text encoder's several GB to the base; apart, peak is just the base.
+    # Before the precache, never after: this costs milliseconds and precaching costs twenty
+    # minutes, and the failure it catches only surfaces once the base finally loads.
+    models.check_base_mappable(manifest["modelsDir"], arch.key, manifest["baseMode"])
+
     protocol.progress(0, steps, status="caching latents")
     dropout = max(0.0, min(1.0, float(hp.get("captionDropout") or 0.0)))
+    # Precache is minutes of silence on a large dataset, so its phases are reported as progress
+    # statuses. The orchestrator turns each new status into a log line, which is the only channel
+    # that reaches the UI: this subprocess installs no logging handler.
     data, unconditional, shift = cache.build(
         manifest["datasetDir"], manifest["modelsDir"], arch.key, str(device), dtype, resolution,
         flip=bool(hp.get("flipAugment")), dropout=dropout,
         clip_frames=archs.clip_frames(arch, hp.get("clipSeconds")),
+        on_status=lambda text: protocol.progress(0, steps, status=text),
     )
 
     quant = models.resolve_quant(

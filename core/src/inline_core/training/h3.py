@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import gc
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -43,10 +44,12 @@ def precache(
     flip: bool,
     want_unconditional: bool,
     clip_frames: int = 1,
+    on_status: Callable[[str], None] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Every image as a latent and every caption as conditioning, as CPU tensors."""
     from . import dataset as ds
 
+    say = on_status or (lambda _text: None)
     pairs = ds._pairs(Path(dataset_dir), ds._IMAGE_SUFFIXES + ds._VIDEO_SUFFIXES)
     if not pairs:
         raise RuntimeError("The exported dataset is empty.")
@@ -54,7 +57,7 @@ def precache(
     root = Path(models_dir)
     # Only the clips that survived encoding carry captions, or every caption after the first skip
     # would be paired with the wrong latent.
-    latents, kept = _encode_pixels(root, pairs, device, resolution, flip, clip_frames)
+    latents, kept = _encode_pixels(root, pairs, device, resolution, flip, clip_frames, say)
     if not kept:
         raise RuntimeError(
             f"None of the {len(pairs)} dataset items could be encoded. For clips, each must be at "
@@ -64,7 +67,8 @@ def precache(
     captions = [caption for _img, caption in kept for _ in ((False, True) if flip else (False,))]
     if want_unconditional:
         captions.append("")
-    embeds = _encode_captions(root, captions, device, dtype)
+    embeds = _encode_captions(root, captions, device, dtype, say)
+    say(f"cached {len(latents)} latents and {len(embeds)} captions")
 
     items = [
         {"latent": latent, **_conditioning(embed, tags, latent)}
@@ -84,7 +88,7 @@ def precache(
 
 def _encode_pixels(
     root: Path, pairs: list[tuple[Path, str]], device: str, resolution: int, flip: bool,
-    clip_frames: int = 1,
+    clip_frames: int = 1, say: Callable[[str], None] = lambda _text: None,
 ) -> tuple[list[Any], list[tuple[Path, str]]]:
     """Pass one: the video VAE, then dropped. Returns the latents and the pairs they came from."""
     import numpy
@@ -105,9 +109,7 @@ def _encode_pixels(
     kept: list[tuple[Path, str]] = []
     skipped: list[str] = []
     total = len(pairs)
-    logger.info(
-        "MiniMax H3: encoding %d dataset items at %dpx through the video VAE", total, resolution
-    )
+    say(f"encoding {total} items at {resolution}px through the video VAE")
     try:
         for index, (path, _caption) in enumerate(pairs, start=1):
             clip = ds.is_video(path)
@@ -115,12 +117,12 @@ def _encode_pixels(
                 frames = _clip_frames(path, clip_frames) if clip else [Image.open(path)]
             except ShortClipError as exc:
                 skipped.append(path.name)
-                logger.warning("MiniMax H3: %s", exc)
+                say(f"skipped {exc}")
                 continue
             # A long precache is otherwise silent for many minutes, so report often enough that it
             # reads as progress rather than a hang.
-            if index == 1 or index % 10 == 0 or index == total:
-                logger.info("MiniMax H3: encoding item %d/%d (%s)", index, total, path.name)
+            if index == 1 or index % 5 == 0 or index == total:
+                say(f"caching latents {index}/{total}")
             for mirrored in (False, True) if flip else (False,):
                 stack = [_as_array(ds._square(f, resolution, mirrored)) for f in frames]
                 # ImageNet statistics, not the [-1, 1] the image archs use, and always 5D:
@@ -139,13 +141,8 @@ def _encode_pixels(
         del vae
         _reclaim()
     if skipped:
-        logger.warning(
-            "MiniMax H3: skipped %d of %d items as too short to encode: %s",
-            len(skipped), total, ", ".join(skipped),
-        )
-    logger.info(
-        "MiniMax H3: cached %d latents from %d items, video VAE released", len(out), len(kept)
-    )
+        say(f"skipped {len(skipped)} of {total} items as too short: {', '.join(skipped)}")
+    say(f"cached {len(out)} latents from {len(kept)} items, video VAE released")
     return out, kept
 
 
@@ -180,26 +177,27 @@ def _clip_frames(path: Path, clip_frames: int) -> list[Any]:
 
 
 def _encode_captions(
-    root: Path, captions: list[str], device: str, dtype: Any
+    root: Path, captions: list[str], device: str, dtype: Any,
+    say: Callable[[str], None] = lambda _text: None,
 ) -> list[tuple[Any, Any]]:
     """Pass two: the 4-bit conditioner, then dropped."""
     import torch
 
     from ..models.minimaxh3.vendor.encoders import MiniMaxH3TextEncoderStep
 
+    say("loading the 4-bit text conditioner (20.5GB)")
     pipeline = _load_conditioner(root, device, dtype)
     # Encode wherever it landed. It spills to host RAM on a card too small for 20.5GB, and the
     # vendored step builds its input ids on the device it is handed, so CUDA ids against a
     # CPU-resident encoder fail in `index_select`.
     where = next(pipeline.text_encoder.parameters()).device
     if where.type != torch.device(device).type:
-        logger.info("MiniMax H3: conditioner is on %s, encoding captions there", where)
+        say(f"conditioner spilled to {where}, encoding captions there (slower)")
     out: list[tuple[Any, Any]] = []
-    logger.info("MiniMax H3: encoding %d captions through the 4-bit conditioner", len(captions))
     try:
         for index, caption in enumerate(captions, start=1):
-            if index == 1 or index % 25 == 0 or index == len(captions):
-                logger.info("MiniMax H3: caption %d/%d", index, len(captions))
+            if index == 1 or index % 10 == 0 or index == len(captions):
+                say(f"encoding captions {index}/{len(captions)}")
             caption = caption or _EMPTY_CAPTION
             with torch.no_grad():
                 # The staticmethod rather than the block, so nothing needs a PipelineState. `dtype`
@@ -211,7 +209,7 @@ def _encode_captions(
             out.append((embeds[0].cpu(), tags.cpu()))
     finally:
         _drop_conditioner(pipeline)
-    logger.info("MiniMax H3: cached %d captions, conditioner released", len(out))
+    say(f"cached {len(out)} captions, conditioner released")
     return out
 
 
