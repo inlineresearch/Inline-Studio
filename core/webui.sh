@@ -29,6 +29,7 @@ FORCE_REBUILD=0
 SMART_MEMORY=0
 USE_ACTIVE_ENV=0
 RECREATE=0
+TORCH_INDEX_CHOICE="${INLINE_TORCH_INDEX:-}"
 
 usage() {
   cat <<'EOF'
@@ -62,6 +63,10 @@ Setup
                          reused, and an unrelated environment activated in your shell is never
                          touched.
   --extra NAME           add an install extra (repeatable): runtime, parallel, server, training
+  --torch-index WHICH    with --install, override the PyTorch wheel index picked from your GPU's
+                         compute capability. A short name (cu130, cu128, cu126), a full index URL,
+                         or "cpu" to force the CPU-only build. Also settable as INLINE_TORCH_INDEX.
+                         Use cu128 on a Blackwell card whose driver predates CUDA 13.
   --recreate             with --install, rebuild ./.venv from scratch (discards anything installed
                          into it by hand, e.g. a ROCm build of PyTorch)
   --use-active-env       install into / run from the environment activated in this shell instead of
@@ -110,6 +115,7 @@ while [[ $# -gt 0 ]]; do
     --data-dir) export INLINE_DATA_DIR="${2:?--data-dir needs a path}"; shift 2 ;;
     --install) RUN_INSTALL=1; shift ;;
     --extra) EXTRAS="$EXTRAS,${2:?--extra needs a name}"; shift 2 ;;
+    --torch-index) TORCH_INDEX_CHOICE="${2:?--torch-index needs a name, URL or 'cpu'}"; shift 2 ;;
     --recreate) RECREATE=1; shift ;;
     --use-active-env) USE_ACTIVE_ENV=1; shift ;;
     --dev) DEV_MODE=1; shift ;;
@@ -154,6 +160,45 @@ normalize_extras() {
   EXTRAS="$out"
 }
 
+# Only Windows needs us to name a CUDA index: PyPI's torch is CPU-only there, while the Linux wheels
+# already bundle CUDA. This script also runs under Git Bash / MSYS on Windows.
+is_windows() {
+  case "$(uname -s 2>/dev/null || true)" in
+    MINGW*|MSYS*|CYGWIN*|Windows_NT) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The highest compute-capability major across the installed GPUs (12 for an RTX 50-series card).
+# Fails when the driver is too old to answer the query, which the caller treats as "unknown".
+gpu_compute_cap_major() {
+  local caps cap major best=""
+  caps="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null)" || return 1
+  while read -r cap; do
+    major="${cap%%.*}"
+    [[ "$major" =~ ^[0-9]+$ ]] || continue
+    if [[ -z "$best" || "$major" -gt "$best" ]]; then best="$major"; fi
+  done <<<"$caps"
+  [[ -n "$best" ]] || return 1
+  printf '%s\n' "$best"
+}
+
+# No single index covers every card: Blackwell (sm_100/sm_120) exists only from cu128 on, while cu126
+# is the last index still built for Maxwell..Volta (sm_50..sm_70). Unknown cards get cu126, the one
+# that covers the widest range of what people actually own.
+pick_torch_index() {
+  local major
+  major="$(gpu_compute_cap_major)" || { printf 'cu126\n'; return 0; }
+  if [[ "$major" -ge 10 ]]; then printf 'cu130\n'; else printf 'cu126\n'; fi
+}
+
+torch_index_url() {
+  case "$1" in
+    http://*|https://*) printf '%s\n' "$1" ;;
+    *) printf 'https://download.pytorch.org/whl/%s\n' "$1" ;;
+  esac
+}
+
 if [[ "$RUN_INSTALL" -eq 1 ]]; then
   command -v uv >/dev/null 2>&1 || { echo "uv not found: https://docs.astral.sh/uv/" >&2; exit 1; }
   normalize_extras
@@ -184,22 +229,51 @@ if [[ "$RUN_INSTALL" -eq 1 ]]; then
   fi
   # Pick the right torch wheel. PyPI's default torch is CPU-only on Windows (Linux wheels bundle
   # CUDA), so installing blind there yields a working install that generates on the CPU ~100x
-  # slower, with no error. When an NVIDIA GPU is present, resolve torch from the CUDA index.
+  # slower, with no error. Which CUDA index is right depends on the card - see pick_torch_index.
   TORCH_INDEX=()
-  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
-    # unsafe-best-match: torchao is on the CUDA index too but only up to 0.9.0; without this uv's
-    # first-index rule stops there and fails our torchao>=0.14 pin instead of finding it on PyPI.
-    TORCH_INDEX=(--extra-index-url https://download.pytorch.org/whl/cu124 \
-      --index-strategy unsafe-best-match)
+  TORCH_CHOICE="$TORCH_INDEX_CHOICE"
+  GPU_PRESENT=0
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then GPU_PRESENT=1; fi
+  if [[ -z "$TORCH_CHOICE" ]]; then
+    if [[ "$GPU_PRESENT" -eq 1 ]]; then
+      if is_windows; then TORCH_CHOICE="$(pick_torch_index)"; fi
+    else
+      TORCH_CHOICE="cpu"
+    fi
+  fi
+  if [[ "$TORCH_CHOICE" == "cpu" && "$GPU_PRESENT" -eq 0 ]]; then
+    echo "No NVIDIA GPU detected - installing the default (CPU) build of PyTorch."
+  elif [[ "$TORCH_CHOICE" == "cpu" ]]; then
+    echo "Installing the default (CPU) build of PyTorch (--torch-index cpu)."
+  elif [[ -z "$TORCH_CHOICE" ]]; then
     echo "NVIDIA GPU detected - installing the CUDA build of PyTorch."
   else
-    echo "No NVIDIA GPU detected - installing the default (CPU) build of PyTorch."
+    # unsafe-best-match: torchao is on the CUDA index too but older there than our torchao>=0.14 pin
+    # on some indexes; without this uv's first-index rule stops at that older copy instead of
+    # finding a new enough one on PyPI. It also makes the +cuXXX local version outrank PyPI's plain
+    # one, which is what pulls the CUDA build in on Windows.
+    # no-sources-package: the pyproject pin names one fixed index, and the whole point here is that
+    # the card decides.
+    TORCH_INDEX=(--extra-index-url "$(torch_index_url "$TORCH_CHOICE")" \
+      --index-strategy unsafe-best-match --no-sources-package torch)
+    echo "NVIDIA GPU detected - installing the CUDA build of PyTorch ($TORCH_CHOICE)."
   fi
   uv pip install --python "$TARGET_PY" "${TORCH_INDEX[@]}" -e ".[$EXTRAS]"
   # Pull the prebuilt web UI so there's no Node build (best-effort - it may not be published yet).
   uv pip install --python "$TARGET_PY" inline-studio-frontend >/dev/null 2>&1 \
     && echo "Installed the prebuilt web UI (inline-studio-frontend)." \
     || echo "Note: inline-studio-frontend not installed; the UI will build from source or run API-only."
+  # A CPU-only wheel on a GPU box is silent at runtime and ~100x slower, so say it here rather than
+  # let the resolve fail quietly - it can still happen if PyPI outranks the CUDA index on version.
+  if [[ "$TORCH_CHOICE" != "cpu" ]] && ! "$TARGET_PY" -c 'import importlib.util, sys
+if importlib.util.find_spec("torch") is None:
+    sys.exit(0)
+import torch
+sys.exit(0 if torch.version.cuda else 1)' 2>/dev/null; then
+    echo "WARNING: the torch that got installed is a CPU-ONLY build. Generation would run on the"
+    echo "         CPU, roughly 100x slower. Re-run with an explicit index, e.g."
+    echo "         ./webui.sh --install --torch-index cu126"
+  fi
   echo "Installed extras: $EXTRAS. Start with: ./webui.sh"
   exit 0
 fi

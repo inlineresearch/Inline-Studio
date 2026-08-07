@@ -8,12 +8,18 @@
 # inline-studio-frontend is the prebuilt SPA wheel; Core serves it automatically (no Node needed).
 #
 # NVIDIA GPU users, read this: PyPI's default `torch` is a CPU-ONLY build on Windows (the Linux
-# wheels bundle CUDA). Installing without the line below on Windows gives you a working install that
-# generates on the CPU - roughly 100x slower, with no error. Uncomment it, or run
-# `webui.sh --install`, which detects the GPU and does it for you. Core also warns at startup if it
-# finds an NVIDIA GPU behind a CPU-only torch.
+# wheels bundle CUDA). Installing without one of the lines below on Windows gives you a working
+# install that generates on the CPU - roughly 100x slower, with no error. Uncomment the one that
+# matches your card, or run `webui.sh --install`, which reads the compute capability and does it for
+# you. Core also warns at startup if it finds an NVIDIA GPU behind a CPU-only torch, or behind a
+# build with no kernels for the card.
 #
-# --extra-index-url https://download.pytorch.org/whl/cu124
+# RTX 50-series and newer (Blackwell, sm_120) - needs a CUDA 13 driver:
+# --extra-index-url https://download.pytorch.org/whl/cu130
+# ...on a Blackwell card with an older driver, use cu128 instead.
+#
+# Everything older (GTX 10-series through RTX 40-series, sm_50..sm_90):
+# --extra-index-url https://download.pytorch.org/whl/cu126
 #
 # `[all]` is the whole app in one line: engine + local model runtime + LoRA trainer + server. For a
 # hosted-only (fal) setup with no local GPU generation, use `inline-core[server]` instead - that

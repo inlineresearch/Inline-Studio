@@ -78,7 +78,8 @@ def test_bf16_gate_uses_the_capability_rule_on_nvidia(monkeypatch) -> None:
     from inline_core.device.types import Device, DeviceKind
 
     dev = Device(DeviceKind.CUDA, 0)
-    for capability, expected in (((8, 6), True), ((9, 0), True), ((7, 5), False), ((7, 0), False)):
+    caps = (((12, 0), True), ((8, 6), True), ((9, 0), True), ((7, 5), False), ((7, 0), False))
+    for capability, expected in caps:
         monkeypatch.setitem(
             __import__("sys").modules,
             "torch",
@@ -108,6 +109,73 @@ def test_bf16_gate_asks_torch_directly_on_rocm(monkeypatch) -> None:
         _fake_gpu_torch(hip="6.2.0", capability=(9, 4), bf16=True),
     )
     assert detect.cuda_supports_bf16(dev) is True
+
+
+# What a cu124 wheel reports - the build every Windows install used to be pinned to.
+_CU124_ARCHES = ["sm_50", "sm_60", "sm_61", "sm_70", "sm_75", "sm_80", "sm_86", "sm_90"]
+
+
+def _fake_arch_torch(
+    *, capability: tuple[int, int], arches: list[str], name: str = "NVIDIA GeForce RTX 5070 Ti"
+) -> types.SimpleNamespace:
+    return types.SimpleNamespace(
+        version=types.SimpleNamespace(cuda="12.4", hip=None),
+        cuda=types.SimpleNamespace(
+            device_count=lambda: 1,
+            get_arch_list=lambda: arches,
+            get_device_capability=lambda i=0: capability,
+            get_device_name=lambda i=0: name,
+        ),
+    )
+
+
+def test_warns_when_the_wheel_has_no_kernels_for_the_card(monkeypatch) -> None:
+    """The RTX 50-series failure: torch is a CUDA build and the device is visible, so every check in
+    cpu_only_torch_warning passes and the user is left with PyTorch's own cryptic UserWarning."""
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "torch",
+        _fake_arch_torch(capability=(12, 0), arches=_CU124_ARCHES),
+    )
+    warning = detect.unsupported_arch_warning()
+    assert warning is not None
+    assert "sm_120" in warning
+    assert "RTX 5070 Ti" in warning
+    assert "--torch-index" in warning  # tells them how to fix it
+
+
+def test_silent_when_the_wheel_covers_the_card(monkeypatch) -> None:
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "torch",
+        _fake_arch_torch(capability=(8, 6), arches=_CU124_ARCHES),
+    )
+    assert detect.unsupported_arch_warning() is None
+
+
+def test_arch_warning_accepts_a_tuned_variant(monkeypatch) -> None:
+    """Wheels list per-architecture variants like sm_90a; that is still a match for sm_90."""
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "torch",
+        _fake_arch_torch(capability=(9, 0), arches=["sm_80", "sm_90a"]),
+    )
+    assert detect.unsupported_arch_warning() is None
+
+
+def test_arch_warning_silent_when_torch_cannot_answer(monkeypatch) -> None:
+    """An older torch has no get_arch_list, and a CPU-only build reports no sm_ arches at all -
+    cpu_only_torch_warning owns that second case. Neither may produce a false alarm here."""
+    monkeypatch.setitem(
+        __import__("sys").modules, "torch", _fake_torch(cuda_available=False, cuda_version="12.4")
+    )
+    assert detect.unsupported_arch_warning() is None
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "torch",
+        _fake_arch_torch(capability=(12, 0), arches=[]),
+    )
+    assert detect.unsupported_arch_warning() is None
 
 
 def test_silent_without_torch(monkeypatch) -> None:

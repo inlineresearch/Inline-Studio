@@ -31,9 +31,10 @@ class Sandbox:
     active_env: Path
     uv_log: Path
     python_log: Path
+    stubs: Path
     path: str
 
-    def run(self, *args: str) -> subprocess.CompletedProcess[str]:
+    def run(self, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(  # noqa: S603 - fixed argv from our own code, no shell
             ["bash", str(self.script), *args],
             cwd=self.script.parent,
@@ -46,6 +47,7 @@ class Sandbox:
                 "HOME": str(self.script.parent.parent),
                 "VIRTUAL_ENV": str(self.active_env),
                 "PYTHON_LOG": str(self.python_log),
+                **env,
             },
         )
 
@@ -57,6 +59,25 @@ class Sandbox:
     def make_venv_python(self) -> None:
         self.venv_python.parent.mkdir(parents=True, exist_ok=True)
         _stub(self.venv_python, 'echo "$*" >> "$PYTHON_LOG"\nexit 0\n')
+
+    def pretend_nvidia_gpu(self, *compute_caps: str) -> None:
+        """A driver that answers `-L` and the compute_cap query. Pass no caps for an older driver
+        that does not know the query, which is the case the fallback index exists for."""
+        answer = "".join(f"printf '{cap}\\n'\n" for cap in compute_caps) or "exit 1\n"
+        _stub(
+            self.stubs / "nvidia-smi",
+            f'case "$*" in\n  *compute_cap*) {answer.strip()} ;;\nesac\nexit 0\n',
+        )
+
+    def pretend_windows(self) -> None:
+        """Only Windows needs an explicit CUDA index; this script runs there under Git Bash."""
+        _stub(self.stubs / "uname", "printf 'MINGW64_NT-10.0-22631\\n'\nexit 0\n")
+
+    def project_install(self) -> str:
+        """The one uv call that resolves pyproject's dependencies."""
+        calls = [call for call in self.uv_calls() if "-e ." in call]
+        assert len(calls) == 1, self.uv_calls()
+        return calls[0]
 
 
 def _stub(path: Path, body: str) -> None:
@@ -86,6 +107,7 @@ def sandbox(tmp_path: Path) -> Sandbox:
         active_env=active,
         uv_log=uv_log,
         python_log=tmp_path / "python.log",
+        stubs=stubs,
         path=f"{stubs}:/usr/bin:/bin",
     )
 
@@ -139,6 +161,83 @@ def test_unknown_extra_fails_with_the_valid_list(sandbox: Sandbox) -> None:
     assert "unknown extra: bogus" in done.stderr
     assert "runtime" in done.stderr
     assert not sandbox.uv_calls()
+
+
+_WHL = "--extra-index-url https://download.pytorch.org/whl"
+
+
+def test_blackwell_gets_an_index_that_has_sm_120_wheels(sandbox: Sandbox) -> None:
+    """The RTX 50-series bug: cu124 is frozen at torch 2.6.0 and never gained sm_120, so a Blackwell
+    card has to be sent somewhere else entirely."""
+    sandbox.make_venv_python()
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_gpu("12.0")
+
+    done = sandbox.run("--install", "--extra", "runtime")
+
+    assert done.returncode == 0, done.stderr
+    install = sandbox.project_install()
+    assert f"{_WHL}/cu130" in install
+    # Without this the pyproject pin wins and the detected index is silently ignored.
+    assert "--no-sources-package torch" in install
+
+
+def test_older_cards_get_the_index_that_still_covers_them(sandbox: Sandbox) -> None:
+    """cu126 is the last index built for Maxwell..Volta, so it is both the Ampere answer and the
+    fallback when the driver is too old to report a compute capability at all."""
+    sandbox.make_venv_python()
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_gpu("8.6")
+
+    assert f"{_WHL}/cu126" in _install(sandbox)
+
+    sandbox.pretend_nvidia_gpu()  # driver that does not know the query
+    assert f"{_WHL}/cu126" in _install(sandbox)
+
+
+def test_the_highest_capability_across_gpus_decides(sandbox: Sandbox) -> None:
+    sandbox.make_venv_python()
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_gpu("8.6", "12.0")
+
+    assert f"{_WHL}/cu130" in _install(sandbox)
+
+
+def test_torch_index_override_beats_detection(sandbox: Sandbox) -> None:
+    """The reporter hand-edited webui.bat because there was no way to say this; there is now."""
+    sandbox.make_venv_python()
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_gpu("12.0")
+
+    assert f"{_WHL}/cu128" in _install(sandbox, "--torch-index", "cu128")
+    assert f"{_WHL}/cu128" in _install(sandbox, INLINE_TORCH_INDEX="cu128")
+    assert "https://mirror.example/whl/cu128" in _install(
+        sandbox, "--torch-index", "https://mirror.example/whl/cu128"
+    )
+
+    forced_cpu = _install(sandbox, "--torch-index", "cpu")
+    assert "--extra-index-url" not in forced_cpu
+
+
+def test_linux_keeps_the_default_pypi_wheels(sandbox: Sandbox) -> None:
+    """Linux torch on PyPI already bundles CUDA, so naming an index there would only pin us to an
+    older build than the default one."""
+    sandbox.make_venv_python()
+    sandbox.pretend_nvidia_gpu("12.0")
+
+    done = sandbox.run("--install", "--extra", "runtime")
+
+    assert done.returncode == 0, done.stderr
+    assert "--extra-index-url" not in sandbox.project_install()
+    # Not because detection failed - the GPU was found, it just does not need an index here.
+    assert "NVIDIA GPU detected" in done.stdout
+
+
+def _install(sandbox: Sandbox, *args: str, **env: str) -> str:
+    sandbox.uv_log.unlink(missing_ok=True)
+    done = sandbox.run("--install", "--extra", "runtime", *args, **env)
+    assert done.returncode == 0, done.stderr
+    return sandbox.project_install()
 
 
 def test_launch_prefers_our_venv_over_the_active_environment(sandbox: Sandbox) -> None:

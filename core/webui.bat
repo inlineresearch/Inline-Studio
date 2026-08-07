@@ -29,6 +29,8 @@ set "FORCE_REBUILD=0"
 set "SMART_MEMORY=0"
 set "USE_ACTIVE_ENV=0"
 set "RECREATE=0"
+rem Empty means "decide from the GPU's compute capability at install time" (see :install_torch_args).
+set "TORCH_CHOICE=%INLINE_TORCH_INDEX%"
 
 :parse
 if "%~1"=="" goto after_parse
@@ -46,6 +48,7 @@ if /i "%~1"=="--models-dir"   ( set "INLINE_MODELS_DIR=%~2" & shift & shift & go
 if /i "%~1"=="--data-dir"     ( set "INLINE_DATA_DIR=%~2" & shift & shift & goto parse )
 if /i "%~1"=="--install"      ( set "RUN_INSTALL=1" & shift & goto parse )
 if /i "%~1"=="--extra"        ( set "EXTRAS=!EXTRAS!,%~2" & shift & shift & goto parse )
+if /i "%~1"=="--torch-index"  ( set "TORCH_CHOICE=%~2" & shift & shift & goto parse )
 if /i "%~1"=="--recreate"     ( set "RECREATE=1" & shift & goto parse )
 if /i "%~1"=="--use-active-env" ( set "USE_ACTIVE_ENV=1" & shift & goto parse )
 if /i "%~1"=="--dev"          ( set "DEV_MODE=1" & shift & goto parse )
@@ -125,21 +128,61 @@ echo Installing into the active environment: %ACTIVE_ENV%
 
 :install_torch_args
 rem PyPI's default torch is CPU-only on Windows, so installing blind generates on the CPU ~100x
-rem slower with no error. When an NVIDIA GPU is present, resolve torch from the CUDA index.
+rem slower with no error. Which CUDA index is right depends on the card: Blackwell (sm_120) has no
+rem wheels before cu128, while cu126 is the last index still built for Maxwell..Volta (sm_50..sm_70).
 set "TORCH_ARGS="
+if defined TORCH_CHOICE goto install_torch_index
 where nvidia-smi >nul 2>nul || goto install_cpu
 nvidia-smi -L >nul 2>nul || goto install_cpu
-rem unsafe-best-match: torchao is on the CUDA index too but only up to 0.9.0; without this uv's
-rem first-index rule stops there and fails our torchao>=0.14 pin instead of finding it on PyPI.
-set "TORCH_ARGS=--extra-index-url https://download.pytorch.org/whl/cu124 --index-strategy unsafe-best-match"
-echo NVIDIA GPU detected - installing the CUDA build of PyTorch.
+rem compute_cap reads "12.0" on an RTX 50-series card. A driver too old to know the query leaves
+rem CAP_MAJOR unset and lands on cu126, which covers the widest range of what people actually own.
+set "CAP_MAJOR="
+for /f "usebackq tokens=1 delims=." %%c in (`nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2^>nul`) do call :cap_max %%c
+set "TORCH_CHOICE=cu126"
+if defined CAP_MAJOR if !CAP_MAJOR! GEQ 10 set "TORCH_CHOICE=cu130"
+
+:install_torch_index
+if /i "!TORCH_CHOICE!"=="cpu" goto install_cpu_forced
+set "TORCH_URL=https://download.pytorch.org/whl/!TORCH_CHOICE!"
+if /i "!TORCH_CHOICE:~0,4!"=="http" set "TORCH_URL=!TORCH_CHOICE!"
+rem unsafe-best-match: torchao is on the CUDA index too, older there than our torchao>=0.14 pin on
+rem some indexes; without this uv's first-index rule stops at that older copy instead of finding a
+rem new enough one on PyPI. It also makes the +cuXXX local version outrank PyPI's plain one, which
+rem is what pulls the CUDA build in rather than the CPU-only wheel PyPI serves on Windows.
+rem no-sources-package: the pyproject pin names one fixed index, and the card decides here.
+set "TORCH_ARGS=--extra-index-url !TORCH_URL! --index-strategy unsafe-best-match --no-sources-package torch"
+echo NVIDIA GPU detected - installing the CUDA build of PyTorch (!TORCH_CHOICE!).
 goto install_pkgs
+
+:install_cpu_forced
+echo Installing the default (CPU) build of PyTorch (--torch-index cpu).
+goto install_pkgs
+
 :install_cpu
+set "TORCH_CHOICE=cpu"
 echo No NVIDIA GPU detected - installing the default (CPU) build of PyTorch.
+
 :install_pkgs
 uv pip install --python "!TARGET_PY!" !TORCH_ARGS! -e ".[!EXTRAS!]" || goto fail
 uv pip install --python "!TARGET_PY!" inline-studio-frontend >nul 2>nul && echo Installed the prebuilt web UI (inline-studio-frontend). || echo Note: inline-studio-frontend not installed; the UI will build from source or run API-only.
+rem A CPU-only wheel on a GPU box is silent at runtime and ~100x slower, so say it here rather than
+rem let it through: it can still happen if PyPI ever outranks the CUDA index on version.
+if /i "!TORCH_CHOICE!"=="cpu" goto install_done
+"!TARGET_PY!" -c "import importlib, importlib.util, sys; spec = importlib.util.find_spec('torch'); sys.exit(0 if spec is None or importlib.import_module('torch').version.cuda else 1)" 2>nul && goto install_done
+echo WARNING: the torch that got installed is a CPU-ONLY build. Generation would run on the
+echo          CPU, roughly 100x slower. Re-run with an explicit index, e.g.
+echo          .\webui.bat --install --torch-index cu126
+
+:install_done
 echo Installed extras: !EXTRAS!. Start with: .\webui.bat
+exit /b 0
+
+rem Keeps the highest compute-capability major seen. Anything not a plain number is ignored: an
+rem older driver answers an unknown query with an error string instead of failing outright.
+:cap_max
+echo(%~1| findstr /r /c:"^[0-9][0-9]*$" >nul || exit /b 0
+if not defined CAP_MAJOR set "CAP_MAJOR=%~1"
+if %~1 GTR %CAP_MAJOR% set "CAP_MAJOR=%~1"
 exit /b 0
 
 rem --- Pick the Python interpreter (and matching pip), in priority order -------------------------
@@ -302,6 +345,11 @@ echo   --install              create .venv (via uv) and install, then exit. An e
 echo                          reused, and an unrelated environment activated in your shell is never
 echo                          touched.
 echo   --extra NAME           add an install extra (repeatable): runtime, parallel, server, training
+echo   --torch-index WHICH    with --install, override the PyTorch wheel index picked from your GPU's
+echo                          compute capability. A short name (cu130, cu128, cu126), a full index
+echo                          URL, or "cpu" to force the CPU-only build. Also settable as
+echo                          INLINE_TORCH_INDEX. Use cu128 on a Blackwell card whose driver
+echo                          predates CUDA 13.
 echo   --recreate             with --install, rebuild .venv from scratch (discards anything installed
 echo                          into it by hand)
 echo   --use-active-env       install into / run from the environment activated in this shell instead

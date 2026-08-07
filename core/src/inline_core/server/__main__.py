@@ -19,7 +19,7 @@ _os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 import uvicorn
 
 from ..config import data_dir, server_host, server_port
-from ..device.detect import cpu_only_torch_warning
+from ..device.detect import cpu_only_torch_warning, unsupported_arch_warning
 from ..device.memory import MemoryPolicy
 from ..extensions.loader import LoadedExtension
 from ..graph.cache import InMemoryCache
@@ -55,7 +55,7 @@ def main() -> None:
         print(f"Extensions: {_extension_summary(extensions)}")
     # A CPU-only torch wheel on a CUDA machine is a silent ~100x slowdown, so say it loudly here
     # rather than letting the user conclude the engine is just slow.
-    torch_warning = cpu_only_torch_warning()
+    torch_warning = cpu_only_torch_warning() or unsupported_arch_warning()
     if torch_warning:
         print(f"WARNING: {torch_warning}")
     frontend_root = resolve_frontend_root()

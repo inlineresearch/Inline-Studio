@@ -37,7 +37,7 @@ It runs as a **single process on one port**: the Inline Core engine (Python) ser
 
 ## Get Started
 
-The built web UI ships as a Python package, so all you need is [Python 3.11+](https://python.org), no Node. **`--install --extra all` is the single command that installs everything** - the engine, the local model runtime, the LoRA trainer, and the UI. On an NVIDIA machine it detects the GPU and pulls the CUDA build of PyTorch for you.
+The built web UI ships as a Python package, so all you need is [Python 3.11+](https://python.org), no Node. **`--install --extra all` is the single command that installs everything** - the engine, the local model runtime, the LoRA trainer, and the UI. On an NVIDIA machine it reads the GPU's compute capability and pulls the CUDA build of PyTorch that has kernels for it, RTX 50-series included.
 
 **macOS / Linux:**
 
@@ -70,13 +70,29 @@ Prefer pip over the launcher? `pip install -r requirements.txt` (from the repo r
 
 Honest status - what's actually been run, versus what has a code path but no one has verified:
 
-| Hardware                | Status                                                                                              | Extra steps                                                                                                                                                                                                                                                                                                      |
-| ----------------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **NVIDIA, Linux**       | **Tested** - Z-Image Turbo 1024² on a T4 (16 GB); Krea 2 1024² and LoRA training on an L40S (48 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                                                                                                   |
-| **NVIDIA, Windows**     | Supported, needs one step                                                                           | Run `.\webui.bat --install` (the Windows launcher; it detects the GPU). PyPI's default `torch` is **CPU-only on Windows**, so `--install` pulls the CUDA build for you, or install torch from `https://download.pytorch.org/whl/cu124`. Core warns at startup if it finds an NVIDIA GPU behind a CPU-only torch. |
-| **Apple Silicon (MPS)** | Code path exists, **untested**                                                                      | None. int8 quantisation doesn't apply on MPS, so a model too big for unified memory won't fit.                                                                                                                                                                                                                   |
-| **AMD (ROCm), Linux**   | **Untested** - reports welcome                                                                      | Needs a ROCm build of PyTorch - see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                                                                                                   |
-| **CPU only**            | Works, very slow                                                                                    | `./webui.sh --cpu` (Windows: `.\webui.bat --cpu`)                                                                                                                                                                                                                                                                |
+| Hardware                | Status                                                                                              | Extra steps                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **NVIDIA, Linux**       | **Tested** - Z-Image Turbo 1024² on a T4 (16 GB); Krea 2 1024² and LoRA training on an L40S (48 GB) | None. `webui.sh --install` picks the CUDA build automatically.                                                                                                                                                                                                                                                                                            |
+| **NVIDIA, Windows**     | Supported, needs one step                                                                           | Run `.\webui.bat --install` (the Windows launcher). PyPI's default `torch` is **CPU-only on Windows**, so `--install` reads your GPU's compute capability and pulls the matching CUDA build: `cu130` for RTX 50-series (Blackwell), `cu126` for everything older. Override it with `--torch-index` - see [RTX 50-series](#rtx-50-series-blackwell) below. |
+| **Apple Silicon (MPS)** | Code path exists, **untested**                                                                      | None. int8 quantisation doesn't apply on MPS, so a model too big for unified memory won't fit.                                                                                                                                                                                                                                                            |
+| **AMD (ROCm), Linux**   | **Untested** - reports welcome                                                                      | Needs a ROCm build of PyTorch - see [AMD (ROCm) setup](#amd-rocm-setup) below.                                                                                                                                                                                                                                                                            |
+| **CPU only**            | Works, very slow                                                                                    | `./webui.sh --cpu` (Windows: `.\webui.bat --cpu`)                                                                                                                                                                                                                                                                                                         |
+
+#### RTX 50-series (Blackwell)
+
+RTX 50-series cards (5060/5070/5080/5090 and the RTX PRO Blackwell line) are compute capability **sm_120**, and no PyTorch wheel built for CUDA 12.4 or 12.6 has kernels for them. `--install` handles this: it reads the compute capability off the driver and picks `cu130`, so a plain `.\webui.bat --install --extra all` is all you need.
+
+Two cases where you may want to say it yourself:
+
+```powershell
+rem Blackwell card, but a driver older than CUDA 13 (R580) - cu128 has sm_120 and a lower floor
+.\webui.bat --install --extra all --torch-index cu128
+
+rem Or set it once for the shell, same effect
+set INLINE_TORCH_INDEX=cu128
+```
+
+`--torch-index` takes a short name (`cu130`, `cu128`, `cu126`), a full index URL, or `cpu` to force the CPU-only build. `webui.sh` takes the same flag. If the installed build turns out to have no kernels for your card, Core says so by name at startup rather than leaving you with PyTorch's own `sm_120 is not compatible` warning.
 
 #### AMD (ROCm) setup
 
@@ -100,7 +116,7 @@ Then run `./webui.sh` as usual.
 
 Three gotchas:
 
-- **Don't run `uv sync` afterwards** - it re-resolves the environment against the lockfile and will pull the PyPI torch back over your ROCm build. Use `uv pip install --python .venv/bin/python` for follow-up installs.
+- **Don't run `uv sync` afterwards** - it re-resolves the environment against the lockfile and will pull the PyPI torch back over your ROCm build. Use `uv pip install --python .venv/bin/python` for follow-up installs. The same applies to a hand-picked CUDA index.
 - **Don't pass `--recreate`** - it rebuilds `.venv` from scratch and your ROCm torch goes with it. A plain `--install` re-run reuses the venv and is safe.
 - ROCm presents itself through `torch.cuda`, so the engine will treat it as a CUDA device and may largely work. But the dtype heuristics key off **NVIDIA** compute capability (`< 8.0` → fp16), which is meaningless on RDNA/CDNA, and the int8 (torchao) path is unverified on ROCm. If it works - or doesn't - [open an issue](https://github.com/inlineresearch/Inline-Studio/issues); that's the fastest way to get AMD properly supported.
 
@@ -164,7 +180,7 @@ The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` envir
 
 </details>
 
-`webui.sh` also has `--install` / `--extra NAME` to set up the venv, plus `--recreate` (rebuild `.venv` from scratch) and `--use-active-env` (install into / run from the environment activated in your shell instead of `.venv`). New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
+`webui.sh` also has `--install` / `--extra NAME` to set up the venv, plus `--torch-index WHICH` (`INLINE_TORCH_INDEX`) to override the PyTorch wheel index picked from your GPU's compute capability, `--recreate` (rebuild `.venv` from scratch) and `--use-active-env` (install into / run from the environment activated in your shell instead of `.venv`). New to Inline Studio? The [Getting Started guide](https://inlinestudio.art/getting-started) walks you through your first render.
 
 ## Features
 
