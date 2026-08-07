@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging as _logging
 import os as _os
 
 # Default PyTorch to expandable CUDA segments before torch initializes its allocator (it reads this
@@ -35,7 +36,20 @@ from .rpc import EventBroadcaster, RpcRouter
 from .run_store import SqliteRunStore
 
 
+def _quiet_dependency_noise() -> None:
+    """Two third-party import-time warnings that are noise here, not signal.
+
+    diffusers cannot build its torchao ``torch.load`` allowlist because torchao dropped
+    ``uint4_layout``; we never load torchao-serialized checkpoints, and quantization itself is
+    unaffected. torch's pytree then warns about torchao registering Enum subclasses - torchao's to
+    fix, not ours. Both loggers have exactly one warning site, so this hides nothing else.
+    """
+    for name in ("diffusers.quantizers.torchao.torchao_quantizer", "torch.utils._pytree"):
+        _logging.getLogger(name).setLevel(_logging.ERROR)
+
+
 def main() -> None:
+    _quiet_dependency_noise()  # before register_models, which is what pulls diffusers/torchao in
     policy = MemoryPolicy()
     registry = build_default_registry()
     data = data_dir()
@@ -47,10 +61,9 @@ def main() -> None:
     rpc = RpcRouter()
     events = EventBroadcaster()
     requirements = RequirementsRegistry()
-    registered, extensions = register_models(
+    _, extensions = register_models(
         registry, take_store, policy, requirements=requirements, rpc=rpc, events=events
     )
-    print(f"Registered models: {registered or 'none (source nodes only)'}")
     if extensions:
         print(f"Extensions: {_extension_summary(extensions)}")
     # A CPU-only torch wheel on a CUDA machine is a silent ~100x slowdown, so say it loudly here
@@ -59,8 +72,6 @@ def main() -> None:
     if torch_warning:
         print(f"WARNING: {torch_warning}")
     frontend_root = resolve_frontend_root()
-    fe = frontend_root or "none (API only); use --front-end-root or install the frontend package"
-    print(f"Frontend: {fe}")
     # The Studio app-backend: Core is the sole native backend (projects, frames, moodboard, assets,
     # generation, fal, timeline). Every InlineStudioApi channel is handled here.
     store = StudioStore(
@@ -68,7 +79,6 @@ def main() -> None:
         studio_config.workspace_dir(),
         default_core_url=studio_config.DEFAULT_CORE_URL,
     )
-    print(f"Studio data: {studio_config.data_dir()}  |  workspace: {studio_config.workspace_dir()}")
     app = create_app(
         registry=registry,
         cache=InMemoryCache(),
