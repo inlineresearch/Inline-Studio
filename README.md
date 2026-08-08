@@ -55,6 +55,9 @@ git clone https://github.com/inlineresearch/Inline-Studio.git
 cd Inline-Studio\core
 .\webui.bat --install --extra all
 .\webui.bat
+
+rem If the CUDA build turns out wrong for your card, name the index yourself:
+.\webui.bat --install --extra all --torch-index cu130
 ```
 
 That's it: `--install` sets up the environment and installs everything once, then `webui.sh` / `webui.bat` runs the app on one port. See **[Command-line options](#command-line-options)** for every flag (`--listen`, `--port`, `--lowvram`, `--multi-gpu`, …).
@@ -82,17 +85,20 @@ Honest status - what's actually been run, versus what has a code path but no one
 
 RTX 50-series cards (5060/5070/5080/5090 and the RTX PRO Blackwell line) are compute capability **sm_120**, and no PyTorch wheel built for CUDA 12.4 or 12.6 has kernels for them. `--install` handles this: it reads the compute capability off the driver and picks `cu130`, so a plain `.\webui.bat --install --extra all` is all you need.
 
-Two cases where you may want to say it yourself:
+**Old driver?** CUDA 13 needs driver R580 or newer. If yours predates it, `--install` picks `cu128` for you and says so: cu128 still has `sm_120` but is **frozen at torch 2.11** and will never update, so updating the driver and re-running `--install` is worth doing when you can.
+
+To name an index yourself:
 
 ```powershell
-rem Blackwell card, but a driver older than CUDA 13 (R580) - cu128 has sm_120 and a lower floor
-.\webui.bat --install --extra all --torch-index cu128
+.\webui.bat --install --extra all --torch-index cu130
 
 rem Or set it once for the shell, same effect
-set INLINE_TORCH_INDEX=cu128
+set INLINE_TORCH_INDEX=cu130
 ```
 
-`--torch-index` takes a short name (`cu130`, `cu128`, `cu126`), a full index URL, or `cpu` to force the CPU-only build. `webui.sh` takes the same flag. If the installed build turns out to have no kernels for your card, Core says so by name at startup rather than leaving you with PyTorch's own `sm_120 is not compatible` warning.
+`--torch-index` takes a short name (`cu130`, `cu128`, `cu126`), a full index URL, or `cpu` to force the CPU-only build. `webui.sh` takes the same flag. Naming it explicitly also **replaces** an already-installed torch, which a plain re-run will not do, so you rarely need `--recreate`.
+
+Not sure what you have? `.\webui.bat --print-torch-index` prints what the driver reported and which index would be used, and installs nothing. Paste that into a bug report. If the installed build turns out to have no kernels for your card, Core also says so by name at startup rather than leaving you with PyTorch's own `sm_120 is not compatible` warning.
 
 #### AMD (ROCm) setup
 
@@ -163,20 +169,22 @@ The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` envir
 <details>
 <summary><strong>Show all command-line flags</strong></summary>
 
-| `webui.sh` / `main.py` flag        | Env var                  | What it does                                                                                                                                                              |
-| ---------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--listen`                         | `INLINE_HOST=0.0.0.0`    | Bind all interfaces so other machines can reach it                                                                                                                        |
-| `--host ADDR`                      | `INLINE_HOST`            | Bind a specific address (default `127.0.0.1`)                                                                                                                             |
-| `--port N`                         | `INLINE_PORT`            | Port to serve on (default `8848`)                                                                                                                                         |
-| `--models-dir PATH`                | `INLINE_MODELS_DIR`      | Where model weights are scanned from (default `./models`)                                                                                                                 |
-| `--data-dir PATH`                  | `INLINE_DATA_DIR`        | Where runs + takes are written (default `./.inline`)                                                                                                                      |
-| `--lowvram`                        | `INLINE_PROFILE=lowvram` | Tight-VRAM profile (VAE tiling/slicing, attention slicing)                                                                                                                |
-| `--cpu`                            | `INLINE_PROFILE=cpu`     | Force CPU generation                                                                                                                                                      |
-| `--profile NAME`                   | `INLINE_PROFILE`         | Set the profile explicitly: `gpu-max` \| `lowvram` \| `cpu`                                                                                                               |
-| `--vram-budget GB`                 | `INLINE_VRAM_BUDGET_GB`  | Treat the GPU as having GB of usable VRAM                                                                                                                                 |
-| `--multi-gpu [SPEC]`               | `INLINE_PARALLEL`        | Split one image's denoise across GPUs (e.g. `pipefusion=2`); auto with 2+ GPUs                                                                                            |
-| `--front-end-root DIR` _(main.py)_ | `INLINE_FRONTEND_ROOT`   | Serve a local SPA build instead of the installed UI package (dev)                                                                                                         |
-| `--rebuild` _(webui.sh)_           | n/a                      | Force a fresh SPA build (`npm run build:spa`) from source and serve it on the one port; use after UI changes when not running `--dev`. Needs the repo checkout + Node/npm |
+| `webui.sh` / `main.py` flag        | Env var                  | What it does                                                                                                                                                                                                           |
+| ---------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--listen`                         | `INLINE_HOST=0.0.0.0`    | Bind all interfaces so other machines can reach it                                                                                                                                                                     |
+| `--host ADDR`                      | `INLINE_HOST`            | Bind a specific address (default `127.0.0.1`)                                                                                                                                                                          |
+| `--port N`                         | `INLINE_PORT`            | Port to serve on (default `8848`)                                                                                                                                                                                      |
+| `--models-dir PATH`                | `INLINE_MODELS_DIR`      | Where model weights are scanned from (default `./models`)                                                                                                                                                              |
+| `--data-dir PATH`                  | `INLINE_DATA_DIR`        | Where runs + takes are written (default `./.inline`)                                                                                                                                                                   |
+| `--lowvram`                        | `INLINE_PROFILE=lowvram` | Tight-VRAM profile (VAE tiling/slicing, attention slicing)                                                                                                                                                             |
+| `--cpu`                            | `INLINE_PROFILE=cpu`     | Force CPU generation                                                                                                                                                                                                   |
+| `--profile NAME`                   | `INLINE_PROFILE`         | Set the profile explicitly: `gpu-max` \| `lowvram` \| `cpu`                                                                                                                                                            |
+| `--vram-budget GB`                 | `INLINE_VRAM_BUDGET_GB`  | Treat the GPU as having GB of usable VRAM                                                                                                                                                                              |
+| `--multi-gpu [SPEC]`               | `INLINE_PARALLEL`        | Split one image's denoise across GPUs (e.g. `pipefusion=2`); auto with 2+ GPUs                                                                                                                                         |
+| `--front-end-root DIR` _(main.py)_ | `INLINE_FRONTEND_ROOT`   | Serve a local SPA build instead of the installed UI package (dev)                                                                                                                                                      |
+| `--rebuild` _(webui.sh)_           | n/a                      | Force a fresh SPA build (`npm run build:spa`) from source and serve it on the one port; use after UI changes when not running `--dev`. Needs the repo checkout + Node/npm                                              |
+| `--torch-index WHICH`              | `INLINE_TORCH_INDEX`     | With `--install`, override the PyTorch wheel index picked from your GPU's compute capability. A short name (`cu130`, `cu128`, `cu126`), a full index URL, or `cpu`. Naming it also replaces an already-installed torch |
+| `--print-torch-index`              | n/a                      | Print what the GPU probe read and which index would be used, then exit without installing. The one line to paste into a bug report                                                                                     |
 
 </details>
 

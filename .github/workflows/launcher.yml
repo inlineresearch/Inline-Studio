@@ -1,0 +1,102 @@
+# The launchers pick which PyTorch wheel index a GPU needs, and webui.bat cannot be exercised from
+# a Linux dev box, so two field reports shipped before anyone noticed it chose wrong. cmd runs
+# natively here and the GPU is stubbable, so the decision is assertable without hardware.
+name: launcher
+
+on:
+  push:
+    paths:
+      - "core/webui.bat"
+      - "core/webui.sh"
+      - "core/tests/test_webui_install.py"
+      - "core/src/inline_core/device/**"
+      - ".github/workflows/launcher.yml"
+  pull_request:
+    paths:
+      - "core/webui.bat"
+      - "core/webui.sh"
+      - "core/tests/test_webui_install.py"
+      - "core/src/inline_core/device/**"
+      - ".github/workflows/launcher.yml"
+
+jobs:
+  windows-torch-index:
+    name: "webui.bat picks ${{ matrix.expect }} (${{ matrix.name }})"
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: blackwell on a current driver
+            probe: "12.0, 610.88"
+            expect: cu130
+            reason: autodetect
+          # cu128 still serves and was the first index with sm_120, so this machine has exactly one
+          # workable choice. A hard error here would be worse than what v1.2.64 did.
+          - name: blackwell on a pre-R580 driver
+            probe: "12.0, 575.57"
+            expect: cu128
+            reason: driver-floor-cu128
+          - name: ada
+            probe: "8.9, 580.82"
+            expect: cu126
+            reason: autodetect
+          - name: hopper
+            probe: "9.0, 580.82"
+            expect: cu126
+            reason: autodetect
+          # An old driver answers an unknown query with a word. A string comparison would rank it
+          # above 10 and hand an unknown card cu130, so this asserts the set /a coercion holds.
+          - name: a driver that cannot answer the query
+            probe: "Unknown Error"
+            expect: cu126
+            reason: autodetect
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Put a fake nvidia-smi first on PATH
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'stub'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          # Answers -L with success (so the GPU reads as present) and the query with the matrix line.
+          @"
+          @echo off
+          echo %* | findstr /c:"compute_cap" >nul && echo ${{ matrix.probe }}
+          exit /b 0
+          "@ | Set-Content -Path (Join-Path $dir 'nvidia-smi.bat') -Encoding ascii
+          Add-Content -Path $env:GITHUB_PATH -Value $dir
+
+      - name: Report the decision
+        id: decide
+        shell: cmd
+        working-directory: core
+        run: |
+          call .\webui.bat --print-torch-index > decision.txt 2>&1
+          type decision.txt
+
+      - name: Assert the index and the reason
+        shell: cmd
+        working-directory: core
+        run: |
+          findstr /c:"torch-index: ${{ matrix.expect }}" decision.txt >nul || (echo EXPECTED torch-index: ${{ matrix.expect }} & exit /b 1)
+          findstr /c:"reason: ${{ matrix.reason }}" decision.txt >nul || (echo EXPECTED reason: ${{ matrix.reason }} & exit /b 1)
+
+      - name: Assert it installed nothing
+        shell: cmd
+        working-directory: core
+        run: |
+          if exist .venv (echo --print-torch-index must not create a venv & exit /b 1)
+
+  posix-launcher-tests:
+    name: webui.sh launcher tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install the engine and test tooling
+        working-directory: core
+        run: uv venv && uv pip install --python .venv/bin/python -e ".[server,dev]"
+      - name: Launcher and device tests
+        working-directory: core
+        run: .venv/bin/python -m pytest tests/test_webui_install.py tests/test_device_detect.py -q

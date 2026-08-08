@@ -30,6 +30,7 @@ def build(
     flip: bool = False,
     dropout: float = 0.0,
     clip_frames: int = 1,
+    clip_window: str = "start",
     on_status: Callable[[str], None] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, float]:
     """Return ``(items, unconditional, shift)``, all as CPU tensors, with the encoders freed.
@@ -43,7 +44,7 @@ def build(
 
         items, unconditional = h3.precache(
             dataset_dir, models_dir, device, dtype, resolution, flip, dropout > 0, clip_frames,
-            on_status=on_status,
+            clip_window=clip_window, on_status=on_status,
         )
         return items, unconditional, _H3_SHIFT
 

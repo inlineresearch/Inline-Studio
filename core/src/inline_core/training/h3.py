@@ -44,6 +44,7 @@ def precache(
     flip: bool,
     want_unconditional: bool,
     clip_frames: int = 1,
+    clip_window: str = "start",
     on_status: Callable[[str], None] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Every image as a latent and every caption as conditioning, as CPU tensors."""
@@ -57,7 +58,9 @@ def precache(
     root = Path(models_dir)
     # Only the clips that survived encoding carry captions, or every caption after the first skip
     # would be paired with the wrong latent.
-    latents, kept = _encode_pixels(root, pairs, device, resolution, flip, clip_frames, say)
+    latents, kept = _encode_pixels(
+        root, pairs, device, resolution, flip, clip_frames, say, clip_window
+    )
     if not kept:
         raise RuntimeError(
             f"None of the {len(pairs)} dataset items could be encoded. For clips, each must be at "
@@ -89,6 +92,7 @@ def precache(
 def _encode_pixels(
     root: Path, pairs: list[tuple[Path, str]], device: str, resolution: int, flip: bool,
     clip_frames: int = 1, say: Callable[[str], None] = lambda _text: None,
+    clip_window: str = "start",
 ) -> tuple[list[Any], list[tuple[Path, str]]]:
     """Pass one: the video VAE, then dropped. Returns the latents and the pairs they came from."""
     import numpy
@@ -114,7 +118,9 @@ def _encode_pixels(
         for index, (path, _caption) in enumerate(pairs, start=1):
             clip = ds.is_video(path)
             try:
-                frames = _clip_frames(path, clip_frames) if clip else [Image.open(path)]
+                frames = (
+                    _clip_frames(path, clip_frames, clip_window) if clip else [Image.open(path)]
+                )
             except ShortClipError as exc:
                 skipped.append(path.name)
                 say(f"skipped {exc}")
@@ -151,11 +157,14 @@ class ShortClipError(RuntimeError):
     not throw away a precache that takes many minutes."""
 
 
-def _clip_frames(path: Path, clip_frames: int) -> list[Any]:
-    """A clip as PIL frames on H3's 24fps, 17n+5 grid, taken from the start.
+def _clip_frames(path: Path, clip_frames: int, window: str = "start") -> list[Any]:
+    """A clip as PIL frames on H3's 24fps, 17n+5 grid.
 
     Trimmed rather than sampled: a fixed window keeps the precache to one encode per clip, and
     re-encoding a different window every step would defeat caching the latents at all.
+
+    The grid only snaps **down**, so some of every clip is always dropped. ``window="end"`` takes
+    the tail instead of the head, for footage whose action is at the finish.
     """
     from PIL import Image
 
@@ -173,7 +182,8 @@ def _clip_frames(path: Path, clip_frames: int) -> list[Any]:
             f"{path.name} is {frames.shape[0]} frames once resampled to {_H3_FPS}fps, below H3's "
             f"{keep}-frame minimum ({keep / _H3_FPS:.2f}s). Skipped."
         )
-    return [Image.fromarray(frame) for frame in frames[:keep]]
+    kept = frames[-keep:] if window == "end" else frames[:keep]
+    return [Image.fromarray(frame) for frame in kept]
 
 
 def _encode_captions(

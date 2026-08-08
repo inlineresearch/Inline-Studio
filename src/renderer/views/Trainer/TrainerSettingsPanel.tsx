@@ -8,6 +8,7 @@
  * resumable run asks first, then discards that run's checkpoints.
  */
 import { useEffect, useState } from 'react'
+import { resolveClipLength } from '@shared/clipGrid'
 
 import type {
   TrainingArch,
@@ -168,6 +169,9 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
   const setArch = (next: TrainingArch): void =>
     setHp((current) => ({ ...current, arch: next, baseMode: BASES[next][0].value }))
 
+  // What the typed seconds actually resolve to on H3's frame grid, shown under the field.
+  const resolved = resolveClipLength(hp.clipSeconds ?? 1)
+
   const toggleGpu = (index: number): void =>
     set(
       'gpuIds',
@@ -281,20 +285,47 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
       </label>
 
       {arch === 'minimax-h3' && (
-        <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
-          Clip length (seconds)
-          <NumberField
-            label=""
-            value={hp.clipSeconds ?? 1}
-            step={0.5}
-            onChange={(v) => set('clipSeconds', v)}
-          />
-          <span className="text-[10px] text-zinc-600">
-            How much of each video clip to train on, snapped to H3&apos;s frame grid. Its floor is
-            0.92s. Stills ignore this. A longer clip costs far more memory: a second of video is
-            about six times a still, and five seconds is thirty.
-          </span>
-        </label>
+        <>
+          <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
+            Clip length (seconds)
+            <NumberField
+              label=""
+              value={hp.clipSeconds ?? 1}
+              step={0.5}
+              onChange={(v) => set('clipSeconds', v)}
+            />
+            {/* The grid snaps DOWN, so asking for 5s trains on 4.458s. Silent until it was shown
+                here, and a user lost the action at the end of their clips to it. */}
+            <span className="text-[10px] text-zinc-500">
+              Trains on{' '}
+              <span className="text-zinc-300">
+                {resolved.frames} frames ({resolved.seconds.toFixed(2)}s)
+              </span>{' '}
+              per clip. H3 encodes only 17n+5 frames at 24fps, so this snaps down, never up.
+            </span>
+            <span className="text-[10px] text-zinc-600">
+              Stills ignore this, and the floor is 0.92s. Length costs time rather than memory: a
+              clip peaks about the same as a still, but a second of video is roughly four times the
+              step time.
+            </span>
+          </label>
+
+          <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
+            Clip window
+            <select
+              value={hp.clipWindow ?? 'start'}
+              onChange={(e) => set('clipWindow', e.target.value as 'start' | 'end')}
+              className="rounded-md border border-border bg-black/30 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-zinc-500"
+            >
+              <option value="start">From the start</option>
+              <option value="end">From the end</option>
+            </select>
+            <span className="text-[10px] text-zinc-600">
+              Snapping down always drops part of each clip. Pick the end when the action you want to
+              teach is at the finish.
+            </span>
+          </label>
+        </>
       )}
 
       {QUANTIZABLE.includes(arch) && (

@@ -192,3 +192,132 @@ def test_silent_without_torch(monkeypatch) -> None:
     monkeypatch.setattr(builtins, "__import__", _no_torch)
     monkeypatch.delitem(__import__("sys").modules, "torch", raising=False)
     assert detect.cpu_only_torch_warning() is None
+
+
+# --- CUDA within-major binary compatibility -----------------------------------------------------
+#
+# A cubin built for sm_8x runs on any sm_8y where y >= x, so sm_86 covers an sm_89 Ada card. Exact
+# per-minor matching told every RTX 40-series owner their install was broken.
+
+_CU130_ARCHES = ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120"]
+
+
+def test_arch_parse_reads_the_minor_as_the_last_digit() -> None:
+    """sm_120 is (12, 0), not (1, 20). Left-to-right puts the bug on the Blackwell parts."""
+    assert detect._parse_arch("sm_120") == (12, 0)
+    assert detect._parse_arch("sm_100") == (10, 0)
+    assert detect._parse_arch("sm_90a") == (9, 0)  # tuned variant
+    assert detect._parse_arch("compute_90") is None
+
+
+def test_ada_is_covered_by_ampere_kernels(monkeypatch) -> None:
+    """The RTX 4080 false positive: sm_89 against a wheel whose newest 8.x is sm_86."""
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "torch",
+        _fake_arch_torch(capability=(8, 9), arches=_CU124_ARCHES),
+    )
+    assert detect.unsupported_arch_warning() is None
+
+
+def test_compatibility_runs_upward_only(monkeypatch) -> None:
+    """An sm_86 cubin does NOT run on an sm_80 A100, so that must still warn."""
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "torch",
+        _fake_arch_torch(capability=(8, 0), arches=["sm_86"]),
+    )
+    assert detect.unsupported_arch_warning() is not None
+
+
+def test_a_dropped_architecture_still_warns(monkeypatch) -> None:
+    """cu130 dropped Volta; sm_70 has no same-major kernel at or below it."""
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "torch",
+        _fake_arch_torch(capability=(7, 0), arches=_CU130_ARCHES),
+    )
+    assert detect.unsupported_arch_warning() is not None
+
+
+def test_blackwell_majors_do_not_cover_each_other() -> None:
+    """sm_100 and sm_120 are both Blackwell but different majors, so neither covers the other."""
+    assert detect.arch_list_covers(["sm_100"], 12, 0) is False
+    assert detect.arch_list_covers(["sm_120"], 10, 0) is False
+    assert detect.arch_list_covers(_CU130_ARCHES, 10, 0) is True
+    assert detect.arch_list_covers(_CU130_ARCHES, 12, 0) is True
+
+
+# --- the install-time probe --------------------------------------------------------------------
+
+
+def _fake_probe_torch(
+    *, version: str, arches: list[str], capability: tuple[int, int] | None = (12, 0),
+    hip: str | None = None, devices: int = 1,
+) -> types.SimpleNamespace:
+    return types.SimpleNamespace(
+        __version__=version,
+        version=types.SimpleNamespace(cuda=None if "+cpu" in version else "12.8", hip=hip),
+        cuda=types.SimpleNamespace(
+            device_count=lambda: devices,
+            get_arch_list=lambda: arches,
+            get_device_capability=lambda i=0: capability,
+        ),
+    )
+
+
+def _probe_with(monkeypatch, torch_stub) -> dict:
+    from inline_core.device import probe as probe_mod
+
+    monkeypatch.setitem(__import__("sys").modules, "torch", torch_stub)
+    return probe_mod.probe()
+
+
+def test_probe_reports_an_uncovered_wheel_as_replaceable(monkeypatch) -> None:
+    """The 5060 Ti case: a cu126 wheel on sm_120, and the +cuXXX tag makes it safe to replace."""
+    got = _probe_with(
+        monkeypatch, _fake_probe_torch(version="2.9.0+cu126", arches=_CU124_ARCHES)
+    )
+    assert got["status"] == "uncovered"
+    assert got["replaceable"] is True
+
+
+def test_probe_reports_ada_as_covered(monkeypatch) -> None:
+    got = _probe_with(
+        monkeypatch,
+        _fake_probe_torch(version="2.13.0+cu130", arches=_CU130_ARCHES, capability=(8, 9)),
+    )
+    assert got["status"] == "covered"
+
+
+def test_probe_never_offers_to_replace_a_rocm_build(monkeypatch) -> None:
+    """The safety gate. A ROCm build fails the sm_ rule too, and reinstalling over someone's
+    deliberate choice is worse than the wrong wheel."""
+    got = _probe_with(
+        monkeypatch,
+        _fake_probe_torch(version="2.9.0+rocm6.2", arches=[], hip="6.2.0"),
+    )
+    assert got["status"] == "rocm"
+    assert got["replaceable"] is False
+
+
+def test_probe_never_offers_to_replace_an_untagged_build(monkeypatch) -> None:
+    """A nightly or hand-built wheel carries no +cpu/+cuXXX tag, so leave it alone."""
+    got = _probe_with(
+        monkeypatch, _fake_probe_torch(version="2.14.0.dev20260101", arches=_CU124_ARCHES)
+    )
+    assert got["status"] == "uncovered"
+    assert got["replaceable"] is False
+
+
+def test_probe_survives_a_broken_torch(monkeypatch) -> None:
+    """Never covered on uncertainty: a torch that raises must read as unknown."""
+    class Boom:
+        __version__ = "2.13.0+cu130"
+
+        def __getattr__(self, _name: str):
+            raise RuntimeError("broken install")
+
+    got = _probe_with(monkeypatch, Boom())
+    assert got["status"] == "unknown"
+    assert got["status"] != "covered"

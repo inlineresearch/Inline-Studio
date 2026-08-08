@@ -452,3 +452,26 @@ def test_long_enough_clip_encodes_on_the_frame_grid(tmp_path) -> None:
     frames = h3._clip_frames(clip, clip_frames=24)
     # Snapped down onto H3's 17n+5 grid rather than taking all 40.
     assert len(frames) == 22
+
+
+def test_clip_window_takes_the_tail_when_asked(tmp_path) -> None:
+    """The 17n+5 grid only snaps down, so part of every clip is dropped. A user whose action sits in
+    the last half second needs the tail rather than the head."""
+    from inline_core.training import h3
+
+    clip = _write_clip(tmp_path / "ramp.mp4", frames=40)
+    head = h3._clip_frames(clip, clip_frames=24, window="start")
+    tail = h3._clip_frames(clip, clip_frames=24, window="end")
+
+    assert len(head) == len(tail) == 22
+    # The fixture ramps brightness per frame, so the two windows cannot be the same footage.
+    assert head[0].getpixel((0, 0)) != tail[0].getpixel((0, 0))
+
+
+def test_clip_window_defaults_to_the_start(tmp_path) -> None:
+    from inline_core.training import h3
+
+    clip = _write_clip(tmp_path / "ramp2.mp4", frames=40)
+    assert h3._clip_frames(clip, clip_frames=24)[0].getpixel((0, 0)) == (
+        h3._clip_frames(clip, clip_frames=24, window="start")[0].getpixel((0, 0))
+    )
