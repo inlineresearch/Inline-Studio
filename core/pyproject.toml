@@ -29,7 +29,10 @@ runtime = [
   # Backs the Beta sigma schedule (diffusers gates use_beta_sigmas on scipy).
   "scipy>=1.11",
   # We call snapshot_download directly for the model popup, so pin it rather than rely on transit.
-  "huggingface_hub>=0.23",
+  # 0.32 is where hf_xet became a hard dependency rather than an extra. Below it, Hugging Face
+  # refuses the largest files outright ("too large to be downloaded using the regular download
+  # method"), which is every H3 transformer at 66GB.
+  "huggingface_hub>=0.32",
   # ControlNet preprocessors (the Apply ControlNet node): OpenPose/DWPose, MiDaS/Zoe depth, canny,
   # HED, lineart, MLSD, scribble, normal. DWPose runs its detector on ONNX Runtime.
   "controlnet-aux>=0.0.7",
@@ -85,7 +88,10 @@ all = [
   # Clip decode for MiniMax H3 LoRA training, and H3's reference node.
   "av>=12",
   "scipy>=1.11",
-  "huggingface_hub>=0.23",
+  # 0.32 is where hf_xet became a hard dependency rather than an extra. Below it, Hugging Face
+  # refuses the largest files outright ("too large to be downloaded using the regular download
+  # method"), which is every H3 transformer at 66GB.
+  "huggingface_hub>=0.32",
   "controlnet-aux>=0.0.7",
   "onnxruntime>=1.17",
   # server
