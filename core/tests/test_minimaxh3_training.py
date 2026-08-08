@@ -478,9 +478,7 @@ def test_clip_window_defaults_to_the_start(tmp_path) -> None:
 
 
 def test_the_loop_reports_training_before_the_first_step(monkeypatch) -> None:
-    """Progress used to be emitted only AFTER a step finished, so the UI sat on
-    "loading model (nf4)" for the whole of step one. A slow first step then read as a hung loader,
-    which sent a user and me chasing bitsandbytes for a day."""
+    """Emitted only on completion, a slow step one reads as a hung loader."""
     import inspect
 
     from inline_core.training import trainer

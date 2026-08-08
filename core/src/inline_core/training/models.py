@@ -330,10 +330,8 @@ def resolve_offload(
     quantized base ``auto`` stays off, because there the base is the whole story and offload would
     buy PCIe traffic for nothing.
 
-    ``on`` and ``off`` are the user's answer and win outright. The ordering matters: the quant test
-    used to sit above ``on``, so the control was silently dead for MiniMax H3, always 4-bit. H3
-    breaks the "a quantized base already fits" assumption, because its base is only 11.7GB and it is
-    the clip activations that overflow a card, which is exactly when someone reaches for this."""
+    ``on``/``off`` are tested before the quant rule, or the control is dead for MiniMax H3 (always
+    4-bit), whose base is small and whose clip activations are what overflow the card."""
     from ..device.policy import Quantization
 
     if pref == "off":

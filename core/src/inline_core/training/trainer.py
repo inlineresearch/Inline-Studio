@@ -120,12 +120,8 @@ def _peak_vram_gb() -> float | None:
 
 
 def _vram_note(label: str) -> str:
-    """`label: allocated X.XGB, reserved Y.YGB` for the log.
-
-    Both numbers, because they answer different questions and nvidia-smi only shows the second.
-    Reserved is what the card looks full of; allocated is what is actually live. A phase that frees
-    its weights but leaves reserved high is the allocator holding cache, which is fine. One that
-    leaves ALLOCATED high is a reference nobody dropped, which is a leak."""
+    """Both numbers: nvidia-smi shows only reserved, so allocator cache and a leaked reference look
+    identical from outside."""
     import torch
 
     if not torch.cuda.is_available():
@@ -257,9 +253,8 @@ def train(manifest: dict[str, Any]) -> str | None:
     signal.signal(signal.SIGTERM, stop)
 
     transformer.train()
-    # Announce the phase BEFORE the first step, not after it. Progress was only emitted once a step
-    # finished, so the UI sat on "loading model (nf4)" for the whole of step one and a slow first
-    # step read as a hung loader. That cost a user and me a day of chasing the wrong component.
+    # Before the first step, not after: emitting only on completion makes a slow step one look like
+    # the loader is still running.
     print(_vram_note("VRAM entering the training loop"), flush=True)
     protocol.progress(start, steps, status="training")
     for step in range(start, steps):

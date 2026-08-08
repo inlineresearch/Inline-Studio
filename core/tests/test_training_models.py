@@ -120,12 +120,8 @@ def test_offload_fits_a_bf16_base_that_would_not_otherwise(monkeypatch, tmp_path
     assert off("auto", Quantization.NONE, str(root), archs.KREA2, "raw", 512) is False
     assert off("on", Quantization.NONE, str(root), archs.KREA2, "raw", 512) is True
     assert off("off", Quantization.NONE, str(root), archs.KREA2, "raw", 1024) is False
-    # Under a quantized base, AUTO stays off: there the base is the whole story and offload would
-    # only add PCIe traffic.
+    # Auto stays off under a quantized base; an explicit choice wins.
     assert off("auto", Quantization.NF4, str(root), archs.KREA2, "raw", 1024) is False
-    # But an explicit "on" wins. This used to return False, which made the control silently dead for
-    # MiniMax H3 (always 4-bit), the one arch where a user actually needs it: its base is 11.7GB and
-    # it is the clip activations that overflow the card.
     assert off("on", Quantization.NF4, str(root), archs.KREA2, "raw", 1024) is True
     assert off("off", Quantization.NF4, str(root), archs.KREA2, "raw", 1024) is False
 
@@ -207,9 +203,7 @@ def test_fails_open_when_the_machine_cannot_be_read(monkeypatch) -> None:
 
 
 def test_an_explicit_offload_choice_beats_the_quant_heuristic(monkeypatch, tmp_path) -> None:
-    """MiniMax H3 is always 4-bit, and the quant test used to sit above the explicit-preference
-    test, so the CPU offload control was silently dead for the one architecture whose users need
-    it: H3's base is 11.7GB and it is the clip activations that overflow a card."""
+    """Dead for H3, always 4-bit, whose clip activations are what overflow the card."""
     from inline_core.device.policy import Quantization
 
     root = tmp_path / "models"
@@ -219,7 +213,6 @@ def test_an_explicit_offload_choice_beats_the_quant_heuristic(monkeypatch, tmp_p
 
     assert off("on", Quantization.NF4, str(root), archs.MINIMAX_H3, "raw", 512) is True
     assert off("off", Quantization.NF4, str(root), archs.MINIMAX_H3, "raw", 512) is False
-    # auto stays conservative under a quantized base, which is the original intent.
     assert off("auto", Quantization.NF4, str(root), archs.MINIMAX_H3, "raw", 512) is False
 
 
