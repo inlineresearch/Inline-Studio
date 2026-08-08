@@ -140,7 +140,9 @@ if defined TORCH_CHOICE ( set "TORCH_INDEX_REASON=override" & goto install_torch
 set "NO_GPU_WHY=nvidia-smi is not on PATH"
 where nvidia-smi >nul 2>nul || goto install_cpu
 set "NO_GPU_WHY=nvidia-smi ran but listed no GPU"
-nvidia-smi -L >nul 2>nul || goto install_cpu
+rem `call`, because nvidia-smi on PATH is not always an .exe. A .bat or .cmd shim would otherwise
+rem take over this script and never return, leaving no output and no error.
+call nvidia-smi -L >nul 2>nul || goto install_cpu
 call :read_gpu_probe
 echo GPU probe (compute_cap, driver_version): !GPU_PROBE_RAW!
 set "TORCH_CHOICE=cu126"
@@ -247,14 +249,17 @@ rem "fix" it back into a guard later.
 set "CAP_MAJOR=0"
 set "DRIVER_MAJOR=0"
 set "GPU_PROBE_RAW="
-for /f "usebackq tokens=1,2 delims=., " %%c in (`nvidia-smi --query-gpu^=compute_cap^,driver_version --format^=csv^,noheader 2^>nul`) do (
+rem Split on the comma ONLY. Including "." here would cut "12.0, 610.88" into 12 / 0 / 610 / 88, so
+rem token 2 would be the capability's minor rather than the driver, and the R580 floor could never
+rem fire. The majors are taken off each field by the inner loops.
+for /f "usebackq tokens=1,2 delims=," %%c in (`nvidia-smi --query-gpu^=compute_cap^,driver_version --format^=csv^,noheader 2^>nul`) do (
   rem Reset every iteration: set /a errors on garbage and would otherwise leave the previous line's
   rem value in place, double-counting a good line followed by a bad one.
   set "CAP_TRY=0"
   set "DRV_TRY=0"
-  set /a "CAP_TRY=%%c" 2>nul
-  set /a "DRV_TRY=%%d" 2>nul
-  if not defined GPU_PROBE_RAW ( set "GPU_PROBE_RAW=%%c.x, %%d" ) else ( set "GPU_PROBE_RAW=!GPU_PROBE_RAW!; %%c.x, %%d" )
+  for /f "tokens=1 delims=. " %%m in ("%%c") do set /a "CAP_TRY=%%m" 2>nul
+  for /f "tokens=1 delims=. " %%n in ("%%d") do set /a "DRV_TRY=%%n" 2>nul
+  if not defined GPU_PROBE_RAW ( set "GPU_PROBE_RAW=%%c,%%d" ) else ( set "GPU_PROBE_RAW=!GPU_PROBE_RAW!; %%c,%%d" )
   if !CAP_TRY! GTR !CAP_MAJOR! (
     set "CAP_MAJOR=!CAP_TRY!"
     set "DRIVER_MAJOR=!DRV_TRY!"
@@ -409,7 +414,7 @@ if defined TORCH_CHOICE (
   set "DRIVER_MAJOR=0"
   set "TORCH_CHOICE=cpu"
   set "TORCH_INDEX_REASON=no-gpu"
-  where nvidia-smi >nul 2>nul && nvidia-smi -L >nul 2>nul && call :decide_print_index
+  where nvidia-smi >nul 2>nul && call nvidia-smi -L >nul 2>nul && call :decide_print_index
 )
 echo probe: !GPU_PROBE_RAW!
 if "!CAP_MAJOR!"=="0" ( echo capability-major: unknown ) else ( echo capability-major: !CAP_MAJOR! )

@@ -67,20 +67,29 @@ jobs:
           "@ | Set-Content -Path (Join-Path $dir 'nvidia-smi.bat') -Encoding ascii
           Add-Content -Path $env:GITHUB_PATH -Value $dir
 
+      - name: Check the stub is reachable and returns
+        shell: cmd
+        run: |
+          where nvidia-smi || (echo stub not on PATH & exit /b 1)
+          call nvidia-smi --query-gpu=compute_cap,driver_version --format=csv,noheader
+          echo stub returned control, errorlevel %errorlevel%
+
       - name: Report the decision
         id: decide
         shell: cmd
         working-directory: core
         run: |
           call .\webui.bat --print-torch-index > decision.txt 2>&1
+          echo ---------- decision.txt ----------
           type decision.txt
+          echo ----------------------------------
 
       - name: Assert the index and the reason
         shell: cmd
         working-directory: core
         run: |
-          findstr /c:"torch-index: ${{ matrix.expect }}" decision.txt >nul || (echo EXPECTED torch-index: ${{ matrix.expect }} & exit /b 1)
-          findstr /c:"reason: ${{ matrix.reason }}" decision.txt >nul || (echo EXPECTED reason: ${{ matrix.reason }} & exit /b 1)
+          findstr /c:"torch-index: ${{ matrix.expect }}" decision.txt >nul || (echo EXPECTED "torch-index: ${{ matrix.expect }}" but got: & type decision.txt & exit /b 1)
+          findstr /c:"reason: ${{ matrix.reason }}" decision.txt >nul || (echo EXPECTED "reason: ${{ matrix.reason }}" but got: & type decision.txt & exit /b 1)
 
       - name: Assert it installed nothing
         shell: cmd
