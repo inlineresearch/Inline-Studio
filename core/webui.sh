@@ -200,17 +200,9 @@ read_gpu_probe() {
 #: | override | no-gpu.
 TORCH_INDEX_REASON="autodetect"
 
-# No single index covers every card: Blackwell (sm_100/sm_120) exists only from cu128 on, while cu126
-# is the last index still built for Maxwell..Volta (sm_50..sm_70). Unknown cards get cu126, the one
-# that covers the widest range of what people actually own.
-#
-# Verified 2026-02 and load-bearing: cu128 still SERVES but is frozen at torch 2.11.0, and it was the
-# first index with sm_120. So a Blackwell card on a pre-R580 driver (CUDA 13's floor) gets cu128
-# rather than an error, because it has exactly one workable choice. Re-check that ceiling before
-# trusting this comment in a year.
-# Assigns TORCH_CHOICE and TORCH_INDEX_REASON rather than printing them. It must NOT be called
-# through $(...): a command substitution is a subshell, so the probe globals and the reason would be
-# discarded and only the index would survive. That is what the tests caught.
+# cu126 is the last index built for Maxwell..Volta; sm_100/sm_120 need cu128 or newer. cu128 serves
+# but is frozen at torch 2.11 (checked 2026-02), so it is only for Blackwell below CUDA 13's R580.
+# Assigns rather than prints: through $(...) the probe globals would die in the subshell.
 pick_torch_index() {
   read_gpu_probe
   if [[ -z "$GPU_CAP_MAJOR" ]]; then TORCH_CHOICE="cu126"; return 0; fi
@@ -340,14 +332,10 @@ if [[ "$RUN_INSTALL" -eq 1 ]]; then
   elif [[ -z "$TORCH_CHOICE" ]]; then
     echo "NVIDIA GPU detected - installing the CUDA build of PyTorch."
   else
-    # unsafe-best-match: torchao is on the CUDA index too but older there than our torchao>=0.14 pin
-    # on some indexes; without this uv's first-index rule stops at that older copy instead of
-    # finding a new enough one on PyPI. It also makes the +cuXXX local version outrank PyPI's plain
-    # one, which is what pulls the CUDA build in on Windows.
-    # no-sources: the pyproject [tool.uv.sources] pin names one fixed index, and the whole point
-    # here is that the card decides. Deliberately the broad flag, not --no-sources-package torch:
-    # that one is too new for the uv versions people actually have, and it hard-errored their
-    # install. torch is the only entry in that table, so the two mean the same thing today.
+    # unsafe-best-match: without it uv stops at the older torchao on the CUDA index, and PyPI's
+    # plain torch outranks the +cuXXX build on Windows.
+    # no-sources: the pyproject pin names one index, and the card decides here. The broad flag, not
+    # --no-sources-package, which needs uv 0.10+; torch is the only entry so they are equivalent.
     TORCH_INDEX=(--extra-index-url "$(torch_index_url "$TORCH_CHOICE")" \
       --index-strategy unsafe-best-match --no-sources)
     echo "NVIDIA GPU detected - installing the CUDA build of PyTorch ($TORCH_CHOICE)."
@@ -373,11 +361,8 @@ if [[ "$RUN_INSTALL" -eq 1 ]]; then
 
   echo "+ uv pip install --python $TARGET_PY ${TORCH_INDEX[*]} -e .[$EXTRAS]"
   uv pip install --python "$TARGET_PY" "${TORCH_INDEX[@]}" -e ".[$EXTRAS]"
-  # Torch LAST, and through --index-url (exclusive), when the index was named or the installed wheel
-  # is wrong. Two reasons it cannot ride on the project install: [tool.uv.sources] pins torch to the
-  # cu126 index on win32, and --extra-index-url with unsafe-best-match picks the highest version
-  # ACROSS indexes, which lands back on PyPI's CPU wheel whenever PyPI leads. Costs one possibly
-  # wasted download on a path that is rare and deliberate.
+  # Torch LAST and through --index-url (exclusive): [tool.uv.sources] pins it to cu126 on win32,
+  # and --extra-index-url picks the highest version ACROSS indexes, so PyPI's CPU wheel can win.
   if [[ "$TORCH_FORCE" -eq 1 && -n "$TORCH_CHOICE" ]]; then
     read -r -a TORCH_PINS <<<"$(torch_pins_for "$TORCH_CHOICE")"
     TORCH_URL="$(torch_index_url "$TORCH_CHOICE")"

@@ -159,6 +159,11 @@ linking. Generation is Core nodes, installed-extension nodes, and fal nodes on t
   `VolumeIcon`); reuse or add to those rather than dropping in an emoji.
 - **Tests (Vitest).** Cover the logic that matters: fal node input/request resolution, frame-input and
   hero-take resolution, DB migrations. UI is verified by running the app - don't chase view coverage.
+- **Arithmetic mirrored from Core lives in `src/shared/` and is pinned by a test.** `clipGrid.ts`
+  restates H3's frame grid so the Trainer can show what a setting resolves to; if the two drift the
+  UI promises a number the run will not honour.
+- **Surface what a setting resolves to, not just what was typed.** A control that silently snaps
+  (H3 clip length rounds down onto its frame grid) reads as broken.
 - **Commits.** Conventional Commits (`feat:`, `fix:`, `chore:`), small and scoped. `lint` +
   `typecheck` run on pre-commit (husky + lint-staged).
 - **Never commit automatically.** Claude (or any AI agent) must **not** run `git commit`/`git push`

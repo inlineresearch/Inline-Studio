@@ -126,6 +126,8 @@ between nodes and are never takes.
   every stop/start**, taking the models and leaving dangling symlinks in `models/`. This has cost two
   full re-downloads of MiniMax H3 at ~130 GB each. Weights go on the persistent root volume, or on an
   attached volume that survives a restart. Scratch is fine for logs and temporary output only.
+- **`huggingface_hub>=0.32`** - below it `hf_xet` is only an extra, and files over ~50GB (every
+  H3 transformer) refuse to download at all.
 - **Models root** - `INLINE_MODELS_DIR`, else `./models`. **Bring your own weights; nothing is
   downloaded.** ComfyUI-style category subfolders (`diffusion_models/`, `vae/`, `text_encoders/`,
   `loras/`, `controlnet/`, `checkpoints/`, `clip_vision/`, `upscale_models/`, `embeddings/`). The
@@ -233,6 +235,20 @@ real codec that moves tensors lives with the model runner.
   vision-language encoder loaded in place of a text one, an unnormalized latent, and a control context
   cast to a quantized weight's `uint8` storage dtype. A unit test cannot see a plausible-but-wrong
   image. Render something and look at it.
+- **Launchers are twins.** `webui.sh` and `webui.bat` change together; only the `launcher` CI job
+  can prove the `.bat`, since it cannot run on a dev box.
+- **Match CUDA arches by within-major compatibility, never exactly.** An `sm_8x` cubin runs on any
+  `sm_8y` where `y >= x`, so `sm_86` covers Ada's `sm_89`.
+- **Pass the widest `uv` flag that works.** `--no-sources-package` needs uv 0.10+; `--no-sources`
+  works back to 0.4 and means the same while torch is the only `[tool.uv.sources]` entry.
+- **An explicit user setting beats a heuristic.** Test `on`/`off` before any auto rule, or the
+  control is silently dead for whichever arch the rule excludes.
+- **Report a phase before the slow work, not after.** Progress emitted only on completion makes a
+  slow step look like a hung previous phase.
+- **In a `.bat`, `call` anything that might be a `.bat`.** `nvidia-smi` is sometimes a shim, and
+  without `call` it takes over the script and never returns.
+- **Log allocated AND reserved VRAM.** `nvidia-smi` shows only reserved, so allocator cache and a
+  leaked reference look identical from outside.
 - **Tests (pytest).** Cover the logic that matters: graph validate/topo/executor/cache, the catalog
   scan, the run store + server contract, the device/memory policy, the parallel group + xfuser seam,
   and each model runner (import-guarded, no GPU needed). See `tests/`.

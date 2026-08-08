@@ -475,3 +475,15 @@ def test_clip_window_defaults_to_the_start(tmp_path) -> None:
     assert h3._clip_frames(clip, clip_frames=24)[0].getpixel((0, 0)) == (
         h3._clip_frames(clip, clip_frames=24, window="start")[0].getpixel((0, 0))
     )
+
+
+def test_the_loop_reports_training_before_the_first_step(monkeypatch) -> None:
+    """Emitted only on completion, a slow step one reads as a hung loader."""
+    import inspect
+
+    from inline_core.training import trainer
+
+    source = inspect.getsource(trainer.train)
+    enters_loop = source.index("for step in range(start, steps):")
+    announces = source.index('status="training"')
+    assert announces < enters_loop, "the training status must be sent before the loop, not after"

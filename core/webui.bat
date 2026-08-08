@@ -162,14 +162,10 @@ if !CAP_MAJOR! GEQ 10 if !DRIVER_MAJOR! GTR 0 if !DRIVER_MAJOR! LSS 580 (
 if /i "!TORCH_CHOICE!"=="cpu" goto install_cpu_forced
 set "TORCH_URL=https://download.pytorch.org/whl/!TORCH_CHOICE!"
 if /i "!TORCH_CHOICE:~0,4!"=="http" set "TORCH_URL=!TORCH_CHOICE!"
-rem unsafe-best-match: torchao is on the CUDA index too, older there than our torchao>=0.14 pin on
-rem some indexes; without this uv's first-index rule stops at that older copy instead of finding a
-rem new enough one on PyPI. It also makes the +cuXXX local version outrank PyPI's plain one, which
-rem is what pulls the CUDA build in rather than the CPU-only wheel PyPI serves on Windows.
-rem no-sources: the pyproject [tool.uv.sources] pin names one fixed index, and the card decides
-rem here. Deliberately the broad flag, not --no-sources-package torch: that one is too new for the
-rem uv versions people actually have, and it hard-errored their install. torch is the only entry in
-rem that table, so the two mean the same thing today. Adding another entry would change that.
+rem unsafe-best-match: without it uv stops at the older torchao on the CUDA index, and PyPI's plain
+rem torch outranks the +cuXXX build on Windows.
+rem no-sources: the pyproject pin names one index, and the card decides here. The broad flag, not
+rem --no-sources-package, which needs uv 0.10+; torch is the only entry so they are equivalent.
 set "TORCH_ARGS=--extra-index-url !TORCH_URL! --index-strategy unsafe-best-match --no-sources"
 echo NVIDIA GPU detected - installing the CUDA build of PyTorch (!TORCH_CHOICE!).
 goto install_pkgs
@@ -216,10 +212,8 @@ if /i "!PROBE_STATUS!"=="uncovered" (
 :install_run
 echo + uv pip install --python "!TARGET_PY!" !TORCH_ARGS! -e ".[!EXTRAS!]"
 uv pip install --python "!TARGET_PY!" !TORCH_ARGS! -e ".[!EXTRAS!]" || goto fail
-rem Torch LAST, and through --index-url (exclusive), when the index was named or the installed wheel
-rem is wrong. It cannot ride on the project install: [tool.uv.sources] pins torch to the cu126 index
-rem on win32, and --extra-index-url with unsafe-best-match picks the highest version ACROSS indexes,
-rem which lands back on PyPI's CPU wheel whenever PyPI leads.
+rem Torch LAST and through --index-url (exclusive): [tool.uv.sources] pins it to cu126 on win32,
+rem and --extra-index-url picks the highest version ACROSS indexes, so PyPI's CPU wheel can win.
 if "!TORCH_FORCE!"=="1" if defined TORCH_CHOICE (
   set "TORCH_PINS=torch torchvision"
   rem cu128 is frozen, so the current pair does not exist there. Pin the last one it has.
@@ -243,18 +237,14 @@ echo          .\webui.bat --install --torch-index !TORCH_CHOICE! --recreate
 echo Installed extras: !EXTRAS!. Start with: .\webui.bat
 exit /b 0
 
-rem Reads compute_cap and driver_version in one query, keeping the highest capability seen.
-rem set /a rather than a findstr guard: an old driver answers an unknown query with an error string,
-rem and `if LSS` would STRING-compare it, so "Unknown" would rank above 10 and win. set /a reads a
-rem bare word as an undefined variable and yields 0, which is exactly what we want here, so do not
-rem "fix" it back into a guard later.
+rem One query for both, keeping the highest capability. set /a not a findstr guard: `if LSS` would
+rem string-compare an error string like "Unknown" above 10; set /a yields 0 for it, as intended.
 :read_gpu_probe
 set "CAP_MAJOR=0"
 set "DRIVER_MAJOR=0"
 set "GPU_PROBE_RAW="
-rem Split on the comma ONLY. Including "." here would cut "12.0, 610.88" into 12 / 0 / 610 / 88, so
-rem token 2 would be the capability's minor rather than the driver, and the R580 floor could never
-rem fire. The majors are taken off each field by the inner loops.
+rem Comma ONLY: adding "." would cut "12.0, 610.88" into 12/0/610/88, making token 2 the minor
+rem rather than the driver, so the R580 floor could never fire.
 for /f "usebackq tokens=1,2 delims=," %%c in (`nvidia-smi --query-gpu^=compute_cap^,driver_version --format^=csv^,noheader 2^>nul`) do (
   rem Reset every iteration: set /a errors on garbage and would otherwise leave the previous line's
   rem value in place, double-counting a good line followed by a bad one.
