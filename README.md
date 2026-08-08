@@ -192,16 +192,16 @@ The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` envir
 
 ## Features
 
-- **Free-form node canvas** - lay out your whole AI film like a mood board that can actually generate. Marquee-select, copy/paste, undo/redo, layers, and text notes all work the way your hands expect.
-- **Versioned, non-destructive takes** - every render is kept. Generating again adds a new take; nothing is overwritten. Star the keeper and it flows downstream.
-- **Chain frames into a generative pipeline** - wire one frame's output into the next frame's input. Refine a shot, feed it forward, regenerate the source, and everything downstream follows.
-- **Video editing on the canvas** - the **Video Director node** is a timeline-in-a-node that assembles your rendered frames into a single cut, with layered audio (the videos' own audio plus your own music/VO), per-input and per-layer volume, an in-node preview to scrub, and high-res export; the **Trim Video/Audio node** lets you drop in a clip, drag the in/out handles over its filmstrip/waveform, and pass just the trimmed segment downstream.
-- **Local generation, built in** - the Inline Core engine runs diffusion models locally, on your own GPU. Z-Image Turbo, Krea 2, FLUX.2, and MiniMax H3 video from single model files (or a diffusers folder for a prequantized build), no external server to set up.
-- **Multi-reference composition** - with **FLUX.2**, wire several images into one node and compose from them: "the character from image 1 wearing the jacket from image 2". The node numbers the references on its face so the prompt can address them by position. One image edits it, several combine them. See [FLUX.2](#flux2).
-- **Train your own LoRAs locally** - the Trainer tab is a second canvas where the dataset, captioning, training run, and loss curve are all nodes. Training runs on your own GPU, the finished LoRA drops into `models/loras/`, and it shows up in the LoRA loader node ready to generate with. See [LoRA training](#lora-training).
-- **API Nodes for hosted models** - run closed models right on the canvas with no GPU. Add a Generate node, pick a model, and bring your own provider key. See [API Nodes](#api-nodes).
-- **Community extensions** - install custom nodes from a GitHub repo in one click, security-reviewed and dependency-isolated. Browse the [registry](https://github.com/inlineresearch/Inline-Registry) or [build your own](https://github.com/inlineresearch/Inline-Studio-Extension-Guide).
-- **Free & open source (GPL-3.0)** - one process (Python + a browser); runs on macOS, Windows, and Linux.
+- Free-form node canvas
+- Versioned, non-destructive takes
+- Chain frames into a generative pipeline
+- Video editing on the canvas
+- Local generation, built in
+- Multi-reference composition
+- Train your own LoRAs locally
+- API Nodes for hosted models
+- Community extensions
+- Free & open source (GPL-3.0)
 
 [**Follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
 
