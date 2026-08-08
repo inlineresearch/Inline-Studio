@@ -119,6 +119,24 @@ def _peak_vram_gb() -> float | None:
     return round(torch.cuda.max_memory_allocated() / 1e9, 2)
 
 
+def _vram_note(label: str) -> str:
+    """`label: allocated X.XGB, reserved Y.YGB` for the log.
+
+    Both numbers, because they answer different questions and nvidia-smi only shows the second.
+    Reserved is what the card looks full of; allocated is what is actually live. A phase that frees
+    its weights but leaves reserved high is the allocator holding cache, which is fine. One that
+    leaves ALLOCATED high is a reference nobody dropped, which is a leak."""
+    import torch
+
+    if not torch.cuda.is_available():
+        return label
+    gb = 1e9
+    return (
+        f"{label}: allocated {torch.cuda.memory_allocated() / gb:.1f}GB, "
+        f"reserved {torch.cuda.memory_reserved() / gb:.1f}GB"
+    )
+
+
 def _activation_offload(enabled: bool) -> Any:
     """A context that streams saved activations to host RAM (pinned) for the forward, pulling them
     back on backward. Keeps a full-precision base resident on a card that could not otherwise hold
@@ -205,9 +223,11 @@ def train(manifest: dict[str, Any]) -> str | None:
     )
     plan = quant.value + (" + cpu offload" if offload else "")
     protocol.progress(0, steps, status=f"loading model ({plan})")
+    print(_vram_note("VRAM after caching, before the base loads"), flush=True)
     transformer = models.load_transformer(
         manifest["modelsDir"], arch.key, manifest["baseMode"], str(device), dtype, quant
     )
+    print(_vram_note("VRAM after the base loaded"), flush=True)
     transformer.requires_grad_(False)
     # PEFT picks its bitsandbytes-aware LoRA layer off this one attribute. Without it, and because
     # bnb's Linear4bit subclasses nn.Linear, the generic dispatcher matches instead: grads still
@@ -237,6 +257,11 @@ def train(manifest: dict[str, Any]) -> str | None:
     signal.signal(signal.SIGTERM, stop)
 
     transformer.train()
+    # Announce the phase BEFORE the first step, not after it. Progress was only emitted once a step
+    # finished, so the UI sat on "loading model (nf4)" for the whole of step one and a slow first
+    # step read as a hung loader. That cost a user and me a day of chasing the wrong component.
+    print(_vram_note("VRAM entering the training loop"), flush=True)
+    protocol.progress(start, steps, status="training")
     for step in range(start, steps):
         if stop.flagged:
             break

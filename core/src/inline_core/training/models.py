@@ -325,20 +325,25 @@ def resolve_offload(
 ) -> bool:
     """Whether to stream saved activations to host RAM this run.
 
-    Only meaningful for a full-precision (bf16) base: the point is to keep the 26GB Krea 2 base
-    resident and fit the ~21GB of 1024 activations elsewhere, rather than dropping the frozen base
-    to NF4. A quantized base already fits, so offload just adds PCIe traffic for nothing. ``auto``
-    turns it on exactly when the bf16 plan would otherwise not fit VRAM; ``on``/``off`` force it."""
+    ``auto`` was written for a full-precision base: keep the 26GB Krea 2 base resident and put the
+    ~21GB of 1024 activations elsewhere, rather than dropping the frozen base to NF4. Under a
+    quantized base ``auto`` stays off, because there the base is the whole story and offload would
+    buy PCIe traffic for nothing.
+
+    ``on`` and ``off`` are the user's answer and win outright. The ordering matters: the quant test
+    used to sit above ``on``, so the control was silently dead for MiniMax H3, always 4-bit. H3
+    breaks the "a quantized base already fits" assumption, because its base is only 11.7GB and it is
+    the clip activations that overflow a card, which is exactly when someone reaches for this."""
     from ..device.policy import Quantization
 
     if pref == "off":
         return False
-    if quant is not Quantization.NONE:
-        return False  # a quantized base already fits; offload would only slow it down
     if pref == "on":
         return True
     if pref not in ("auto", ""):
         raise RuntimeError(f"Unknown offload preference {pref!r}.")
+    if quant is not Quantization.NONE:
+        return False  # auto only: a quantized base already fits, so do not pay for offload
 
     import torch
 

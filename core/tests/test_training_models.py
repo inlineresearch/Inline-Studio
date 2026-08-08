@@ -97,8 +97,8 @@ def test_auto_quantization_accounts_for_resolution(monkeypatch, tmp_path) -> Non
 
 def test_offload_fits_a_bf16_base_that_would_not_otherwise(monkeypatch, tmp_path) -> None:
     """bf16 1024 on a 45GB card: base (26GB) + activations (~21GB) overflow, so auto-offload turns
-    on to keep the base full precision rather than dropping it to NF4. A quantized base already
-    fits, so offload stays off there no matter the preference."""
+    on to keep the base full precision rather than dropping it to NF4. Under a quantized base AUTO
+    stays off, but an explicit on/off is the user's answer and wins."""
     root = tmp_path / "models"
     (root / "diffusion_models").mkdir(parents=True)
     (root / "diffusion_models" / "krea2_raw_bf16.safetensors").write_bytes(b"")
@@ -120,8 +120,14 @@ def test_offload_fits_a_bf16_base_that_would_not_otherwise(monkeypatch, tmp_path
     assert off("auto", Quantization.NONE, str(root), archs.KREA2, "raw", 512) is False
     assert off("on", Quantization.NONE, str(root), archs.KREA2, "raw", 512) is True
     assert off("off", Quantization.NONE, str(root), archs.KREA2, "raw", 1024) is False
-    # A quantized base already fits, so offload would only add PCIe traffic - never on.
-    assert off("on", Quantization.NF4, str(root), archs.KREA2, "raw", 1024) is False
+    # Under a quantized base, AUTO stays off: there the base is the whole story and offload would
+    # only add PCIe traffic.
+    assert off("auto", Quantization.NF4, str(root), archs.KREA2, "raw", 1024) is False
+    # But an explicit "on" wins. This used to return False, which made the control silently dead for
+    # MiniMax H3 (always 4-bit), the one arch where a user actually needs it: its base is 11.7GB and
+    # it is the clip activations that overflow the card.
+    assert off("on", Quantization.NF4, str(root), archs.KREA2, "raw", 1024) is True
+    assert off("off", Quantization.NF4, str(root), archs.KREA2, "raw", 1024) is False
 
 
 def test_zimage_has_no_four_bit_path_and_says_so(tmp_path) -> None:
@@ -198,3 +204,29 @@ def test_fails_open_when_the_machine_cannot_be_read(monkeypatch) -> None:
     _fake_env(monkeypatch, mode=0, ram_gib=30, size_gib=62)
     monkeypatch.setattr(models, "_base_size", lambda *a: 0)
     models.check_base_mappable("/m", "minimax-h3", "raw")
+
+
+def test_an_explicit_offload_choice_beats_the_quant_heuristic(monkeypatch, tmp_path) -> None:
+    """MiniMax H3 is always 4-bit, and the quant test used to sit above the explicit-preference
+    test, so the CPU offload control was silently dead for the one architecture whose users need
+    it: H3's base is 11.7GB and it is the clip activations that overflow a card."""
+    from inline_core.device.policy import Quantization
+
+    root = tmp_path / "models"
+    (root / "diffusion_models").mkdir(parents=True)
+    monkeypatch.setattr(models, "_base_size", lambda *a: 12 * 1024**3)
+    off = models.resolve_offload
+
+    assert off("on", Quantization.NF4, str(root), archs.MINIMAX_H3, "raw", 512) is True
+    assert off("off", Quantization.NF4, str(root), archs.MINIMAX_H3, "raw", 512) is False
+    # auto stays conservative under a quantized base, which is the original intent.
+    assert off("auto", Quantization.NF4, str(root), archs.MINIMAX_H3, "raw", 512) is False
+
+
+def test_an_unknown_offload_preference_still_raises(monkeypatch, tmp_path) -> None:
+    """The reorder must not let a typo fall through to the auto path and silently mean 'off'."""
+    from inline_core.device.policy import Quantization
+
+    monkeypatch.setattr(models, "_base_size", lambda *a: 12 * 1024**3)
+    with pytest.raises(RuntimeError):
+        models.resolve_offload("yes", Quantization.NF4, str(tmp_path), archs.MINIMAX_H3, "raw", 512)
