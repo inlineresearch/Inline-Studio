@@ -29,6 +29,9 @@ set "FORCE_REBUILD=0"
 set "SMART_MEMORY=0"
 set "USE_ACTIVE_ENV=0"
 set "RECREATE=0"
+set "PRINT_TORCH_INDEX=0"
+set "TORCH_EXPLICIT=0"
+set "TORCH_INDEX_REASON=autodetect"
 rem Empty means "decide from the GPU's compute capability at install time" (see :install_torch_args).
 set "TORCH_CHOICE=%INLINE_TORCH_INDEX%"
 
@@ -48,7 +51,8 @@ if /i "%~1"=="--models-dir"   ( set "INLINE_MODELS_DIR=%~2" & shift & shift & go
 if /i "%~1"=="--data-dir"     ( set "INLINE_DATA_DIR=%~2" & shift & shift & goto parse )
 if /i "%~1"=="--install"      ( set "RUN_INSTALL=1" & shift & goto parse )
 if /i "%~1"=="--extra"        ( set "EXTRAS=!EXTRAS!,%~2" & shift & shift & goto parse )
-if /i "%~1"=="--torch-index"  ( set "TORCH_CHOICE=%~2" & shift & shift & goto parse )
+if /i "%~1"=="--torch-index"  ( set "TORCH_CHOICE=%~2" & set "TORCH_EXPLICIT=1" & shift & shift & goto parse )
+if /i "%~1"=="--print-torch-index" ( set "PRINT_TORCH_INDEX=1" & shift & goto parse )
 if /i "%~1"=="--recreate"     ( set "RECREATE=1" & shift & goto parse )
 if /i "%~1"=="--use-active-env" ( set "USE_ACTIVE_ENV=1" & shift & goto parse )
 if /i "%~1"=="--dev"          ( set "DEV_MODE=1" & shift & goto parse )
@@ -93,6 +97,7 @@ if defined CONDA_PREFIX set "ACTIVE_ENV=%CONDA_PREFIX%"
 if defined VIRTUAL_ENV set "ACTIVE_ENV=%VIRTUAL_ENV%"
 call :foreign_env
 
+if "%PRINT_TORCH_INDEX%"=="1" goto print_torch_index
 if "%RUN_INSTALL%"=="1" goto do_install
 goto pick_python
 
@@ -131,15 +136,27 @@ rem PyPI's default torch is CPU-only on Windows, so installing blind generates o
 rem slower with no error. Which CUDA index is right depends on the card: Blackwell (sm_120) has no
 rem wheels before cu128, while cu126 is the last index still built for Maxwell..Volta (sm_50..sm_70).
 set "TORCH_ARGS="
-if defined TORCH_CHOICE goto install_torch_index
+if defined TORCH_CHOICE ( set "TORCH_INDEX_REASON=override" & goto install_torch_index )
+set "NO_GPU_WHY=nvidia-smi is not on PATH"
 where nvidia-smi >nul 2>nul || goto install_cpu
-nvidia-smi -L >nul 2>nul || goto install_cpu
-rem compute_cap reads "12.0" on an RTX 50-series card. A driver too old to know the query leaves
-rem CAP_MAJOR unset and lands on cu126, which covers the widest range of what people actually own.
-set "CAP_MAJOR="
-for /f "usebackq tokens=1 delims=." %%c in (`nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2^>nul`) do call :cap_max %%c
+set "NO_GPU_WHY=nvidia-smi ran but listed no GPU"
+rem `call`, because nvidia-smi on PATH is not always an .exe. A .bat or .cmd shim would otherwise
+rem take over this script and never return, leaving no output and no error.
+call nvidia-smi -L >nul 2>nul || goto install_cpu
+call :read_gpu_probe
+echo GPU probe (compute_cap, driver_version): !GPU_PROBE_RAW!
 set "TORCH_CHOICE=cu126"
-if defined CAP_MAJOR if !CAP_MAJOR! GEQ 10 set "TORCH_CHOICE=cu130"
+if !CAP_MAJOR! GEQ 10 set "TORCH_CHOICE=cu130"
+rem Verified 2026-02 and load-bearing: cu128 still SERVES but is frozen at torch 2.11.0, and it was
+rem the first index with sm_120. So a Blackwell card on a pre-R580 driver (CUDA 13's floor) has
+rem exactly one workable choice; hand it that rather than erroring. Re-check the ceiling in a year.
+if !CAP_MAJOR! GEQ 10 if !DRIVER_MAJOR! GTR 0 if !DRIVER_MAJOR! LSS 580 (
+  set "TORCH_CHOICE=cu128"
+  set "TORCH_INDEX_REASON=driver-floor-cu128"
+  echo Driver !DRIVER_MAJOR!.xx predates R580, which CUDA 13 needs. Installing from cu128,
+  echo which is frozen at torch 2.11 and will never update. Updating the NVIDIA driver and
+  echo re-running --install gets you current torch via cu130.
+)
 
 :install_torch_index
 if /i "!TORCH_CHOICE!"=="cpu" goto install_cpu_forced
@@ -160,29 +177,95 @@ goto install_pkgs
 
 :install_cpu
 set "TORCH_CHOICE=cpu"
-echo No NVIDIA GPU detected - installing the default (CPU) build of PyTorch.
+set "TORCH_INDEX_REASON=no-gpu"
+echo No NVIDIA GPU detected (!NO_GPU_WHY!) - installing the default (CPU) build of PyTorch.
+echo   On an AMD or Intel GPU this is not what you want: pass a full index URL, e.g.
+echo   .\webui.bat --install --torch-index https://download.pytorch.org/whl/rocm6.2
+echo   See the README section "AMD (ROCm) setup".
 
 :install_pkgs
+rem A venv reused from a bad install keeps its torch: uv leaves a satisfying version alone, so
+rem neither a corrected detector nor --torch-index would replace it. Ask the installed torch whether
+rem it actually has kernels for this card.
+set "TORCH_FORCE=!TORCH_EXPLICIT!"
+if "!TORCH_FORCE!"=="1" goto install_run
+if /i "!TORCH_CHOICE!"=="cpu" goto install_run
+if not defined TORCH_CHOICE goto install_run
+set "PROBE_STATUS=unknown"
+set "PROBE_REPLACEABLE=0"
+for /f "usebackq tokens=1,2" %%a in (`"!TARGET_PY!" -c "from inline_core.device.probe import probe; p = probe(); print(p['status'], int(p['replaceable']))" 2^>nul`) do (
+  set "PROBE_STATUS=%%a"
+  set "PROBE_REPLACEABLE=%%b"
+)
+if /i "!PROBE_STATUS!"=="uncovered" (
+  if "!PROBE_REPLACEABLE!"=="1" (
+    set "TORCH_FORCE=1"
+    echo The installed torch has no kernels for this GPU; replacing it from !TORCH_CHOICE!.
+  ) else (
+    rem Not a pytorch.org build: a ROCm wheel, a nightly or something hand-built also fails the arch
+    rem rule, and reinstalling over a deliberate choice is worse than the wrong wheel.
+    echo WARNING: the installed torch has no kernels for this GPU, but it is not a pytorch.org
+    echo          build, so it is left alone. To rebuild the environment from scratch:
+    echo          .\webui.bat --install --extra !EXTRAS! --recreate
+  )
+)
+
+:install_run
+echo + uv pip install --python "!TARGET_PY!" !TORCH_ARGS! -e ".[!EXTRAS!]"
 uv pip install --python "!TARGET_PY!" !TORCH_ARGS! -e ".[!EXTRAS!]" || goto fail
+rem Torch LAST, and through --index-url (exclusive), when the index was named or the installed wheel
+rem is wrong. It cannot ride on the project install: [tool.uv.sources] pins torch to the cu126 index
+rem on win32, and --extra-index-url with unsafe-best-match picks the highest version ACROSS indexes,
+rem which lands back on PyPI's CPU wheel whenever PyPI leads.
+if "!TORCH_FORCE!"=="1" if defined TORCH_CHOICE (
+  set "TORCH_PINS=torch torchvision"
+  rem cu128 is frozen, so the current pair does not exist there. Pin the last one it has.
+  if /i "!TORCH_CHOICE!"=="cu128" set "TORCH_PINS=torch==2.11.0 torchvision==0.26.0"
+  set "TORCH_URL=https://download.pytorch.org/whl/!TORCH_CHOICE!"
+  if /i "!TORCH_CHOICE:~0,4!"=="http" set "TORCH_URL=!TORCH_CHOICE!"
+  echo + uv pip install --python "!TARGET_PY!" --index-url !TORCH_URL! --reinstall !TORCH_PINS!
+  uv pip install --python "!TARGET_PY!" --index-url !TORCH_URL! --reinstall !TORCH_PINS! || goto fail
+)
 uv pip install --python "!TARGET_PY!" inline-studio-frontend >nul 2>nul && echo Installed the prebuilt web UI (inline-studio-frontend). || echo Note: inline-studio-frontend not installed; the UI will build from source or run API-only.
+call :write_install_record
 rem A CPU-only wheel on a GPU box is silent at runtime and ~100x slower, so say it here rather than
 rem let it through: it can still happen if PyPI ever outranks the CUDA index on version.
 if /i "!TORCH_CHOICE!"=="cpu" goto install_done
 "!TARGET_PY!" -c "import importlib, importlib.util, sys; spec = importlib.util.find_spec('torch'); sys.exit(0 if spec is None or importlib.import_module('torch').version.cuda else 1)" 2>nul && goto install_done
 echo WARNING: the torch that got installed is a CPU-ONLY build. Generation would run on the
 echo          CPU, roughly 100x slower. Re-run with an explicit index, e.g.
-echo          .\webui.bat --install --torch-index cu126
+echo          .\webui.bat --install --torch-index !TORCH_CHOICE! --recreate
 
 :install_done
 echo Installed extras: !EXTRAS!. Start with: .\webui.bat
 exit /b 0
 
-rem Keeps the highest compute-capability major seen. Anything not a plain number is ignored: an
-rem older driver answers an unknown query with an error string instead of failing outright.
-:cap_max
-echo(%~1| findstr /r /c:"^[0-9][0-9]*$" >nul || exit /b 0
-if not defined CAP_MAJOR set "CAP_MAJOR=%~1"
-if %~1 GTR %CAP_MAJOR% set "CAP_MAJOR=%~1"
+rem Reads compute_cap and driver_version in one query, keeping the highest capability seen.
+rem set /a rather than a findstr guard: an old driver answers an unknown query with an error string,
+rem and `if LSS` would STRING-compare it, so "Unknown" would rank above 10 and win. set /a reads a
+rem bare word as an undefined variable and yields 0, which is exactly what we want here, so do not
+rem "fix" it back into a guard later.
+:read_gpu_probe
+set "CAP_MAJOR=0"
+set "DRIVER_MAJOR=0"
+set "GPU_PROBE_RAW="
+rem Split on the comma ONLY. Including "." here would cut "12.0, 610.88" into 12 / 0 / 610 / 88, so
+rem token 2 would be the capability's minor rather than the driver, and the R580 floor could never
+rem fire. The majors are taken off each field by the inner loops.
+for /f "usebackq tokens=1,2 delims=," %%c in (`nvidia-smi --query-gpu^=compute_cap^,driver_version --format^=csv^,noheader 2^>nul`) do (
+  rem Reset every iteration: set /a errors on garbage and would otherwise leave the previous line's
+  rem value in place, double-counting a good line followed by a bad one.
+  set "CAP_TRY=0"
+  set "DRV_TRY=0"
+  for /f "tokens=1 delims=. " %%m in ("%%c") do set /a "CAP_TRY=%%m" 2>nul
+  for /f "tokens=1 delims=. " %%n in ("%%d") do set /a "DRV_TRY=%%n" 2>nul
+  if not defined GPU_PROBE_RAW ( set "GPU_PROBE_RAW=%%c,%%d" ) else ( set "GPU_PROBE_RAW=!GPU_PROBE_RAW!; %%c,%%d" )
+  if !CAP_TRY! GTR !CAP_MAJOR! (
+    set "CAP_MAJOR=!CAP_TRY!"
+    set "DRIVER_MAJOR=!DRV_TRY!"
+  )
+)
+if not defined GPU_PROBE_RAW set "GPU_PROBE_RAW=<query returned nothing>"
 exit /b 0
 
 rem --- Pick the Python interpreter (and matching pip), in priority order -------------------------
@@ -316,6 +399,57 @@ call npm run dev:web
 popd
 exit /b 0
 
+rem Detect-only: report the probe and the decision, change nothing. This is what CI asserts against
+rem and what a bug report should paste, instead of a whole reinstall log.
+:print_torch_index
+if defined TORCH_CHOICE (
+  set "TORCH_INDEX_REASON=override"
+  set "GPU_PROBE_RAW=<not queried: index given>"
+  set "CAP_MAJOR=0"
+  set "DRIVER_MAJOR=0"
+  where nvidia-smi >nul 2>nul && call :read_gpu_probe
+) else (
+  set "GPU_PROBE_RAW=<nvidia-smi unavailable>"
+  set "CAP_MAJOR=0"
+  set "DRIVER_MAJOR=0"
+  set "TORCH_CHOICE=cpu"
+  set "TORCH_INDEX_REASON=no-gpu"
+  where nvidia-smi >nul 2>nul && call nvidia-smi -L >nul 2>nul && call :decide_print_index
+)
+echo probe: !GPU_PROBE_RAW!
+if "!CAP_MAJOR!"=="0" ( echo capability-major: unknown ) else ( echo capability-major: !CAP_MAJOR! )
+if "!DRIVER_MAJOR!"=="0" ( echo driver-major: unknown ) else ( echo driver-major: !DRIVER_MAJOR! )
+echo torch-index: !TORCH_CHOICE!
+echo reason: !TORCH_INDEX_REASON!
+exit /b 0
+
+:decide_print_index
+call :read_gpu_probe
+set "TORCH_CHOICE=cu126"
+set "TORCH_INDEX_REASON=autodetect"
+if !CAP_MAJOR! GEQ 10 set "TORCH_CHOICE=cu130"
+if !CAP_MAJOR! GEQ 10 if !DRIVER_MAJOR! GTR 0 if !DRIVER_MAJOR! LSS 580 (
+  set "TORCH_CHOICE=cu128"
+  set "TORCH_INDEX_REASON=driver-floor-cu128"
+)
+exit /b 0
+
+rem What the installer intended versus what landed. Nothing reads this yet; it exists so the next
+rem bug report carries its own diagnosis. Beside the target interpreter, not a hardcoded .venv,
+rem because --use-active-env means there may not be one.
+:write_install_record
+for %%I in ("!TARGET_PY!") do set "RECORD_DIR=%%~dpI.."
+set "INLINE_RECORD=!RECORD_DIR!\.inline-install.json"
+set "INLINE_RECORD_INDEX=!TORCH_CHOICE!"
+if not defined INLINE_RECORD_INDEX set "INLINE_RECORD_INDEX=default"
+set "INLINE_RECORD_REASON=!TORCH_INDEX_REASON!"
+set "INLINE_RECORD_CAP=!CAP_MAJOR!"
+set "INLINE_RECORD_DRIVER=!DRIVER_MAJOR!"
+set "INLINE_RECORD_RAW=!GPU_PROBE_RAW!"
+set "INLINE_RECORD_EXTRAS=!EXTRAS!"
+"!TARGET_PY!" -c "import json, os; from inline_core.device.probe import probe; rec = {'index': os.environ['INLINE_RECORD_INDEX'], 'reason': os.environ['INLINE_RECORD_REASON'], 'capabilityMajor': os.environ.get('INLINE_RECORD_CAP') or None, 'driverMajor': os.environ.get('INLINE_RECORD_DRIVER') or None, 'probeRaw': os.environ.get('INLINE_RECORD_RAW') or None, 'extras': os.environ['INLINE_RECORD_EXTRAS'], 'installed': probe()}; open(os.environ['INLINE_RECORD'], 'w', encoding='utf-8').write(json.dumps(rec, indent=2))" 2>nul
+exit /b 0
+
 :usage
 echo Usage: .\webui.bat [options]
 echo.
@@ -348,8 +482,11 @@ echo   --extra NAME           add an install extra (repeatable): runtime, parall
 echo   --torch-index WHICH    with --install, override the PyTorch wheel index picked from your GPU's
 echo                          compute capability. A short name (cu130, cu128, cu126), a full index
 echo                          URL, or "cpu" to force the CPU-only build. Also settable as
-echo                          INLINE_TORCH_INDEX. Use cu128 on a Blackwell card whose driver
-echo                          predates CUDA 13.
+echo                          INLINE_TORCH_INDEX. cu128 is frozen at torch 2.11 and exists only for
+echo                          Blackwell cards whose driver predates R580; --install picks it for
+echo                          you in that case.
+echo   --print-torch-index    print what the GPU probe read and which index would be used, then
+echo                          exit without installing anything
 echo   --recreate             with --install, rebuild .venv from scratch (discards anything installed
 echo                          into it by hand)
 echo   --use-active-env       install into / run from the environment activated in this shell instead

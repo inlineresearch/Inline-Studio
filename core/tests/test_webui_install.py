@@ -60,13 +60,25 @@ class Sandbox:
         self.venv_python.parent.mkdir(parents=True, exist_ok=True)
         _stub(self.venv_python, 'echo "$*" >> "$PYTHON_LOG"\nexit 0\n')
 
-    def pretend_nvidia_gpu(self, *compute_caps: str) -> None:
+    def pretend_nvidia_gpu(self, *compute_caps: str, driver: str = "") -> None:
         """A driver that answers `-L` and the compute_cap query. Pass no caps for an older driver
-        that does not know the query, which is the case the fallback index exists for."""
-        answer = "".join(f"printf '{cap}\\n'\n" for cap in compute_caps) or "exit 1\n"
+        that does not know the query, which is the case the fallback index exists for.
+
+        `driver` fills the second CSV column; the launcher reads it for the R580 floor that decides
+        cu130 against frozen cu128."""
+        suffix = f", {driver}" if driver else ""
+        answer = "".join(f"printf '{cap}{suffix}\\n'\n" for cap in compute_caps) or "exit 1\n"
         _stub(
             self.stubs / "nvidia-smi",
             f'case "$*" in\n  *compute_cap*) {answer.strip()} ;;\nesac\nexit 0\n',
+        )
+
+    def pretend_nvidia_probe_errors(self) -> None:
+        """A driver that lists GPUs but answers the query with an error string. The word must never
+        be coerced into a capability."""
+        _stub(
+            self.stubs / "nvidia-smi",
+            'case "$*" in\n  *compute_cap*) printf \'Unknown Error\\n\' ;;\nesac\nexit 0\n',
         )
 
     def pretend_windows(self) -> None:
@@ -251,3 +263,76 @@ def test_launch_prefers_our_venv_over_the_active_environment(sandbox: Sandbox) -
     assert "FOREIGN" not in ran
     assert "-m inline_core.server" in ran
     assert "not the environment active in this shell" in done.stdout
+
+
+# --- the detect-only flag, and the decisions it reports -----------------------------------------
+#
+# Two field reports were unfalsifiable because the launcher printed a conclusion and never the
+# evidence. --print-torch-index prints both and installs nothing.
+
+
+def _decision(sandbox: Sandbox, *args: str) -> dict[str, str]:
+    result = sandbox.run("--print-torch-index", *args)
+    assert result.returncode == 0, result.stderr
+    out = {}
+    for line in result.stdout.splitlines():
+        key, _, value = line.partition(": ")
+        out[key] = value
+    return out
+
+
+def test_print_torch_index_installs_nothing(sandbox: Sandbox) -> None:
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_gpu("12.0", driver="610.88")
+    _decision(sandbox)
+    assert sandbox.uv_calls() == []
+
+
+def test_blackwell_on_a_current_driver_gets_cu130(sandbox: Sandbox) -> None:
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_gpu("12.0", driver="610.88")
+    got = _decision(sandbox)
+    assert got["torch-index"] == "cu130"
+    assert got["capability-major"] == "12"
+    assert got["reason"] == "autodetect"
+
+
+def test_blackwell_on_an_old_driver_gets_frozen_cu128(sandbox: Sandbox) -> None:
+    """CUDA 13 needs R580. cu128 still serves and was the first index with sm_120, so that machine
+    has exactly one workable choice and should not be made to type it back to us."""
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_gpu("12.0", driver="575.57")
+    got = _decision(sandbox)
+    assert got["torch-index"] == "cu128"
+    assert got["reason"] == "driver-floor-cu128"
+
+
+def test_ada_gets_cu126(sandbox: Sandbox) -> None:
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_gpu("8.9", driver="580.00")
+    assert _decision(sandbox)["torch-index"] == "cu126"
+
+
+def test_a_garbage_probe_falls_back_and_shows_its_working(sandbox: Sandbox) -> None:
+    """`Unknown Error` must not become a capability. A string comparison would rank it above 10 and
+    hand an unknown card cu130."""
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_probe_errors()
+    got = _decision(sandbox)
+    assert got["torch-index"] == "cu126"
+    assert got["capability-major"] == "unknown"
+    assert "Unknown Error" in got["probe"]  # the raw line is echoed, not swallowed
+
+
+def test_no_gpu_reports_why(sandbox: Sandbox) -> None:
+    got = _decision(sandbox)
+    assert got["torch-index"] == "cpu"
+    assert got["reason"] == "no-gpu"
+
+
+def test_an_explicit_index_is_reported_as_an_override(sandbox: Sandbox) -> None:
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_gpu("12.0", driver="610.88")
+    got = _decision(sandbox, "--torch-index", "cu126")
+    assert got["torch-index"] == "cu126"
+    assert got["reason"] == "override"

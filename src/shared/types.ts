@@ -520,10 +520,15 @@ export interface TrainingHyperparams {
   /** Square training resolution in px (e.g. 1024). */
   resolution: number
   /**
-   * Seconds of each video clip to train on, for archs that accept clips. Snapped to the model's
-   * frame grid, and ignored entirely for stills. MiniMax H3's floor is 0.92s.
+   * Seconds of each video clip to train on, for archs that accept clips. Snapped **down** to the
+   * model's frame grid, and ignored entirely for stills. MiniMax H3's floor is 0.92s.
    */
   clipSeconds?: number
+  /**
+   * Which end of a clip the training window is taken from. Snapping down always discards some of
+   * the clip, so `end` exists for footage whose action is at the finish. Defaults to `start`.
+   */
+  clipWindow?: 'start' | 'end'
   /** Checkpoint every N steps. */
   saveEvery: number
   /** GPU indices to train on; `[]` = auto (first available). */

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from string import ascii_letters
+
 from .types import Device, DeviceKind
 
 
@@ -80,6 +83,37 @@ def cpu_only_torch_warning() -> str | None:
     )
 
 
+def _parse_arch(arch: str) -> tuple[int, int] | None:
+    """``sm_120`` to ``(12, 0)``.
+
+    The minor is the **last digit** and the major is everything before it, so ``sm_100`` is (10, 0).
+    Reading left to right instead gives (1, 20) and puts the bug precisely on the Blackwell parts.
+    Tuned variants (``sm_90a``) drop their trailing letters.
+    """
+    digits = arch[3:].rstrip(ascii_letters)
+    if len(digits) < 2 or not digits.isdigit():
+        return None
+    return int(digits[:-1]), int(digits[-1])
+
+
+def arch_list_covers(arches: Iterable[str], major: int, minor: int) -> bool:
+    """Whether a wheel's arch list has kernels that will run on a ``(major, minor)`` device.
+
+    CUDA binary compatibility runs **upward within one major only**: an ``sm_8x`` cubin executes on
+    any ``sm_8y`` where ``y >= x``. So ``sm_86`` covers an sm_89 Ada card, which is why exact
+    matching told every RTX 40-series owner their install was broken. Crossing a major never works,
+    so ``sm_90`` does not cover sm_120 and the Blackwell warning stays correct.
+
+    PTX entries (``compute_90``) JIT forward but are not matched here: they do not start with
+    ``sm_``, so a PTX-carrying wheel still warns. Rare, and warning is the safe way to be wrong.
+    """
+    for arch in arches:
+        parsed = _parse_arch(arch)
+        if parsed is not None and parsed[0] == major and parsed[1] <= minor:
+            return True
+    return False
+
+
 def unsupported_arch_warning() -> str | None:
     """A warning when the installed torch has no kernels for the GPU it is about to run on.
 
@@ -105,16 +139,15 @@ def unsupported_arch_warning() -> str | None:
             return None  # a CPU-only build; cpu_only_torch_warning owns that case
         major, minor = get_capability(0)
         target = f"sm_{major}{minor}"
-        # startswith, because a wheel lists tuned variants like sm_90a for the same architecture.
-        if any(arch.startswith(target) for arch in arches):
+        if arch_list_covers(arches, major, minor):
             return None
         name = _device_name(torch) or "The detected NVIDIA GPU"
         return (
             f"{name} is compute capability {target}, but this install's PyTorch only has kernels "
             f"for {' '.join(arches)}. Generation will fail or fall back to the CPU. Re-run "
             "`webui.sh --install` (Windows: `.\\webui.bat --install`) to pick the wheel index that "
-            "matches the card, or force one with `--torch-index cu130` - `cu128` if the driver "
-            "predates CUDA 13."
+            "matches the card, or force one with `--torch-index cu130`. On a Blackwell card whose "
+            "driver predates R580, use `cu128`, which still has sm_120 but is frozen at torch 2.11."
         )
     except Exception:  # noqa: BLE001 - a diagnostic must never break startup
         return None

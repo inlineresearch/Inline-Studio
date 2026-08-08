@@ -29,6 +29,7 @@ FORCE_REBUILD=0
 SMART_MEMORY=0
 USE_ACTIVE_ENV=0
 RECREATE=0
+PRINT_TORCH_INDEX=0
 TORCH_INDEX_CHOICE="${INLINE_TORCH_INDEX:-}"
 
 usage() {
@@ -66,7 +67,10 @@ Setup
   --torch-index WHICH    with --install, override the PyTorch wheel index picked from your GPU's
                          compute capability. A short name (cu130, cu128, cu126), a full index URL,
                          or "cpu" to force the CPU-only build. Also settable as INLINE_TORCH_INDEX.
-                         Use cu128 on a Blackwell card whose driver predates CUDA 13.
+                         cu128 is frozen at torch 2.11 and exists only for Blackwell cards whose
+                         driver predates R580; --install picks it for you in that case.
+  --print-torch-index    print what the GPU probe read and which index would be used, then exit
+                         without installing anything
   --recreate             with --install, rebuild ./.venv from scratch (discards anything installed
                          into it by hand, e.g. a ROCm build of PyTorch)
   --use-active-env       install into / run from the environment activated in this shell instead of
@@ -116,6 +120,7 @@ while [[ $# -gt 0 ]]; do
     --install) RUN_INSTALL=1; shift ;;
     --extra) EXTRAS="$EXTRAS,${2:?--extra needs a name}"; shift 2 ;;
     --torch-index) TORCH_INDEX_CHOICE="${2:?--torch-index needs a name, URL or 'cpu'}"; shift 2 ;;
+    --print-torch-index) PRINT_TORCH_INDEX=1; shift ;;
     --recreate) RECREATE=1; shift ;;
     --use-active-env) USE_ACTIVE_ENV=1; shift ;;
     --dev) DEV_MODE=1; shift ;;
@@ -169,27 +174,65 @@ is_windows() {
   esac
 }
 
-# The highest compute-capability major across the installed GPUs (12 for an RTX 50-series card).
-# Fails when the driver is too old to answer the query, which the caller treats as "unknown".
-gpu_compute_cap_major() {
-  local caps cap major best=""
-  caps="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null)" || return 1
-  while read -r cap; do
+# One query for both facts, cached, so the raw line can be echoed verbatim. A silent guess is what
+# made two field reports unfalsifiable: whatever we decide, the input is printed alongside it.
+GPU_PROBE_RAW=""
+GPU_CAP_MAJOR=""
+GPU_DRIVER_MAJOR=""
+
+read_gpu_probe() {
+  local line cap driver major
+  GPU_PROBE_RAW="$(nvidia-smi --query-gpu=compute_cap,driver_version --format=csv,noheader 2>/dev/null || true)"
+  while IFS=, read -r cap driver; do
+    cap="${cap// /}"; driver="${driver// /}"
     major="${cap%%.*}"
+    # Numeric guard, not a coercion: an old driver answers an unknown query with an error string,
+    # and a bare word must never become a capability.
     [[ "$major" =~ ^[0-9]+$ ]] || continue
-    if [[ -z "$best" || "$major" -gt "$best" ]]; then best="$major"; fi
-  done <<<"$caps"
-  [[ -n "$best" ]] || return 1
-  printf '%s\n' "$best"
+    if [[ -z "$GPU_CAP_MAJOR" || "$major" -gt "$GPU_CAP_MAJOR" ]]; then
+      GPU_CAP_MAJOR="$major"
+      GPU_DRIVER_MAJOR="${driver%%.*}"
+    fi
+  done <<<"$GPU_PROBE_RAW"
 }
+
+#: Why the index was chosen, for the message and the install record: autodetect | driver-floor-cu128
+#: | override | no-gpu.
+TORCH_INDEX_REASON="autodetect"
 
 # No single index covers every card: Blackwell (sm_100/sm_120) exists only from cu128 on, while cu126
 # is the last index still built for Maxwell..Volta (sm_50..sm_70). Unknown cards get cu126, the one
 # that covers the widest range of what people actually own.
+#
+# Verified 2026-02 and load-bearing: cu128 still SERVES but is frozen at torch 2.11.0, and it was the
+# first index with sm_120. So a Blackwell card on a pre-R580 driver (CUDA 13's floor) gets cu128
+# rather than an error, because it has exactly one workable choice. Re-check that ceiling before
+# trusting this comment in a year.
+# Assigns TORCH_CHOICE and TORCH_INDEX_REASON rather than printing them. It must NOT be called
+# through $(...): a command substitution is a subshell, so the probe globals and the reason would be
+# discarded and only the index would survive. That is what the tests caught.
 pick_torch_index() {
-  local major
-  major="$(gpu_compute_cap_major)" || { printf 'cu126\n'; return 0; }
-  if [[ "$major" -ge 10 ]]; then printf 'cu130\n'; else printf 'cu126\n'; fi
+  read_gpu_probe
+  if [[ -z "$GPU_CAP_MAJOR" ]]; then TORCH_CHOICE="cu126"; return 0; fi
+  if [[ "$GPU_CAP_MAJOR" -ge 10 ]]; then
+    if [[ -n "$GPU_DRIVER_MAJOR" && "$GPU_DRIVER_MAJOR" -lt 580 ]]; then
+      TORCH_CHOICE="cu128"
+      TORCH_INDEX_REASON="driver-floor-cu128"
+      return 0
+    fi
+    TORCH_CHOICE="cu130"
+    return 0
+  fi
+  TORCH_CHOICE="cu126"
+}
+
+# cu128 is frozen, so the current torch/torchvision pair does not exist there. Pin the last one it
+# has instead of resolving, or uv picks whatever is newest on an index that stopped moving.
+torch_pins_for() {
+  case "$1" in
+    cu128) printf 'torch==2.11.0 torchvision==0.26.0\n' ;;
+    *) printf 'torch torchvision\n' ;;
+  esac
 }
 
 torch_index_url() {
@@ -198,6 +241,32 @@ torch_index_url() {
     *) printf 'https://download.pytorch.org/whl/%s\n' "$1" ;;
   esac
 }
+
+# Detect-only: report the probe and the decision, change nothing. This is what CI asserts against
+# and what a bug report should paste, instead of a whole reinstall log.
+if [[ "$PRINT_TORCH_INDEX" -eq 1 ]]; then
+  TORCH_CHOICE=""
+  if [[ -n "$TORCH_INDEX_CHOICE" ]]; then
+    read_gpu_probe
+    PRINT_CHOICE="$TORCH_INDEX_CHOICE"
+    TORCH_INDEX_REASON="override"
+  elif command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    pick_torch_index
+    PRINT_CHOICE="$TORCH_CHOICE"
+    # Linux PyPI wheels already bundle CUDA, so the installer names no index there at all.
+    if ! is_windows; then PRINT_CHOICE="$PRINT_CHOICE (linux: installer uses the default PyPI wheels)"; fi
+  else
+    read_gpu_probe
+    PRINT_CHOICE="cpu"
+    TORCH_INDEX_REASON="no-gpu"
+  fi
+  echo "probe: ${GPU_PROBE_RAW:-<nvidia-smi unavailable>}"
+  echo "capability-major: ${GPU_CAP_MAJOR:-unknown}"
+  echo "driver-major: ${GPU_DRIVER_MAJOR:-unknown}"
+  echo "torch-index: $PRINT_CHOICE"
+  echo "reason: $TORCH_INDEX_REASON"
+  exit 0
+fi
 
 if [[ "$RUN_INSTALL" -eq 1 ]]; then
   command -v uv >/dev/null 2>&1 || { echo "uv not found: https://docs.astral.sh/uv/" >&2; exit 1; }
@@ -232,17 +301,40 @@ if [[ "$RUN_INSTALL" -eq 1 ]]; then
   # slower, with no error. Which CUDA index is right depends on the card - see pick_torch_index.
   TORCH_INDEX=()
   TORCH_CHOICE="$TORCH_INDEX_CHOICE"
+  TORCH_EXPLICIT=0
+  if [[ -n "$TORCH_CHOICE" ]]; then TORCH_EXPLICIT=1; TORCH_INDEX_REASON="override"; fi
   GPU_PRESENT=0
-  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then GPU_PRESENT=1; fi
+  NO_GPU_WHY=""
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    NO_GPU_WHY="nvidia-smi is not on PATH"
+  elif ! nvidia-smi -L >/dev/null 2>&1; then
+    NO_GPU_WHY="nvidia-smi ran but listed no GPU"
+  else
+    GPU_PRESENT=1
+  fi
   if [[ -z "$TORCH_CHOICE" ]]; then
     if [[ "$GPU_PRESENT" -eq 1 ]]; then
-      if is_windows; then TORCH_CHOICE="$(pick_torch_index)"; fi
+      if is_windows; then pick_torch_index; fi
     else
       TORCH_CHOICE="cpu"
+      TORCH_INDEX_REASON="no-gpu"
     fi
   fi
+  # Whatever we decided, show the input it came from. Both field reports were unfalsifiable because
+  # the launcher printed a conclusion and never the evidence.
+  if [[ "$GPU_PRESENT" -eq 1 && -n "$GPU_PROBE_RAW" ]]; then
+    echo "GPU probe (compute_cap, driver_version): $(printf '%s' "$GPU_PROBE_RAW" | tr '\n' ';')"
+  fi
+  if [[ "$TORCH_INDEX_REASON" == "driver-floor-cu128" ]]; then
+    echo "Driver ${GPU_DRIVER_MAJOR}.xx predates R580, which CUDA 13 needs. Installing from cu128,"
+    echo "which is frozen at torch 2.11 and will never update. Updating the NVIDIA driver and"
+    echo "re-running --install gets you current torch via cu130."
+  fi
   if [[ "$TORCH_CHOICE" == "cpu" && "$GPU_PRESENT" -eq 0 ]]; then
-    echo "No NVIDIA GPU detected - installing the default (CPU) build of PyTorch."
+    echo "No NVIDIA GPU detected ($NO_GPU_WHY) - installing the default (CPU) build of PyTorch."
+    echo "  On an AMD or Intel GPU this is not what you want: pass a full index URL, e.g."
+    echo "  ./webui.sh --install --torch-index https://download.pytorch.org/whl/rocm6.2"
+    echo "  See the README section \"AMD (ROCm) setup\"."
   elif [[ "$TORCH_CHOICE" == "cpu" ]]; then
     echo "Installing the default (CPU) build of PyTorch (--torch-index cpu)."
   elif [[ -z "$TORCH_CHOICE" ]]; then
@@ -258,7 +350,38 @@ if [[ "$RUN_INSTALL" -eq 1 ]]; then
       --index-strategy unsafe-best-match --no-sources-package torch)
     echo "NVIDIA GPU detected - installing the CUDA build of PyTorch ($TORCH_CHOICE)."
   fi
+  # A venv reused from a bad install keeps its torch: uv leaves a satisfying version alone, so
+  # neither a corrected detector nor --torch-index would replace it. Ask the installed torch whether
+  # it actually covers this card.
+  TORCH_FORCE="$TORCH_EXPLICIT"
+  if [[ "$TORCH_FORCE" -eq 0 && "$GPU_PRESENT" -eq 1 && "$TORCH_CHOICE" != "cpu" && -n "$TORCH_CHOICE" ]]; then
+    PROBE_OUT="$("$TARGET_PY" -c 'from inline_core.device.probe import probe; p = probe(); print(p["status"], int(p["replaceable"]))' 2>/dev/null || true)"
+    read -r PROBE_STATUS PROBE_REPLACEABLE <<<"${PROBE_OUT:-unknown 0}"
+    if [[ "$PROBE_STATUS" == "uncovered" && "$PROBE_REPLACEABLE" == "1" ]]; then
+      TORCH_FORCE=1
+      echo "The installed torch has no kernels for this GPU; replacing it from $TORCH_CHOICE."
+    elif [[ "$PROBE_STATUS" == "uncovered" ]]; then
+      # Not a pytorch.org build: a ROCm wheel, a nightly or something hand-built also fails the arch
+      # rule, and reinstalling over a deliberate choice is worse than the wrong wheel.
+      echo "WARNING: the installed torch has no kernels for this GPU, but it is not a pytorch.org"
+      echo "         build, so it is left alone. To rebuild the environment from scratch:"
+      echo "         ./webui.sh --install --extra $EXTRAS --recreate"
+    fi
+  fi
+
+  echo "+ uv pip install --python $TARGET_PY ${TORCH_INDEX[*]} -e .[$EXTRAS]"
   uv pip install --python "$TARGET_PY" "${TORCH_INDEX[@]}" -e ".[$EXTRAS]"
+  # Torch LAST, and through --index-url (exclusive), when the index was named or the installed wheel
+  # is wrong. Two reasons it cannot ride on the project install: [tool.uv.sources] pins torch to the
+  # cu126 index on win32, and --extra-index-url with unsafe-best-match picks the highest version
+  # ACROSS indexes, which lands back on PyPI's CPU wheel whenever PyPI leads. Costs one possibly
+  # wasted download on a path that is rare and deliberate.
+  if [[ "$TORCH_FORCE" -eq 1 && -n "$TORCH_CHOICE" ]]; then
+    read -r -a TORCH_PINS <<<"$(torch_pins_for "$TORCH_CHOICE")"
+    TORCH_URL="$(torch_index_url "$TORCH_CHOICE")"
+    echo "+ uv pip install --python $TARGET_PY --index-url $TORCH_URL --reinstall ${TORCH_PINS[*]}"
+    uv pip install --python "$TARGET_PY" --index-url "$TORCH_URL" --reinstall "${TORCH_PINS[@]}"
+  fi
   # Pull the prebuilt web UI so there's no Node build (best-effort - it may not be published yet).
   uv pip install --python "$TARGET_PY" inline-studio-frontend >/dev/null 2>&1 \
     && echo "Installed the prebuilt web UI (inline-studio-frontend)." \
@@ -274,6 +397,31 @@ sys.exit(0 if torch.version.cuda else 1)' 2>/dev/null; then
     echo "         CPU, roughly 100x slower. Re-run with an explicit index, e.g."
     echo "         ./webui.sh --install --torch-index cu126"
   fi
+  # What the installer intended versus what landed. Nothing reads this yet; it exists so the next
+  # bug report carries its own diagnosis instead of a guess. Beside the target interpreter, not a
+  # hardcoded .venv, because --use-active-env means there may not be one.
+  INLINE_RECORD_DIR="$(dirname "$(dirname "$TARGET_PY")")"
+  INLINE_RECORD="$INLINE_RECORD_DIR/.inline-install.json" \
+  INLINE_RECORD_INDEX="${TORCH_CHOICE:-default}" \
+  INLINE_RECORD_REASON="$TORCH_INDEX_REASON" \
+  INLINE_RECORD_CAP="${GPU_CAP_MAJOR:-}" \
+  INLINE_RECORD_DRIVER="${GPU_DRIVER_MAJOR:-}" \
+  INLINE_RECORD_RAW="${GPU_PROBE_RAW:-}" \
+  INLINE_RECORD_EXTRAS="$EXTRAS" \
+    "$TARGET_PY" -c 'import json, os
+from inline_core.device.probe import probe
+rec = {
+    "index": os.environ["INLINE_RECORD_INDEX"],
+    "reason": os.environ["INLINE_RECORD_REASON"],
+    "capabilityMajor": os.environ.get("INLINE_RECORD_CAP") or None,
+    "driverMajor": os.environ.get("INLINE_RECORD_DRIVER") or None,
+    "probeRaw": os.environ.get("INLINE_RECORD_RAW") or None,
+    "extras": os.environ["INLINE_RECORD_EXTRAS"],
+    "installed": probe(),
+}
+with open(os.environ["INLINE_RECORD"], "w", encoding="utf-8") as fh:
+    json.dump(rec, fh, indent=2)
+' 2>/dev/null || true
   echo "Installed extras: $EXTRAS. Start with: ./webui.sh"
   exit 0
 fi
