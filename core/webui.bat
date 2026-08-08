@@ -166,8 +166,11 @@ rem unsafe-best-match: torchao is on the CUDA index too, older there than our to
 rem some indexes; without this uv's first-index rule stops at that older copy instead of finding a
 rem new enough one on PyPI. It also makes the +cuXXX local version outrank PyPI's plain one, which
 rem is what pulls the CUDA build in rather than the CPU-only wheel PyPI serves on Windows.
-rem no-sources-package: the pyproject pin names one fixed index, and the card decides here.
-set "TORCH_ARGS=--extra-index-url !TORCH_URL! --index-strategy unsafe-best-match --no-sources-package torch"
+rem no-sources: the pyproject [tool.uv.sources] pin names one fixed index, and the card decides
+rem here. Deliberately the broad flag, not --no-sources-package torch: that one is too new for the
+rem uv versions people actually have, and it hard-errored their install. torch is the only entry in
+rem that table, so the two mean the same thing today. Adding another entry would change that.
+set "TORCH_ARGS=--extra-index-url !TORCH_URL! --index-strategy unsafe-best-match --no-sources"
 echo NVIDIA GPU detected - installing the CUDA build of PyTorch (!TORCH_CHOICE!).
 goto install_pkgs
 

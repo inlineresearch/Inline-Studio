@@ -190,8 +190,10 @@ def test_blackwell_gets_an_index_that_has_sm_120_wheels(sandbox: Sandbox) -> Non
     assert done.returncode == 0, done.stderr
     install = sandbox.project_install()
     assert f"{_WHL}/cu130" in install
-    # Without this the pyproject pin wins and the detected index is silently ignored.
-    assert "--no-sources-package torch" in install
+    # Without this the pyproject pin wins and the detected index is silently ignored. The broad
+    # flag, not --no-sources-package torch: that one is too new for the uv versions people have and
+    # hard-errored their install. See test_every_uv_flag_the_launcher_passes_is_real.
+    assert "--no-sources" in install
 
 
 def test_older_cards_get_the_index_that_still_covers_them(sandbox: Sandbox) -> None:
@@ -336,3 +338,36 @@ def test_an_explicit_index_is_reported_as_an_override(sandbox: Sandbox) -> None:
     got = _decision(sandbox, "--torch-index", "cu126")
     assert got["torch-index"] == "cu126"
     assert got["reason"] == "override"
+
+
+# --- the flags we pass must exist in the uv we are talking to ------------------------------------
+
+
+def test_every_uv_flag_the_launcher_passes_is_real(sandbox: Sandbox) -> None:
+    """A stubbed uv accepts anything, so a flag that does not exist sails through every other test
+    here and hard-errors on a user's machine. `--no-sources-package torch` did exactly that: valid
+    in current uv, absent from the version people had, and the install died at the first command.
+
+    Checked against the real uv's help rather than a hardcoded list, so it tracks whatever is
+    installed.
+    """
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is not installed; nothing to validate the launcher's flags against")
+    help_text = subprocess.run(  # noqa: S603 - fixed argv
+        [uv, "pip", "install", "--help"], capture_output=True, text=True, check=True, timeout=60
+    ).stdout
+
+    sandbox.pretend_windows()
+    sandbox.pretend_nvidia_gpu("8.6", driver="580.82")
+    sandbox.run("--install", "--extra", "runtime")
+
+    passed = {
+        word
+        for call in sandbox.uv_calls()
+        for word in call.split()
+        if word.startswith("--")
+    }
+    assert passed, "the launcher ran no uv command, so this test proves nothing"
+    missing = sorted(flag for flag in passed if flag not in help_text)
+    assert not missing, f"webui.sh passes flags this uv does not have: {missing}"

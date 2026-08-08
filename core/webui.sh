@@ -344,10 +344,12 @@ if [[ "$RUN_INSTALL" -eq 1 ]]; then
     # on some indexes; without this uv's first-index rule stops at that older copy instead of
     # finding a new enough one on PyPI. It also makes the +cuXXX local version outrank PyPI's plain
     # one, which is what pulls the CUDA build in on Windows.
-    # no-sources-package: the pyproject pin names one fixed index, and the whole point here is that
-    # the card decides.
+    # no-sources: the pyproject [tool.uv.sources] pin names one fixed index, and the whole point
+    # here is that the card decides. Deliberately the broad flag, not --no-sources-package torch:
+    # that one is too new for the uv versions people actually have, and it hard-errored their
+    # install. torch is the only entry in that table, so the two mean the same thing today.
     TORCH_INDEX=(--extra-index-url "$(torch_index_url "$TORCH_CHOICE")" \
-      --index-strategy unsafe-best-match --no-sources-package torch)
+      --index-strategy unsafe-best-match --no-sources)
     echo "NVIDIA GPU detected - installing the CUDA build of PyTorch ($TORCH_CHOICE)."
   fi
   # A venv reused from a bad install keeps its torch: uv leaves a satisfying version alone, so

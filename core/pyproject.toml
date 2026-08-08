@@ -111,8 +111,10 @@ name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
-# Launcher installs pass `--no-sources-package torch` so their detected index wins over this pin;
-# anything else added to this table would still apply to them.
+# Launcher installs pass `--no-sources` so their detected index wins over this pin. That flag is
+# broad rather than per-package because the per-package form is too new for the uv versions people
+# have. torch being the ONLY entry here is what makes that equivalent: adding another would silently
+# start ignoring it on launcher installs too.
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu126", marker = "sys_platform == 'win32'" }]
 
