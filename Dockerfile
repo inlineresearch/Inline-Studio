@@ -24,11 +24,15 @@ FROM nvidia/cuda:13.0.3-base-ubuntu24.04
 
 # ffmpeg is for ffprobe, which imageio-ffmpeg does not bundle. git is a runtime
 # requirement of the Extensions dialog. The rest are opencv and onnxruntime deps.
+# gcc and libc6-dev are not build-time only: Triton compiles a launcher stub at first
+# use and fails with "Failed to find C compiler" without them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
       ffmpeg \
+      gcc \
       git \
+      libc6-dev \
       libgl1 \
       libglib2.0-0t64 \
       libgomp1 \
