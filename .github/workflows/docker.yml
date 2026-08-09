@@ -1,8 +1,9 @@
-# Build and push the image, refresh the Docker Hub description, and point the RunPod template at
-# the new tag. Same triggers and version stamping as publish-core.yml.
+# Build and push the image, then point the RunPod template at the new tag. Same triggers and
+# version stamping as publish-core.yml.
 #
-# Secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (read/write/delete, the description API needs it),
-# RUNPOD_API_KEY. The image builds from this checkout, so it never races the PyPI workflows.
+# Both descriptions are written by hand in the Docker Hub and RunPod consoles, so nothing here
+# touches them. Secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, RUNPOD_API_KEY. The image builds
+# from this checkout, so it never races the PyPI workflows.
 name: Publish the container image
 
 on:
@@ -43,17 +44,6 @@ jobs:
           swap-storage: true
 
       - uses: actions/checkout@v4
-
-      # RunPod caps a template readme at 5000 characters and Docker Hub caps a description at
-      # 25000 bytes. Both silently reject an oversized body, so check before the 20 minute build.
-      - name: Check the description lengths
-        run: |
-          runpod=$(wc -m < docker/runpod-template.md)
-          hub=$(wc -c < docker/README.md)
-          echo "runpod-template.md: $runpod / 5000 chars"
-          echo "README.md: $hub / 25000 bytes"
-          [ "$runpod" -le 5000 ] || { echo "runpod-template.md is too long"; exit 1; }
-          [ "$hub" -le 25000 ] || { echo "README.md is too long"; exit 1; }
 
       - name: Resolve version
         id: ver
@@ -123,24 +113,14 @@ jobs:
             || { echo "the SPA is not being served"; docker logs smoke; exit 1; }
           docker rm -f smoke
 
-      - name: Update the Docker Hub description
-        uses: peter-evans/dockerhub-description@v5
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ env.IMAGE }}
-          readme-filepath: ./docker/README.md
-          short-description: 'AI filmmaking on a node canvas. Local generation and LoRA training on your own GPU.'
-
+      # imageName only. The template readme is written by hand in the RunPod console, so sending
+      # one here would overwrite it on every release.
       # --fail-with-body: a rejected field returns a 400 whose body is the only clue.
       - name: Point the RunPod template at the new image
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
         run: |
-          jq -n \
-            --arg img "${IMAGE}:${{ steps.ver.outputs.version }}" \
-            --rawfile readme docker/runpod-template.md \
-            '{imageName: $img, readme: $readme}' \
+          jq -n --arg img "${IMAGE}:${{ steps.ver.outputs.version }}" '{imageName: $img}' \
           | curl --fail-with-body -sS -X PATCH \
               "https://rest.runpod.io/v1/templates/${RUNPOD_TEMPLATE_ID}" \
               -H "Authorization: Bearer $RUNPOD_API_KEY" \
