@@ -113,16 +113,33 @@ jobs:
             || { echo "the SPA is not being served"; docker logs smoke; exit 1; }
           docker rm -f smoke
 
-      # imageName only. The template readme is written by hand in the RunPod console, so sending
-      # one here would overwrite it on every release.
-      # --fail-with-body: a rejected field returns a 400 whose body is the only clue.
+      # Read the template, change imageName, send the whole thing back. PATCH is not a merge:
+      # every field in TemplateUpdateInput has a default, so a body carrying only imageName
+      # would reset isPublic, ports, disk sizes and the hand-written readme.
+      # containerRegistryAuthId is dropped on purpose. The image is public, and a public
+      # template carrying registry credentials is rejected with a 500.
+      # --fail-with-body: a rejected field returns an error whose body is the only clue.
       - name: Point the RunPod template at the new image
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          TAG: ${{ steps.ver.outputs.version }}
         run: |
-          jq -n --arg img "${IMAGE}:${{ steps.ver.outputs.version }}" '{imageName: $img}' \
-          | curl --fail-with-body -sS -X PATCH \
-              "https://rest.runpod.io/v1/templates/${RUNPOD_TEMPLATE_ID}" \
-              -H "Authorization: Bearer $RUNPOD_API_KEY" \
-              -H "Content-Type: application/json" \
-              --data-binary @-
+          api="https://rest.runpod.io/v1/templates/${RUNPOD_TEMPLATE_ID}"
+          auth="Authorization: Bearer ${RUNPOD_API_KEY}"
+
+          curl --fail-with-body -sS "$api" -H "$auth" -o template.json
+
+          jq --arg img "${IMAGE}:${TAG}" '
+            {containerDiskInGb, dockerEntrypoint, dockerStartCmd, env, imageName,
+             isPublic, name, ports, readme, volumeInGb, volumeMountPath}
+            | with_entries(select(.value != null))
+            | .imageName = $img
+          ' template.json > patch.json
+
+          curl --fail-with-body -sS -X PATCH "$api" \
+            -H "$auth" -H "Content-Type: application/json" --data-binary @patch.json
+
+          # A 200 does not prove the field landed, so read it back.
+          got=$(curl --fail-with-body -sS "$api" -H "$auth" | jq -r .imageName)
+          echo "template now points at: $got"
+          [ "$got" = "${IMAGE}:${TAG}" ] || { echo "imageName did not stick"; exit 1; }
