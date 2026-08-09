@@ -1,0 +1,148 @@
+# Build and push the image, refresh the Docker Hub description, and point the RunPod template at
+# the new tag. Same triggers and version stamping as publish-core.yml.
+#
+# Secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (read/write/delete, the description API needs it),
+# RUNPOD_API_KEY. The image builds from this checkout, so it never races the PyPI workflows.
+name: Publish the container image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 1.2.66). Defaults to the tag.'
+        required: false
+      latest:
+        description: 'Also tag it latest. Turn off when rebuilding an older version.'
+        type: boolean
+        default: true
+
+env:
+  IMAGE: inlineresearch/inline-studio
+  # Already public, it is in the deploy link on the site and in the README.
+  RUNPOD_TEMPLATE_ID: c0qkyaypuv
+
+jobs:
+  image:
+    name: Build and push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # A hosted runner has ~21GB free on /, and the image is ~11GB before build snapshots.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
+
+      - uses: actions/checkout@v4
+
+      # RunPod caps a template readme at 5000 characters and Docker Hub caps a description at
+      # 25000 bytes. Both silently reject an oversized body, so check before the 20 minute build.
+      - name: Check the description lengths
+        run: |
+          runpod=$(wc -m < docker/runpod-template.md)
+          hub=$(wc -c < docker/README.md)
+          echo "runpod-template.md: $runpod / 5000 chars"
+          echo "README.md: $hub / 25000 bytes"
+          [ "$runpod" -le 5000 ] || { echo "runpod-template.md is too long"; exit 1; }
+          [ "$hub" -le 25000 ] || { echo "README.md is too long"; exit 1; }
+
+      - name: Resolve version
+        id: ver
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION"
+
+      # Same stamp publish-core.yml applies, so /v1/health reports the released version.
+      - name: Stamp the package version
+        run: |
+          sed -i "s/^version = .*/version = \"${{ steps.ver.outputs.version }}\"/" core/pyproject.toml
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # A dispatched run has no release payload, so it needs its own say on `latest`.
+      - name: Decide on the latest tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            LATEST="${{ !github.event.release.prerelease }}"
+          else
+            LATEST="${{ github.event.inputs.latest }}"
+          fi
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "tagging latest: $LATEST"
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ steps.ver.outputs.version }}
+            type=raw,value=latest,enable=${{ steps.tag.outputs.latest == 'true' }}
+
+      # Registry cache, not type=gha: the Actions cache is 10GB per repo, so this image
+      # would evict itself every run.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=min
+
+      # Catches a wrong INLINE_FRONTEND_ROOT, which ships an API-only image that looks fine.
+      - name: Smoke test the pushed image
+        run: |
+          docker run -d --name smoke -p 8848:8848 \
+            -e INLINE_PROFILE=cpu -e ENABLE_JUPYTER=0 -e ENABLE_FILEBROWSER=0 \
+            "${IMAGE}:${{ steps.ver.outputs.version }}"
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8848/v1/health >/dev/null && break || sleep 5
+          done
+          curl -fsS http://127.0.0.1:8848/v1/health
+          curl -fsS http://127.0.0.1:8848/ | grep -q 'id="root"' \
+            || { echo "the SPA is not being served"; docker logs smoke; exit 1; }
+          docker rm -f smoke
+
+      - name: Update the Docker Hub description
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.IMAGE }}
+          readme-filepath: ./docker/README.md
+          short-description: 'AI filmmaking on a node canvas. Local generation and LoRA training on your own GPU.'
+
+      # --fail-with-body: a rejected field returns a 400 whose body is the only clue.
+      - name: Point the RunPod template at the new image
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+        run: |
+          jq -n \
+            --arg img "${IMAGE}:${{ steps.ver.outputs.version }}" \
+            --rawfile readme docker/runpod-template.md \
+            '{imageName: $img, readme: $readme}' \
+          | curl --fail-with-body -sS -X PATCH \
+              "https://rest.runpod.io/v1/templates/${RUNPOD_TEMPLATE_ID}" \
+              -H "Authorization: Bearer $RUNPOD_API_KEY" \
+              -H "Content-Type: application/json" \
+              --data-binary @-

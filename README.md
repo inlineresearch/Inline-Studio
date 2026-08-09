@@ -39,6 +39,8 @@ It runs as a **single process on one port**: the Inline Core engine (Python) ser
 
 The built web UI ships as a Python package, so all you need is [Python 3.11+](https://python.org), no Node. **`--install --extra all` is the single command that installs everything** - the engine, the local model runtime, the LoRA trainer, and the UI. On an NVIDIA machine it reads the GPU's compute capability and pulls the CUDA build of PyTorch that has kernels for it, RTX 50-series included.
 
+[**No GPU? Deploy Inline Studio on RunPod →**](https://console.runpod.io/deploy?template=c0qkyaypuv&ref=hs2l4qhc)
+
 **macOS / Linux:**
 
 ```bash
