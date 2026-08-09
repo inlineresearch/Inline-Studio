@@ -489,7 +489,9 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
           caption. 10 to 30 of your character trains a good LoRA.
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">
+        // content-start: the grid fills the panel, so without it one row of cards stretches to
+        // the bottom instead of sizing to the thumbnail.
+        <div className="grid min-h-0 flex-1 auto-rows-min content-start grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">
           {items.map((item) => {
             const asset = byId.get(item.assetId)
             const src = asset ? resolveMedia(asset.thumbPath ?? asset.filePath) : ''

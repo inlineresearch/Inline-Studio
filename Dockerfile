@@ -115,6 +115,8 @@ RUN chmod +x /opt/entrypoint.sh
 # HF_HOME has no in-app knob, but the captioner and annotators fall back to that cache.
 # FORWARDED_ALLOW_IPS: uvicorn defaults to 127.0.0.1, so behind a TLS proxy it drops
 # X-Forwarded-Proto and StaticFiles redirects to http:// from an https:// page.
+# HF_HUB_DISABLE_XET=0 overrides Core's default. Xet costs per-chunk progress, but without it
+# Hugging Face refuses any file over ~50GB, which is every MiniMax H3 transformer.
 ENV INLINE_HOST=0.0.0.0 \
     INLINE_PORT=8848 \
     INLINE_FRONTEND_ROOT=/opt/inline-studio/dist-web \
@@ -129,6 +131,7 @@ ENV INLINE_HOST=0.0.0.0 \
     UV_CACHE_DIR=/workspace/.cache/uv \
     TRITON_CACHE_DIR=/workspace/.cache/triton \
     FORWARDED_ALLOW_IPS=* \
+    HF_HUB_DISABLE_XET=0 \
     TOKENIZERS_PARALLELISM=false \
     PYTHONUNBUFFERED=1 \
     ENABLE_JUPYTER=1 \
