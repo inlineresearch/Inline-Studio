@@ -150,6 +150,59 @@ def _to_device(item: dict[str, Any], device: Any, dtype: Any) -> dict[str, Any]:
     }
 
 
+def _wandb_run(manifest: dict[str, Any], steps: int) -> Any:
+    """Optional Weights & Biases run for headless / Vast. Off unless WANDB_PROJECT is set
+    (or manifest hyperparams carry wandbProject) and the wandb package is installed."""
+    import os
+
+    hp = manifest.get("hyperparams") or {}
+    project = (
+        os.environ.get("WANDB_PROJECT")
+        or hp.get("wandbProject")
+        or ""
+    ).strip()
+    if not project:
+        return None
+    try:
+        import wandb
+    except ImportError:
+        protocol.progress(0, steps, status="wandb requested but package missing; continuing offline")
+        return None
+    name = (
+        os.environ.get("WANDB_RUN_NAME")
+        or hp.get("wandbRunName")
+        or hp.get("outputName")
+        or manifest.get("runId")
+        or "inline-lora"
+    )
+    config = {
+        "arch": manifest.get("arch"),
+        "baseMode": manifest.get("baseMode"),
+        "steps": steps,
+        "rank": hp.get("rank"),
+        "alpha": hp.get("alpha"),
+        "learningRate": hp.get("learningRate"),
+        "resolution": hp.get("resolution"),
+        "clipSeconds": hp.get("clipSeconds"),
+        "batchSize": hp.get("batchSize"),
+        "loraScope": hp.get("loraScope"),
+        "datasetDir": manifest.get("datasetDir"),
+    }
+    run = wandb.init(
+        project=project,
+        name=str(name),
+        config=config,
+        dir=str(Path(manifest.get("workingDir") or ".")),
+        resume="allow",
+    )
+    # JSON protocol stays machine-readable; surface the human URL on stderr + a progress status.
+    url = getattr(run, "url", None) or ""
+    if url:
+        print(f"wandb: {url}", flush=True)
+        protocol.progress(0, steps, status=f"wandb {url}")
+    return run
+
+
 def train(manifest: dict[str, Any]) -> str | None:
     import torch
     from accelerate import Accelerator
@@ -161,6 +214,7 @@ def train(manifest: dict[str, Any]) -> str | None:
     hp = manifest["hyperparams"]
     steps = int(hp["steps"])
     save_every = max(1, int(hp.get("saveEvery", 250)))
+    log_every = max(1, int(hp.get("wandbLogEvery") or hp.get("logEvery") or 1))
     resolution = int(hp.get("resolution", 1024))
     ckpt_dir = Path(manifest["checkpointDir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -168,6 +222,8 @@ def train(manifest: dict[str, Any]) -> str | None:
     accelerator = Accelerator(gradient_accumulation_steps=max(1, int(hp.get("batchSize", 1))))
     device = accelerator.device
     dtype = models.compute_dtype()
+
+    wb = _wandb_run(manifest, steps) if accelerator.is_main_process else None
 
     # Two phases, never overlapping: encoders -> precache -> free, THEN the transformer. Held
     # together they add the text encoder's several GB to the base; apart, peak is just the base.
@@ -180,12 +236,21 @@ def train(manifest: dict[str, Any]) -> str | None:
     # Precache is minutes of silence on a large dataset, so its phases are reported as progress
     # statuses. The orchestrator turns each new status into a log line, which is the only channel
     # that reaches the UI: this subprocess installs no logging handler.
+    def _cache_status(text: str) -> None:
+        protocol.progress(0, steps, status=text)
+        if wb is not None:
+            wb.log({"status": text})
+
     data, unconditional, shift = cache.build(
         manifest["datasetDir"], manifest["modelsDir"], arch.key, str(device), dtype, resolution,
         flip=bool(hp.get("flipAugment")), dropout=dropout,
         clip_frames=archs.clip_frames(arch, hp.get("clipSeconds")),
-        on_status=lambda text: protocol.progress(0, steps, status=text),
+        on_status=_cache_status,
     )
+    if wb is not None:
+        wb.log({"dataset/items": len(data), "train/clip_frames": archs.clip_frames(
+            arch, hp.get("clipSeconds")
+        )})
 
     quant = models.resolve_quant(
         str(hp.get("baseQuant") or "auto"),
@@ -264,19 +329,37 @@ def train(manifest: dict[str, Any]) -> str | None:
             optimizer.zero_grad()
 
         done = step + 1
-        protocol.progress(
-            done, steps, loss=float(loss.detach().item()), status="training", vram=_peak_vram_gb()
-        )
+        loss_val = float(loss.detach().item())
+        vram = _peak_vram_gb()
+        protocol.progress(done, steps, loss=loss_val, status="training", vram=vram)
+        if wb is not None and (done % log_every == 0 or done == steps or done == 1):
+            payload: dict[str, Any] = {
+                "train/loss": loss_val,
+                "train/step": done,
+                "train/epoch_frac": done / max(len(data), 1),
+            }
+            if vram is not None:
+                payload["system/peak_vram_gb"] = vram
+            wb.log(payload, step=done)
         if done % save_every == 0 or done == steps:
             _save_checkpoint(accelerator, transformer, optimizer, ckpt_dir, done)
             if accelerator.is_main_process:
                 protocol.checkpoint(str(ckpt_dir))
+                if wb is not None:
+                    wb.log({"train/checkpoint_step": done}, step=done)
 
     if stop.flagged:
         _save_checkpoint(accelerator, transformer, optimizer, ckpt_dir, step)
+        if wb is not None:
+            wb.log({"train/status": "interrupted", "train/step": step})
+            wb.finish()
         return None  # cooperative cancel: a checkpoint exists, so the run is resumable
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         _save_lora(accelerator.unwrap_model(transformer), manifest["outputPath"])
+        if wb is not None:
+            wb.log({"train/status": "done", "train/step": steps})
+            # Finish so the run URL is complete even if the process is killed on Vast teardown.
+            wb.finish()
     return manifest["outputPath"]

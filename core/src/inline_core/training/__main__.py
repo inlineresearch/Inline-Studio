@@ -176,6 +176,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Stage the dataset and write the manifest, then print its path and exit.",
     )
+    parser.add_argument(
+        "--wandb-project",
+        default="",
+        help="Weights & Biases project (or set WANDB_PROJECT). Empty = no wandb.",
+    )
+    parser.add_argument(
+        "--wandb-run-name",
+        default="",
+        help="Weights & Biases run name (or set WANDB_RUN_NAME).",
+    )
+    parser.add_argument(
+        "--wandb-log-every",
+        type=int,
+        default=1,
+        help="Log train/loss to wandb every N steps (default 1).",
+    )
     return parser
 
 
@@ -232,6 +248,15 @@ def _resolve_manifest(args: argparse.Namespace) -> dict[str, Any]:
         clip_seconds=clip_seconds,
         gpu_ids=_parse_gpu_ids(args.gpu_ids),
     )
+    # WandB knobs live on the hyperparams block (and/or env) so a prebuilt manifest can carry them.
+    if args.wandb_project:
+        manifest["hyperparams"]["wandbProject"] = args.wandb_project
+        os.environ.setdefault("WANDB_PROJECT", args.wandb_project)
+    if args.wandb_run_name:
+        manifest["hyperparams"]["wandbRunName"] = args.wandb_run_name
+        os.environ.setdefault("WANDB_RUN_NAME", args.wandb_run_name)
+    if args.wandb_log_every:
+        manifest["hyperparams"]["wandbLogEvery"] = int(args.wandb_log_every)
     # Surface the path on stderr so stdout stays the pure progress protocol.
     print(f"manifest: {path}", file=sys.stderr)
     return manifest

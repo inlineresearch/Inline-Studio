@@ -126,6 +126,9 @@ def build_hyperparams(
     clip_seconds: float | None = None,
     output_name: str = "",
     gpu_ids: list[int] | None = None,
+    wandb_project: str = "",
+    wandb_run_name: str = "",
+    wandb_log_every: int = 1,
 ) -> dict[str, Any]:
     """Hyperparams block matching what the Trainer Adjust panel posts."""
     if arch not in _ARCHS:
@@ -152,6 +155,12 @@ def build_hyperparams(
     # snaps an unset clip length to the 22-frame floor for any video files present.
     if arch == "minimax-h3" and clip_seconds is not None:
         hp["clipSeconds"] = float(clip_seconds)
+    if wandb_project:
+        hp["wandbProject"] = wandb_project
+    if wandb_run_name:
+        hp["wandbRunName"] = wandb_run_name
+    if wandb_log_every and wandb_log_every != 1:
+        hp["wandbLogEvery"] = int(wandb_log_every)
     return hp
 
 

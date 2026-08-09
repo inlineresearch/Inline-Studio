@@ -162,6 +162,23 @@ staged dataset, checkpoints and `manifest.json` (resume with `--resume --work-di
 Progress is JSON lines on stdout (`type: progress|checkpoint|done|error`), the same protocol the
 Trainer node already parses.
 
+**Weights & Biases (optional).** Set `WANDB_API_KEY` and pass a project (or `WANDB_PROJECT`):
+
+```bash
+export WANDB_API_KEY=…
+python -m inline_core.training \
+  --dataset /path/to/clips \
+  --arch minimax-h3 --clip-seconds 1 \
+  --wandb-project scrya-h3-iso-video \
+  --wandb-run-name scrya_iso_char_clips \
+  --wandb-log-every 5 \
+  …
+```
+
+The run URL is printed on stderr as `wandb: https://wandb.ai/…` and mirrored as a progress status
+line. Loss, step, peak VRAM and cache phase strings are logged. Omit `--wandb-project` (and leave
+`WANDB_PROJECT` unset) for a fully offline run.
+
 **Manifest path (what the UI already uses).** You can still hand the subprocess a prebuilt file:
 
 ```bash
