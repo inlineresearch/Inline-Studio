@@ -1,0 +1,36 @@
+# Without this the build context is hundreds of GB: core/models alone holds the weights.
+.git
+.github
+.claude
+node_modules
+
+# Local venvs, weights, generation sweeps and build output.
+core/.venv
+core/models
+core/.inline
+core/extensions
+core/scripts
+models
+outputs
+out
+build
+dist
+dist-web
+packages/frontend/inline_studio_frontend/static
+
+# Not needed to build or run the image.
+docs
+screenshots
+core/tests
+core/webui.bat
+
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+*.log
+nohup.out
+.env
+.env.local
+Inline-Studio.code-workspace

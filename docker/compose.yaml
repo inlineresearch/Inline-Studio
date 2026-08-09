@@ -1,0 +1,35 @@
+# Run Inline Studio locally on your own GPU:
+#
+#   docker compose -f docker/compose.yaml up
+#
+# Open http://localhost:8848. Everything is written to ./inline-workspace.
+
+services:
+  inline-studio:
+    image: inlineresearch/inline-studio:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "8848:8848" # Inline Studio
+      - "8888:8888" # JupyterLab
+      - "8080:8080" # file browser
+    volumes:
+      - ./inline-workspace:/workspace
+    environment:
+      # Unset means one is generated and printed to the log on every start.
+      JUPYTER_PASSWORD: ${JUPYTER_PASSWORD:-}
+      FILEBROWSER_PASSWORD: ${FILEBROWSER_PASSWORD:-}
+      # Only read on first start, after which the key lives on the volume.
+      FAL_KEY: ${FAL_KEY:-}
+      # Needed for gated repos such as FLUX.2 dev.
+      HF_TOKEN: ${HF_TOKEN:-}
+    # The default 64MB is not enough for the trainer's dataloader workers.
+    shm_size: "16gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
