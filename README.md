@@ -231,9 +231,26 @@ cd core
 ./webui.sh --install --extra training   # Windows: .\webui.bat --install --extra training
 ```
 
+**Headless (no UI).** On a rented GPU or in a script, train from a folder of captioned stills or
+clips with the same entry point the Trainer tab spawns:
+
+```bash
+cd core
+python -m inline_core.training \
+  --dataset /path/to/clips \
+  --arch minimax-h3 \
+  --clip-seconds 1 \
+  --models-dir ./models \
+  --output ./models/loras/my_h3_clip.safetensors \
+  --steps 500 --resolution 512
+```
+
+See [Headless training (CLI)](TRAINING.md#headless-training-cli) for the dataset layout,
+`metadata.jsonl` import, resume, and the stills-only path.
+
 For a worked example, see [`inlineresearch/skin-lora-krea-2-raw`](https://huggingface.co/inlineresearch/skin-lora-krea-2-raw), a photorealistic skin LoRA trained here on the Krea 2 RAW base from the 26 image and caption pairs published as [`inlineresearch/krea2-skin-lora`](https://huggingface.co/datasets/inlineresearch/krea2-skin-lora).
 
-**[TRAINING.md](TRAINING.md) is the full reference:** [which base to train on](TRAINING.md#architecture-and-base-model-modes) · [measured benchmarks](TRAINING.md#benchmark-results) · [datasets and outputs](TRAINING.md#datasets-and-outputs) · [stop and resume](TRAINING.md#stop-and-resume) · [trigger words](TRAINING.md#trigger-words) · [base precision](TRAINING.md#base-precision)
+**[TRAINING.md](TRAINING.md) is the full reference:** [which base to train on](TRAINING.md#architecture-and-base-model-modes) · [training on clips](TRAINING.md#training-on-clips) · [headless CLI](TRAINING.md#headless-training-cli) · [measured benchmarks](TRAINING.md#benchmark-results) · [datasets and outputs](TRAINING.md#datasets-and-outputs) · [stop and resume](TRAINING.md#stop-and-resume) · [trigger words](TRAINING.md#trigger-words) · [base precision](TRAINING.md#base-precision)
 
 ## How it works
 

@@ -12,7 +12,8 @@ resolution.
 **Contents:** [The graph](#the-graph) · [Datasets and outputs](#datasets-and-outputs) ·
 [Stop and resume](#stop-and-resume) · [Trigger words](#trigger-words) ·
 [Architecture and base model modes](#architecture-and-base-model-modes) · [Install](#install) ·
-[Training on clips](#training-on-clips) · [**Benchmark results**](#benchmark-results) ·
+[Training on clips](#training-on-clips) · [Headless training (CLI)](#headless-training-cli) ·
+[**Benchmark results**](#benchmark-results) ·
 [Dataset and adapter options](#dataset-and-adapter-options) · [Base precision](#base-precision)
 
 ## The graph
@@ -101,6 +102,74 @@ better than the first frame usually does. Write them by hand if you would rather
 
 Audio is not trained. H3 generates video and its soundtrack jointly, but the trainer packs zero
 audio rows, so an adapter changes what a clip looks like and never what it sounds like.
+
+## Headless training (CLI)
+
+The Trainer tab is optional. The same loop runs from the shell, which is what you want on a rented
+GPU, in a Docker box, or when you already have a folder of captioned clips and do not want the SPA.
+
+**Dataset layout.** A folder of media with captions beside them:
+
+```text
+dataset/
+  0000.mp4
+  0000.txt
+  0001.mp4
+  0001.txt
+  …
+```
+
+Stills (`.png` / `.jpg` / `.webp`) and clips (`.mp4` / `.mov` / `.webm` / `.mkv`) can mix. If the
+folder has a Hugging Face-style `metadata.jsonl` (`file_name` + `text` / `caption`) and no
+sidecars, the CLI materialises `NNNN.txt` for you. Put `minimax_h3_fl2va_bf16.safetensors` in
+`models/diffusion_models/` first (about 124GB).
+
+**Train a clip LoRA (motion):**
+
+```bash
+cd core
+# after ./webui.sh --install --extra all   (or --extra training + runtime)
+python -m inline_core.training \
+  --dataset /path/to/clips \
+  --arch minimax-h3 \
+  --clip-seconds 1 \
+  --models-dir ./models \
+  --output ./models/loras/my_h3_clip.safetensors \
+  --steps 500 \
+  --resolution 512 \
+  --rank 16
+```
+
+`--clip-seconds 1` is the practical floor: H3 snaps to a 22-frame grid at 24fps (~0.92s). Longer
+clips cost time per step, not VRAM. Omit images-only runs' clip flag if you prefer; any short video
+in the set is still snapped to the grid when the arch is H3.
+
+**Stills only (appearance, no motion):**
+
+```bash
+python -m inline_core.training \
+  --dataset /path/to/stills \
+  --arch minimax-h3 \
+  --models-dir ./models \
+  --output ./models/loras/my_h3_still.safetensors \
+  --steps 1500 \
+  --resolution 512
+```
+
+**Useful flags.** `--trigger TOKEN` prepends the token to every caption. `--work-dir DIR` holds the
+staged dataset, checkpoints and `manifest.json` (resume with `--resume --work-dir DIR`).
+`--dry-run` stages and prints the manifest without loading the GPU. `--gpu-ids 0` pins a card.
+Progress is JSON lines on stdout (`type: progress|checkpoint|done|error`), the same protocol the
+Trainer node already parses.
+
+**Manifest path (what the UI already uses).** You can still hand the subprocess a prebuilt file:
+
+```bash
+python -m inline_core.training /path/to/manifest.json
+```
+
+That shape is what `studio/training.py` writes; the flag path builds the same object via
+`inline_core.training.manifest`.
 
 ## Install
 
