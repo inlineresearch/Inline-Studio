@@ -129,6 +129,12 @@ jobs:
 
           curl --fail-with-body -sS "$api" -H "$auth" -o template.json
 
+          # The stored record is what the update is validated against, so log the fields that
+          # decide whether it is accepted. A public template with a registry credential attached
+          # is rejected, and the body cannot clear it: detach it in the console once.
+          jq '{isPublic, containerRegistryAuthId, imageName, ports,
+               containerDiskInGb, volumeInGb, volumeMountPath}' template.json
+
           jq --arg img "${IMAGE}:${TAG}" '
             {containerDiskInGb, dockerEntrypoint, dockerStartCmd, env, imageName,
              isPublic, name, ports, readme, volumeInGb, volumeMountPath}
