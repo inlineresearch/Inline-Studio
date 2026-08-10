@@ -2,9 +2,9 @@
 
 The full reference for Inline Studio's **Trainer**: which base to train on, what it costs in VRAM
 on a real card, and every setting that shapes the result. For the short version and a screenshot of
-the canvas, see [LoRA training in the README](README.md#lora-training).
+the canvas, see [Train a LoRA in the README](README.md#train-a-lora).
 
-Inline Studio trains LoRAs for **Z-Image**, **Krea 2**, **FLUX.2** and **MiniMax H3** on your own
+Inline Studio trains LoRAs for **Z-Image Turbo**, **FLUX.2**, **Krea 2** and **MiniMax H3** on your own
 GPU, with no cloud step and nothing uploaded. Training is cheaper than generating: a 16GB card
 trains all three image models at 512px, and a LoRA trained at 512 applies at any generation
 resolution.
@@ -104,7 +104,7 @@ audio rows, so an adapter changes what a clip looks like and never what it sound
 
 ## Install
 
-If you installed with `--extra all` from [Get Started](README.md#get-started), the trainer is already set up - nothing more to do. To add it to a leaner install, its dependencies (PEFT, 8-bit Adam, the captioner) sit behind the `training` extra:
+If you installed with `--extra all` from [Install](README.md#install), the trainer is already set up - nothing more to do. To add it to a leaner install, its dependencies (PEFT, 8-bit Adam, the captioner) sit behind the `training` extra:
 
 ```bash
 cd core
