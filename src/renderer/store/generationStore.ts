@@ -183,17 +183,18 @@ export const useGenerationStore = create<GenerationState>((set) => ({
     try {
       const res = await studio().generation.active()
       if (!res.ok) return
-      set((s) => {
-        const busy = { ...s.busyByFrame }
-        const progress = { ...s.progressByFrame }
-        const status = { ...s.statusByFrame }
-        for (const run of res.value) {
-          busy[run.frameId] = true
-          progress[run.frameId] = run.fraction
-          status[run.frameId] = run.status
-        }
-        return { busyByFrame: busy, progressByFrame: progress, statusByFrame: status }
-      })
+      // Core's answer REPLACES local state rather than merging into it. Restarting Core kills every
+      // run, and a merge left the nodes spinning forever because nothing ever said they stopped.
+      // Anything absent here is not running, whatever this tab last saw.
+      const busy: Record<string, boolean> = {}
+      const progress: Record<string, number | null> = {}
+      const status: Record<string, string | undefined> = {}
+      for (const run of res.value) {
+        busy[run.frameId] = true
+        progress[run.frameId] = run.fraction
+        status[run.frameId] = run.status
+      }
+      set({ busyByFrame: busy, progressByFrame: progress, statusByFrame: status })
     } catch {
       // A backend that predates the channel simply has no queue to restore.
     }

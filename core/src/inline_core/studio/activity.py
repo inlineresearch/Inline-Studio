@@ -127,6 +127,8 @@ class ActivityRegistry:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._last_broadcast = 0.0
         self._cancellers: dict[str, Callable[[str], None]] = {}
+        #: Projects already settled this process, so reconcile stays a no-op after the first look.
+        self._reconciled: set[str] = set()
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -266,10 +268,17 @@ class ActivityRegistry:
             pass
 
     def reconcile(self) -> None:
-        """Flip rows left mid-run by a crash to `interrupted`, so history has no stuck 'running'."""
+        """Flip rows left mid-run by a restart to `interrupted`, so history has no stuck 'running'.
+
+        Idempotent per project, because it is called from every path that can surface a project
+        (an explicit open, and the restore that happens when a client asks for the current one).
+        """
         ref = self._store.project_ref()
         if ref is None:
             return
+        if ref.id in self._reconciled:
+            return
+        self._reconciled.add(ref.id)
         with self._lock:
             alive = {rid for rid, r in self._runs.items() if r.status not in _TERMINAL}
         with self._store.bind(ref) as conn:

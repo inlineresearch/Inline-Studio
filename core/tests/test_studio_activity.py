@@ -233,6 +233,28 @@ def test_reconcile_settles_rows_left_running_by_a_crash(tmp_path) -> None:
     assert row["status"] == "interrupted"
 
 
+def test_reconcile_runs_once_per_project(tmp_path) -> None:
+    """It is called from both the open and the restore path, so a repeat must not rewrite rows."""
+    store = _store(tmp_path)
+    store.create_project("Alpha")
+    ref = store.project_ref()
+    assert ref is not None
+    store.conn().execute(
+        "INSERT INTO generation_runs (id, project_id, item_id, surface, engine, title, status, "
+        "queued_at) VALUES ('stale', ?, 'i1', 'studio', 'core', 'Z-Image', 'running', 1)",
+        (ref.id,),
+    )
+    registry = ActivityRegistry(store, _Events())
+    registry.reconcile()
+    first = store.conn().execute("SELECT ended_at FROM generation_runs WHERE id='stale'").fetchone()
+
+    # A second pass must leave the already-settled row exactly as it was.
+    store.conn().execute("UPDATE generation_runs SET status = 'running' WHERE id = 'stale'")
+    registry.reconcile()
+    row = store.conn().execute("SELECT status, ended_at FROM generation_runs").fetchone()
+    assert row["status"] == "running" and row["ended_at"] == first["ended_at"]
+
+
 def test_a_status_change_broadcasts_the_whole_live_list(tmp_path) -> None:
     store = _store(tmp_path)
     store.create_project("Alpha")

@@ -153,6 +153,13 @@ describe('generationStore run bookkeeping', () => {
     expect(state.progressByFrame['b']).toBe(0.7)
   })
 
+  it('hydrateActive replaces local state, so a Core restart clears every node', async () => {
+    // Core came back with nothing running. A merge left these two spinning forever.
+    await useGenerationStore.getState().hydrateActive()
+    expect(useGenerationStore.getState().busyByFrame).toEqual({})
+    expect(useGenerationStore.getState().statusByFrame).toEqual({})
+  })
+
   it('reset clears every node, for a project close', () => {
     useGenerationStore.getState().reset()
     expect(useGenerationStore.getState().busyByFrame).toEqual({})

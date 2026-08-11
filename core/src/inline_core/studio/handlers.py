@@ -86,10 +86,20 @@ def register_studio_handlers(
 
     def _open_project(path: str) -> Any:
         opened = store.open_project(path)
-        # A crash leaves rows stuck at running; settle them before anyone reads the history.
+        _settle_orphans()
+        return opened
+
+    def _current_project() -> Any:
+        # Also the restore path: after a Core restart the client asks for the current project
+        # rather than opening one, and its rows still need settling.
+        current = store.current_project()
+        _settle_orphans()
+        return current
+
+    def _settle_orphans() -> None:
+        """A restart leaves rows stuck at running; settle them before anyone reads the history."""
         if activity is not None:
             activity.reconcile()
-        return opened
 
     # --- project + app-global -------------------------------------------------------------------
     reg("project:create", lambda inp: store.create_project(inp["name"], inp.get("parentDir")))
@@ -97,7 +107,7 @@ def register_studio_handlers(
     reg("project:openDialog", lambda: None)  # no native folder picker in a browser
     reg("project:openZip", lambda: None)
     reg("project:listRecent", store.list_recent)
-    reg("project:current", store.current_project)
+    reg("project:current", _current_project)
     reg("project:close", store.close_project)
     reg("project:mediaDirs", store.media_dirs)
     reg("project:export", lambda _path: None)  # zip export: pending (see plan)
