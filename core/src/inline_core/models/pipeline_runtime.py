@@ -705,10 +705,15 @@ def attach_step_progress(pipe: Any, on_step: Any) -> bool:
 
 
 def _blocksets(pipe: Any) -> list[Any]:
-    """Every blockset that might run: a staged pipeline keeps the denoise in its second half."""
+    """Every blockset that might run: a staged pipeline keeps the denoise in its second half.
+
+    Reads ``_blocks`` and not the public ``blocks``, which is a property documented as returning a
+    *copy*. Patching the copy silently does nothing, which is exactly what it did.
+    """
     phases = getattr(pipe, "_inline_phases", None)
     targets = list(phases) if phases else [pipe]
-    return [t.blocks for t in targets if getattr(t, "blocks", None) is not None]
+    found = [getattr(t, "_blocks", None) or getattr(t, "blocks", None) for t in targets]
+    return [b for b in found if b is not None]
 
 
 def _denoise_loop(blocks: Any) -> Any:
