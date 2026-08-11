@@ -6,6 +6,7 @@ import { useUpdateStore } from '../../store/updateStore'
 import { DemoSampleCard } from './DemoSampleCard'
 import { GettingStartedCard } from './GettingStartedCard'
 import { FalKeyCard } from './FalKeyCard'
+import { ActivityIndicator } from '../Activity/ActivityIndicator'
 
 export function ProjectLauncher(): React.JSX.Element {
   const {
@@ -41,6 +42,10 @@ export function ProjectLauncher(): React.JSX.Element {
 
   return (
     <div className="relative flex h-full flex-col overflow-y-auto p-8">
+      {/* Runs keep going with no project open, so the indicator has to live here too. */}
+      <div className="absolute right-4 top-4 z-30">
+        <ActivityIndicator />
+      </div>
       <div className="flex flex-1 items-center">
         <div className="mx-auto w-full max-w-4xl">
           <header className="mb-8 text-center">

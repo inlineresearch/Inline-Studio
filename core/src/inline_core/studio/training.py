@@ -16,12 +16,16 @@ import json
 import re
 import shutil
 import sys
+import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from ..config import models_dir
 from . import training_store as ts
+from .activity import ActivityRun
 
 _CAPTION_EXT = ".txt"
 
@@ -44,9 +48,14 @@ def _unique_lora_name(loras: Path, stem: str) -> str:
 class Training:
     """Owns the LoRA training lifecycle: dataset CRUD, auto-caption, and one run at a time."""
 
-    def __init__(self, store: Any, events: Any, on_output: Any = None) -> None:
+    def __init__(
+        self, store: Any, events: Any, on_output: Any = None, activity: Any = None
+    ) -> None:
         self._store = store
         self._events = events
+        self._activity = activity
+        #: run id -> the project it was started in, so its row stays reachable across a switch.
+        self._refs: dict[str, Any] = {}
         # Rescans the model catalog when a run's LoRA lands in models/loras/, so it appears in the
         # loader node's dropdown + bumps the registry version - the same hook model downloads use.
         self._on_output = on_output
@@ -136,22 +145,62 @@ class Training:
     def status(self, run_id: str) -> dict[str, Any]:
         return ts.get_run(self._conn(), run_id)
 
-    def _persist(self, run_id: str, patch: dict[str, Any]) -> bool:
-        """Write a run patch, tolerating the row having gone away. False when it has.
+    @contextmanager
+    def _run_conn(self, run_id: str) -> Iterator[Any]:
+        """A connection to the project the run was started in, not whichever one is open now.
 
-        `_conn()` resolves the *currently open* project, but a run belongs to the project it was
-        started in - switching projects mid-run makes its row unreachable. That used to raise
-        inside the training task ("Training run not found", an unretrieved task exception) and
-        left the run stuck as `training` forever."""
+        Switching projects mid-run used to make the row unreachable, which left the run stuck as
+        `training` forever."""
+        ref = self._refs.get(run_id)
+        if ref is None:
+            yield self._conn()
+            return
+        with self._store.bind(ref) as conn:
+            yield conn
+
+    # training_runs is the durable record; these are the same states as the activity panel shows.
+    _ACTIVITY_STATUS = {
+        "queued": "queued",
+        "training": "running",
+        "done": "done",
+        "failed": "error",
+        "cancelled": "cancelled",
+        "interrupted": "interrupted",
+    }
+
+    def _persist(self, run_id: str, patch: dict[str, Any]) -> bool:
+        """Write a run patch, tolerating the row having gone away. False when it has."""
         try:
-            ts.update_run(self._conn(), run_id, patch)
+            with self._run_conn(run_id) as conn:
+                ts.update_run(conn, run_id, patch)
+            self._mirror(run_id, patch)
             return True
         except ValueError:
             return False
 
+    def _mirror(self, run_id: str, patch: dict[str, Any]) -> None:
+        """Reflect a training patch into the activity panel. Its history stays in training_runs."""
+        if self._activity is None:
+            return
+        status = self._ACTIVITY_STATUS.get(str(patch.get("status") or ""))
+        if status in ("done", "error", "cancelled", "interrupted"):
+            self._refs.pop(run_id, None)
+            self._activity.finish(run_id, status, error=patch.get("error"))
+            return
+        fields: dict[str, Any] = {}
+        if status is not None:
+            fields["status"] = status
+        if "progressFraction" in patch:
+            fields["fraction"] = patch["progressFraction"]
+        if "progressStatus" in patch:
+            fields["status_label"] = patch["progressStatus"]
+        if fields:
+            self._activity.update(run_id, **fields)
+
     def _lookup(self, run_id: str) -> dict[str, Any] | None:
         try:
-            return ts.get_run(self._conn(), run_id)
+            with self._run_conn(run_id) as conn:
+                return ts.get_run(conn, run_id)
         except ValueError:
             return None
 
@@ -244,6 +293,7 @@ class Training:
             raise RuntimeError("A training run is already in progress; wait for it to finish.")
         dataset = ts.get_dataset(self._conn(), dataset_id)
         run = ts.create_run(self._conn(), dataset_id, dataset["name"], hyperparams)
+        self._pin(run["id"], run["name"])
         asyncio.create_task(self._run(run["id"], resume=False))
         return run
 
@@ -253,8 +303,33 @@ class Training:
         run = ts.get_run(self._conn(), run_id)
         if run["status"] not in ("interrupted", "failed"):
             raise RuntimeError("Only an interrupted run can be resumed.")
+        self._pin(run_id, run["name"])
         asyncio.create_task(self._run(run_id, resume=True))
         return ts.update_run(self._conn(), run_id, {"status": "queued", "error": None})
+
+    def _pin(self, run_id: str, name: str) -> None:
+        ref = self._store.project_ref()
+        if ref is None:
+            return
+        self._refs[run_id] = ref
+        if self._activity is None:
+            return
+        self._activity.track(
+            ActivityRun(
+                run_id=run_id,
+                kind="training",
+                engine="core",
+                origin="studio",
+                status="queued",
+                title=name or "Training run",
+                queued_at=int(time.time() * 1000),
+                project_id=ref.id,
+                project_name=ref.name,
+                project_path=str(ref.folder),
+                item_id=run_id,
+                surface="trainer",
+            )
+        )
 
     def discard(self, run_id: str) -> dict[str, Any]:
         """Delete a run's working dir and make it unresumable.

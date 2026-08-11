@@ -7,10 +7,31 @@ from pathlib import Path
 
 
 def models_dir() -> Path:
-    """The models root scanned on start (category subfolders inside). `INLINE_MODELS_DIR`, else
-    `./models`. Users drop their own weight files here; nothing is downloaded."""
+    """The **writable** models root: where downloads and trained LoRAs land. `INLINE_MODELS_DIR`,
+    else `./models`. Users drop their own weight files here; nothing is downloaded."""
     env = os.environ.get("INLINE_MODELS_DIR")
     return Path(env).expanduser() if env else Path("models")
+
+
+def models_dirs() -> list[Path]:
+    """Every root scanned for installed weights, writable one first.
+
+    Pointing `INLINE_MODELS_DIR` (or `--models-dir`) somewhere else used to hide `./models`
+    entirely, so a user with weights in both places could only ever see one set. The extra roots
+    are read-only: only `models_dir()` is ever written to.
+    """
+    roots = [models_dir()]
+    default = Path("models")
+    for extra in (default, *_extra_models_dirs()):
+        if extra not in roots and extra.is_dir():
+            roots.append(extra)
+    return roots
+
+
+def _extra_models_dirs() -> list[Path]:
+    """Additional read-only roots from `INLINE_EXTRA_MODELS_DIRS` (os.pathsep-separated)."""
+    raw = os.environ.get("INLINE_EXTRA_MODELS_DIRS", "")
+    return [Path(p).expanduser() for p in raw.split(os.pathsep) if p.strip()]
 
 
 def data_dir() -> Path:

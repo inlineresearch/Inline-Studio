@@ -409,6 +409,80 @@ export interface GenerationErrorEvent {
   targetFrameId: string
   frameId?: string
   error: string
+  runId?: string
+}
+
+/** Main → renderer: a run was cancelled, so its node can stop showing as busy. */
+export interface GenerationCancelledEvent {
+  targetFrameId: string
+  runId?: string
+}
+
+/** What a run is doing. Mirrors Core's `RunStatus`, plus `interrupted` for a run lost to a crash. */
+export type ActivityStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted'
+
+/**
+ * One run in the activity panel. Covers Core generations, fal generations and training runs, from
+ * any project - Core is a single process, so its queue spans whichever project happens to be open.
+ */
+export interface ActivityRun {
+  runId: string
+  kind: 'generation' | 'training'
+  engine: 'core' | 'fal'
+  /** `api` is a run submitted straight to `POST /v1/runs` rather than started from this UI. */
+  origin: 'studio' | 'api'
+  status: ActivityStatus
+  title: string
+  /** 0..1, or null when the run has not reported yet (a long model load reports nothing). */
+  fraction: number | null
+  statusLabel: string | null
+  /** 0-based place in the pending line; null once the run has left the queue. */
+  queuePosition: number | null
+  queuedAt: number
+  startedAt: number | null
+  endedAt: number | null
+  error: string | null
+  takeId: string | null
+  /** Studio-origin only. An API run has no project and no canvas node behind it. */
+  projectId: string | null
+  projectName: string | null
+  projectPath: string | null
+  itemId: string | null
+  surface: string | null
+}
+
+/** Main → renderer: the live run list changed. Carries the whole list, so it replaces state. */
+export interface ActivityChangedEvent {
+  runs: ActivityRun[]
+}
+
+/** One file under a models root. */
+export interface ModelTreeFile {
+  name: string
+  path: string
+  kind: 'file'
+  sizeBytes: number
+  mtime: number
+}
+
+/** A folder under a models root. Only folders containing weights are listed. */
+export interface ModelTreeDir {
+  name: string
+  path: string
+  kind: 'dir'
+  children: ModelTreeNode[]
+  fileCount: number
+}
+
+export type ModelTreeNode = ModelTreeFile | ModelTreeDir
+
+/** One scanned models root. Only the first is writable; the rest are read-only extras. */
+export interface ModelTreeRoot {
+  path: string
+  label: string
+  writable: boolean
+  exists: boolean
+  categories: ModelTreeDir[]
 }
 
 /** Main → renderer: progress (0..1) of an explicit model download (the node's model popup). */

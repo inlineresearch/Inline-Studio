@@ -114,3 +114,28 @@ def test_frame_inputs_gain_a_nullable_handle_keeping_existing_rows() -> None:
     assert "handle" in _columns(conn, "frame_inputs")
     row = conn.execute("SELECT asset_id, handle FROM frame_inputs WHERE id='i1'").fetchone()
     assert row == ("a1", None)
+
+
+def test_generation_runs_table_is_added_to_an_existing_project() -> None:
+    """v17 -> v18: run history is per project, so it arrives on upgrade, not only on create."""
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT, created_at INTEGER,
+                              updated_at INTEGER);
+        INSERT INTO project (id, name, created_at, updated_at) VALUES ('p1', 'Alpha', 0, 0);
+        PRAGMA user_version = 17;
+        """
+    )
+
+    apply_schema(conn)
+
+    assert "generation_runs" in _tables(conn)
+    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION
+    # The existing row survived the upgrade.
+    assert conn.execute("SELECT name FROM project").fetchone()[0] == "Alpha"
+    conn.execute(
+        "INSERT INTO generation_runs (id, project_id, item_id, status, queued_at) "
+        "VALUES ('r1', 'p1', 'i1', 'done', 1)"
+    )
+    assert conn.execute("SELECT status FROM generation_runs").fetchone()[0] == "done"

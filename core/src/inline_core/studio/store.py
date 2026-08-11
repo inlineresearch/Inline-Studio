@@ -20,6 +20,9 @@ import re
 import sqlite3
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +46,32 @@ def _sanitize_folder_name(name: str) -> str:
 
 def _is_project_ext(folder: str) -> bool:
     return any(folder.endswith(ext) for ext in PROJECT_EXTS)
+
+
+@dataclass(frozen=True)
+class ProjectRef:
+    """A project identified independently of which one happens to be open.
+
+    A run outlives the project being open, so anything it writes later (its take bytes, the takes
+    row, its history row) has to resolve against the project it was submitted for rather than
+    ``StudioStore``'s current one.
+    """
+
+    id: str
+    name: str
+    folder: Path
+
+
+def open_project_db(folder: Path) -> sqlite3.Connection:
+    """A standalone connection to a project's db, independent of the open-project connection.
+
+    WAL is on, so this coexists with the open project's own connection when they are the same file.
+    """
+    db_path = Path(folder) / "project.db"
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+    return conn
 
 
 class StudioStore:
@@ -99,6 +128,30 @@ class StudioStore:
             raise RuntimeError("No project is open.")
         return self._folder
 
+    def project_ref(self) -> ProjectRef | None:
+        """A pinnable handle to the open project, or None when none is open."""
+        if self._current is None or self._folder is None:
+            return None
+        return ProjectRef(
+            id=str(self._current["id"]), name=str(self._current["name"]), folder=self._folder
+        )
+
+    @contextmanager
+    def bind(self, ref: ProjectRef) -> Iterator[sqlite3.Connection]:
+        """A connection to `ref`'s db: the live one when it is still open, else a short-lived one.
+
+        Reusing the open connection matters because SQLite writes from two handles to the same file
+        would otherwise contend for the write lock on every take.
+        """
+        if self._conn is not None and self._folder == ref.folder:
+            yield self._conn
+            return
+        conn = open_project_db(ref.folder)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
@@ -148,9 +201,11 @@ class StudioStore:
         return project
 
     def _load_project_row(self, folder: Path) -> dict[str, Any]:
-        row = self._db().execute(
-            "SELECT id, name, created_at, updated_at FROM project LIMIT 1"
-        ).fetchone()
+        row = (
+            self._db()
+            .execute("SELECT id, name, created_at, updated_at FROM project LIMIT 1")
+            .fetchone()
+        )
         if row is None:
             raise ValueError("project.db is missing its project record.")
         return {

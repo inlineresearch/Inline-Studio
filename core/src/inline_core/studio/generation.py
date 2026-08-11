@@ -44,11 +44,19 @@ def _kind_str(kind: Any) -> str:
 class CoreGeneration:
     """Drives core-node runs and streams their progress as Studio generation events."""
 
-    def __init__(self, store: Any, manager: Any, events: Any, registry: Any = None) -> None:
+    def __init__(
+        self,
+        store: Any,
+        manager: Any,
+        events: Any,
+        registry: Any = None,
+        activity: Any = None,
+    ) -> None:
         self._store = store
         self._manager = manager
         self._events = events
         self._registry = registry
+        self._activity = activity
         self._active: dict[str, str] = {}  # canvas item id -> run id
         # Last progress per item, so a reloaded page can rebuild its queue. Progress is broadcast
         # and forgotten otherwise, and a run mid-model-load emits nothing for minutes.
@@ -71,13 +79,41 @@ class CoreGeneration:
         previous = self._active.get(item_id)
         if previous is not None:
             self._manager.cancel(previous)
+        ref = self._store.project_ref()
+        if ref is None:
+            raise RuntimeError("No project is open.")
         graph_dict, target = build_workflow_graph(
-            self._store.conn(), self._store.folder(), item_id, self._is_list_port
+            self._store.conn(), ref.folder, item_id, self._is_list_port
         )
         self._progress(item_id, 0.02, "Submitting")
-        record, _created = self._manager.submit(parse_graph(graph_dict), target)
+        record, _created = self._manager.submit(
+            parse_graph(graph_dict),
+            target,
+            None,
+            {
+                "projectId": ref.id,
+                "projectName": ref.name,
+                "projectPath": str(ref.folder),
+                "itemId": item_id,
+                "surface": mb.STUDIO_SURFACE,
+                "title": self._node_title(item_id),
+            },
+        )
         self._active[item_id] = record.state.run_id
-        asyncio.create_task(self._drain(item_id, record))
+        asyncio.create_task(self._drain(item_id, record, ref))
+
+    def _node_title(self, item_id: str) -> str:
+        """The node's model type, for the activity list. Falls back to the item id."""
+        try:
+            item = mb.get_item(self._store.conn(), item_id)
+            node_type = str(((item.get("data") or {}).get("core") or {}).get("type") or "")
+        except Exception:  # noqa: BLE001 - a label is never worth failing a run over
+            return item_id
+        if not node_type:
+            return item_id
+        if self._registry is not None and self._registry.has(node_type):
+            return str(self._registry.get(node_type).title or node_type)
+        return node_type
 
     def cancel(self, item_id: str | None = None) -> None:
         ids = [item_id] if item_id else list(self._active.keys())
@@ -87,9 +123,12 @@ class CoreGeneration:
             if run_id:
                 self._manager.cancel(run_id)
 
-    async def _drain(self, item_id: str, record: Any) -> None:
+    async def _drain(self, item_id: str, record: Any, ref: Any = None) -> None:
+        # `ref` is the project pinned at submit; only a direct caller omits it.
+        ref = ref if ref is not None else self._store.project_ref()
         queue: asyncio.Queue[Any] = asyncio.Queue()
         record.subscribers.add(queue)
+        run_id = record.state.run_id
         seen: set[str] = set()
         result = "done"
         try:
@@ -97,7 +136,7 @@ class CoreGeneration:
             for take in list(record.state.takes):
                 if take.id not in seen:
                     seen.add(take.id)
-                    self._save_take(item_id, take)
+                    self._save_take(item_id, take, ref)
             if record.done:
                 self._events.broadcast("events:generationDone", {"targetFrameId": item_id})
                 return
@@ -112,7 +151,7 @@ class CoreGeneration:
                         if take.id in seen:
                             continue
                         seen.add(take.id)
-                        self._save_take(item_id, take)
+                        self._save_take(item_id, take, ref)
                         self._events.broadcast(
                             "events:generationNodeDone", {"frameId": item_id, "takeId": take.id}
                         )
@@ -129,19 +168,29 @@ class CoreGeneration:
                             "targetFrameId": item_id,
                             "frameId": event.node_id,
                             "error": event.message,
+                            "runId": run_id,
                         },
                     )
                     break
             if result == "done":
                 self._events.broadcast("events:generationDone", {"targetFrameId": item_id})
+            elif result == "cancelled":
+                # Without this the node spins forever whenever the cancel came from anywhere but
+                # the tab that started the run.
+                self._events.broadcast(
+                    "events:generationCancelled", {"targetFrameId": item_id, "runId": run_id}
+                )
         except Exception as error:  # noqa: BLE001
             self._events.broadcast(
                 "events:generationError", {"targetFrameId": item_id, "error": str(error)}
             )
         finally:
             record.subscribers.discard(queue)
-            self._active.pop(item_id, None)
-            self._last.pop(item_id, None)
+            # Only clear the item if it still points at *this* run: re-running a node cancels the
+            # previous one, and that drain task lands here after the successor has claimed the slot.
+            if self._active.get(item_id) == run_id:
+                self._active.pop(item_id, None)
+                self._last.pop(item_id, None)
 
     def active(self) -> list[dict[str, Any]]:
         """The runs still in flight, for a client that has lost its own copy of the queue."""
@@ -154,50 +203,55 @@ class CoreGeneration:
             {"frameId": item_id, "fraction": fraction, "status": status},
         )
 
-    def _save_take(self, item_id: str, take: Any) -> None:
+    def _save_take(self, item_id: str, take: Any, ref: Any) -> None:
         """Copy a take's bytes into the project's takes/ dir and set its Core node's output. Image
         PNGs are re-saved with an embedded recipe (the params + upstream subgraph that made them) so
         the file is self-describing; the params/prompt are also recorded on the node's output entry
-        so flipping through a node's take history can restore that image's settings."""
-        folder: Path = self._store.folder()
-        conn = self._store.conn()
+        so flipping through a node's take history can restore that image's settings.
+
+        Everything resolves against `ref`, the project the run was submitted for. Reading the open
+        project here instead would land the take in whichever project the user switched to.
+        """
+        folder: Path = ref.folder
         kind = _kind_str(take.kind)
         src = Path(take.uri)
         ext = src.suffix or _EXT.get(kind, ".png")
         rel = f"takes/{uuid.uuid4()}{ext}"
         (folder / "takes").mkdir(parents=True, exist_ok=True)
-        # take.node_id is the canvas item that produced it (node ids == item ids).
-        recipe = build_recipe(conn, take.node_id)
-        dst = folder / rel
-        embedded = False
-        if kind == "image" and ext.lower() == ".png":
-            try:
-                embed_recipe_png(src, dst, recipe)
-                embedded = True
-            except Exception:  # noqa: BLE001 - never fail a render over metadata; fall back to copy
-                logger.warning("Recipe embed failed for %s; copying without metadata", take.id)
-        if not embedded:
-            shutil.copyfile(src, dst)
-        # A node can produce more than one take (MiniMax H3 returns the muxed video and its
-        # soundtrack), and each one is persisted above - but only the node's declared output_kind
-        # claims the canvas slot, or the last take saved would silently become what the card shows.
-        if not self._is_primary_output(take.node_id, kind):
-            return
-        # Stamp createdAt (ms) so the Outputs gallery interleaves these with frame takes.
-        mb.set_core_node_output(
-            conn,
-            take.node_id,
-            {
-                "takeId": take.id,
-                "filePath": rel,
-                "kind": kind,
-                "createdAt": int(time.time() * 1000),
-                "params": dict(getattr(take, "params", {}) or {}),
-                "prompt": recipe.get("prompt", ""),
-            },
-        )
+        with self._store.bind(ref) as conn:
+            # take.node_id is the canvas item that produced it (node ids == item ids).
+            recipe = build_recipe(conn, take.node_id)
+            dst = folder / rel
+            embedded = False
+            if kind == "image" and ext.lower() == ".png":
+                try:
+                    embed_recipe_png(src, dst, recipe)
+                    embedded = True
+                except Exception:  # noqa: BLE001 - never fail a render over metadata, just copy
+                    logger.warning("Recipe embed failed for %s; copying without metadata", take.id)
+            if not embedded:
+                shutil.copyfile(src, dst)
+            # A node can produce more than one take (MiniMax H3 returns the muxed video and its
+            # soundtrack), and each is persisted above - but only the node's declared output_kind
+            # claims the canvas slot, or the last take saved would silently become what the card
+            # shows.
+            if not self._is_primary_output(take.node_id, kind, conn):
+                return
+            # Stamp createdAt (ms) so the Outputs gallery interleaves these with frame takes.
+            mb.set_core_node_output(
+                conn,
+                take.node_id,
+                {
+                    "takeId": take.id,
+                    "filePath": rel,
+                    "kind": kind,
+                    "createdAt": int(time.time() * 1000),
+                    "params": dict(getattr(take, "params", {}) or {}),
+                    "prompt": recipe.get("prompt", ""),
+                },
+            )
 
-    def _is_primary_output(self, item_id: str, kind: str) -> bool:
+    def _is_primary_output(self, item_id: str, kind: str, conn: Any) -> bool:
         """Whether this take's kind is the one the node's card shows.
 
         Defaults to True whenever the answer is not knowable - no registry, an unregistered type, a
@@ -207,7 +261,7 @@ class CoreGeneration:
         if self._registry is None:
             return True
         try:
-            item = mb.get_item(self._store.conn(), item_id)
+            item = mb.get_item(conn, item_id)
             node_type = str(((item.get("data") or {}).get("core") or {}).get("type") or "")
         except Exception:  # noqa: BLE001 - a lookup failure must not lose the take
             return True

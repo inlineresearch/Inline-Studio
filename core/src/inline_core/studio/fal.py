@@ -14,12 +14,14 @@ import asyncio
 import base64
 import logging
 import re
+import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 from . import frames as fr
 from . import moodboard as mb
+from .activity import ActivityRun
 from .image_meta import embed_recipe_png
 from .recipe import build_recipe
 
@@ -264,10 +266,13 @@ def _progress_from_status(status: dict[str, Any]) -> tuple[float, str]:
 class FalGeneration:
     """Runs a browser-built fal request server-side and streams it as Studio generation events."""
 
-    def __init__(self, store: Any, events: Any) -> None:
+    def __init__(self, store: Any, events: Any, activity: Any = None) -> None:
         self._store = store
         self._events = events
-        self._active: dict[str, bool] = {}
+        self._activity = activity
+        #: frame id -> the project it was submitted against, which doubles as the "still live" flag.
+        self._active: dict[str, Any] = {}
+        self._run_ids: dict[str, str] = {}
         #: Last progress per frame, so a reloaded page can rebuild its queue.
         self._last: dict[str, tuple[float, str | None]] = {}
 
@@ -279,13 +284,44 @@ class FalGeneration:
                 {"targetFrameId": frame_id, "error": "Add a fal API key in Settings to generate."},
             )
             return
-        self._active[frame_id] = True
-        asyncio.create_task(self._run(frame_id, request, key))
+        project = self._store.project_ref()
+        if project is None:
+            self._events.broadcast(
+                "events:generationError",
+                {"targetFrameId": frame_id, "error": "Open a project before generating."},
+            )
+            return
+        self._active[frame_id] = project
+        run_id = f"fal_{uuid.uuid4().hex[:12]}"
+        self._run_ids[frame_id] = run_id
+        if self._activity is not None:
+            self._activity.track(
+                ActivityRun(
+                    run_id=run_id,
+                    kind="generation",
+                    engine="fal",
+                    origin="studio",
+                    status="running",
+                    title=str(request.get("endpoint") or "fal"),
+                    queued_at=int(time.time() * 1000),
+                    started_at=int(time.time() * 1000),
+                    project_id=project.id,
+                    project_name=project.name,
+                    project_path=str(project.folder),
+                    item_id=frame_id,
+                    surface="studio",
+                ),
+                ref=project,
+            )
+        asyncio.create_task(self._run(frame_id, request, key, project))
 
     def cancel(self, frame_id: str | None = None) -> None:
         for fid in [frame_id] if frame_id else list(self._active.keys()):
             self._active.pop(fid, None)
             self._last.pop(fid, None)
+            run_id = self._run_ids.pop(fid, None)
+            if run_id and self._activity is not None:
+                self._activity.finish(run_id, "cancelled")
 
     def active(self) -> list[dict[str, Any]]:
         """The fal runs still in flight, for a client that has lost its own copy of the queue."""
@@ -300,7 +336,13 @@ class FalGeneration:
             {"frameId": frame_id, "fraction": fraction, "status": status},
         )
 
-    async def _run(self, frame_id: str, request: dict[str, Any], key: str) -> None:
+    def cancel_run(self, run_id: str) -> None:
+        """Cancel by activity run id; the fal path is otherwise keyed by frame."""
+        frame_id = next((f for f, r in self._run_ids.items() if r == run_id), None)
+        if frame_id is not None:
+            self.cancel(frame_id)
+
+    async def _run(self, frame_id: str, request: dict[str, Any], key: str, project: Any) -> None:
         import httpx
 
         endpoint = request["endpoint"]
@@ -349,36 +391,52 @@ class FalGeneration:
                     raise RuntimeError("The model returned no output.")
                 take_id = None
                 for ref in refs:
-                    take_id = await self._save(client, frame_id, ref, handle["requestId"], body)
+                    take_id = await self._save(
+                        client, frame_id, ref, handle["requestId"], body, project
+                    )
                 if take_id:
                     self._events.broadcast(
                         "events:generationNodeDone", {"frameId": frame_id, "takeId": take_id}
                     )
             self._events.broadcast("events:generationDone", {"targetFrameId": frame_id})
+            self._settle(frame_id, "done", take_id=take_id)
         except Exception as error:  # noqa: BLE001
+            message = fal_error_message(error)
             self._events.broadcast(
-                "events:generationError",
-                {"targetFrameId": frame_id, "error": fal_error_message(error)},
+                "events:generationError", {"targetFrameId": frame_id, "error": message}
             )
+            self._settle(frame_id, "error", error=message)
         finally:
             self._active.pop(frame_id, None)
 
+    def _settle(self, frame_id: str, status: str, **fields: Any) -> None:
+        run_id = self._run_ids.pop(frame_id, None)
+        if run_id and self._activity is not None:
+            self._activity.finish(run_id, status, **fields)
+
     async def _save(
-        self, client: Any, frame_id: str, ref: dict[str, str], request_id: str, params: dict
+        self,
+        client: Any,
+        frame_id: str,
+        ref: dict[str, str],
+        request_id: str,
+        params: dict,
+        project: Any,
     ) -> str:
-        folder: Path = self._store.folder()
-        conn = self._store.conn()
+        # Against the project this run was submitted for, not whichever one is open when it lands.
+        folder: Path = project.folder
         data = await client.get(ref["url"])
         data.raise_for_status()
         rel = f"takes/{uuid.uuid4()}{ref['ext']}"
         (folder / "takes").mkdir(parents=True, exist_ok=True)
         dst = folder / rel
-        # Embed the recipe into fal PNG outputs so a shared image can rebuild its graph. Only PNG
-        # carries a tEXt chunk (jpg/webp/video can't); the take stores params in the DB regardless.
-        is_png = ref["kind"] == "image" and ref["ext"].lower() == ".png"
-        if not (is_png and self._embed_recipe(conn, frame_id, data.content, dst)):
-            dst.write_bytes(data.content)
-        take = fr.add_take(conn, frame_id, rel, ref["kind"], params, comfy_prompt_id=request_id)
+        with self._store.bind(project) as conn:
+            # Embed the recipe into fal PNG outputs so a shared image can rebuild its graph. Only
+            # PNG carries a tEXt chunk (jpg/webp/video can't); the take stores params regardless.
+            is_png = ref["kind"] == "image" and ref["ext"].lower() == ".png"
+            if not (is_png and self._embed_recipe(conn, frame_id, data.content, dst)):
+                dst.write_bytes(data.content)
+            take = fr.add_take(conn, frame_id, rel, ref["kind"], params, comfy_prompt_id=request_id)
         return take["id"]
 
     def _embed_recipe(self, conn: Any, frame_id: str, content: bytes, dst: Path) -> bool:

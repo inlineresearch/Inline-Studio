@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseRecipeBytes, type Recipe } from './pngRecipe'
+import { parseRecipeBytes, parseRecipeJson, type Recipe } from './pngRecipe'
 
 const PNG_SIG = [137, 80, 78, 71, 13, 10, 26, 10]
 
@@ -52,5 +52,27 @@ describe('parseRecipeBytes', () => {
   it('returns null for non-PNG bytes and malformed JSON', () => {
     expect(parseRecipeBytes(new Uint8Array([1, 2, 3]))).toBeNull()
     expect(parseRecipeBytes(pngWithText('inline-studio', '{not json'))).toBeNull()
+  })
+})
+
+describe('parseRecipeJson', () => {
+  const graph = { items: [{ id: 'a', type: 'core', data: {}, x: 0, y: 0 }], connectors: [] }
+
+  it('reads an exported graph file', () => {
+    const text = JSON.stringify({ version: 1, app: 'inline-studio', target: 'a', graph })
+    expect(parseRecipeJson(text)?.target).toBe('a')
+  })
+
+  it('rejects JSON from some other app', () => {
+    // The `app` guard is what stops an unrelated .json drop from being rebuilt as a graph.
+    expect(parseRecipeJson(JSON.stringify({ app: 'something-else', graph }))).toBeNull()
+  })
+
+  it('rejects malformed JSON rather than throwing', () => {
+    expect(parseRecipeJson('{not json')).toBeNull()
+  })
+
+  it('rejects a bare array', () => {
+    expect(parseRecipeJson('[1,2,3]')).toBeNull()
   })
 })

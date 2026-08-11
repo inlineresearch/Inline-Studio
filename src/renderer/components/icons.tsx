@@ -234,3 +234,30 @@ export function PlayIcon({ className }: { className?: string }): React.JSX.Eleme
     </Svg>
   )
 }
+
+/** `stop_circle` - cancel a queued or running job. */
+export function StopCircleIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM9 9h6v6H9V9z" />
+    </Svg>
+  )
+}
+
+/** `pending` - the activity indicator (queued + running work). */
+export function ActivityIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM7 13.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
+    </Svg>
+  )
+}
+
+/** `deployed_code` - a model weight file / the Models panel. */
+export function ModelsIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.3 6.5 3.6L12 11.5 5.5 7.9 12 4.3zM5 9.6l6 3.3v6.5l-6-3.3V9.6zm8 9.8v-6.5l6-3.3v6.5l-6 3.3z" />
+    </Svg>
+  )
+}

@@ -22,6 +22,7 @@ export function NodeFrame({
   transparent = false,
   subtleSelect = false,
   running = false,
+  invalid = false,
   overflowVisible = false,
   onResizeStart,
   onResize,
@@ -39,6 +40,8 @@ export function NodeFrame({
   subtleSelect?: boolean
   /** This node is currently executing - show a green border so it's clear which node is running. */
   running?: boolean
+  /** Something this node needs is not installed (e.g. an imported graph's LoRA) - thin red border. */
+  invalid?: boolean
   /** Let content overflow the card (e.g. a dropdown that spills past the frame). Off by default. */
   overflowVisible?: boolean
   /** Resize hooks. When `onResizeEnd` is given it replaces the default width/height persist. */
@@ -49,11 +52,25 @@ export function NodeFrame({
 }): React.JSX.Element {
   const { updateItem, deleteItem } = useBoardActions()
 
-  // A running node's green border wins over the selection colour so it's always clear what's executing.
+  // Running (green) wins over invalid (red), which wins over the selection colour: what is
+  // executing matters more than what is broken, and both matter more than what is selected.
   const selBorder = subtleSelect ? 'border-zinc-600' : 'border-accent'
-  const activeBorder = running ? 'border-emerald-400' : selected ? selBorder : 'border-border'
+  const activeBorder = running
+    ? 'border-emerald-400'
+    : invalid
+      ? 'border-red-500'
+      : selected
+        ? selBorder
+        : 'border-border'
+  const transparentBorder = running
+    ? 'border border-emerald-400'
+    : invalid
+      ? 'border border-red-500'
+      : selected
+        ? `border border-dashed ${subtleSelect ? 'border-zinc-600/70' : 'border-accent/60'}`
+        : 'border border-transparent'
   const box = transparent
-    ? `bg-transparent ${running ? 'border border-emerald-400' : selected ? `border border-dashed ${subtleSelect ? 'border-zinc-600/70' : 'border-accent/60'}` : 'border border-transparent'}`
+    ? `bg-transparent ${transparentBorder}`
     : `border bg-surface ${activeBorder}`
   const ring = running ? 'ring-2 ring-emerald-400/30' : ''
 

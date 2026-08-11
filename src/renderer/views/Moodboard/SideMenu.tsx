@@ -19,13 +19,15 @@ import {
   FolderIcon,
   HistoryIcon,
   ImageIcon,
+  ModelsIcon,
   MusicNoteIcon,
   SparklesIcon,
   StarIcon,
 } from '../../components/icons'
 import { Waveform } from '../../components/Waveform'
+import { ModelsPanel } from '../Models/ModelsPanel'
 
-type Tab = 'assets' | 'outputs' | 'timeline'
+type Tab = 'assets' | 'outputs' | 'timeline' | 'models'
 type SortKey = 'updated' | 'name'
 
 const TABS: { key: Tab; label: string; Icon: (p: { className?: string }) => React.JSX.Element }[] =
@@ -33,6 +35,7 @@ const TABS: { key: Tab; label: string; Icon: (p: { className?: string }) => Reac
     { key: 'assets', label: 'Assets', Icon: ImageIcon },
     { key: 'outputs', label: 'Outputs', Icon: SparklesIcon },
     { key: 'timeline', label: 'Timeline', Icon: HistoryIcon },
+    { key: 'models', label: 'Models', Icon: ModelsIcon },
   ]
 
 /**
@@ -153,6 +156,7 @@ export function SideMenu(): React.JSX.Element {
         {tab === 'assets' && <LibraryPanel />}
         {tab === 'outputs' && <OutputsTab />}
         {tab === 'timeline' && <TimelineTab />}
+        {tab === 'models' && <ModelsPanel />}
       </div>
 
       {/* Drag separator on the right edge to resize the panel. */}
