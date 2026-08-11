@@ -587,3 +587,31 @@ def test_step_progress_reports_when_there_is_no_loop_to_hook() -> None:
     from inline_core.models import pipeline_runtime as rt
 
     assert rt.attach_step_progress(_Pipe(), lambda *_a: None) is False
+
+
+def test_step_progress_survives_the_blocks_property_returning_a_copy() -> None:
+    """``ModularPipeline.blocks`` is a property that deepcopies, so patching what it returns is a
+    silent no-op. This is the bug that made the hook look installed while the UI showed nothing."""
+    from inline_core.models import pipeline_runtime as rt
+
+    loop = _FakeLoop()
+
+    class _Blocks:
+        sub_blocks = {"denoise": loop}
+
+    class _Pipe:
+        _blocks = _Blocks()
+
+        @property
+        def blocks(self) -> object:
+            import copy
+
+            return copy.deepcopy(self._blocks)
+
+    seen: list[tuple[int, int]] = []
+    assert rt.attach_step_progress(_Pipe(), lambda done, total: seen.append((done, total)))
+
+    with loop.progress_bar(total=2) as bar:
+        bar.update()
+        bar.update()
+    assert seen == [(1, 2), (2, 2)]
