@@ -26,6 +26,14 @@ def is_video(path: Path) -> bool:
     return path.suffix.lower() in _VIDEO_SUFFIXES
 
 
+def media_pairs(root: Path) -> list[tuple[Path, str]]:
+    """Every dataset item as ``(file, caption)``, images and clips alike.
+
+    Public because the video archs and the on-disk cache both need the same enumeration, and the
+    suffix lists that define it belong to this module."""
+    return _pairs(root, _IMAGE_SUFFIXES + _VIDEO_SUFFIXES)
+
+
 def _pairs(
     dataset_dir: Path, suffixes: tuple[str, ...] = _IMAGE_SUFFIXES
 ) -> list[tuple[Path, str]]:

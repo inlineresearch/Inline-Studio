@@ -212,6 +212,7 @@ def train(manifest: dict[str, Any]) -> str | None:
         flip=bool(hp.get("flipAugment")), dropout=dropout,
         clip_frames=archs.clip_frames(arch, hp.get("clipSeconds")),
         clip_window=str(hp.get("clipWindow") or "start"),
+        cache_dir=manifest.get("precacheDir"),
         on_status=lambda text: protocol.progress(0, steps, status=text),
     )
 

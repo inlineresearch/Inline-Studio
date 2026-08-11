@@ -51,7 +51,7 @@ def precache(
     from . import dataset as ds
 
     say = on_status or (lambda _text: None)
-    pairs = ds._pairs(Path(dataset_dir), ds._IMAGE_SUFFIXES + ds._VIDEO_SUFFIXES)
+    pairs = ds.media_pairs(Path(dataset_dir))
     if not pairs:
         raise RuntimeError("The exported dataset is empty.")
 
