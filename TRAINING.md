@@ -2,9 +2,9 @@
 
 The full reference for Inline Studio's **Trainer**: which base to train on, what it costs in VRAM
 on a real card, and every setting that shapes the result. For the short version and a screenshot of
-the canvas, see [Train a LoRA in the README](README.md#train-a-lora).
+the canvas, see [LoRA training in the README](README.md#lora-training).
 
-Inline Studio trains LoRAs for **Z-Image Turbo**, **FLUX.2**, **Krea 2** and **MiniMax H3** on your own
+Inline Studio trains LoRAs for **Z-Image**, **Krea 2**, **FLUX.2** and **MiniMax H3** on your own
 GPU, with no cloud step and nothing uploaded. Training is cheaper than generating: a 16GB card
 trains all three image models at 512px, and a LoRA trained at 512 applies at any generation
 resolution.
@@ -56,7 +56,7 @@ The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FL
 
 **MiniMax H3** is the video model, and it trains on **still images**:
 
-- **FL2VA** is the only base, and it is undistilled, so there is no adapter and nothing to drift. Put `minimax_h3_fl2va_bf16.safetensors` in `models/diffusion_models/`, train on stills, then wire the LoRA into any of the four H3 nodes. It loads on the Reference to Video node too, which uses a different checkpoint file: the two partitions are the same architecture.
+- **FL2VA** is the only base, and it is undistilled, so there is no adapter and nothing to drift. Put `minimax_h3_fl2va_bf16.safetensors` in `models/diffusion_models/`, train on stills, then wire the LoRA into any of the four H3 nodes. **It has to be the bf16 file.** The smaller `pruned` and `pruned_fp8_scaled` builds generate but cannot train: they ship no timestep path for the modulation basis to be derived from, and they would save nothing anyway, because the base trains at 4-bit whichever file it starts from. The trainer says so rather than failing part way in. It loads on the Reference to Video node too, which uses a different checkpoint file: the two partitions are the same architecture.
 - **Stills or short clips.** Drop images and it learns appearance: look, style, character, lighting. Drop video and it learns motion too. Sound is never learned either way, because the audio rows are empty. See [Training on clips](#training-on-clips).
 - **The base is 4-bit, always.** H3 is 40GB after the AdaLN factorisation and 11.7GB after quantisation, so full precision is refused rather than offered and then failing. There is no base-precision control for H3 for the same reason.
 - **A 24GB card is comfortable and a 16GB card works, slowly.** The run encodes latents and captions in two passes that never overlap, because H3's fp32 video VAE and its 32B conditioner cannot be resident together. On a card that holds the conditioner it peaks at 20.6GB; on one that does not, the conditioner runs on the CPU and the peak drops to 12.7GB while a step goes from 0.6s to 16s. Either way there is about seven minutes of startup, and 64GB of system RAM for the smaller card. See [Benchmark results](#benchmark-results) for the split. The download is about 124GB before any of that.
@@ -104,7 +104,7 @@ audio rows, so an adapter changes what a clip looks like and never what it sound
 
 ## Install
 
-If you installed with `--extra all` from [Install](README.md#install), the trainer is already set up - nothing more to do. To add it to a leaner install, its dependencies (PEFT, 8-bit Adam, the captioner) sit behind the `training` extra:
+If you installed with `--extra all` from [Get Started](README.md#get-started), the trainer is already set up - nothing more to do. To add it to a leaner install, its dependencies (PEFT, 8-bit Adam, the captioner) sit behind the `training` extra:
 
 ```bash
 cd core

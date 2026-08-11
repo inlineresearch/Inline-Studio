@@ -94,17 +94,30 @@ def _resume_step(ckpt_dir: Path) -> int:
     return 0
 
 
-def _save_lora(transformer: Any, output_path: str) -> None:
-    """Write the PEFT adapter as safetensors. Its ``base_model.model...lora_A/lora_B`` keys are read
-    directly by the loader's fuser (``models/lora.py`` strips the ``base_model.model.`` prefix)."""
+def _save_lora(
+    transformer: Any, output_path: str, *, alpha: int, arch: archs.TrainingArch
+) -> None:
+    """Write the finished adapter as safetensors, in the keys other tools read.
+
+    An arch with ``export_keys`` is written in its published checkpoint's names rather than the
+    diffusers port's, because a LoRA that only loads back into the app that made it is not much of a
+    deliverable. Our own loader translates it back on the way in.
+
+    The ``.alpha`` written beside each pair is not decoration. PEFT trains with a scale of
+    ``alpha / rank`` and saves the factors raw, so an adapter without it fuses at 1.0: correct only
+    while ``alpha == rank``, which is the default and is why this went unnoticed."""
     import torch
     from peft import get_peft_model_state_dict
     from safetensors.torch import save_file
 
-    state = {
+    state: dict[str, Any] = {
         k: v.detach().to("cpu", dtype=torch.float32).contiguous()
         for k, v in get_peft_model_state_dict(transformer).items()
     }
+    for key in [k for k in state if k.endswith(".lora_A.weight")]:
+        state[f"{key[: -len('.lora_A.weight')]}.alpha"] = torch.tensor(float(alpha))
+    if arch.export_keys is not None:
+        state = arch.export_keys(state)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     save_file(state, output_path)
 
@@ -230,10 +243,11 @@ def train(manifest: dict[str, Any]) -> str | None:
     # flow, so it looks fine, but it is not the path peft tests and merging would be wrong.
     if quant is Quantization.NF4:
         transformer.is_loaded_in_4bit = True
+    lora_alpha = int(hp.get("alpha") or hp["rank"])
     transformer.add_adapter(
         LoraConfig(
             r=int(hp["rank"]),
-            lora_alpha=int(hp.get("alpha") or hp["rank"]),
+            lora_alpha=lora_alpha,
             lora_dropout=0.0,
             target_modules=archs.target_modules(arch, str(hp.get("loraScope") or "full")),
         )
@@ -299,5 +313,10 @@ def train(manifest: dict[str, Any]) -> str | None:
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        _save_lora(accelerator.unwrap_model(transformer), manifest["outputPath"])
+        _save_lora(
+            accelerator.unwrap_model(transformer),
+            manifest["outputPath"],
+            alpha=lora_alpha,
+            arch=arch,
+        )
     return manifest["outputPath"]

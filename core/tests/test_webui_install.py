@@ -110,6 +110,9 @@ def sandbox(tmp_path: Path) -> Sandbox:
 
     stubs = tmp_path / "stubs"
     stubs.mkdir()
+    # Shadows the real driver so the suite means the same thing on a GPU box as on a bare one.
+    # Without it, /usr/bin/nvidia-smi leaks in and every no-GPU case silently tests the opposite.
+    _stub(stubs / "nvidia-smi", "exit 1\n")
     uv_log = tmp_path / "uv.log"
     _stub(stubs / "uv", f'printf "%s\\n" "$*" >> "{uv_log}"\nexit 0\n')
 

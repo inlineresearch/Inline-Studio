@@ -127,6 +127,9 @@ class TrainingArch:
     target: Callable[[Any, Any], Any]
     #: (transformer, noisy, timestep, item) -> the prediction, same shape as the clean latent.
     forward: Callable[..., Any]
+    #: Rewrites the finished adapter into the published checkpoint's key names, for an arch whose
+    #: names differ from the port's. Without it the LoRA only ever loads back into Inline.
+    export_keys: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
 
 # --- Z-Image -------------------------------------------------------------------------------------
@@ -254,6 +257,14 @@ def _flux2_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, 
 
 # --- MiniMax H3 -----------------------------------------------------------------------------------
 
+
+def _h3_export_keys(state: dict[str, Any]) -> dict[str, Any]:
+    """H3 ships attention fused, so three of the port's modules are one of the checkpoint's."""
+    from ..models.minimaxh3.lora_keys import export_reference
+
+    return export_reference(state)
+
+
 #: H3's (t, h, w) patch. A still is one latent frame, so only the spatial half ever bites.
 _H3_PATCH = (1, 2, 2)
 
@@ -321,6 +332,7 @@ ARCHS: dict[str, TrainingArch] = {
     ),
     MINIMAX_H3: TrainingArch(
         key=MINIMAX_H3,
+        export_keys=_h3_export_keys,
         target_modules=_MINIMAX_H3_TARGETS,
         # Same shift expression as Z-Image, at the scheduler's video shift of 12.0.
         sigma=_zimage_sigma,

@@ -404,6 +404,7 @@ def load_base(models_dir: str, device: str, dtype: Any, quant: Any) -> Any:
     from . import models
 
     path = Path(models._require(Path(models_dir), "minimax-h3", "diffusion_models"))
+    _refuse_pruned(path)
     # Derived before the stream: the callback needs it while the first block lands, and
     # `time_embedder.*` sorts after `blocks.*`. Only two tensors are read, about 60 MB of 62 GB.
     basis = _adaln_basis(path)
@@ -414,6 +415,24 @@ def load_base(models_dir: str, device: str, dtype: Any, quant: Any) -> Any:
     _place_unstreamed(model, device)
     logger.info("MiniMax H3 base loaded for training (%s)", quant.value)
     return model
+
+
+def _refuse_pruned(path: Path) -> None:
+    """Training needs the full build. A pruned one has no timestep path to derive the basis from.
+
+    Worth saying plainly rather than letting it fail: the smaller builds save download size, not
+    VRAM, because the base is quantised to 4-bit either way. Nobody gains a card by using one.
+    """
+    from ..models.minimaxh3 import requirements as reqs
+
+    if not reqs.inspect_file(path).pruned:
+        return
+    raise RuntimeError(
+        f"{path.name} is a pruned MiniMax H3 build. It ships the AdaLN branch already reduced and "
+        "no timestep path at all, which training needs to derive the basis, so it can generate but "
+        "not train. Use minimax_h3_fl2va_bf16.safetensors. It will not cost you any VRAM: the base "
+        "trains at 4-bit whichever file you start from."
+    )
 
 
 def _shrinker(basis: Any, quant: Any, device: str, dtype: Any) -> Any:

@@ -10,6 +10,7 @@ from inline_core.errors import ComponentError
 from inline_core.graph.loader_runners import LoadLoraRunner, LoraRef
 from inline_core.graph.registry import build_default_registry
 from inline_core.graph.schema import Node
+from inline_core.models import lora
 from inline_core.models.loaders import _device_key, _dtype_key, lora_cache_key
 
 torch = pytest.importorskip("torch")
@@ -216,3 +217,45 @@ def test_fuse_of_an_empty_stack_is_a_noop() -> None:
     fuse_loras(model, ())
 
     assert torch.equal(model.proj.weight, before)
+
+
+# --- fusing without materialising the whole delta ------------------------------------------------
+
+
+def _unchunked(weight, up, down, scale):  # type: ignore[no-untyped-def]
+    """What the fuse used to do: one full fp32 product, cast, scaled, added."""
+    product = up.to(torch.float32).flatten(1) @ down.to(torch.float32).flatten(1)
+    return weight + product.reshape(weight.shape).to(weight.dtype) * scale
+
+
+@pytest.mark.parametrize("shape,rank", [((512, 256), 8), ((97, 33), 4), ((64, 8, 3, 3), 4)])
+def test_chunked_fuse_matches_the_whole_product_exactly(shape, rank) -> None:  # type: ignore[no-untyped-def]
+    """The chunking is a memory change only, so the arithmetic must be bit-identical, including for
+    a shape that does not divide evenly and for a conv LoRA that flattens its spatial dims."""
+    torch.manual_seed(0)
+    fan_in = 1
+    for dim in shape[1:]:
+        fan_in *= dim
+    weight = torch.randn(*shape, dtype=torch.bfloat16)
+    up = torch.randn(shape[0], rank, dtype=torch.bfloat16)
+    down = torch.randn(rank, fan_in, dtype=torch.bfloat16)
+
+    want = _unchunked(weight.clone(), up, down, 1.7)
+    got = weight.clone()
+    lora._add_delta(got, up, down, 1.7)
+    assert torch.equal(got, want)
+
+
+def test_the_delta_is_never_materialised_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One MiniMax H3 block's Linears are 1.5GB of fp32 product and the model 80GB, which is host
+    RAM during a staged load. A chunk size below one row still has to land on the same answer."""
+    monkeypatch.setattr(lora, "_DELTA_CHUNK_BYTES", 1)
+    torch.manual_seed(1)
+    weight = torch.randn(300, 128, dtype=torch.bfloat16)
+    up = torch.randn(300, 8, dtype=torch.bfloat16)
+    down = torch.randn(8, 128, dtype=torch.bfloat16)
+
+    want = _unchunked(weight.clone(), up, down, 0.5)
+    got = weight.clone()
+    lora._add_delta(got, up, down, 0.5)
+    assert torch.equal(got, want)

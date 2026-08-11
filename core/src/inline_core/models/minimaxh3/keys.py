@@ -23,7 +23,7 @@ fused QKV into three.
 
 from __future__ import annotations
 
-from ..keymap import AssertEqual, KeyPlan, Rename, RowLayout, Split, SwapHalves
+from ..keymap import AssertEqual, Drop, KeyPlan, Rename, RowLayout, Split, SwapHalves
 
 #: Bumping this invalidates every prepared artifact built by the old plan.
 PLAN_VERSION = "minimax-h3.keys.1"
@@ -81,8 +81,16 @@ def build_plan(
     num_blocks: int = NUM_BLOCKS,
     num_refiner_blocks: int = NUM_REFINER_BLOCKS,
     head_dim: int = HEAD_DIM,
+    pruned: bool = False,
+    sidecars: tuple[str, ...] = (),
 ) -> KeyPlan:
     """The plan for a publisher's layout. ``source`` selects how the fused QKV rows are arranged.
+
+    ``pruned`` is the published rank-8 build: it ships ``adaln_t_table`` in place of the whole
+    timestep path, so the two ``time_embedder`` projections are simply not in the file.
+
+    ``sidecars`` are the quantisation tensors an fp8 build carries beside each weight. They are
+    consumed while streaming and dropped here, so the coverage check still accounts for every key.
 
     The counts are arguments so a round-trip test can exercise the same code at a size that fits in
     memory; the defaults are the released geometry.
@@ -95,7 +103,16 @@ def build_plan(
         ) from None
 
     actions: dict[str, object] = {}
-    for stem, target in _TOP_LEVEL.items():
+    top_level = {
+        stem: target
+        for stem, target in _TOP_LEVEL.items()
+        if not (pruned and stem.startswith("time_embedder."))
+    }
+    if pruned:
+        actions["adaln_t_table"] = Drop("read before streaming, to rebuild the timestep path")
+    for key in sidecars:
+        actions[key] = Drop("a quantisation scale, applied to its weight while streaming")
+    for stem, target in top_level.items():
         for suffix in ("weight", "bias"):
             actions[f"{stem}.{suffix}"] = Rename(f"{target}.{suffix}")
     for key, target in _WEIGHT_ONLY.items():
@@ -126,9 +143,16 @@ def build_plan(
                     continue
                 actions[f"{src}.{stem}"] = Rename(f"{dst}.{target}")
 
-    return KeyPlan(version=f"{PLAN_VERSION}+{source}", actions=actions)  # type: ignore[arg-type]
+    suffix = source + ("+pruned" if pruned else "") + ("+fp8" if sidecars else "")
+    return KeyPlan(version=f"{PLAN_VERSION}+{suffix}", actions=actions)  # type: ignore[arg-type]
 
 
-def self_computed_targets() -> set[str]:
+def self_computed_targets(*, pruned: bool = False) -> set[str]:
     """Targets the port builds itself, which ``check_coverage`` must not demand be filled."""
-    return {"rope.inv_freq"}
+    if not pruned:
+        return {"rope.inv_freq"}
+    return {"rope.inv_freq", *_PRUNED_SELF_COMPUTED}
+
+
+#: What ``adaln.tabulate`` creates in place of the timestep path. No checkpoint fills these.
+_PRUNED_SELF_COMPUTED = ("time_embedder.table", "time_embedder.linear_1.weight")

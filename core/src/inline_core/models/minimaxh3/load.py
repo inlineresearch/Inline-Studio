@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ from ..keymap import (
     row_stats,
     transform,
 )
+from . import adaln, lora_keys
 from . import keys as h3keys
 from .vendor import MiniMaxH3Transformer3DModel
 
@@ -39,6 +41,19 @@ logger = logging.getLogger("inline_core.minimaxh3")
 
 #: The tensor the layout is measured on. Block 0's fused QKV is present in every published build.
 _PROBE_KEY = "blocks.0.attn.qkv_proj.weight"
+
+#: Only the pruned builds carry it, and it stands in for the entire timestep path.
+_TABLE_KEY = "adaln_t_table"
+
+#: What an fp8 build writes beside each quantised weight. ``weight_scale`` is the scalar the weight
+#: multiplies back by; ``input_scale`` is for an fp8 matmul we do not do, and ``comfy_quant`` names
+#: the format, which ``requirements.py`` has already checked by the time a load starts.
+_SIDECAR_SUFFIXES = (".weight_scale", ".input_scale", ".comfy_quant")
+_SCALE_SUFFIX = ".weight_scale"
+
+#: The rank-8 projections a pruned build ships. 75 MB across the model, so they stay in float32:
+#: rounding them to bf16 would cost more accuracy than the whole factorisation does.
+_ADALN_LINEAR = re.compile(r"(?:adaln_proj|norm_out)\.linear\.(?:weight|bias)$")
 
 #: Source config name -> the vendored port's constructor argument. The port's defaults already match
 #: the released checkpoints, but a future build may not, so the file wins over the default.
@@ -110,6 +125,7 @@ def load_transformer(
     layout: RowLayout | None = None,
     shrink: Any = None,
     loras: tuple[Any, ...] = (),
+    quantised: bool = False,
 ) -> MiniMaxH3Transformer3DModel:
     """Build the port and stream ``path`` into it through the key plan.
 
@@ -128,9 +144,12 @@ def load_transformer(
 
     # Resolved against module names on the meta model, so a LoRA trained for another architecture
     # is refused before the 62 GB read rather than a block into it.
-    lora_plan = lora_module.plan_loras(model, loras) if loras else {}
+    lora_plan = (
+        lora_module.plan_loras(model, loras, translate=lora_keys.adapt) if loras else {}
+    )
     fused: set[str] = set()
-    shrink = _fusing_shrink(lora_plan, fused, shrink) if lora_plan else shrink
+    strength: list[float] = []
+    shrink = _fusing_shrink(lora_plan, fused, shrink, strength) if lora_plan else shrink
 
     with safe_open(str(path), framework="pt") as handle:
         source_keys = list(handle.keys())  # noqa: SIM118 - safe_open has no __contains__
@@ -149,10 +168,30 @@ def load_transformer(
             handle.get_tensor(_PROBE_KEY), head_dim=geometry["head_dim"]
         )
         logger.info("MiniMax H3 checkpoint %s: QKV rows are %s", path.name, measured.value)
-        plan = h3keys.build_plan(_source_for(measured), **geometry)
-        _check_plan(plan, source_keys, model)
+        # The pruned builds ship no timestep path at all, so the modules the table feeds have to be
+        # rebuilt at their reduced width before a single weight is placed into them.
+        sidecars = tuple(k for k in source_keys if k.endswith(_SIDECAR_SUFFIXES))
+        scales = {
+            f"{k[: -len(_SCALE_SUFFIX)]}.weight": handle.get_tensor(k)
+            for k in source_keys
+            if k.endswith(_SCALE_SUFFIX)
+        }
+        if scales:
+            logger.info(
+                "MiniMax H3 %s is an fp8 build: dequantising %d weights on the way in",
+                path.name, len(scales),
+            )
+        pruned = _TABLE_KEY in source_keys
+        if pruned:
+            adaln.tabulate(model, handle.get_tensor(_TABLE_KEY))
+            logger.info("MiniMax H3 %s is a pruned build: reading its AdaLN table", path.name)
+        plan = h3keys.build_plan(
+            _source_for(measured), pruned=pruned, sidecars=sidecars, **geometry
+        )
+        _check_plan(plan, source_keys, model, pruned=pruned)
         filled = _stream_into(
-            model, handle, plan, dtype=dtype, device=device, shrink=shrink
+            model, handle, plan, dtype=dtype, device=device, shrink=shrink, pruned=pruned,
+            scales=scales,
         )
 
     if lora_plan:
@@ -165,12 +204,22 @@ def load_transformer(
             len(lora_plan),
             ", ".join(f"{Path(ref.file).name}@{ref.strength:g}" for ref in loras),
         )
-    _assert_nothing_left_on_meta(model, filled)
+        _report_strength(strength, quantised)
+    _assert_nothing_left_on_meta(model, filled, pruned=pruned)
     model.eval()
     return model
 
 
-def _fusing_shrink(plan: Any, fused: set[str], inner: Any) -> Any:
+#: A fused delta smaller than this fraction of one quantisation step is rounded away rather than
+#: applied. Measured on a real adapter: 0.008 of a step, which flipped 0.92% of int8 codes and
+#: delivered none of its intended output change. Adapter strength itself is not the test - published
+#: LoRAs that work well measure anywhere from 0.017% to 1.2% of the weight norm.
+_LOST_TO_QUANTISATION = 0.25
+
+
+def _fusing_shrink(
+    plan: Any, fused: set[str], inner: Any, strength: list[float] | None = None
+) -> Any:
     """Fuse a block's share of the LoRA stack the moment it lands, then hand off to ``shrink``.
 
     The only window that works: after the stream the weights exist, before ``shrink`` they are
@@ -181,22 +230,72 @@ def _fusing_shrink(plan: Any, fused: set[str], inner: Any) -> Any:
         module = model
         for part in prefix.split("."):
             module = module[int(part)] if part.isdigit() else getattr(module, part)
-        fused.update(_fuse_subtree(module, plan, f"{prefix}."))
+        fused.update(_fuse_subtree(module, plan, f"{prefix}.", strength))
         if inner is not None:
             inner(model, prefix)
 
     return shrink
 
 
-def _fuse_subtree(module: Any, plan: Any, prefix: str) -> set[str]:
+def _fuse_subtree(
+    module: Any, plan: Any, prefix: str, strength: list[float] | None = None
+) -> set[str]:
     """Apply the plan's share for one subtree, reporting which of its targets were covered."""
     hit = {
         path
         for name, _child in module.named_modules()
         if (path := f"{prefix}{name}" if prefix else name) in plan
     }
+    if strength is not None and not strength and hit:
+        _measure_strength(module, plan, prefix, hit, strength)
     lora_module.apply_plan(module, plan, prefix)
     return hit
+
+
+def _measure_strength(
+    module: Any, plan: Any, prefix: str, hit: set[str], out: list[float]
+) -> None:
+    """``|B@A| / |W|`` on the first adapted layer, read before the fuse and before quantisation.
+
+    An adapter that trained but barely moved renders exactly like one that never loaded, and until
+    this number was in the log the only way to tell them apart was to render twice and compare."""
+    path = sorted(hit)[0]
+    child = dict(module.named_modules()).get(path[len(prefix) :])
+    weight = getattr(child, "weight", None)
+    if weight is None:
+        return
+    reference = weight.detach().to(torch.float32)
+    delta = None
+    for down, up, scale in plan[path]:
+        step = up.to(reference.device, torch.float32) @ down.to(reference.device, torch.float32)
+        delta = step * scale if delta is None else delta + step * scale
+    norm = float(reference.norm())
+    if delta is None or not norm:
+        return
+    delta = delta.reshape(reference.shape)
+    # int8 is symmetric per output row, so one step is the row's largest magnitude over 127.
+    quant_step = float((reference.abs().amax(dim=1) / 127.0).median()) if reference.ndim == 2 else 0
+    out.append(float(delta.norm()) / norm)
+    out.append(float(delta.abs().mean()) / quant_step if quant_step else 0.0)
+
+
+def _report_strength(strength: list[float], quantised: bool) -> None:
+    """Say what the adapter did, and warn only when quantisation is about to discard it."""
+    if len(strength) < 2:
+        return
+    ratio, per_step = strength
+    logger.info(
+        "MiniMax H3: the LoRA moves that layer by %.3f%% of its weight norm (%.2f of an int8 step)",
+        ratio * 100, per_step,
+    )
+    if quantised and per_step < _LOST_TO_QUANTISATION:
+        logger.warning(
+            "MiniMax H3: this base is quantised and the LoRA changes each weight by only %.2f of "
+            "one int8 step, so rounding discards nearly all of it and the render will look "
+            "unadapted. This is not a weak LoRA, it is the quantisation. Raising the LoRA strength "
+            "does not fix it. A card that holds the base unquantised does.",
+            per_step,
+        )
 
 
 def _finish_fuse(model: Any, plan: Any, fused: set[str]) -> None:
@@ -225,11 +324,13 @@ def _source_for(layout: RowLayout) -> str:
     raise ComponentError(f"No key plan for a {layout.value} checkpoint.")
 
 
-def _check_plan(plan: Any, source_keys: list[str], model: Any) -> None:
+def _check_plan(plan: Any, source_keys: list[str], model: Any, *, pruned: bool = False) -> None:
     from ..keymap import check_coverage
 
     targets = set(dict(model.named_parameters()) | dict(model.named_buffers()))
-    check_coverage(plan, source_keys, sorted(targets - h3keys.self_computed_targets()))
+    check_coverage(
+        plan, source_keys, sorted(targets - h3keys.self_computed_targets(pruned=pruned))
+    )
 
 
 def _stream_into(
@@ -240,6 +341,8 @@ def _stream_into(
     dtype: torch.dtype,
     device: str,
     shrink: Any = None,
+    pruned: bool = False,
+    scales: dict[str, torch.Tensor] | None = None,
 ) -> set[str]:
     """Place every tensor, optionally shrinking each transformer block as soon as it is complete.
 
@@ -260,12 +363,16 @@ def _stream_into(
             _assign(model, key, shipped.to(device=device))
             filled.add(key)
             continue
-        for target, value in transform(key, handle.get_tensor(key), action):
+        source = handle.get_tensor(key)
+        if scales and (scale := scales.get(key)) is not None:
+            source = source.to(torch.float32) * scale.to(torch.float32)
+        for target, value in transform(key, source, action):
             block = _block_prefix(target)
             if shrink is not None and pending is not None and block != pending:
                 shrink(model, pending)
             pending = block if shrink is not None else None
-            _assign(model, target, value.to(dtype=dtype, device=device))
+            placed = torch.float32 if pruned and _ADALN_LINEAR.search(target) else dtype
+            _assign(model, target, value.to(dtype=placed, device=device))
             filled.add(target)
     if shrink is not None and pending is not None:
         shrink(model, pending)
@@ -308,14 +415,14 @@ def _assign(model: Any, key: str, tensor: torch.Tensor) -> None:
         raise ComponentError(f"The model has no parameter or buffer named {key}.")
 
 
-def _assert_nothing_left_on_meta(model: Any, filled: set[str]) -> None:
+def _assert_nothing_left_on_meta(model: Any, filled: set[str], *, pruned: bool = False) -> None:
     """A parameter still on the meta device was never assigned, which the coverage check should
     have caught. Belt and braces, because the failure downstream is an inscrutable meta-tensor
     error deep in a forward pass."""
     stranded = sorted(
         name
         for name, tensor in (dict(model.named_parameters()) | dict(model.named_buffers())).items()
-        if tensor.is_meta and name not in h3keys.self_computed_targets()
+        if tensor.is_meta and name not in h3keys.self_computed_targets(pruned=pruned)
     )
     if stranded:
         raise ComponentError(
