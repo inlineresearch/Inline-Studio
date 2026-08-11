@@ -4,3 +4,4 @@
 - templates
 - keep runs active between project switch
 - provide gen node in trainer tab for quick test with different lora strenths
+- Run Graph drop down, download workflow json

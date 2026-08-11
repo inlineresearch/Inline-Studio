@@ -527,3 +527,63 @@ def test_training_accepts_the_full_build(models_root: Path) -> None:
 
     path = _fake_checkpoint(models_root / "diffusion_models" / reqs.FL2VA_FILE, _H3_PROBE)
     train_h3._refuse_pruned(path)  # does not raise
+
+
+# --- per-step progress ---------------------------------------------------------------------------
+
+
+class _FakeBar:
+    def __init__(self) -> None:
+        self.updates = 0
+
+    def __enter__(self) -> _FakeBar:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def update(self, n: int = 1) -> None:
+        self.updates += n
+
+
+class _FakeLoop:
+    """Stands in for the vendored denoise block: it has a loop_step and drives a progress bar."""
+
+    def __init__(self) -> None:
+        self.bar = _FakeBar()
+        self.progress_bar = lambda total=None, **_kw: self.bar
+
+    def loop_step(self) -> None: ...
+
+
+def test_step_progress_hooks_the_denoise_loop() -> None:
+    """The modular loop has no callback_on_step_end, so the progress bar is the only per-step hook.
+    Without it a long denoise emits nothing and the UI shows 'loading model' for the whole render."""
+    from inline_core.models import pipeline_runtime as rt
+
+    loop = _FakeLoop()
+
+    class _Blocks:
+        sub_blocks = {"denoise": loop}
+
+    class _Pipe:
+        blocks = _Blocks()
+
+    seen: list[tuple[int, int]] = []
+    assert rt.attach_step_progress(_Pipe(), lambda done, total: seen.append((done, total)))
+
+    with loop.progress_bar(total=3) as bar:
+        for _ in range(3):
+            bar.update()
+
+    assert seen == [(1, 3), (2, 3), (3, 3)]
+    assert loop.bar.updates == 3  # the real bar is still driven
+
+
+def test_step_progress_reports_when_there_is_no_loop_to_hook() -> None:
+    class _Pipe:
+        blocks = None
+
+    from inline_core.models import pipeline_runtime as rt
+
+    assert rt.attach_step_progress(_Pipe(), lambda *_a: None) is False
