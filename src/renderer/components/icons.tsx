@@ -235,29 +235,29 @@ export function PlayIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
-/** `stop_circle` - cancel a queued or running job. */
-export function StopCircleIcon({ className }: { className?: string }): React.JSX.Element {
-  return (
-    <Svg className={className}>
-      <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM9 9h6v6H9V9z" />
-    </Svg>
-  )
-}
-
-/** `pending` - the activity indicator (queued + running work). */
-export function ActivityIcon({ className }: { className?: string }): React.JSX.Element {
-  return (
-    <Svg className={className}>
-      <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM7 13.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
-    </Svg>
-  )
-}
-
 /** `deployed_code` - a model weight file / the Models panel. */
 export function ModelsIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
       <path d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.3 6.5 3.6L12 11.5 5.5 7.9 12 4.3zM5 9.6l6 3.3v6.5l-6-3.3V9.6zm8 9.8v-6.5l6-3.3v6.5l-6 3.3z" />
+    </Svg>
+  )
+}
+
+/** `movie` - video material. Distinct from `TrainIcon`, which is the Trainer tab's own glyph. */
+export function MovieIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V4h-4z" />
+    </Svg>
+  )
+}
+
+/** `refresh` - re-scan / reload. */
+export function RefreshIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M17.65 6.35A8 8 0 1 0 19.73 14h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
     </Svg>
   )
 }

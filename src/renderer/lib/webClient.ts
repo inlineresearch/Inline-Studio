@@ -6,6 +6,7 @@
  * bridge instead. getPathForFile has no meaning in a browser (no absolute paths) and returns ''.
  */
 import { IpcChannels, type InlineStudioApi } from '@shared/ipc'
+import { setCoreConnected } from './connection'
 import { pickFilesViaInput, uploadFiles } from './importFiles'
 import { resolveMedia } from './media'
 
@@ -137,6 +138,9 @@ function errText(e: unknown): string {
 function connectEvents(url: string, listeners: Map<string, Set<EventCb>>): void {
   const open = (): void => {
     const ws = new WebSocket(url)
+    ws.onopen = (): void => {
+      setCoreConnected(true)
+    }
     ws.onmessage = (ev: MessageEvent<string>): void => {
       try {
         const { channel, payload } = JSON.parse(ev.data) as { channel: string; payload: unknown }
@@ -147,6 +151,7 @@ function connectEvents(url: string, listeners: Map<string, Set<EventCb>>): void 
       }
     }
     ws.onclose = (): void => {
+      setCoreConnected(false)
       setTimeout(open, 1000)
     }
   }

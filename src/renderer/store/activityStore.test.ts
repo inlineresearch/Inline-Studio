@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { InlineStudioApi } from '@shared/ipc'
 import { ok } from '@shared/result'
 import type { ActivityRun } from '@shared/types'
+import { setCoreConnected } from '../lib/connection'
 import { setStudioClient } from '../lib/studio'
-import { useActivityStore } from './activityStore'
+import { subscribeActivityEvents, useActivityStore } from './activityStore'
 import { useGenerationStore } from './generationStore'
 
 function run(runId: string, status: ActivityRun['status'] = 'running'): ActivityRun {
@@ -49,6 +50,8 @@ beforeEach(() => {
       },
       clearHistory: async () => ok(undefined),
     },
+    generation: { active: async () => ok([]) },
+    events: { onActivityChanged: () => () => undefined },
   } as unknown as InlineStudioApi)
   useActivityStore.setState({ live: [], history: [], error: null })
 })
@@ -100,6 +103,34 @@ describe('activityStore', () => {
   it('cancelAll is a no-op with nothing running', async () => {
     await useActivityStore.getState().cancelAll()
     expect(cancelled).toEqual([])
+  })
+
+  it('re-asks Core for the truth when the socket reconnects', async () => {
+    // Events sent while the socket was down are gone, so a run that finished during the outage
+    // would otherwise sit in the list as running forever.
+    setCoreConnected(false)
+    const stop = subscribeActivityEvents()
+    await Promise.resolve()
+    const before = historyCalls
+
+    setCoreConnected(true)
+    await Promise.resolve()
+
+    expect(historyCalls).toBeGreaterThan(before)
+    stop()
+  })
+
+  it('does not resync when the socket drops', async () => {
+    setCoreConnected(true)
+    const stop = subscribeActivityEvents()
+    await Promise.resolve()
+    const before = historyCalls
+
+    setCoreConnected(false)
+    await Promise.resolve()
+
+    expect(historyCalls).toBe(before)
+    stop()
   })
 })
 

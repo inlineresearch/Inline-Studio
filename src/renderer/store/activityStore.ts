@@ -9,6 +9,8 @@ import { create } from 'zustand'
 import type { ActivityRun } from '@shared/types'
 import { studio } from '@/lib/studio'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { subscribeCoreConnection } from '../lib/connection'
+import { useGenerationStore } from './generationStore'
 
 interface ActivityState {
   /** Queued + running, oldest first. */
@@ -100,7 +102,22 @@ export function subscribeActivityEvents(): () => void {
   const store = useActivityStore.getState()
   void store.load()
   void store.loadHistory()
-  return studio().events.onActivityChanged((e) => {
+  const unsub = studio().events.onActivityChanged((e) => {
     useActivityStore.getState().applySnapshot(e.runs)
   })
+
+  // Events sent while the socket was down are gone for good. A run that *finished* during the
+  // outage would otherwise sit in the list as running forever, since its terminal broadcast was
+  // the only thing that would have cleared it. So re-ask Core for the truth on every reconnect.
+  const unwatch = subscribeCoreConnection((connected) => {
+    if (!connected) return
+    void useActivityStore.getState().load()
+    void useActivityStore.getState().loadHistory()
+    void useGenerationStore.getState().hydrateActive()
+  })
+
+  return () => {
+    unsub()
+    unwatch()
+  }
 }

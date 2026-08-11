@@ -340,6 +340,17 @@ def create_app(
         def core_status() -> dict[str, Any]:
             return {"running": True, "url": ""}
 
+        def rescan_models() -> dict[str, Any]:
+            """Re-read the models roots and tell every client the registry moved.
+
+            The catalog caches its scan, and only a download or a finished training run refreshed
+            it - so a weight file dropped in by hand stayed invisible until Core restarted.
+            """
+            catalog.rescan()
+            version = _version(registry, catalog)
+            events.broadcast("events:modelsChanged", {"registryVersion": version})
+            return {"registryVersion": version}
+
         # Observes the manager, so a run submitted straight to POST /v1/runs is listed and
         # cancellable here too, not just the ones this UI started.
         activity = ActivityRegistry(studio_store, events)
@@ -371,6 +382,7 @@ def create_app(
                 events, on_change=catalog.rescan, policy=policy, requirements=reqs
             ),
             model_tree=catalog.tree,
+            model_rescan=rescan_models,
         )
 
         register_extension_handlers(

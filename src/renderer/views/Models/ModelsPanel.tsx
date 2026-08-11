@@ -110,6 +110,7 @@ export function ModelsPanel(): React.JSX.Element {
   const loading = useModelsTreeStore((s) => s.loading)
   const error = useModelsTreeStore((s) => s.error)
   const load = useModelsTreeStore((s) => s.load)
+  const refresh = useModelsTreeStore((s) => s.refresh)
   const registryVersion = useCoreNodesStore((s) => s.registryVersion)
 
   // registryVersion changes whenever a weight file lands, so this doubles as the refresh trigger.
@@ -122,10 +123,12 @@ export function ModelsPanel(): React.JSX.Element {
       <div className="flex items-center justify-between border-b border-border px-2 py-1.5">
         <span className="text-[11px] font-medium text-zinc-300">Models on disk</span>
         <button
-          onClick={() => void load()}
-          className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-black/30 hover:text-zinc-300"
+          onClick={() => void refresh()}
+          disabled={loading}
+          title="Re-scan the models folders and update every model picker"
+          className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-black/30 hover:text-zinc-300 disabled:opacity-40"
         >
-          Refresh
+          {loading ? 'Scanning…' : 'Refresh'}
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">

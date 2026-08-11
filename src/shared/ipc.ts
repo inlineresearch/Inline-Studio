@@ -179,6 +179,8 @@ export const IpcChannels = {
     download: 'models:download',
     /** Read-only listing of every models root on disk, for the Models panel. */
     tree: 'models:tree',
+    /** Re-read the models roots so files added or removed on disk reach the pickers. */
+    rescan: 'models:rescan',
   },
   extensions: {
     /** Installed extensions + whether the machine has the tools to install more. */
@@ -273,6 +275,8 @@ export const IpcChannels = {
     generationCancelled: 'events:generationCancelled',
     /** Main → renderer: the live run list changed (queued, started, progressed, finished). */
     activityChanged: 'events:activityChanged',
+    /** Main → renderer: the installed model set changed, so every open client should refetch. */
+    modelsChanged: 'events:modelsChanged',
     /** Main → renderer: explicit model-download lifecycle (the node's model popup). */
     modelDownloadProgress: 'events:modelDownloadProgress',
     modelDownloadDone: 'events:modelDownloadDone',
@@ -543,6 +547,11 @@ export interface InlineStudioApi {
     download(nodeType: string, componentId: string): Promise<Result<void>>
     /** Every models root on disk as a read-only tree. No file actions. */
     tree(): Promise<Result<ModelTreeRoot[]>>
+    /**
+     * Re-scan the models roots and return the new registry version. The catalog caches its scan,
+     * so a weight file dropped in by hand is invisible to the pickers until this runs.
+     */
+    rescan(): Promise<Result<{ registryVersion: string }>>
   }
   extensions: {
     /** Installed extensions + whether git/uv are available to install more. */
@@ -694,6 +703,7 @@ export interface InlineStudioApi {
     onGenerationError(callback: (e: GenerationErrorEvent) => void): () => void
     onGenerationCancelled(callback: (e: GenerationCancelledEvent) => void): () => void
     onActivityChanged(callback: (e: ActivityChangedEvent) => void): () => void
+    onModelsChanged(callback: (e: { registryVersion: string }) => void): () => void
     /** Subscribe to explicit model-download lifecycle pushes. Each returns an unsubscribe fn. */
     onModelDownloadProgress(callback: (e: ModelDownloadProgressEvent) => void): () => void
     onModelDownloadDone(callback: (e: ModelDownloadDoneEvent) => void): () => void

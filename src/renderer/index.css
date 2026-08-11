@@ -24,6 +24,25 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* The activity box's travelling border while runs are in flight: a conic gradient rotating behind
+   the box, with the inner panel covering all but a 1px ring. A rotating gradient rather than a
+   dashed border because the highlight has to travel the perimeter, including the corners. */
+@keyframes run-border-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+.run-border-spin {
+  animation: run-border-spin 3s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-border-spin {
+    animation: none;
+  }
+}
+
 /* Flat native audio player: drop Chromium's rounded, filled control enclosure so the
    play/duration bar blends into the dark node instead of sitting on a rounded pill. */
 .flat-audio::-webkit-media-controls-enclosure {

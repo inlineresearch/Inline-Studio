@@ -62,6 +62,7 @@ def register_studio_handlers(
     model_downloads: Any = None,
     activity: Any = None,
     model_tree: Callable[[], Any] | None = None,
+    model_rescan: Callable[[], Any] | None = None,
     # Empty falls back to the installed package version; the launcher footer shows this.
     app_version: str = "",
 ) -> None:
@@ -117,6 +118,8 @@ def register_studio_handlers(
 
     # Read-only listing of every models root, for the Models side panel.
     reg("models:tree", model_tree if model_tree is not None else lambda: [])
+    # Pick up weight files added or removed on disk since start.
+    reg("models:rescan", model_rescan if model_rescan is not None else lambda: {})
 
     # --- folders --------------------------------------------------------------------------------
     reg("folders:list", lambda: ax.list_folders(conn()))
