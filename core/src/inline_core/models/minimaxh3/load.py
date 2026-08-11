@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -50,10 +49,6 @@ _TABLE_KEY = "adaln_t_table"
 #: the format, which ``requirements.py`` has already checked by the time a load starts.
 _SIDECAR_SUFFIXES = (".weight_scale", ".input_scale", ".comfy_quant")
 _SCALE_SUFFIX = ".weight_scale"
-
-#: The rank-8 projections a pruned build ships. 75 MB across the model, so they stay in float32:
-#: rounding them to bf16 would cost more accuracy than the whole factorisation does.
-_ADALN_LINEAR = re.compile(r"(?:adaln_proj|norm_out)\.linear\.(?:weight|bias)$")
 
 #: Source config name -> the vendored port's constructor argument. The port's defaults already match
 #: the released checkpoints, but a future build may not, so the file wins over the default.
@@ -210,13 +205,6 @@ def load_transformer(
     return model
 
 
-#: A fused delta smaller than this fraction of one quantisation step is rounded away rather than
-#: applied. Measured on a real adapter: 0.008 of a step, which flipped 0.92% of int8 codes and
-#: delivered none of its intended output change. Adapter strength itself is not the test - published
-#: LoRAs that work well measure anywhere from 0.017% to 1.2% of the weight norm.
-_LOST_TO_QUANTISATION = 0.25
-
-
 def _fusing_shrink(
     plan: Any, fused: set[str], inner: Any, strength: list[float] | None = None
 ) -> Any:
@@ -280,22 +268,21 @@ def _measure_strength(
 
 
 def _report_strength(strength: list[float], quantised: bool) -> None:
-    """Say what the adapter did, and warn only when quantisation is about to discard it."""
+    """Report what the adapter actually did to the weights.
+
+    Reported and not judged. A threshold on strength is a false-positive machine, since published
+    LoRAs that work well span 0.017% to 1.2% of the weight norm, and the obvious second theory is
+    wrong too: fusing into a quantised base preserves the delta along its intended direction at
+    about 100%, measured, so a small step ratio is not evidence the adapter will be invisible.
+    """
     if len(strength) < 2:
         return
     ratio, per_step = strength
     logger.info(
-        "MiniMax H3: the LoRA moves that layer by %.3f%% of its weight norm (%.2f of an int8 step)",
-        ratio * 100, per_step,
+        "MiniMax H3: the LoRA moves that layer by %.3f%% of its weight norm (%.2f of an int8 "
+        "step%s)",
+        ratio * 100, per_step, "" if quantised else ", this base is not quantised",
     )
-    if quantised and per_step < _LOST_TO_QUANTISATION:
-        logger.warning(
-            "MiniMax H3: this base is quantised and the LoRA changes each weight by only %.2f of "
-            "one int8 step, so rounding discards nearly all of it and the render will look "
-            "unadapted. This is not a weak LoRA, it is the quantisation. Raising the LoRA strength "
-            "does not fix it. A card that holds the base unquantised does.",
-            per_step,
-        )
 
 
 def _finish_fuse(model: Any, plan: Any, fused: set[str]) -> None:
@@ -371,8 +358,7 @@ def _stream_into(
             if shrink is not None and pending is not None and block != pending:
                 shrink(model, pending)
             pending = block if shrink is not None else None
-            placed = torch.float32 if pruned and _ADALN_LINEAR.search(target) else dtype
-            _assign(model, target, value.to(dtype=placed, device=device))
+            _assign(model, target, value.to(dtype=dtype, device=device))
             filled.add(target)
     if shrink is not None and pending is not None:
         shrink(model, pending)

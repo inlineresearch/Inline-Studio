@@ -7,6 +7,7 @@
  *   preload. The renderer imports this type; the main process implements it.
  */
 import type {
+  ActiveGeneration,
   Project,
   RecentProject,
   Asset,
@@ -123,6 +124,8 @@ export const IpcChannels = {
     runWorkflow: 'generation:runWorkflow',
     /** Abort the in-flight generation run (optionally just one frame's). */
     cancel: 'generation:cancel',
+    /** What is still running, so a reloaded page can rebuild its queue. */
+    active: 'generation:active',
     /** Re-poll + finish any runs that were in flight when the app last closed. */
     resumePending: 'generation:resumePending',
   },
@@ -431,6 +434,11 @@ export interface InlineStudioApi {
     runWorkflow(itemId: string): Promise<Result<void>>
     /** Abort the in-flight run - a specific frame's, or all when no id is given. */
     cancel(frameId?: string): Promise<Result<void>>
+    /**
+     * The runs Core still has in flight. A page refresh throws away the renderer's copy of the
+     * queue while the backend keeps working, so this is what rebuilds it on mount.
+     */
+    active(): Promise<Result<ActiveGeneration[]>>
     /** Re-poll + finish any generations that were in flight when the app last closed. */
     resumePending(): Promise<Result<void>>
   }

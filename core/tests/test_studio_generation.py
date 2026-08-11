@@ -274,3 +274,43 @@ def test_single_take_image_node_is_unaffected_by_the_gate(tmp_path) -> None:
 
     output = mb.get_item(store.conn(), z["id"])["data"]["core"]["output"]
     assert output["kind"] == "image" and output["takeId"] == "tk1"
+
+
+# --- surviving a page refresh --------------------------------------------------------------------
+
+
+class _Events:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, dict]] = []
+
+    def broadcast(self, channel: str, payload: dict) -> None:
+        self.sent.append((channel, payload))
+
+
+def test_active_reports_runs_in_flight_with_their_last_progress() -> None:
+    """A refresh throws away the client's queue while the run carries on. Without this the UI shows
+    an empty queue against a GPU that is still working."""
+    gen = CoreGeneration(store=None, manager=None, events=_Events())
+    gen._active["item-1"] = "run-1"
+    gen._progress("item-1", 0.4, "Sampling")
+
+    assert gen.active() == [{"frameId": "item-1", "fraction": 0.4, "status": "Sampling"}]
+
+
+def test_a_run_that_has_not_reported_yet_still_appears() -> None:
+    """H3 emits nothing for minutes while the base loads, which is exactly when someone refreshes,
+    so an entry with no progress yet has to come back rather than be omitted."""
+    gen = CoreGeneration(store=None, manager=None, events=_Events())
+    gen._active["item-2"] = "run-2"
+
+    assert gen.active() == [{"frameId": "item-2", "fraction": None, "status": None}]
+
+
+def test_a_finished_run_is_not_reported() -> None:
+    gen = CoreGeneration(store=None, manager=None, events=_Events())
+    gen._active["item-3"] = "run-3"
+    gen._progress("item-3", 0.9, "Decoding")
+    gen._active.pop("item-3")
+    gen._last.pop("item-3")
+
+    assert gen.active() == []

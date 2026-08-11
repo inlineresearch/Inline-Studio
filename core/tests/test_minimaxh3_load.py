@@ -309,12 +309,15 @@ def test_a_pruned_build_replaces_the_timestep_path(tmp_path: Path) -> None:
     model = _tiny_model()
     state = {k: v.detach().clone() for k, v in model.state_dict().items()}
     path = _write(tmp_path / "h3_pruned2.safetensors", _pruned_source(model, state))
-    loaded = load_transformer(path, dtype=torch.float32)
+    loaded = load_transformer(path, dtype=torch.bfloat16)
     assert isinstance(loaded.time_embedder, adaln.TableEmbedder)
     assert isinstance(loaded.transformer_blocks[0].adaln_proj, adaln.TabulatedModulation)
     assert isinstance(loaded.norm_out, adaln.TabulatedNormOut)
-    # The rank-8 projections stay in float32; rounding them costs more than the factorisation does.
-    assert loaded.transformer_blocks[0].adaln_proj.linear.weight.dtype is torch.float32
+    # The compute dtype like every other weight, and not float32. Float32 here promoted the hidden
+    # states through the modulation multiply, which doubled activation memory and dropped rms_norm
+    # off its fused kernel for the whole denoise.
+    for module in (loaded.transformer_blocks[0].adaln_proj, loaded.norm_out):
+        assert module.linear.weight.dtype is torch.bfloat16
 
 
 def test_an_unpruned_build_is_untouched_by_any_of_this(reference) -> None:  # type: ignore[no-untyped-def]
@@ -373,38 +376,30 @@ def test_the_fp8_plan_is_versioned_apart() -> None:
 # --- what a fused LoRA is worth once the base is quantised ------------------------------------
 
 
-def test_a_lora_lost_to_quantisation_is_warned_about(caplog) -> None:  # type: ignore[no-untyped-def]
-    """The measured case: 0.008 of an int8 step reaches the weights, so rounding discards it."""
+def test_the_fuse_reports_both_numbers(caplog) -> None:  # type: ignore[no-untyped-def]
+    """Strength alone says nothing, so the step ratio is reported beside it."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="inline_core.minimaxh3"):
+        h3_load._report_strength([0.00818, 0.15], quantised=True)
+    assert "0.818%" in caplog.text
+    assert "0.15 of an int8 step" in caplog.text
+
+
+def test_a_small_step_ratio_is_not_warned_about(caplog) -> None:  # type: ignore[no-untyped-def]
+    """It was, and the warning was wrong. Fusing into a quantised base preserves the delta along
+    its intended direction at about 100%, measured, so a small ratio is not evidence of anything.
+    Published LoRAs that work well span 0.017% to 1.2% of the weight norm."""
     import logging
 
     with caplog.at_level(logging.WARNING, logger="inline_core.minimaxh3"):
         h3_load._report_strength([0.00038, 0.008], quantised=True)
-    assert "quantisation" in caplog.text
-    assert "not a weak LoRA" in caplog.text
-
-
-def test_no_warning_when_the_base_is_not_quantised(caplog) -> None:  # type: ignore[no-untyped-def]
-    """The same adapter applies fine in full precision, so warning there would be noise."""
-    import logging
-
-    with caplog.at_level(logging.WARNING, logger="inline_core.minimaxh3"):
-        h3_load._report_strength([0.00038, 0.008], quantised=False)
     assert caplog.text == ""
 
 
-def test_no_warning_when_the_delta_clears_a_quantisation_step(caplog) -> None:  # type: ignore[no-untyped-def]
+def test_an_unquantised_base_says_so(caplog) -> None:  # type: ignore[no-untyped-def]
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="inline_core.minimaxh3"):
-        h3_load._report_strength([0.02, 1.5], quantised=True)
-    assert caplog.text == ""
-
-
-def test_adapter_strength_alone_does_not_trigger_the_warning(caplog) -> None:  # type: ignore[no-untyped-def]
-    """Published LoRAs that work well measure 0.017% to 1.2% of the weight norm, so a threshold on
-    strength alone would fire on almost all of them."""
-    import logging
-
-    with caplog.at_level(logging.WARNING, logger="inline_core.minimaxh3"):
-        h3_load._report_strength([0.00017, 0.9], quantised=True)
-    assert caplog.text == ""
+    with caplog.at_level(logging.INFO, logger="inline_core.minimaxh3"):
+        h3_load._report_strength([0.02, 1.5], quantised=False)
+    assert "not quantised" in caplog.text

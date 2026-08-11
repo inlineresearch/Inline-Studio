@@ -34,6 +34,8 @@ interface GenerationState {
   cancel: (frameId?: string) => Promise<void>
   /** Ask main to re-poll + finish any generations left in flight from a previous session. */
   resumePending: () => Promise<void>
+  /** Rebuild the queue from what Core still has running, after a page refresh threw ours away. */
+  hydrateActive: () => Promise<void>
   /** Persist a fal frame's param values (optimistically updates the frame store). */
   setParams: (frameId: string, params: Record<string, unknown>) => Promise<void>
   /** Switch a fal frame to a different model (resets params + output kind). */
@@ -168,6 +170,26 @@ export const useGenerationStore = create<GenerationState>((set) => ({
       await studio().generation.resumePending()
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
+    }
+  },
+
+  hydrateActive: async () => {
+    try {
+      const res = await studio().generation.active()
+      if (!res.ok) return
+      set((s) => {
+        const busy = { ...s.busyByFrame }
+        const progress = { ...s.progressByFrame }
+        const status = { ...s.statusByFrame }
+        for (const run of res.value) {
+          busy[run.frameId] = true
+          progress[run.frameId] = run.fraction
+          status[run.frameId] = run.status
+        }
+        return { busyByFrame: busy, progressByFrame: progress, statusByFrame: status }
+      })
+    } catch {
+      // A backend that predates the channel simply has no queue to restore.
     }
   },
 
