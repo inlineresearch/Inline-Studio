@@ -41,6 +41,11 @@ from typing import Any
 import torch
 from torch import nn
 
+from .vendor.transformer_minimax_h3 import (
+    MiniMaxH3AdaLayerNormModulation,
+    MiniMaxH3AdaLayerNormOut,
+)
+
 logger = logging.getLogger("inline_core.minimaxh3")
 
 #: Rank kept. Five directions carry the energy; eight matches the published build and leaves slack.
@@ -144,3 +149,100 @@ def factorise(model: Any, *, rank: int = RANK) -> int:
         len(model.transformer_blocks), saved / 1e9,
     )
     return saved
+
+
+# --- the published pruned builds ------------------------------------------------------------
+#
+# MiniMax ship `pruned` checkpoints that do this same rank-8 reduction ahead of time, and go one
+# step further: the timestep path itself is gone. There is no `time_embedder` in the file at all,
+# only `adaln_t_table [1025, 8]`, holding `silu(temb)` already projected into their basis at 1025
+# points across t in [0, 1]. So the branch cannot be rebuilt as a basis applied to a `silu(temb)` we
+# compute; the table has to be read directly.
+#
+# Off-grid timesteps are interpolated. Measured against the full bf16 weights at 24 random t, the
+# table reaches 1.636e-4 relative with linear interpolation and 1.874e-4 taking the nearest row,
+# where one bf16 ulp of the reference is 1.307e-3. The grid is dense enough that interpolating costs
+# nothing and removes the sampler constraint a lookup would otherwise impose.
+
+#: Rows in the published table. Checked, not assumed: a build on a different grid must not be read
+#: as though it were on this one.
+TABLE_ROWS = 1025
+
+
+class TableEmbedder(nn.Module):
+    """Stands in for ``time_proj`` + ``time_embedder``, returning the pruned build's rank-8 row.
+
+    ``linear_1`` exists because the port reads ``time_embedder.linear_1.weight.dtype`` to cast its
+    input; it carries the table's dtype and nothing else, which keeps ``vendor/`` verbatim.
+    """
+
+    #: Declared so the buffer reads as a tensor; ``register_buffer`` alone types as ``Module``.
+    table: torch.Tensor
+
+    def __init__(self, table: torch.Tensor) -> None:
+        super().__init__()
+        self.register_buffer("table", table, persistent=True)
+        self.linear_1 = nn.Linear(1, 1, bias=False, dtype=table.dtype)
+
+    def forward(self, timestep: torch.Tensor) -> torch.Tensor:
+        rows = self.table.shape[0]
+        position = timestep.to(self.table.dtype).flatten() * (rows - 1)
+        low = position.floor().long().clamp(0, rows - 2)
+        frac = (position - low).unsqueeze(1)
+        return self.table[low] * (1 - frac) + self.table[low + 1] * frac
+
+
+class TabulatedModulation(MiniMaxH3AdaLayerNormModulation):
+    """``adaln_proj`` reading a table row. It already holds ``silu(temb)``, so no activation."""
+
+    def forward(self, temb: torch.Tensor) -> tuple[torch.Tensor, ...]:
+        out = self.linear(temb.to(self.linear.weight.dtype)).view(-1, 6 * self.hidden_size)
+        return out.chunk(6, dim=-1)
+
+
+class TabulatedNormOut(MiniMaxH3AdaLayerNormOut):
+    """``norm_out`` reading a table row, otherwise the port's own forward."""
+
+    def forward(
+        self, hidden_states: torch.Tensor, temb: torch.Tensor, timestep_indices: torch.Tensor
+    ) -> torch.Tensor:
+        shift, scale = self.linear(temb.to(self.linear.weight.dtype)).chunk(2, dim=-1)
+        hidden_states = self.norm(hidden_states)
+        return hidden_states * (1.0 + scale.index_select(0, timestep_indices)) + shift.index_select(
+            0, timestep_indices
+        )
+
+
+@torch.no_grad()
+def tabulate(model: Any, table: torch.Tensor) -> None:
+    """Rebuild the timestep path around a pruned build's table, on the meta device before streaming.
+
+    Every module the table feeds changes shape, so this has to happen before any weight is placed:
+    the rank-8 ``adaln_proj`` in the file would otherwise be assigned into a ``[96768, 2688]`` slot.
+    """
+    if table.ndim != 2 or table.shape[0] != TABLE_ROWS:
+        raise ValueError(
+            f"adaln_t_table is {tuple(table.shape)}, not [{TABLE_ROWS}, rank]. This build is on a "
+            "different timestep grid from the one measured, and reading it as if it were not would "
+            "shift the modulation at every step while still rendering."
+        )
+    rank = int(table.shape[1])
+    model.time_proj = nn.Identity()
+    model.time_embedder = TableEmbedder(table)
+    for block in model.transformer_blocks:
+        block.adaln_proj = _retyped(block.adaln_proj, TabulatedModulation, rank)
+    model.norm_out = _retyped(model.norm_out, TabulatedNormOut, rank)
+
+
+def _retyped(module: Any, cls: type, rank: int) -> Any:
+    """The same module with its projection narrowed to ``rank`` inputs, still on meta."""
+    replacement = module
+    replacement.__class__ = cls
+    old = module.linear
+    with torch.device("meta"):
+        replacement.linear = nn.Linear(rank, old.out_features, bias=old.bias is not None)
+    return replacement
+
+
+#: Parameters ``tabulate`` creates that no checkpoint fills.
+TABULATED_SELF_COMPUTED = ("time_embedder.linear_1.weight", "time_embedder.table")

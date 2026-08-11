@@ -116,6 +116,14 @@ def load_pipeline(
     )
     audio_vae = _require(reqs.resolve("vae", reqs.AUDIO_VAE_FILE), "the audio VAE")
 
+    # A pruned build has already had this done to it, and re-running the transform would multiply a
+    # rank-8 projection by a full-width basis. Same shape of rule as never re-quantising a
+    # prequantized checkpoint, and the same reason: the source is already in the target form.
+    if reqs.inspect_file(transformer_path).pruned:
+        if factorise_adaln:
+            logger.info("%s ships its AdaLN reduced; skipping ours.", transformer_path.name)
+        factorise_adaln = False
+
     # Hand the policy the on-disk sizes so it fits dtype and quantisation to THIS card, then refuse
     # an impossible load up front. Without this it falls back to coarse VRAM buckets and tries to
     # place a 62 GB transformer resident, which no consumer card can hold. Residency is staged, so
@@ -317,6 +325,7 @@ def _build(
         # `render_staged` moves it across once the conditioner is parked.
         device="cpu" if (recipe.denoiser_offload or staged) else device,
         loras=loras,
+        quantised=recipe.quantizes,
         shrink=_block_shrinker(
             recipe,
             transformer_path if factorise_adaln else None,

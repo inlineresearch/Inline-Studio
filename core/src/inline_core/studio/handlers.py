@@ -257,6 +257,16 @@ def register_studio_handlers(
             fal_generation.cancel(frame_id)
 
     reg("generation:cancel", cancel_generation)
+
+    def active_generations() -> list[dict[str, Any]]:
+        """What is still running, so a reloaded page rebuilds its queue instead of losing it."""
+        out: list[dict[str, Any]] = []
+        for source in (generation, fal_generation):
+            if source is not None:
+                out.extend(source.active())
+        return out
+
+    reg("generation:active", active_generations)
     reg("generation:resumePending", lambda: None)
 
     # --- LoRA training (dataset CRUD + the training run subprocess) ------------------------------

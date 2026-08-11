@@ -418,6 +418,10 @@ function Board(): React.JSX.Element {
     // Finish any generations that were still running when the app last closed (they keep
     // running server-side); their progress/completion arrives through the events below.
     void gen.resumePending()
+    // A page refresh throws away this tab's copy of the queue while Core keeps working, and a run
+    // inside a long model load emits nothing for minutes, so waiting for the next event is not
+    // enough. Ask Core what is still in flight.
+    void gen.hydrateActive()
     const unsubs = [
       studio().events.onGenerationProgress((e) => {
         gen.setBusy(e.frameId, true)

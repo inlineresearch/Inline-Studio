@@ -649,3 +649,74 @@ __all__ = [
     "try_call",
     "wont_fit_message",
 ]
+
+
+class _StepReporter:
+    """Stands in for the progress bar a modular denoise loop drives, and reports each step onward.
+
+    A modular blockset has no ``callback_on_step_end``: its loop calls ``self.progress_bar`` and
+    then ``.update()`` per step. That bar is therefore the only per-step hook, and using it keeps
+    ``vendor/`` verbatim. The real bar is still driven, so the terminal output is unchanged.
+    """
+
+    def __init__(self, inner: Any, total: int, on_step: Any) -> None:
+        self._inner = inner
+        self._total = total
+        self._on_step = on_step
+        self._done = 0
+
+    def __enter__(self) -> _StepReporter:
+        self._inner.__enter__()
+        return self
+
+    def __exit__(self, *exc: Any) -> Any:
+        return self._inner.__exit__(*exc)
+
+    def update(self, n: int = 1) -> None:
+        self._inner.update(n)
+        self._done += n
+        self._on_step(self._done, self._total)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def attach_step_progress(pipe: Any, on_step: Any) -> bool:
+    """Report every denoising step of ``pipe``. Returns whether a loop was found to hook.
+
+    Without this a long denoise emits nothing between "loading" and "saving", and the UI shows the
+    load phase for the whole render, which reads as a hang.
+    """
+    found = False
+    for blocks in _blocksets(pipe):
+        loop = _denoise_loop(blocks)
+        if loop is None:
+            continue
+        found = True
+        original = loop.progress_bar
+
+        def progress_bar(
+            total: Any = None, _original: Any = original, **kw: Any
+        ) -> _StepReporter:
+            return _StepReporter(_original(total=total, **kw), int(total or 0), on_step)
+
+        loop.progress_bar = progress_bar
+    return found
+
+
+def _blocksets(pipe: Any) -> list[Any]:
+    """Every blockset that might run: a staged pipeline keeps the denoise in its second half."""
+    phases = getattr(pipe, "_inline_phases", None)
+    targets = list(phases) if phases else [pipe]
+    return [t.blocks for t in targets if getattr(t, "blocks", None) is not None]
+
+
+def _denoise_loop(blocks: Any) -> Any:
+    """The loop block, found by the ``loop_step`` that defines one, not by name."""
+    if hasattr(blocks, "loop_step"):
+        return blocks
+    for child in getattr(blocks, "sub_blocks", {}).values():
+        found = _denoise_loop(child)
+        if found is not None:
+            return found
+    return None

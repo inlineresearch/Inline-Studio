@@ -601,7 +601,7 @@ wheels = [
 
 [[package]]
 name = "inline-core"
-version = "1.2.63"
+version = "1.2.66"
 source = { editable = "." }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -612,6 +612,7 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "accelerate" },
+    { name = "av" },
     { name = "bitsandbytes", marker = "sys_platform != 'darwin'" },
     { name = "controlnet-aux" },
     { name = "diffusers" },
@@ -678,6 +679,7 @@ training = [
 requires-dist = [
     { name = "accelerate", marker = "extra == 'all'", specifier = ">=0.30" },
     { name = "accelerate", marker = "extra == 'runtime'", specifier = ">=0.30" },
+    { name = "av", marker = "extra == 'all'", specifier = ">=12" },
     { name = "av", marker = "extra == 'runtime'", specifier = ">=12" },
     { name = "bitsandbytes", marker = "sys_platform != 'darwin' and extra == 'all'", specifier = ">=0.43" },
     { name = "bitsandbytes", marker = "sys_platform != 'darwin' and extra == 'training'", specifier = ">=0.43" },
@@ -690,8 +692,8 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.110" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
-    { name = "huggingface-hub", marker = "extra == 'all'", specifier = ">=0.23" },
-    { name = "huggingface-hub", marker = "extra == 'runtime'", specifier = ">=0.23" },
+    { name = "huggingface-hub", marker = "extra == 'all'", specifier = ">=0.32" },
+    { name = "huggingface-hub", marker = "extra == 'runtime'", specifier = ">=0.32" },
     { name = "imageio-ffmpeg", marker = "extra == 'all'", specifier = ">=0.4" },
     { name = "imageio-ffmpeg", marker = "extra == 'server'", specifier = ">=0.4" },
     { name = "numpy", specifier = ">=1.26" },

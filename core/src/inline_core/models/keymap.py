@@ -262,7 +262,7 @@ def transform(
         raise ComponentError(f"{key} has {tensor.shape[0]} rows, not divisible into {parts} parts.")
     if verify_layout:
         assert_layout(tensor, action, key=key)
-    source = _deinterleave(tensor, parts, action.head_dim) if (
+    source = deinterleave_rows(tensor, parts, action.head_dim) if (
         action.layout is RowLayout.INTERLEAVED
     ) else tensor
     block = source.shape[0] // parts
@@ -270,16 +270,31 @@ def transform(
         yield target, source[index * block : (index + 1) * block]
 
 
-def _deinterleave(tensor: Any, parts: int, head_dim: int) -> Any:
-    """``[p0_h0; p1_h0; p2_h0][p0_h1; …]`` to ``[p0_all; p1_all; p2_all]``.
-
-    ``transpose`` is not the same call in torch and numpy - torch swaps two axes, numpy wants a full
-    permutation - so the swap is spelled per backend rather than duck-typed.
-    """
+def deinterleave_rows(tensor: Any, parts: int, head_dim: int) -> Any:
+    """``[p0_h0; p1_h0; p2_h0][p0_h1; …]`` to ``[p0_all; p1_all; p2_all]``."""
     if head_dim < 1:
         raise ComponentError("De-interleaving needs the head dimension the parts are grouped by.")
     heads = tensor.shape[0] // (parts * head_dim)
-    reshaped = tensor.reshape(heads, parts, head_dim, *tensor.shape[1:])
+    return _swap01(tensor, (heads, parts, head_dim))
+
+
+def interleave_rows(tensor: Any, parts: int, head_dim: int) -> Any:
+    """``[p0_all; p1_all; p2_all]`` back to per-head groups: the inverse of ``deinterleave_rows``.
+
+    Needed to *write* a checkpoint or adapter in a publisher's interleaved layout, where the load
+    path only ever reads one."""
+    if head_dim < 1:
+        raise ComponentError("Interleaving needs the head dimension the parts are grouped by.")
+    heads = tensor.shape[0] // (parts * head_dim)
+    return _swap01(tensor, (parts, heads, head_dim))
+
+
+def _swap01(tensor: Any, shape: tuple[int, int, int]) -> Any:
+    """Reshape to ``shape`` plus the trailing dims, exchange the first two, flatten back.
+
+    ``transpose`` is not the same call in torch and numpy - torch swaps two axes, numpy wants a full
+    permutation - so the swap is spelled per backend rather than duck-typed."""
+    reshaped = tensor.reshape(*shape, *tensor.shape[1:])
     if _is_torch(tensor):
         moved = reshaped.transpose(0, 1).contiguous()
     else:

@@ -29,6 +29,10 @@ if TYPE_CHECKING:
 #: while ostris' training adapter uses the reference names.
 Alias = Callable[[str], str | None]
 
+#: Rewrites a whole adapter before it is matched, for an arch whose checkpoint keys need more than a
+#: rename - MiniMax H3 ships attention fused, so three of our modules are one of theirs.
+Translate = Callable[[dict[str, Any]], dict[str, Any]]
+
 _DOWN = ("lora_down.weight", "lora_A.weight", "lora_A.default.weight")
 _UP = ("lora_up.weight", "lora_B.weight", "lora_B.default.weight")
 # Prefixes checkpoints put in front of the module path; stripped when matching against the model.
@@ -39,12 +43,22 @@ _PREFIXES = ("diffusion_model.", "transformer.", "lora_unet_", "lora_te_", "base
 LoraPlan = dict[str, list[tuple[Any, Any, float]]]
 
 
-def fuse_loras(model: Any, loras: tuple[LoraRef, ...], alias: Alias | None = None) -> None:
+def fuse_loras(
+    model: Any,
+    loras: tuple[LoraRef, ...],
+    alias: Alias | None = None,
+    translate: Translate | None = None,
+) -> None:
     """Merge each LoRA into ``model``'s weights in order. No-op for an empty stack."""
-    apply_plan(model, plan_loras(model, loras, alias))
+    apply_plan(model, plan_loras(model, loras, alias, translate))
 
 
-def plan_loras(model: Any, loras: tuple[LoraRef, ...], alias: Alias | None = None) -> LoraPlan:
+def plan_loras(
+    model: Any,
+    loras: tuple[LoraRef, ...],
+    alias: Alias | None = None,
+    translate: Translate | None = None,
+) -> LoraPlan:
     """Resolve every LoRA against ``model``'s module names, without touching any weights.
 
     Split from the fusing so a streaming loader can validate the whole stack **before** reading a
@@ -53,7 +67,7 @@ def plan_loras(model: Any, loras: tuple[LoraRef, ...], alias: Alias | None = Non
     plan: LoraPlan = {}
     names = _linear_module_names(model)
     for lora in loras:
-        _plan_one(plan, names, lora.file, lora.strength, alias)
+        _plan_one(plan, names, lora.file, lora.strength, alias, translate)
     return plan
 
 
@@ -74,7 +88,12 @@ def apply_plan(module: Any, plan: LoraPlan, prefix: str = "") -> None:
 
 
 def _plan_one(
-    plan: LoraPlan, names: dict[str, None], path: str, strength: float, alias: Alias | None
+    plan: LoraPlan,
+    names: dict[str, None],
+    path: str,
+    strength: float,
+    alias: Alias | None,
+    translate: Translate | None = None,
 ) -> None:
     from safetensors.torch import load_file
 
@@ -83,6 +102,8 @@ def _plan_one(
     except Exception as exc:  # noqa: BLE001
         raise ComponentError(f"Could not read LoRA {path!r}: {exc}") from exc
 
+    if translate is not None:
+        state = translate(state)
     pairs, alphas = _group(state)
     if not pairs:
         raise ComponentError(f"LoRA {path!r} contains no recognisable lora_down/lora_up pairs.")
@@ -104,27 +125,39 @@ def _plan_one(
         )
 
 
+#: Most fp32 delta held at once. The product is computed a slice of output rows at a time because
+#: the whole of it is enormous: one MiniMax H3 block's six Linears come to 1.5GB and the model to
+#: 80GB, which is host RAM during a staged load and took a 60GB box down three times.
+_DELTA_CHUNK_BYTES = 64 * 1024 * 1024
+
+
 def _add_delta(weight: Any, up: Any, down: Any, scale: float) -> None:
     """Fuse ``scale * (up @ down)`` into ``weight`` in place.
 
-    Computed on the weight's own device: a big LoRA (Krea 2's are ~260 modules on a 12.9B model)
-    materializes tens of GB of fp32 deltas, and doing that on the CPU costs ~20s of maths plus the
-    transfer where the GPU takes ~2s. Falls back to the CPU if the device runs out of memory, so a
-    tight card still fuses, just slowly."""
+    Computed on the weight's own device: doing it on the CPU costs ~20s of maths plus the transfer
+    where the GPU takes ~2s. Falls back to the CPU if the device runs out of memory, so a tight card
+    still fuses, just slowly."""
     import torch
 
     try:
-        weight.add_(_delta(up, down, weight, weight.device) * scale)
+        _accumulate(weight, up, down, scale, weight.device)
     except torch.cuda.OutOfMemoryError:
-        weight.add_((_delta(up, down, weight, "cpu") * scale).to(weight.device, weight.dtype))
+        _accumulate(weight, up, down, scale, "cpu")
 
 
-def _delta(up: Any, down: Any, weight: Any, device: Any) -> Any:
-    """``up @ down`` on ``device``, shaped and typed for the target weight. Conv LoRAs flatten the
-    spatial dims."""
+def _accumulate(weight: Any, up: Any, down: Any, scale: float, device: Any) -> None:
+    """Add the product into ``weight`` in row slices. Conv LoRAs flatten the spatial dims."""
     dtype = _fuse_dtype(up)
-    delta = up.to(device, dtype=dtype).flatten(1) @ down.to(device, dtype=dtype).flatten(1)
-    return delta.reshape(weight.shape).to(weight.dtype)
+    rows = up.to(device, dtype=dtype).flatten(1)
+    cols = down.to(device, dtype=dtype).flatten(1)
+    if not weight.is_contiguous():  # a non-contiguous target cannot be written through a view
+        weight.add_((rows @ cols).reshape(weight.shape).to(weight.dtype) * scale)
+        return
+    target = weight.view(rows.shape[0], -1)
+    step = max(1, _DELTA_CHUNK_BYTES // max(1, cols.shape[1] * 4))
+    for start in range(0, rows.shape[0], step):
+        stop = start + step
+        target[start:stop].add_((rows[start:stop] @ cols).to(weight.dtype) * scale)
 
 
 def _fuse_dtype(tensor: Any) -> Any:
@@ -141,20 +174,29 @@ def _alpha_scale(alpha: Any, rank: int) -> float:
     return float(alpha.item() if hasattr(alpha, "item") else alpha) / float(rank)
 
 
+def split_key(key: str) -> tuple[str, str] | None:
+    """``…to_q.lora_A.weight`` to ``("…to_q", "down")``. None for anything that is not a LoRA key.
+
+    Public so a per-arch key translator groups by exactly the suffixes the fuser recognises: a
+    convention known to one and not the other would drop tensors silently."""
+    for suffix in _DOWN:
+        if key.endswith("." + suffix):
+            return key[: -len(suffix) - 1], "down"
+    for suffix in _UP:
+        if key.endswith("." + suffix):
+            return key[: -len(suffix) - 1], "up"
+    if key.endswith(".alpha"):
+        return key[: -len(".alpha")], "alpha"
+    return None
+
+
 def _group(state: dict[str, Any]) -> tuple[dict[str, tuple[Any, Any]], dict[str, Any]]:
-    downs: dict[str, Any] = {}
-    ups: dict[str, Any] = {}
-    alphas: dict[str, Any] = {}
+    parts: dict[str, dict[str, Any]] = {}
     for key, value in state.items():
-        for suffix in _DOWN:
-            if key.endswith("." + suffix):
-                downs[key[: -len(suffix) - 1]] = value
-        for suffix in _UP:
-            if key.endswith("." + suffix):
-                ups[key[: -len(suffix) - 1]] = value
-        if key.endswith(".alpha"):
-            alphas[key[: -len(".alpha")]] = value
-    return {k: (downs[k], ups[k]) for k in downs if k in ups}, alphas
+        if (split := split_key(key)) is not None:
+            parts.setdefault(split[0], {})[split[1]] = value
+    pairs = {k: (v["down"], v["up"]) for k, v in parts.items() if "down" in v and "up" in v}
+    return pairs, {k: v["alpha"] for k, v in parts.items() if "alpha" in v}
 
 
 def _linear_module_names(model: Any) -> dict[str, None]:

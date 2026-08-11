@@ -79,6 +79,17 @@ export interface FrameInput {
 }
 
 /** Every ComfyUI render of a frame becomes an immutable Take. */
+/**
+ * A generation Core still has in flight. Shaped like the progress event so the renderer can feed
+ * it through the same reducer when rebuilding its queue after a page refresh.
+ */
+export interface ActiveGeneration {
+  frameId: string
+  /** 0..1, or null when the run has not reported yet (a long model load reports nothing). */
+  fraction: number | null
+  status?: string
+}
+
 export interface Take {
   id: string
   frameId: string

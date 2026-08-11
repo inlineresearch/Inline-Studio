@@ -218,9 +218,11 @@ def test_the_seed_is_resolved_to_a_concrete_value() -> None:
 # --- recognising checkpoints ----------------------------------------------------------------------
 
 
-def _fake_checkpoint(path: Path, keys: dict[str, list[int]]) -> Path:
+def _fake_checkpoint(
+    path: Path, keys: dict[str, list[int]], dtypes: dict[str, str] | None = None
+) -> Path:
     header = {
-        name: {"dtype": "BF16", "shape": shape, "data_offsets": [0, 0]}
+        name: {"dtype": (dtypes or {}).get(name, "BF16"), "shape": shape, "data_offsets": [0, 0]}
         for name, shape in keys.items()
     }
     blob = json.dumps(header).encode()
@@ -254,14 +256,58 @@ def test_another_architecture_is_not_offered(models_root: Path) -> None:
     assert not reqs.inspect_file(path).is_h3
 
 
-def test_the_pruned_build_is_rejected_with_a_reason(models_root: Path) -> None:
+def test_a_pruned_bf16_build_is_accepted(models_root: Path) -> None:
+    """40.2 GB against 66.3 GB, and the loader reads its AdaLN table directly."""
     path = _fake_checkpoint(
-        models_root / "diffusion_models" / "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        models_root / "diffusion_models" / "minimax_h3_fl2va_pruned_bf16.safetensors",
         {**_H3_PROBE, "adaln_t_table": [1025, 8]},
     )
     candidate = reqs.inspect_file(path)
+    assert candidate.is_h3 and candidate.pruned and candidate.usable
+    assert candidate.reason == ""
+
+
+def test_a_pruned_fp8_build_is_accepted(models_root: Path) -> None:
+    """21.0 GB. A scalar scale per weight and no rotation, so it dequantises exactly."""
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / "minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
+        {
+            **_H3_PROBE,
+            "adaln_t_table": [1025, 8],
+            "blocks.0.attn.qkv_proj.comfy_quant": [27],
+            "blocks.0.attn.qkv_proj.weight_scale": [],
+        },
+        dtypes={"blocks.0.attn.qkv_proj.weight": "F8_E4M3"},
+    )
+    candidate = reqs.inspect_file(path)
+    assert candidate.usable and candidate.quantisation == "float8_e4m3fn"
+    # A reason on a loadable file reads as a refusal to anything that shows it.
+    assert candidate.reason == ""
+
+
+def test_an_int8_convrot_build_is_still_rejected(models_root: Path) -> None:
+    """The rotation is the part we cannot invert, and inverting it wrongly still renders."""
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        {
+            **_H3_PROBE,
+            "adaln_t_table": [1025, 8],
+            "blocks.0.attn.qkv_proj.comfy_quant": [70],
+        },
+        dtypes={"blocks.0.attn.qkv_proj.weight": "I8"},
+    )
+    candidate = reqs.inspect_file(path)
     assert candidate.is_h3 and not candidate.usable
-    assert "rank-8 lookup table" in candidate.reason
+    assert "convrot" in candidate.reason
+
+
+def test_an_unrecognised_quantisation_is_refused_rather_than_guessed(models_root: Path) -> None:
+    """A comfy_quant format we do not know would render a plausible wrong video, not raise."""
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / "minimax_h3_fl2va_something_new.safetensors",
+        {**_H3_PROBE, "blocks.0.attn.qkv_proj.comfy_quant": [40]},
+    )
+    assert not reqs.inspect_file(path).usable
 
 
 def test_the_comfy_int8_build_is_rejected_with_a_reason(models_root: Path) -> None:
@@ -282,8 +328,11 @@ def test_the_picker_offers_the_usable_file_and_explains_the_rest(models_root: Pa
     )
     provider = MiniMaxH3Provider("fl2va")
 
-    assert provider.catalog_options("diffusion_models") == ["good.safetensors"]
-    assert [r["file"] for r in provider.rejected()] == ["pruned.safetensors"]
+    assert provider.catalog_options("diffusion_models") == [
+        "good.safetensors",
+        "pruned.safetensors",
+    ]
+    assert provider.rejected() == []
     assert provider.catalog_options("loras") is None  # not ours to filter
 
 
@@ -319,7 +368,7 @@ def test_a_picked_transformer_is_what_gets_sized(models_root: Path) -> None:
     assert reqs.footprint_bytes("fl2va", factorised=False)["diffusion_bytes"] == 0
 
     raw = reqs.footprint_bytes("fl2va", factorised=False, transformer=picked)["diffusion_bytes"]
-    assert raw == picked.stat().st_size > 0
+    assert raw == reqs.resident_bytes(picked) > 0
 
 
 def test_the_factorised_share_comes_off_whichever_file_was_picked(models_root: Path) -> None:
@@ -380,3 +429,161 @@ def test_each_blockset_gets_its_denoiser_under_the_name_it_declares() -> None:
 
     assert _denoiser_name(MiniMaxH3Blocks()) == "transformer"
     assert _denoiser_name(MiniMaxH3Ref2VABlocks()) == "transformer_ref"
+
+
+def test_a_pruned_build_is_sized_by_what_it_becomes_not_its_file_size(models_root: Path) -> None:
+    """Under-sizing is the dangerous direction: the fit ladder would promise a machine that then
+    dies to a host-RAM OOM kill instead of raising. A pruned build has already lost its AdaLN
+    branch, so taking the usual 39 percent off it a second time under-counts by that much again."""
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / reqs.FL2VA_FILE,
+        {**_H3_PROBE, "adaln_t_table": [1025, 8]},
+    )
+    resident = reqs.resident_bytes(path)
+    assert resident == (21504 * 5376 + 1025 * 8) * 2
+    sizes = reqs.footprint_bytes("fl2va", transformer=path)
+    assert sizes["diffusion_bytes"] == resident
+
+
+def test_an_unpruned_build_still_has_the_adaln_share_taken_off(models_root: Path) -> None:
+    path = _fake_checkpoint(models_root / "diffusion_models" / reqs.FL2VA_FILE, _H3_PROBE)
+    sizes = reqs.footprint_bytes("fl2va", transformer=path)
+    assert sizes["diffusion_bytes"] == int(reqs.resident_bytes(path) * (1 - reqs.ADALN_SHARE))
+
+
+def test_an_fp8_build_is_sized_at_its_dequantised_weight(models_root: Path) -> None:
+    """The file is half the size it will occupy, and sizing from disk would halve the estimate."""
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / reqs.FL2VA_FILE,
+        {**_H3_PROBE, "adaln_t_table": [1025, 8]},
+        dtypes={"blocks.0.attn.qkv_proj.weight": "F8_E4M3"},
+    )
+    expected = (21504 * 5376 + 1025 * 8) * 2
+    assert reqs.footprint_bytes("fl2va", transformer=path)["diffusion_bytes"] == expected
+
+
+def test_a_pruned_build_is_not_factorised_again(models_root: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Re-running the transform would multiply a rank-8 projection by a full-width basis. The load
+    fails long before that, at the first shape mismatch, so this asserts the flag rather than the
+    crash."""
+    pytest.importorskip("torch")
+    from inline_core.models.minimaxh3 import pipeline as pl
+
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / reqs.FL2VA_FILE,
+        {**_H3_PROBE, "adaln_t_table": [1025, 8]},
+    )
+    for folder in ("MiniMax-H3-text-encoder", "MiniMax-H3-processor"):
+        (models_root / "text_encoders" / folder).mkdir(parents=True, exist_ok=True)
+    for name in (reqs.VIDEO_VAE_FILE, reqs.AUDIO_VAE_FILE):
+        (models_root / "vae").mkdir(parents=True, exist_ok=True)
+        (models_root / "vae" / name).write_bytes(b"")
+    seen: dict[str, object] = {}
+
+    def stop(*_a: object, **kw: object) -> None:
+        seen.update(kw)
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(pl.reqs, "footprint_bytes", stop)
+    with pytest.raises(RuntimeError, match="stop here"):
+        pl.load_pipeline(_NullPolicy(), params={"model": path.name}, partition="fl2va")
+    assert seen["factorised"] is False
+
+
+class _NullPolicy:
+    """Enough policy for the resolve-and-size prologue, which is all this reaches."""
+
+    def set_footprint(self, *_a: object) -> None: ...
+    def fit_estimate(self) -> None: return None
+
+
+def test_the_fp8_build_is_offered_as_an_optional_download(models_root: Path) -> None:
+    """A third the download for the same model, so it belongs in the popup. Optional, because the
+    trainer cannot use it and the bf16 file stays the one a full install needs."""
+    entries = {c.id: c for c in reqs.components("fl2va")}
+    fp8 = entries["h3-fl2va-fp8"]
+    assert fp8.optional and fp8.filename == reqs.FL2VA_FP8_FILE
+    assert "generation only" in fp8.label
+    assert not entries["h3-fl2va"].optional
+
+
+def test_training_refuses_a_pruned_build_by_name(models_root: Path) -> None:
+    """It would otherwise fail reading a timestep tensor the file does not contain, which reads
+    like a corrupt download rather than the wrong build."""
+    pytest.importorskip("torch")
+    from inline_core.training import h3 as train_h3
+
+    path = _fake_checkpoint(
+        models_root / "diffusion_models" / reqs.FL2VA_FP8_FILE,
+        {**_H3_PROBE, "adaln_t_table": [1025, 8]},
+    )
+    with pytest.raises(RuntimeError, match="pruned MiniMax H3 build"):
+        train_h3._refuse_pruned(path)
+
+
+def test_training_accepts_the_full_build(models_root: Path) -> None:
+    pytest.importorskip("torch")
+    from inline_core.training import h3 as train_h3
+
+    path = _fake_checkpoint(models_root / "diffusion_models" / reqs.FL2VA_FILE, _H3_PROBE)
+    train_h3._refuse_pruned(path)  # does not raise
+
+
+# --- per-step progress ---------------------------------------------------------------------------
+
+
+class _FakeBar:
+    def __init__(self) -> None:
+        self.updates = 0
+
+    def __enter__(self) -> _FakeBar:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def update(self, n: int = 1) -> None:
+        self.updates += n
+
+
+class _FakeLoop:
+    """Stands in for the vendored denoise block: it has a loop_step and drives a progress bar."""
+
+    def __init__(self) -> None:
+        self.bar = _FakeBar()
+        self.progress_bar = lambda total=None, **_kw: self.bar
+
+    def loop_step(self) -> None: ...
+
+
+def test_step_progress_hooks_the_denoise_loop() -> None:
+    """The modular loop has no callback_on_step_end, so the progress bar is the only per-step hook.
+    Without it a long denoise emits nothing and the UI shows 'loading model' for the whole render."""
+    from inline_core.models import pipeline_runtime as rt
+
+    loop = _FakeLoop()
+
+    class _Blocks:
+        sub_blocks = {"denoise": loop}
+
+    class _Pipe:
+        blocks = _Blocks()
+
+    seen: list[tuple[int, int]] = []
+    assert rt.attach_step_progress(_Pipe(), lambda done, total: seen.append((done, total)))
+
+    with loop.progress_bar(total=3) as bar:
+        for _ in range(3):
+            bar.update()
+
+    assert seen == [(1, 3), (2, 3), (3, 3)]
+    assert loop.bar.updates == 3  # the real bar is still driven
+
+
+def test_step_progress_reports_when_there_is_no_loop_to_hook() -> None:
+    class _Pipe:
+        blocks = None
+
+    from inline_core.models import pipeline_runtime as rt
+
+    assert rt.attach_step_progress(_Pipe(), lambda *_a: None) is False

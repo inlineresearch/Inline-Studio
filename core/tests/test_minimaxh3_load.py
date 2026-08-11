@@ -16,6 +16,8 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("safetensors")
 
+from safetensors.torch import load_file  # noqa: E402
+
 from inline_core.errors import ComponentError  # noqa: E402
 from inline_core.models.keymap import (  # noqa: E402
     AssertEqual,
@@ -24,7 +26,9 @@ from inline_core.models.keymap import (  # noqa: E402
     Split,
     SwapHalves,
 )
+from inline_core.models.minimaxh3 import adaln  # noqa: E402
 from inline_core.models.minimaxh3 import keys as h3keys  # noqa: E402
+from inline_core.models.minimaxh3 import load as h3_load  # noqa: E402
 from inline_core.models.minimaxh3.load import (  # noqa: E402
     detect_source_layout,
     expected_inv_freq,
@@ -255,3 +259,147 @@ def test_detect_source_layout_reads_a_real_shaped_tensor() -> None:
     )
     assert detect_source_layout(contiguous, head_dim=head_dim) is RowLayout.CONTIGUOUS
     assert detect_source_layout(interleaved, head_dim=head_dim) is RowLayout.INTERLEAVED
+
+
+# --- the published pruned builds ------------------------------------------------------------
+
+
+def _pruned_source(model: Any, state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """A pruned checkpoint for ``model``: no timestep path, a table, rank-reduced projections.
+
+    Built the way MiniMax's own build is. ``V`` is an orthonormal basis for ``silu(temb)``, the
+    table holds ``silu(temb) @ V`` sampled across t, and each projection becomes ``W @ V``, so that
+    ``(silu(temb) @ V) @ (W @ V).T`` is the modulation the unpruned model computes.
+    """
+    plan = h3keys.build_plan("comfy-org", pruned=True, **TINY_PLAN)
+    source = _invert(plan, state, RowLayout.CONTIGUOUS)
+    grid = torch.linspace(0, 1, adaln.TABLE_ROWS)
+    with torch.no_grad():
+        activated = torch.nn.functional.silu(model.time_embedder(model.time_proj(grid))).float()
+    basis = torch.linalg.svd(activated, full_matrices=False)[2].T.contiguous()
+    source[_TABLE] = (activated @ basis).contiguous()
+    for key in [k for k in source if k.endswith("adaln_proj.linear.weight")]:
+        source[key] = (source[key].float() @ basis).contiguous()
+    return source
+
+
+_TABLE = "adaln_t_table"
+
+
+def test_a_pruned_build_reproduces_the_unpruned_modulation(tmp_path: Path) -> None:
+    """The whole point: the same modulation, from a file with no timestep path in it."""
+    model = _tiny_model()
+    state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    path = _write(tmp_path / "h3_pruned.safetensors", _pruned_source(model, state))
+
+    loaded = load_transformer(path, dtype=torch.float32).eval()
+    steps = torch.tensor([0.03, 0.271, 0.5, 0.8125, 0.99])
+    with torch.no_grad():
+        want = model.transformer_blocks[0].adaln_proj(
+            model.time_embedder(model.time_proj(steps))
+        )
+        got = loaded.transformer_blocks[0].adaln_proj(
+            loaded.time_embedder(loaded.time_proj(steps))
+        )
+    for a, b in zip(want, got, strict=True):
+        assert torch.allclose(a, b, atol=2e-4), (a - b).abs().max()
+
+
+def test_a_pruned_build_replaces_the_timestep_path(tmp_path: Path) -> None:
+    model = _tiny_model()
+    state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    path = _write(tmp_path / "h3_pruned2.safetensors", _pruned_source(model, state))
+    loaded = load_transformer(path, dtype=torch.bfloat16)
+    assert isinstance(loaded.time_embedder, adaln.TableEmbedder)
+    assert isinstance(loaded.transformer_blocks[0].adaln_proj, adaln.TabulatedModulation)
+    assert isinstance(loaded.norm_out, adaln.TabulatedNormOut)
+    # The compute dtype like every other weight, and not float32. Float32 here promoted the hidden
+    # states through the modulation multiply, which doubled activation memory and dropped rms_norm
+    # off its fused kernel for the whole denoise.
+    for module in (loaded.transformer_blocks[0].adaln_proj, loaded.norm_out):
+        assert module.linear.weight.dtype is torch.bfloat16
+
+
+def test_an_unpruned_build_is_untouched_by_any_of_this(reference) -> None:  # type: ignore[no-untyped-def]
+    path, _ = reference(RowLayout.CONTIGUOUS)
+    loaded = load_transformer(path, dtype=torch.float32)
+    assert not isinstance(loaded.time_embedder, adaln.TableEmbedder)
+    assert not isinstance(loaded.norm_out, adaln.TabulatedNormOut)
+
+
+def test_a_table_on_a_different_grid_is_refused(tmp_path: Path) -> None:
+    """A build sampled at another resolution would shift the modulation at every step and render."""
+    model = _tiny_model()
+    state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    source = _pruned_source(model, state)
+    source[_TABLE] = source[_TABLE][::2].contiguous()
+    path = _write(tmp_path / "h3_offgrid.safetensors", source)
+    with pytest.raises(ValueError, match="different timestep grid"):
+        load_transformer(path, dtype=torch.float32)
+
+
+def test_the_pruned_plan_is_versioned_apart(tmp_path: Path) -> None:
+    """Prepared artifacts are keyed on the plan version; the two must not collide."""
+    plain = h3keys.build_plan("comfy-org", **TINY_PLAN).version
+    pruned = h3keys.build_plan("comfy-org", pruned=True, **TINY_PLAN).version
+    assert plain != pruned and "pruned" in pruned
+
+
+def test_an_fp8_weight_is_dequantised_by_its_scale(reference, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    """Values chosen to be exact in fp8, so this measures the scale and nothing else.
+
+    Silently ignoring ``weight_scale`` would leave every quantised weight off by a constant factor,
+    which renders a washed-out video rather than raising."""
+    path, state = reference(RowLayout.CONTIGUOUS)
+    tensors = dict(load_file(str(path)))
+    target = "blocks.0.mlp.fc2.weight"
+    shape = tensors[target].shape
+    codes = torch.tensor([-2.0, -0.5, 0.5, 2.0]).repeat(shape.numel() // 4).reshape(shape)
+    tensors[target] = codes.to(torch.float8_e4m3fn)
+    tensors["blocks.0.mlp.fc2.weight_scale"] = torch.tensor(0.25)
+    tensors["blocks.0.mlp.fc2.input_scale"] = torch.tensor(1.0)
+    tensors["blocks.0.mlp.fc2.comfy_quant"] = torch.zeros(27, dtype=torch.uint8)
+    quantised = _write(tmp_path / "h3_fp8.safetensors", tensors)
+
+    loaded = load_transformer(quantised, dtype=torch.float32)
+    assert torch.equal(loaded.transformer_blocks[0].ff.net[2].weight, codes * 0.25)
+
+
+def test_the_fp8_plan_is_versioned_apart() -> None:
+    plain = h3keys.build_plan("comfy-org", **TINY_PLAN).version
+    fp8 = h3keys.build_plan(
+        "comfy-org", sidecars=("blocks.0.mlp.fc2.weight_scale",), **TINY_PLAN
+    ).version
+    assert plain != fp8 and "fp8" in fp8
+
+
+# --- what a fused LoRA is worth once the base is quantised ------------------------------------
+
+
+def test_the_fuse_reports_both_numbers(caplog) -> None:  # type: ignore[no-untyped-def]
+    """Strength alone says nothing, so the step ratio is reported beside it."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="inline_core.minimaxh3"):
+        h3_load._report_strength([0.00818, 0.15], quantised=True)
+    assert "0.818%" in caplog.text
+    assert "0.15 of an int8 step" in caplog.text
+
+
+def test_a_small_step_ratio_is_not_warned_about(caplog) -> None:  # type: ignore[no-untyped-def]
+    """It was, and the warning was wrong. Fusing into a quantised base preserves the delta along
+    its intended direction at about 100%, measured, so a small ratio is not evidence of anything.
+    Published LoRAs that work well span 0.017% to 1.2% of the weight norm."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="inline_core.minimaxh3"):
+        h3_load._report_strength([0.00038, 0.008], quantised=True)
+    assert caplog.text == ""
+
+
+def test_an_unquantised_base_says_so(caplog) -> None:  # type: ignore[no-untyped-def]
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="inline_core.minimaxh3"):
+        h3_load._report_strength([0.02, 1.5], quantised=False)
+    assert "not quantised" in caplog.text

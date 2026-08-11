@@ -163,6 +163,17 @@ between nodes and are never takes.
   → sequential offload → wont-fit. NF4 is what makes a 32B model viable on a 24 GB card. Note int8
   forces bf16 (torchao's weight-only int8 silently no-ops under fp16) while NF4 does not, so a Turing
   card keeps its fp16 tensor cores under NF4.
+- **A pre-reduced checkpoint must not be re-reduced, structurally or numerically.** MiniMax H3's
+  `pruned` builds ship the AdaLN branch already factorised to rank 8 and drop the timestep path
+  entirely, so re-running our factorisation multiplies a `[96768, 8]` projection by a full-width
+  basis. `minimaxh3/pipeline.py` turns `factorise_adaln` off for those, the same way the rule below
+  turns quantization off for a prequantized file. Both are the same rule: the source is already in
+  the target form.
+- **Size a checkpoint by what it becomes, not by what it weighs.** A pruned file has already lost
+  its AdaLN branch and an fp8 file stores half the bytes it will occupy once dequantised, so scaling
+  the on-disk number under-sizes both, by up to 3x. `minimaxh3.requirements.resident_bytes` counts
+  from the header. Under-sizing is the dangerous direction: the fit ladder then promises a machine
+  that dies to a host-RAM OOM kill instead of raising.
 - **Prequantized checkpoints must not be re-quantized.** A checkpoint that ships already quantized
   (`flux2/variants.is_prequantized`) has an on-disk size that already _is_ its resident size, so the
   ladder's assumption that quantization halves it does not hold, and handing diffusers a second,
@@ -230,6 +241,11 @@ real codec that moves tensors lives with the model runner.
   Don't scatter it.
 - **Bring-your-own models.** Nothing is downloaded by the engine. The catalog scans; the user places
   files. A model picker is a `SELECT` param with `options_from="<category>"`.
+- **Adapter strength is not a quality metric, and a threshold on it is a false-positive machine.**
+  Measured against real bases, published LoRAs that work well span `|B@A| / |W|` from 0.017%
+  (a style LoRA) to 1.2% (a restoration LoRA), so "this adapter looks weak" is not a finding. What
+  predicts a LoRA doing nothing is whether its per-weight change clears one quantization step. Warn
+  on that, and only when the base is actually quantized.
 - **Verify image models by rendering.** The FLUX.2 work shipped five bugs past a green test suite,
   and every one produced a _wrong image rather than an error_: a mis-keyed checkpoint, a
   vision-language encoder loaded in place of a text one, an unnormalized latent, and a control context

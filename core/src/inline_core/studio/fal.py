@@ -268,6 +268,8 @@ class FalGeneration:
         self._store = store
         self._events = events
         self._active: dict[str, bool] = {}
+        #: Last progress per frame, so a reloaded page can rebuild its queue.
+        self._last: dict[str, tuple[float, str | None]] = {}
 
     def run(self, frame_id: str, request: dict[str, Any]) -> None:
         key = self._store.fal_key()
@@ -283,6 +285,20 @@ class FalGeneration:
     def cancel(self, frame_id: str | None = None) -> None:
         for fid in [frame_id] if frame_id else list(self._active.keys()):
             self._active.pop(fid, None)
+            self._last.pop(fid, None)
+
+    def active(self) -> list[dict[str, Any]]:
+        """The fal runs still in flight, for a client that has lost its own copy of the queue."""
+        from .generation import active_entry
+
+        return [active_entry(f, self._last.get(f)) for f in self._active]
+
+    def _progress(self, frame_id: str, fraction: float, status: str | None) -> None:
+        self._last[frame_id] = (fraction, status)
+        self._events.broadcast(
+            "events:generationProgress",
+            {"frameId": frame_id, "fraction": fraction, "status": status},
+        )
 
     async def _run(self, frame_id: str, request: dict[str, Any], key: str) -> None:
         import httpx
@@ -292,10 +308,7 @@ class FalGeneration:
         output_kind = request.get("outputKind") or "image"
         headers = {"Authorization": f"Key {key}"}
         try:
-            self._events.broadcast(
-                "events:generationProgress",
-                {"frameId": frame_id, "fraction": 0.05, "status": "Queued"},
-            )
+            self._progress(frame_id, 0.05, "Queued")
             async with httpx.AsyncClient(timeout=600) as client:
                 sub = await client.post(f"{_QUEUE_BASE}/{endpoint}", headers=headers, json=body)
                 sub.raise_for_status()
@@ -310,10 +323,7 @@ class FalGeneration:
                     res.raise_for_status()
                     status = res.json()
                     fraction, label = _progress_from_status(status)
-                    self._events.broadcast(
-                        "events:generationProgress",
-                        {"frameId": frame_id, "fraction": fraction, "status": label},
-                    )
+                    self._progress(frame_id, fraction, label)
                     state = status.get("status")
                     if state == "COMPLETED":
                         break

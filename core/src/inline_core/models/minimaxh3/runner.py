@@ -325,6 +325,20 @@ class MiniMaxH3Runner(NodeRunner):
 
         call = call_kwargs(request, self._variant, inputs)
         call["generator"] = torch.Generator(device="cpu").manual_seed(request.seed)
+
+        def on_step(done: int, total: int) -> None:
+            if ctx.cancel.cancelled:
+                raise CancelledError("Run cancelled.")
+            ctx.emitter.emit(
+                rt.progress_event(
+                    ctx, node, Phase.SAMPLE, done / max(total, 1),
+                    step=done, step_count=total, status=f"Step {done}/{total}",
+                )
+            )
+
+        # Without this the run reports nothing between loading and saving, and a denoise that takes
+        # minutes reads as a stuck model load.
+        rt.attach_step_progress(pipe, on_step)
         started = time.perf_counter()
         try:
             state = render_staged(pipe, self._policy.placement('denoiser').device, **call)

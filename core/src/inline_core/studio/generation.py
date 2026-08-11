@@ -50,6 +50,9 @@ class CoreGeneration:
         self._events = events
         self._registry = registry
         self._active: dict[str, str] = {}  # canvas item id -> run id
+        # Last progress per item, so a reloaded page can rebuild its queue. Progress is broadcast
+        # and forgotten otherwise, and a run mid-model-load emits nothing for minutes.
+        self._last: dict[str, tuple[float, str | None]] = {}
 
     def _is_list_port(self, node_type: str, port_id: str) -> bool:
         """Whether a port accepts several wires. Only the registry knows, and the canvas needs it to
@@ -80,6 +83,7 @@ class CoreGeneration:
         ids = [item_id] if item_id else list(self._active.keys())
         for iid in ids:
             run_id = self._active.pop(iid, None)
+            self._last.pop(iid, None)
             if run_id:
                 self._manager.cancel(run_id)
 
@@ -137,8 +141,14 @@ class CoreGeneration:
         finally:
             record.subscribers.discard(queue)
             self._active.pop(item_id, None)
+            self._last.pop(item_id, None)
+
+    def active(self) -> list[dict[str, Any]]:
+        """The runs still in flight, for a client that has lost its own copy of the queue."""
+        return [active_entry(i, self._last.get(i)) for i in self._active]
 
     def _progress(self, item_id: str, fraction: float, status: str | None) -> None:
+        self._last[item_id] = (fraction, status)
         self._events.broadcast(
             "events:generationProgress",
             {"frameId": item_id, "fraction": fraction, "status": status},
@@ -205,3 +215,11 @@ class CoreGeneration:
             return True
         output_kind = self._registry.get(node_type).output_kind
         return output_kind is None or _kind_str(output_kind) == kind
+
+
+def active_entry(frame_id: str, last: tuple[float, str | None] | None) -> dict[str, Any]:
+    """One in-flight run, shaped like a progress event so a client reuses the same reducer.
+
+    Public because the fal runner reports the same shape into the same merged queue."""
+    fraction, status = last if last is not None else (None, None)
+    return {"frameId": frame_id, "fraction": fraction, "status": status}

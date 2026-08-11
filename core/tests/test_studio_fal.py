@@ -234,3 +234,19 @@ def test_the_same_asset_can_feed_two_ports(tmp_path) -> None:
     assert first["id"] != second["id"]
     # Re-adding the same (asset, handle) pair still dedups.
     assert fr.add_input(conn, gen["frameId"], "a1", "image")["id"] == first["id"]
+
+
+def test_fal_active_reports_runs_in_flight() -> None:
+    """Same contract as the Core side, since the handler merges both into one queue."""
+
+    class _Events:
+        def broadcast(self, channel: str, payload: dict) -> None: ...
+
+    gen = fal.FalGeneration(store=None, events=_Events())
+    gen._active["frame-1"] = True
+    gen._progress("frame-1", 0.25, "Queued")
+
+    assert gen.active() == [{"frameId": "frame-1", "fraction": 0.25, "status": "Queued"}]
+
+    gen.cancel("frame-1")
+    assert gen.active() == []

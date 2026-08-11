@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import json
 import struct
+from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Any, cast
 
 from ...config import models_dir
 from ..requirements import ModelComponent
@@ -26,6 +28,9 @@ COMFY_REPO = "Comfy-Org/MiniMax-H3"
 MINIMAX_REPO = "MiniMaxAI/MiniMax-H3"
 
 FL2VA_FILE = "minimax_h3_fl2va_bf16.safetensors"
+#: A third the download for the same model. Generation only: the trainer needs the timestep path a
+#: pruned build does not ship, and it saves nothing in VRAM because the base is quantised anyway.
+FL2VA_FP8_FILE = "minimax_h3_fl2va_pruned_fp8_scaled.safetensors"
 REF2VA_FILE = "minimax_h3_ref2va_bf16.safetensors"
 TEXT_ENCODER_DIR = "FL2VA/text_encoder"
 VIDEO_VAE_FILE = "minimax_h3_video_vae_fp16.safetensors"
@@ -36,8 +41,13 @@ _PROBE = "blocks.0.attn.qkv_proj.weight"
 _PROBE_SHAPE = [21504, 5376]
 #: Only in the pruned builds, whose AdaLN branch is a rank-8 lookup, not a projection.
 _PRUNED_MARKER = "adaln_t_table"
-#: ComfyUI's own quantisation, which carries scale tensors nothing else can read.
+#: ComfyUI's own quantisation, which carries scale tensors alongside the weights.
 _COMFY_QUANT_SUFFIX = ".comfy_quant"
+#: The quantised dtypes the published builds use, and whether the loader can read one.
+#: fp8 is a scalar scale per weight and nothing else, so it dequantises exactly. int8 is only
+#: published with ComfyUI's rotation applied, which is a transform we cannot invert.
+_FP8_DTYPE = "F8_E4M3"
+_INT8_DTYPE = "I8"
 
 
 @dataclass(frozen=True)
@@ -48,26 +58,29 @@ class Candidate:
     is_h3: bool
     pruned: bool = False
     comfy_quantised: bool = False
+    #: "", "float8_e4m3fn" or "int8". Read from the weight dtypes, not from the filename.
+    quantisation: str = ""
 
     @property
     def usable(self) -> bool:
-        return self.is_h3 and not self.pruned and not self.comfy_quantised
+        return self.is_h3 and self.quantisation in ("", "float8_e4m3fn")
 
     @property
     def reason(self) -> str:
-        """Why an H3 file cannot be loaded, for the picker to show instead of hiding it."""
+        """Why an H3 file cannot be loaded, for the picker to show instead of hiding it.
+
+        Empty for anything loadable, so a caller can treat a reason as proof of refusal."""
+        if self.usable:
+            return ""
         if not self.is_h3:
             return "not a MiniMax H3 transformer"
-        if self.comfy_quantised:
+        if self.quantisation in ("int8", "unknown"):
             return (
-                "a ComfyUI int8 build: it carries comfy_quant scale tensors that only ComfyUI "
-                "reads. Use the bf16 file; memory saving is the device policy's job here."
+                "a ComfyUI int8 build: its weights are stored rotated (convrot), which is a "
+                "transform only ComfyUI can invert. The fp8 build is the same size and loads."
             )
-        if self.pruned:
-            return (
-                "a pruned build: its AdaLN branch is a rank-8 lookup table rather than a "
-                "projection, which is a different graph from the one this node runs."
-            )
+        if self.quantisation:
+            return f"quantised as {self.quantisation}, which this node cannot read"
         return ""
 
 
@@ -88,6 +101,13 @@ def read_header(path: Path) -> dict[str, object] | None:
         return None
     header.pop("__metadata__", None)
     return header
+
+
+def _entries(header: dict[str, object]) -> Iterator[tuple[str, dict[str, Any]]]:
+    """The tensor records in a header, skipping anything that is not one."""
+    for name, info in header.items():
+        if isinstance(info, dict):
+            yield name, cast("dict[str, Any]", info)
 
 
 def inspect_file(path: Path) -> Candidate:
@@ -114,12 +134,26 @@ def _inspect_cached(path_str: str, mtime: int, size: int) -> Candidate:
     is_h3 = isinstance(probe, dict) and list(probe.get("shape", [])) == _PROBE_SHAPE
     if not is_h3:
         return Candidate(path, is_h3=False)
+    dtypes = {str(info.get("dtype")) for _, info in _entries(header)}
     return Candidate(
         path,
         is_h3=True,
         pruned=any(_PRUNED_MARKER in key for key in header),
         comfy_quantised=any(key.endswith(_COMFY_QUANT_SUFFIX) for key in header),
+        quantisation=_quantisation(dtypes, any(k.endswith(_COMFY_QUANT_SUFFIX) for k in header)),
     )
+
+
+def _quantisation(dtypes: set[str], has_sidecars: bool) -> str:
+    """What a build is quantised as, refusing anything unrecognised rather than guessing.
+
+    A ``comfy_quant`` sidecar in a format we do not know is named ``unknown`` and refused: reading
+    quantised weights with the wrong recipe renders a plausible wrong video, not an error."""
+    if _FP8_DTYPE in dtypes:
+        return "float8_e4m3fn"
+    if _INT8_DTYPE in dtypes:
+        return "int8"
+    return "unknown" if has_sidecars else ""
 
 
 def usable_transformers() -> list[Path]:
@@ -228,6 +262,9 @@ def components(partition: str = "fl2va") -> list[ModelComponent]:
                 "MiniMax-H3-processor", MINIMAX_REPO, "FL2VA/processor"),
         _file("h3-ref2va", "Ref2VA transformer (66.3 GB)", "diffusion_models", REF2VA_FILE,
               COMFY_REPO, f"diffusion_models/{REF2VA_FILE}", optional=not ref2va_required),
+        _file("h3-fl2va-fp8", "FL2VA transformer, fp8 (21.0 GB, generation only)",
+              "diffusion_models", FL2VA_FP8_FILE,
+              COMFY_REPO, f"diffusion_models/{FL2VA_FP8_FILE}", optional=True),
     ]
     return entries
 
@@ -259,6 +296,32 @@ def _folder(
 #: under half that.
 ADALN_SHARE = 0.392
 
+#: What the model weighs once loaded, always bf16 whatever the file holds.
+_RESIDENT_BYTES_PER_PARAM = 2
+
+
+def resident_bytes(path: Path) -> int:
+    """What ``path`` will occupy once placed, counted from its own header.
+
+    Not the file size. A pruned build has already had its AdaLN branch reduced, and an fp8 build
+    stores half a byte-per-param of what it will occupy once dequantised, so scaling the on-disk
+    number would under-size both. Under-sizing is the dangerous direction: the fit ladder would
+    promise a machine that then dies to a host-RAM OOM kill rather than raising.
+    """
+    header = read_header(path)
+    if header is None:
+        return 0
+    total = 0
+    for _, info in _entries(header):
+        shape = info.get("shape")
+        if not isinstance(shape, list):
+            continue
+        count = 1
+        for dim in cast("list[Any]", shape):
+            count *= int(dim)
+        total += count * _RESIDENT_BYTES_PER_PARAM
+    return total
+
 
 def footprint_bytes(
     partition: str = "fl2va",
@@ -284,8 +347,15 @@ def footprint_bytes(
     encoder_bytes = sum(f.stat().st_size for f in encoder.rglob("*") if f.is_file()) if (
         encoder.is_dir()
     ) else 0
-    diffusion = size(transformer if transformer is not None else resolve_transformer(partition))
-    if factorised:
+    chosen = transformer if transformer is not None else resolve_transformer(partition)
+    diffusion = size(chosen)
+    if chosen is not None and (candidate := inspect_file(chosen)).is_h3:
+        # Counted from the header, so a pruned or fp8 build is sized by what it becomes rather than
+        # by what it weighs on disk.
+        diffusion = resident_bytes(chosen)
+        if factorised and not candidate.pruned:
+            diffusion = int(diffusion * (1 - ADALN_SHARE))
+    elif factorised:
         diffusion = int(diffusion * (1 - ADALN_SHARE))
     video = video_vae if video_vae is not None else resolve("vae", VIDEO_VAE_FILE)
     return {
