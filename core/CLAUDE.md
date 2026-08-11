@@ -246,6 +246,11 @@ real codec that moves tensors lives with the model runner.
   (a style LoRA) to 1.2% (a restoration LoRA), so "this adapter looks weak" is not a finding. What
   predicts a LoRA doing nothing is whether its per-weight change clears one quantization step. Warn
   on that, and only when the base is actually quantized.
+- **Patching a diffusers object may patch a copy, and it will not tell you.**
+  `ModularPipeline.blocks` is a property returning `deepcopy(self._blocks)`, so hooking the block
+  graph through it installs cleanly onto a throwaway and reports success. That is how H3's denoise
+  ran with no per-step progress while the hook said it was attached. Reach for the backing
+  attribute, and prove a hook fires against the real object rather than trusting a return value.
 - **Verify image models by rendering.** The FLUX.2 work shipped five bugs past a green test suite,
   and every one produced a _wrong image rather than an error_: a mis-keyed checkpoint, a
   vision-language encoder loaded in place of a text one, an unnormalized latent, and a control context
