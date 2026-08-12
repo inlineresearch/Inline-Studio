@@ -12,7 +12,7 @@ resolution.
 **Contents:** [The graph](#the-graph) · [Datasets and outputs](#datasets-and-outputs) ·
 [Stop and resume](#stop-and-resume) · [Trigger words](#trigger-words) ·
 [Architecture and base model modes](#architecture-and-base-model-modes) · [Install](#install) ·
-[Training on clips](#training-on-clips) · [Motion LoRAs](#motion-loras) ·
+[Training on clips](#training-on-clips) · [Control LoRAs](#control-loras) ·
 [**Benchmark results**](#benchmark-results) ·
 [Dataset and adapter options](#dataset-and-adapter-options) · [Base precision](#base-precision)
 
@@ -74,7 +74,7 @@ The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FL
   mode as well as quality - they are the same architecture.
 - **Two training modes.** A **Clip LoRA** learns look and motion from single clips, and adapts the
   video, audio and cross-modal attention together so the soundtrack stays in step with whatever you
-  changed. A **Motion LoRA** learns a transform from paired reference and target clips, adapts the
+  changed. A **Control LoRA** learns a transform from paired reference and target clips, adapts the
   video branch only, and is what upstream calls an IC-LoRA.
 - **Clip length snaps down onto 8n+1 at 24fps.** The floor is 9 frames, and the panel shows what
   your setting actually resolves to before you start.
@@ -141,19 +141,38 @@ Two things the model popup does not cover, so you fetch them yourself:
 
 The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader node straight away, so you can wire it into a generate node and try it without leaving the app.
 
-## Motion LoRAs
+## Control LoRAs
 
 LTX-2.5 can train an **IC-LoRA**: instead of learning what a clip looks like, it learns the
 transform between a pair of clips. Give it a reference and a target for each item and it learns to
-apply that change to anything.
+apply that change to anything - edges to video, depth to video, one look to another.
 
-Set **Training mode** to _Motion LoRA_ in the Adjust panel. Each dataset item then needs a second
+Set **Training mode** to _Control LoRA_ in the Adjust panel. Each dataset item then needs a second
 clip wired to it as the reference, and the pair must agree on frame count - a mismatch trains a
 broken adapter without erroring, so the Trainer refuses the run rather than starting it.
 
-A Motion LoRA adapts the video branch only, including the feed-forward layers, which is upstream's
+A Control LoRA adapts the video branch only, including the feed-forward layers, which is upstream's
 advice for transformation quality. A Clip LoRA adapts video, audio and the cross-modal attention
 together, which is what keeps a generated soundtrack in step with a changed picture.
+
+### Preparing a paired dataset
+
+Lightricks document the whole pipeline for this, and it is worth reading before building your own:
+[dataset preparation](https://github.com/Lightricks/LTX-2/blob/main/packages/ltx-trainer/docs/dataset-preparation.md).
+Two parts of it carry over directly:
+
+- **`compute_reference.py`** derives references from clips you already have - Canny edges out of the
+  box, and the function is written to be swapped for depth, pose or anything else. That is how you
+  turn a folder of ordinary clips into pairs.
+- **Reference and target must share a frame count.** Upstream states it. The Trainer trims both
+  halves of a pair to the same length, so they match by construction - but it trims from the same
+  end of each, so a reference of a different duration to its target ends up misaligned rather than
+  rejected. Keep pairs the same length.
+
+The quickest way to see one work is their published set,
+[Canny-Control-Dataset](https://huggingface.co/datasets/Lightricks/Canny-Control-Dataset): 90 pairs,
+already 24 fps, named `clip.mp4` alongside `clip_reference.mp4`. The Trainer reads that naming as
+well as its own `0001.ref.mp4`, so a downloaded set can be trained on directly.
 
 ## Benchmark results
 

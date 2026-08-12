@@ -135,20 +135,24 @@ def _encode_clips(
     def run(encoder: Any) -> None:
         for index, triple in enumerate(triples):
             say(f"encoding clip {index + 1} of {len(triples)}")
+            # The reference is decoded inside the same guard as the target: a pair is only usable
+            # if both halves are, and a short reference used to escape as an uncaught error and end
+            # the whole run where a short target merely skipped its item.
             try:
                 pixels = _clip_pixels(
                     triple.target, resolution, frames, clip_window, device, dtype
+                )
+                ref_pixels = (
+                    _clip_pixels(triple.reference, resolution, frames, clip_window, device, dtype)
+                    if mode == archs.MODE_CONTROL
+                    else None
                 )
             except ShortClipError as exc:
                 logger.warning("%s", exc)
                 continue
             with torch.no_grad():
                 latent = encoder(pixels)
-            if mode == archs.MODE_CONTROL:
-                ref_pixels = _clip_pixels(
-                    triple.reference, resolution, frames, clip_window, device, dtype
-                )
-                with torch.no_grad():
+                if ref_pixels is not None:
                     references.append(_reference_condition(encoder(ref_pixels).to("cpu")))
             latents.append(latent[0].to("cpu"))
             kept.append(triple)
