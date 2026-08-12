@@ -339,7 +339,14 @@ def _encode_captions(
     for start in range(0, len(prompts), _CAPTION_BATCH):
         batch = prompts[start : start + _CAPTION_BATCH]
         say(f"encoding captions {start + 1}-{start + len(batch)} of {len(prompts)} ({_vram()})")
-        embeds += [c.video_encoding[0].to("cpu") for c in prompt_encoder(batch)]
+        # ``clone`` is load-bearing, not defensive. A streamed encoder's output keeps its source
+        # alive, so holding the embedding holds ~19.4 GiB of encoder with it - memory climbed by
+        # that much per caption and died on the third. Copying detaches it from the pool.
+        embeds += [
+            c.video_encoding[0].detach().to("cpu", copy=True).clone()
+            for c in prompt_encoder(batch)
+        ]
+        _reclaim()
     _reclaim()
 
     if want_unconditional:
