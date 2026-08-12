@@ -12,7 +12,8 @@ resolution.
 **Contents:** [The graph](#the-graph) · [Datasets and outputs](#datasets-and-outputs) ·
 [Stop and resume](#stop-and-resume) · [Trigger words](#trigger-words) ·
 [Architecture and base model modes](#architecture-and-base-model-modes) · [Install](#install) ·
-[Training on clips](#training-on-clips) · [**Benchmark results**](#benchmark-results) ·
+[Training on clips](#training-on-clips) · [Motion LoRAs](#motion-loras) ·
+[**Benchmark results**](#benchmark-results) ·
 [Dataset and adapter options](#dataset-and-adapter-options) · [Base precision](#base-precision)
 
 ## The graph
@@ -43,7 +44,7 @@ A dataset's trigger word is prepended to every caption during training, so the m
 
 ## Architecture and base model modes
 
-The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FLUX.2, or MiniMax H3), then a base within it. Training directly on a step-distilled checkpoint breaks the distillation down (turbo drift), so each architecture offers a way around that.
+The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FLUX.2, MiniMax H3, or LTX-2.5), then a base within it. Training directly on a step-distilled checkpoint breaks the distillation down (turbo drift), so each architecture offers a way around that.
 
 **Krea 2** avoids the problem outright, which is why it is the recommended path:
 
@@ -66,11 +67,31 @@ The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FL
 - **Turbo + training adapter** fuses a de-distillation adapter into the base for the duration of training and drops it when the LoRA is saved, which preserves the 8-step speed. Put [ostris/zimage_turbo_training_adapter](https://huggingface.co/ostris/zimage_turbo_training_adapter) in `models/loras/`; any filename containing `adapter` is detected automatically, or point `INLINE_ZIMAGE_TRAIN_ADAPTER` at a specific file. Keep runs short, since the adapter slows the breakdown rather than preventing it.
 - **De-Turbo** trains without an adapter and needs no extra download.
 
+**LTX-2.5** is the other video model, and unlike H3 it trains on **clips**:
+
+- **The dev transformer is the only base.** It is the undistilled build, published beside the
+  distilled one specifically to be trained. The adapter then loads on all three LTX nodes, in fast
+  mode as well as quality - they are the same architecture.
+- **Two training modes.** A **Clip LoRA** learns look and motion from single clips, and adapts the
+  video, audio and cross-modal attention together so the soundtrack stays in step with whatever you
+  changed. A **Motion LoRA** learns a transform from paired reference and target clips, adapts the
+  video branch only, and is what upstream calls an IC-LoRA.
+- **Clip length snaps down onto 8n+1 at 24fps.** The floor is 9 frames, and the panel shows what
+  your setting actually resolves to before you start.
+- **It wants a 48GB card.** A 22B base with no 4-bit training path here; upstream's own floor is
+  32GB. See [Benchmark results](#benchmark-results).
+
 ## Training on clips
 
-The H3 trainer takes video as well as stills. Drop clips into a dataset the same way, set **Clip
-length** in the Adjust panel, and each clip trains as a short piece of motion rather than a frame.
-Mixed datasets are fine: a still is simply a one-frame clip.
+Both video architectures take clips. Drop them into a dataset the same way, set **Clip length** in
+the Adjust panel, and each clip trains as a short piece of motion rather than a frame. For H3 mixed
+datasets are fine, since a still is simply a one-frame clip.
+
+**The length you type is not always the length you get.** A video VAE only encodes certain frame
+counts - `17n + 5` for H3, `8n + 1` for LTX-2.5, both at 24fps - and the trainer snaps **down** onto
+that grid, because a clip does not have frames the file never held. The panel shows the resolved
+number next to the field so this is never silent. Generation rounds the other way, up and then
+clamped, because there a request should be honoured wherever it is legal.
 
 **It costs no extra VRAM.** Measured on an L4, every clip length peaks at the same 20.4GB as a
 still, because the high-water mark is the caption pass rather than the training:
@@ -120,7 +141,25 @@ Two things the model popup does not cover, so you fetch them yourself:
 
 The LoRA a run produces lands in `models/loras/` and shows up in the LoRA loader node straight away, so you can wire it into a generate node and try it without leaving the app.
 
+## Motion LoRAs
+
+LTX-2.5 can train an **IC-LoRA**: instead of learning what a clip looks like, it learns the
+transform between a pair of clips. Give it a reference and a target for each item and it learns to
+apply that change to anything.
+
+Set **Training mode** to _Motion LoRA_ in the Adjust panel. Each dataset item then needs a second
+clip wired to it as the reference, and the pair must agree on frame count - a mismatch trains a
+broken adapter without erroring, so the Trainer refuses the run rather than starting it.
+
+A Motion LoRA adapts the video branch only, including the feed-forward layers, which is upstream's
+advice for transformation quality. A Clip LoRA adapts video, audio and the cross-modal attention
+together, which is what keeps a generated soundtrack in step with a changed picture.
+
 ## Benchmark results
+
+> **LTX-2.5 has not been measured yet.** The tables below carry no LTX rows on purpose. The runbook
+> for producing them is at the end of this section; until it has been run on real hardware there is
+> no honest number to publish, and a guessed one is worse than a gap.
 
 12 steps at rank 16, batch 1, gradient checkpointing on. The number is `torch.cuda.max_memory_allocated`, so leave headroom for the CUDA context and allocator slack.
 
@@ -234,3 +273,22 @@ reference: [Krea 2](https://inlinestudio.art/lora-training/krea-2) ·
 [Z-Image](https://inlinestudio.art/lora-training/z-image) ·
 [FLUX.2](https://inlinestudio.art/lora-training/flux-2). Back to the
 [README](README.md), or the [full guide on the site](https://inlinestudio.art/lora-training).
+
+### Runbook: measuring LTX-2.5
+
+Two boxes, because they answer different questions: a **Tesla T4 (16GB, Turing)** and a **48GB
+A6000, L40S or A40**. Record for each run the resolved plan the engine logs, peak **allocated and
+reserved** VRAM (`nvidia-smi` shows only reserved, so a leaked reference and allocator cache look
+identical from outside), host RAM high-water, and wall clock per stage.
+
+1. **Generation, fast mode.** 5 seconds at 1920x1088 and again at 960x544, distilled transformer.
+   Confirm the MP4 has audio in it.
+2. **Generation, quality mode.** The dev transformer plus the distilled LoRA, same two shapes.
+3. **Training, Clip LoRA.** Rank 16, 512px, batch 1, gradient checkpointing on, the shortest
+   grid-legal clip. Peak VRAM and seconds per step.
+
+**On the T4, answer the numerics question before the speed one.** Turing has no bf16 acceleration
+and no fp8, and LTX is written for bf16 throughout. An fp16 cast of a bf16-trained 22B transformer
+is a numerics change rather than a placement one, and it fails by producing black or NaN frames
+rather than by raising. So render one short clip and look at it first. If it is broken, the honest
+result is that LTX-2.5 needs Ampere or newer, and that is what the table should say.

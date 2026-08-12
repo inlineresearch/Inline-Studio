@@ -4,10 +4,13 @@ Torch-free and pure, the way ``models/sampling.py``'s data layer is, so a runner
 in with one call and the awkward arithmetic is unit-testable with no GPU and no weights.
 
 A video model does not accept an arbitrary duration. Its VAE decodes in blocks, so only certain
-frame counts exist, and a request lands on the nearest one at or below what was asked for. Rounding
-**up** is the tempting choice and it is wrong: the next count up can exceed the model's own maximum
-duration, which turns "15 seconds please" into a hard error instead of the 14.4 seconds it could
-have rendered.
+frame counts exist, and a request snaps **up** onto the nearest one and is then clamped into the
+model's duration window. Snapping up alone is not safe - the next count up can exceed the model's
+own maximum - and snapping down alone silently shortens every request, so it takes both.
+
+Training rounds the other way, and deliberately: see ``training/arch.py``'s ``ClipGrid``. A request
+for a duration should be honoured where it is legal; a clip cannot be asked for frames the file
+never held.
 """
 
 from __future__ import annotations

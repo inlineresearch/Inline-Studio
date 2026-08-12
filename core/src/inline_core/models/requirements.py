@@ -126,6 +126,9 @@ class RequirementsRegistry:
         except Exception:  # noqa: BLE001 - a provider must never break the model list
             return None
 
+    def node_types(self) -> list[str]:
+        return sorted(self._providers)
+
 
 def _optional(provider: object | None, name: str, fallback: Any) -> Any:
     """Call an optional provider hook, tolerating both absence and failure: the node list is served
@@ -137,6 +140,3 @@ def _optional(provider: object | None, name: str, fallback: Any) -> Any:
         return hook()
     except Exception:  # noqa: BLE001 - a provider must never break the model list
         return fallback
-
-    def node_types(self) -> list[str]:
-        return sorted(self._providers)

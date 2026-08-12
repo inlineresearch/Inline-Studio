@@ -524,10 +524,17 @@ export interface ModelDownloadErrorEvent {
 
 /** Turbo needs a training adapter to avoid "turbo drift"; a de-turbo base trains without one. */
 /**
- * The model family a LoRA is trained for. `minimax-h3` is the video model: it trains on stills and
- * the adapter applies to every H3 node at generation time.
+ * The model family a LoRA is trained for. `minimax-h3` and `ltx-2-5` are the video models: they
+ * train on stills or clips, and the adapter applies to every node of that family at generation time.
  */
-export type TrainingArch = 'z-image' | 'krea2' | 'flux2' | 'minimax-h3'
+export type TrainingArch = 'z-image' | 'krea2' | 'flux2' | 'minimax-h3' | 'ltx-2-5'
+
+/**
+ * Which shape an LTX-2.5 run trains in. `clip` learns look and motion from single clips; `motion`
+ * is an IC-LoRA that learns a transform from paired reference and target clips, so every dataset
+ * item needs a second clip wired to it.
+ */
+export type TrainingMode = 'clip' | 'motion'
 
 /**
  * Which base checkpoint a run trains against. `raw` is Krea 2's undistilled base (the recommended
@@ -631,6 +638,11 @@ export interface TrainingHyperparams {
    * the clip, so `end` exists for footage whose action is at the finish. Defaults to `start`.
    */
   clipWindow?: 'start' | 'end'
+  /**
+   * Which shape an LTX-2.5 run trains in. Defaults to `clip`. It changes which Linears the adapter
+   * reaches as well as what the dataset must hold, so it is a hyperparameter rather than a view.
+   */
+  trainingMode?: TrainingMode
   /** Checkpoint every N steps. */
   saveEvery: number
   /** GPU indices to train on; `[]` = auto (first available). */

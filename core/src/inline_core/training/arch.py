@@ -5,9 +5,13 @@ checkpoint/resume, the JSON-line protocol - and they differ in only four things:
 adapt, how a noise level maps to a timestep, what the model is asked to predict, and how one forward
 call is shaped. Those four live here so ``trainer.py`` stays one loop.
 
-All four are rectified flow, but with **opposite conventions**, which is exactly the kind of detail
-a test should pin: Z-Image and MiniMax H3 predict ``clean - noise`` at timestep ``1 - sigma``, while
-Krea 2 and FLUX.2 predict ``noise - clean`` at timestep ``sigma``.
+All of them are rectified flow, but with **opposite conventions**, which is exactly the kind of
+detail a test should pin: Z-Image and MiniMax H3 predict ``clean - noise`` at timestep
+``1 - sigma``, while Krea 2, FLUX.2 and LTX-2.5 predict ``noise - clean`` at timestep ``sigma``.
+
+LTX-2.5 is the one that looks like a third convention and is not. Its published model is an
+``X0Model`` returning a denoised latent, but that is a weightless wrapper over a velocity model, and
+training attaches underneath it.
 """
 
 from __future__ import annotations
@@ -20,6 +24,13 @@ Z_IMAGE = "z-image"
 KREA2 = "krea2"
 FLUX2 = "flux2"
 MINIMAX_H3 = "minimax-h3"
+LTX25 = "ltx-2-5"
+
+#: LTX-2.5 trains in two shapes: a Clip LoRA over single clips, and a Motion LoRA over paired
+#: reference and target clips (upstream calls it IC-LoRA). They differ in which Linears the adapter
+#: reaches, so the mode is part of the arch rather than only a dataset shape.
+MODE_CLIP = "clip"
+MODE_MOTION = "motion"
 
 #: Z-Image: every ZImageTransformerBlock's attention + SwiGLU feed-forward Linears, confirmed
 #: against ZImageTransformer2DModel.named_modules() (34 blocks, 238 Linears).
@@ -114,6 +125,32 @@ _ATTENTION = (
 
 
 @dataclass(frozen=True)
+class ClipGrid:
+    """The frame counts a video VAE encodes without padding, as ``grid * n + offset``.
+
+    Deliberately **not** ``models/video_params.VideoGrid``, which carries the same numbers and
+    rounds the other way. Generation snaps **up** and then clamps, so a request is honoured where it
+    is legal. Training snaps **down**, because a clip does not have frames the file never held.
+    Merging them would make one of the two lie.
+    """
+
+    fps: float
+    grid: int
+    offset: int
+
+    @property
+    def min_frames(self) -> int:
+        """The shortest clip the VAE encodes: one whole chunk plus the head."""
+        return self.grid + self.offset
+
+    def snap(self, frames: int) -> int:
+        """``frames`` rounded down onto the grid, never below one chunk."""
+        if frames < 1:
+            raise ValueError(f"A clip must have at least one frame, got {frames}.")
+        return max(1, (frames - self.offset) // self.grid) * self.grid + self.offset
+
+
+@dataclass(frozen=True)
 class TrainingArch:
     """One architecture's training behaviour."""
 
@@ -130,6 +167,11 @@ class TrainingArch:
     #: Rewrites the finished adapter into the published checkpoint's key names, for an arch whose
     #: names differ from the port's. Without it the LoRA only ever loads back into Inline.
     export_keys: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    #: The video VAE's frame grid, or None for an arch that only trains on stills.
+    clip: ClipGrid | None = None
+    #: Per-mode overrides of ``target_modules``, for an arch whose training shapes reach different
+    #: Linears. Absent means every mode adapts the same set.
+    mode_target_modules: dict[str, list[str]] | None = None
 
 
 # --- Z-Image -------------------------------------------------------------------------------------
@@ -301,6 +343,50 @@ def _h3_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, Any
     return unpacked[0]
 
 
+# --- LTX-2.5 --------------------------------------------------------------------------------------
+
+#: Video-only IC-LoRA, for a Motion LoRA learning a transform from a reference clip. Explicit
+#: `attn1`/`attn2` prefixes so the audio branch is left alone, plus the feed-forward, which is
+#: upstream's advice for transformation quality.
+_LTX25_MOTION_TARGETS = [
+    "attn1.to_k", "attn1.to_q", "attn1.to_v", "attn1.to_out.0",
+    "attn2.to_k", "attn2.to_q", "attn2.to_v", "attn2.to_out.0",
+    "ff.net.0.proj", "ff.net.2",
+]
+
+#: A Clip LoRA trains video and its soundtrack together, so the patterns are deliberately short:
+#: PEFT matches by suffix, so `to_k` reaches `attn1`, `attn2`, the audio branch and the two
+#: cross-modal blocks at once. That cross-modal reach is what keeps the audio in sync with what the
+#: adapter changed, and it is the only difference between this list and the one above.
+_LTX25_CLIP_TARGETS = ["to_k", "to_q", "to_v", "to_out.0"]
+
+
+def _ltx25_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, Any]) -> Any:
+    """One velocity prediction from LTX's transformer.
+
+    The published model is wrapped in an ``X0Model`` that converts velocity to a denoised latent,
+    but the wrapper holds no weights: training attaches to the velocity model underneath and
+    predicts velocity directly, which is why the target below is ``noise - clean``.
+
+    State construction goes through the same `LatentTools` the pipeline uses rather than a
+    reimplementation, so patchification, positions and the denoise mask cannot drift from inference.
+    A reference conditioning is prepended as clean tokens the mask excludes from the loss.
+    """
+    from ..models.ltx25.vendor.ltx_pipelines.utils.helpers import modality_from_latent_state
+
+    tools = item["latent_tools"]
+    state = tools.create_initial_state(noisy.device, noisy.dtype, noisy.unsqueeze(0))
+    if (reference := item.get("reference")) is not None:
+        state = reference.apply_to(latent_state=state, latent_tools=tools)
+    modality = modality_from_latent_state(state, item["embed"].unsqueeze(0), timestep.reshape(1))
+
+    velocity, _audio = transformer(video=modality, audio=None, perturbations=None)
+    # Reference tokens are prepended, so only the trailing target tokens are compared to the target.
+    if item.get("reference") is not None:
+        velocity = velocity[:, -state.target_token_count:]
+    return tools.unpatchify(velocity, noisy.shape)[0]
+
+
 ARCHS: dict[str, TrainingArch] = {
     Z_IMAGE: TrainingArch(
         key=Z_IMAGE,
@@ -341,6 +427,22 @@ ARCHS: dict[str, TrainingArch] = {
         timestep=lambda sigma: 1.0 - sigma,
         target=lambda clean, noise: clean - noise,
         forward=_h3_forward,
+        # 24 fps, 17n + 5. Pinned against the vendored `trim_reference_num_frames` in
+        # test_clip_grid_parity.py rather than restated here.
+        clip=ClipGrid(fps=24.0, grid=17, offset=5),
+    ),
+    LTX25: TrainingArch(
+        key=LTX25,
+        target_modules=_LTX25_CLIP_TARGETS,
+        mode_target_modules={MODE_CLIP: _LTX25_CLIP_TARGETS, MODE_MOTION: _LTX25_MOTION_TARGETS},
+        sigma=_zimage_sigma,
+        # Krea 2's and FLUX.2's convention, not Z-Image's: LTX's velocity model is called at the
+        # sigma itself and predicts `noise - clean`. Derived from the vendored `to_velocity` /
+        # `to_denoised` pair in test_ltx25_training.py rather than restated here.
+        timestep=lambda sigma: sigma,
+        target=lambda clean, noise: noise - clean,
+        forward=_ltx25_forward,
+        clip=ClipGrid(fps=24.0, grid=8, offset=1),
     ),
 }
 
@@ -348,17 +450,14 @@ ARCHS: dict[str, TrainingArch] = {
 def clip_frames(arch: TrainingArch, seconds: Any) -> int:
     """How many frames of a clip to train on, snapped to the arch's frame grid.
 
-    1 for an arch with no clip support, which is what a still costs. For H3 the floor is a whole
-    17-frame chunk plus the 5-frame head, so a shorter request rounds up to 0.92s rather than being
-    refused; the VAE has no way to encode less.
+    1 for an arch with no clip support, which is what a still costs. Otherwise the floor is a whole
+    chunk plus the head, so a shorter request rounds up to it rather than being refused; the VAE has
+    no way to encode less.
     """
-    if arch.key != MINIMAX_H3:
+    if arch.clip is None:
         return 1
-    from ..models.minimaxh3.vendor.packing import MINIMAX_H3_FPS
-    from ..models.minimaxh3.vendor.packing_ref2va import trim_reference_num_frames
-
-    wanted = round(float(seconds) * MINIMAX_H3_FPS) if seconds else 1
-    return trim_reference_num_frames(max(1, wanted))
+    wanted = round(float(seconds) * arch.clip.fps) if seconds else 1
+    return arch.clip.snap(max(1, wanted))
 
 
 def get(key: str | None) -> TrainingArch:
@@ -369,14 +468,15 @@ def get(key: str | None) -> TrainingArch:
     return arch
 
 
-def target_modules(arch: TrainingArch, scope: str | None) -> list[str]:
+def target_modules(arch: TrainingArch, scope: str | None, mode: str | None = None) -> list[str]:
     """The Linears the adapter attaches to. ``attention`` keeps only the attention projections the
     arch actually has, so the same scope means the same thing across architectures."""
+    full = (arch.mode_target_modules or {}).get(mode or "", arch.target_modules)
     if (scope or "full") == "full":
-        return arch.target_modules
+        return full
     if scope != "attention":
         raise RuntimeError(f"Unknown LoRA scope {scope!r}.")
-    narrowed = [m for m in arch.target_modules if m in _ATTENTION]
+    narrowed = [m for m in full if m in _ATTENTION or m.split(".", 1)[-1] in _ATTENTION]
     if not narrowed:  # defensive: an arch with no matching attention names would train nothing
         raise RuntimeError(f"{arch.key} has no attention modules to narrow to.")
     return narrowed
