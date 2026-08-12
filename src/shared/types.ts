@@ -595,6 +595,9 @@ export interface TrainingHyperparams {
   captionDropout?: number
   /** Mirror every image, doubling the dataset. Wrong for text or anything asymmetric. */
   flipAugment?: boolean
+  /** Keep a usable LoRA at every checkpoint, not just at the end. Off by default: each one is a
+   *  full adapter, so a long run costs real disk. */
+  saveSnapshots?: boolean
   /** LoRA rank (dim). */
   rank: number
   /** LoRA alpha; defaults to `rank`. */

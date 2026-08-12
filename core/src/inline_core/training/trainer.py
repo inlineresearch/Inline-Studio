@@ -122,6 +122,25 @@ def _save_lora(
     save_file(state, output_path)
 
 
+def _save_snapshot(
+    accelerator: Any,
+    transformer: Any,
+    folder: Path,
+    step: int,
+    alpha: int,
+    arch: archs.TrainingArch,
+) -> None:
+    """A usable LoRA at this step, so a run can be judged before it finishes or after it is stopped.
+
+    Written through ``_save_lora`` rather than copied from the resume checkpoint: that checkpoint is
+    a raw PEFT state dict with no alpha and the port's own key names, which loads nowhere else.
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"step-{step:06d}.safetensors"
+    _save_lora(accelerator.unwrap_model(transformer), str(path), alpha=alpha, arch=arch)
+    protocol.snapshot(str(path), step)
+
+
 def _peak_vram_gb() -> float | None:
     """Peak VRAM this run has touched, in GB. Reported per step so the Trainer log shows what a
     resolution actually costs - the number people need before renting a bigger card."""
@@ -264,6 +283,9 @@ def train(manifest: dict[str, Any]) -> str | None:
     if resume_from and (Path(resume_from) / "adapter.safetensors").exists():
         start = _load_checkpoint(accelerator, transformer, optimizer, Path(resume_from))
 
+    snapshots_dir = Path(manifest.get("snapshotDir") or (ckpt_dir.parent / "snapshots"))
+    snapshots = snapshots_dir if bool(hp.get("saveSnapshots")) else None
+
     stop = _Stop()
     signal.signal(signal.SIGTERM, stop)
 
@@ -307,9 +329,15 @@ def train(manifest: dict[str, Any]) -> str | None:
             _save_checkpoint(accelerator, transformer, optimizer, ckpt_dir, done)
             if accelerator.is_main_process:
                 protocol.checkpoint(str(ckpt_dir))
+                if snapshots is not None and done != steps:
+                    _save_snapshot(accelerator, transformer, snapshots, done, lora_alpha, arch)
 
     if stop.flagged:
         _save_checkpoint(accelerator, transformer, optimizer, ckpt_dir, step)
+        # Always, whatever the snapshot setting says. Stopping at step 900 of 1500 otherwise leaves
+        # resume state and nothing loadable, so the work done so far is unreachable.
+        if accelerator.is_main_process:
+            _save_snapshot(accelerator, transformer, snapshots_dir, step, lora_alpha, arch)
         return None  # cooperative cancel: a checkpoint exists, so the run is resumable
 
     accelerator.wait_for_everyone()

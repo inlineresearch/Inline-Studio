@@ -529,6 +529,7 @@ class Training:
             # Beside the project, not inside the run: the dataset is re-exported per run, so a
             # cache under workingDir would be thrown away by the very resume it exists to serve.
             "precacheDir": str(self._store.folder() / "precache"),
+            "snapshotDir": str(work / "snapshots"),
             "modelsDir": str(models_dir()),
             # Defaulted so a run started before Krea 2 existed still resumes as Z-Image.
             "arch": run["hyperparams"].get("arch") or "z-image",
