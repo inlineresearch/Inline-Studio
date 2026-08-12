@@ -2,6 +2,10 @@ import { useEffect } from 'react'
 import { useProjectStore } from './store/projectStore'
 import { useUpdateStore } from './store/updateStore'
 import { subscribeToLibraryChanges } from './store/assetStore'
+import { subscribeGenerationEvents } from './store/generationStore'
+import { subscribeActivityEvents } from './store/activityStore'
+import { subscribeModelChanges } from './store/modelsTreeStore'
+import { subscribeTrainingEvents } from './store/trainingStore'
 import { ProjectLauncher } from './views/ProjectLauncher/ProjectLauncher'
 import { Workspace } from './views/Workspace/Workspace'
 import { UpdateBanner } from './components/UpdateBanner'
@@ -24,6 +28,13 @@ export function App(): React.JSX.Element {
   useEffect(() => subscribeToUpdates(), [subscribeToUpdates])
 
   useEffect(() => subscribeToLibraryChanges(), [])
+
+  // Subscribed here rather than in Workspace or a tab: a run outlives both the tab that started it
+  // and the project it belongs to, and Workspace unmounts the moment a project closes.
+  useEffect(() => subscribeGenerationEvents(), [])
+  useEffect(() => subscribeActivityEvents(), [])
+  useEffect(() => subscribeTrainingEvents(), [])
+  useEffect(() => subscribeModelChanges(), [])
 
   // Hold the first paint until Core has answered, so a restored project does not flash the launcher.
   if (restoring) return <div className="h-screen w-screen bg-panel" />

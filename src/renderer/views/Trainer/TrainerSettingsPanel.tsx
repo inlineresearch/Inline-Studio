@@ -35,6 +35,7 @@ const DEFAULTS: TrainingHyperparams = {
   batchSize: 1,
   resolution: 1024,
   saveEvery: 250,
+  saveSnapshots: false,
   gpuIds: [],
   outputName: '',
   loraScope: 'full',
@@ -398,6 +399,22 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
           onChange={(v) => set('saveEvery', v)}
         />
       </div>
+
+      <label className="flex items-start gap-2 text-[11px] text-zinc-400">
+        <input
+          type="checkbox"
+          checked={hp.saveSnapshots ?? false}
+          onChange={(e) => set('saveSnapshots', e.target.checked)}
+          className="mt-0.5 accent-emerald-500"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-zinc-200">Keep a LoRA at every checkpoint</span>
+          <span className="text-zinc-500">
+            Saves a usable LoRA at each save point, so you can pick the step before a run
+            overtrains. A stopped run always keeps one, whatever this is set to.
+          </span>
+        </span>
+      </label>
 
       <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
         LoRA scope

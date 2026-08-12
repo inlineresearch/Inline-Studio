@@ -1,7 +1,13 @@
-- queue management
-- past runs, cancel active runs
-- models side panel
-- templates
-- keep runs active between project switch
-- provide gen node in trainer tab for quick test with different lora strenths
-- Run Graph drop down, download workflow json
+Backlog
+- Remove frame node entirely
+- Update asset node to resize based on input
+- drag drop from output to spawn asset node
+- double click, search node
+
+
+settings
+- project output share settings
+- Group based settings
+
+New models
+- Ltx 2.5

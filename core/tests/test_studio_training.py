@@ -173,3 +173,82 @@ def test_a_step_with_a_loss_still_wins_over_the_status() -> None:
 
     line = _progress_log_line({"status": "training", "step": 7, "total": 500, "loss": 0.1234}, "")
     assert line == "step 7/500 · loss 0.1234"
+
+
+# --- mid-run snapshots ---
+
+def _training(conn: sqlite3.Connection, folder, on_output=None):
+    from inline_core.studio.training import Training
+
+    class _Events:
+        def broadcast(self, *_a: object, **_k: object) -> None:
+            return None
+
+    return Training(_Store(conn, folder), _Events(), on_output=on_output)
+
+
+def _snapshot_files(folder_root, run_id: str, steps: list[int]) -> None:
+    folder = folder_root / "training_runs" / run_id / "snapshots"
+    folder.mkdir(parents=True, exist_ok=True)
+    for step in steps:
+        (folder / f"step-{step:06d}.safetensors").write_bytes(b"lora" * 16)
+
+
+def test_snapshots_are_listed_oldest_first(conn: sqlite3.Connection, tmp_path) -> None:
+    """The trainer writes these all along; nothing surfaced them, so they were unreachable."""
+    training = _training(conn, tmp_path)
+    _snapshot_files(tmp_path, "run1", [500, 100, 250])
+
+    steps = [s["step"] for s in training.snapshots("run1")]
+
+    assert steps == [100, 250, 500]
+
+
+def test_a_run_with_no_snapshots_lists_nothing(conn: sqlite3.Connection, tmp_path) -> None:
+    assert _training(conn, tmp_path).snapshots("nope") == []
+
+
+def test_exporting_a_snapshot_puts_it_where_a_picker_can_see_it(
+    conn: sqlite3.Connection, tmp_path, monkeypatch
+) -> None:
+    """Snapshots live in the project working dir, which no model catalog scans."""
+    from inline_core import config
+
+    models = tmp_path / "models"
+    monkeypatch.setattr(config, "models_dir", lambda: models)
+    monkeypatch.setattr("inline_core.studio.training.models_dir", lambda: models)
+
+    rescans: list[int] = []
+    training = _training(conn, tmp_path, on_output=lambda: rescans.append(1))
+    _snapshot_files(tmp_path, "run1", [250])
+
+    result = training.export_snapshot("run1", 250)
+
+    assert result["path"].startswith("loras/") and result["path"].endswith(".safetensors")
+    assert (models / result["path"]).is_file()
+    # The same hook a finished run uses, so the file reaches the dropdown without a restart.
+    assert rescans == [1]
+
+
+def test_exporting_the_same_step_twice_does_not_overwrite(
+    conn: sqlite3.Connection, tmp_path, monkeypatch
+) -> None:
+    from inline_core import config
+
+    models = tmp_path / "models"
+    monkeypatch.setattr(config, "models_dir", lambda: models)
+    monkeypatch.setattr("inline_core.studio.training.models_dir", lambda: models)
+
+    training = _training(conn, tmp_path)
+    _snapshot_files(tmp_path, "run1", [250])
+
+    first = training.export_snapshot("run1", 250)["path"]
+    second = training.export_snapshot("run1", 250)["path"]
+
+    assert first != second
+    assert (models / first).is_file() and (models / second).is_file()
+
+
+def test_exporting_a_missing_step_is_refused(conn: sqlite3.Connection, tmp_path) -> None:
+    with pytest.raises(ValueError):
+        _training(conn, tmp_path).export_snapshot("run1", 999)

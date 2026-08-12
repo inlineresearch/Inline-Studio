@@ -19,7 +19,7 @@ from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..config import models_dir
+from ..config import models_dirs
 from ..device.memory import MemoryPolicy
 from ..device.policy import DevicePolicy
 from ..errors import GraphValidationError, UnknownNodeType
@@ -34,7 +34,7 @@ from .assets import AssetStore
 from .manager import RunConflict, RunManager
 from .rpc import EventBroadcaster, RpcRouter
 from .run_store import RunStore
-from .serialize import descriptor_json, event_json, run_json, take_json
+from .serialize import descriptor_json, event_json, run_json, run_summary_json, take_json
 
 # GET /v1/runs/<id> (the client's run-status poll) - but not /events or nested paths.
 _RUN_POLL_PATH = re.compile(r"^/v1/runs/[^/]+$")
@@ -135,17 +135,23 @@ def create_app(
     # reports no model requirements, which is what a torch-less install already showed.
     reqs = requirements if requirements is not None else RequirementsRegistry()
     assets = AssetStore(Path(asset_dir or "./.inline-assets"))
-    catalog = ModelCatalog(Path(models_root) if models_root else models_dir())
+    # An explicit models_root is that caller's whole world; otherwise scan every configured root so
+    # a custom --models-dir does not hide ./models.
+    catalog = ModelCatalog([Path(models_root)] if models_root else models_dirs())
     takes_root = Path(takes_dir or "./.inline-takes")
     manager = RunManager(registry, cache, policy, store=run_store, takes=FileTakeStore(takes_root))
     rpc = rpc or RpcRouter()
     events = events or EventBroadcaster()
     # Host/GPU telemetry for the Trainer tab; only meaningful with the SPA (studio) backend wired.
     stats = SystemStats(events) if studio_store is not None else None
+    # Assigned further down with the studio wiring; the lifespan closure reads it at startup.
+    activity_registry: Any = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # noqa: ANN202
         manager.bind_loop(asyncio.get_running_loop())
+        if activity_registry is not None:
+            activity_registry.bind_loop(asyncio.get_running_loop())
         catalog.ensure_dirs()
         catalog.scan()
         if stats is not None:
@@ -199,9 +205,15 @@ def create_app(
         target = body.get("target")
         if not isinstance(target, str):
             return _error("invalid_request", "'target' is required.", 422)
+        meta = body.get("meta")
         try:
             graph = parse_graph(body.get("graph"))
-            record, created = manager.submit(graph, target, body.get("clientRunId"))
+            record, created = manager.submit(
+                graph,
+                target,
+                body.get("clientRunId"),
+                meta if isinstance(meta, dict) else None,
+            )
         except GraphValidationError as error:
             return _error("invalid_graph", str(error), 422, node_id=error.node_id)
         except RunConflict as error:
@@ -210,6 +222,15 @@ def create_app(
             {"runId": record.state.run_id, "status": record.state.status.value},
             status_code=201 if created else 200,
         )
+
+    @app.get("/v1/runs")
+    async def list_runs() -> Response:
+        runs = [
+            run_summary_json(r.state, manager.queue_position(r.state.run_id))
+            for r in manager.list_runs()
+            if not r.done
+        ]
+        return JSONResponse({"runs": runs})
 
     @app.get("/v1/runs/{run_id}")
     async def get_run(run_id: str) -> Response:
@@ -300,6 +321,7 @@ def create_app(
     if studio_store is not None:
         from ..extensions.handlers import register_extension_handlers
         from ..extensions.install import Installer
+        from ..studio.activity import ActivityRegistry
         from ..studio.fal import FalGeneration
         from ..studio.generation import CoreGeneration
         from ..studio.handlers import register_studio_handlers
@@ -318,21 +340,49 @@ def create_app(
         def core_status() -> dict[str, Any]:
             return {"running": True, "url": ""}
 
+        def rescan_models() -> dict[str, Any]:
+            """Re-read the models roots and tell every client the registry moved.
+
+            The catalog caches its scan, and only a download or a finished training run refreshed
+            it - so a weight file dropped in by hand stayed invisible until Core restarted.
+            """
+            catalog.rescan()
+            version = _version(registry, catalog)
+            events.broadcast("events:modelsChanged", {"registryVersion": version})
+            return {"registryVersion": version}
+
+        # Observes the manager, so a run submitted straight to POST /v1/runs is listed and
+        # cancellable here too, not just the ones this UI started.
+        activity = ActivityRegistry(studio_store, events)
+        activity.observe(manager)
+        activity.set_canceller("core", manager.cancel)
+        core_generation = CoreGeneration(studio_store, manager, events, registry, activity)
+        fal_generation = FalGeneration(studio_store, events, activity)
+        training_service = Training(
+            studio_store, events, on_output=catalog.rescan, activity=activity
+        )
+        activity.set_canceller("fal", fal_generation.cancel_run)
+        activity.set_canceller("training", training_service.cancel)
+        activity_registry = activity
+
         register_studio_handlers(
             rpc,
             studio_store,
             core_models=core_models,
             core_status=core_status,
-            generation=CoreGeneration(studio_store, manager, events, registry),
-            fal_generation=FalGeneration(studio_store, events),
+            generation=core_generation,
+            fal_generation=fal_generation,
             timeline=Timeline(studio_store, events),
-            training=Training(studio_store, events, on_output=catalog.rescan),
+            training=training_service,
+            activity=activity,
             # Explicit model downloads write into models/; rescan so new files bump the registry.
             # The policy lets the requirements popup show a memory fit estimate before a load;
             # the requirements registry says which node types have models at all.
             model_downloads=ModelDownloads(
                 events, on_change=catalog.rescan, policy=policy, requirements=reqs
             ),
+            model_tree=catalog.tree,
+            model_rescan=rescan_models,
         )
 
         register_extension_handlers(
@@ -346,6 +396,23 @@ def create_app(
                 events=events,
             ),
         )
+
+        @app.get("/download/snapshot/{run_id}/{step}")
+        async def download_snapshot(run_id: str, step: int) -> Response:
+            # A mid-run LoRA lives in the project's working dir, which /media does not surface and
+            # no model picker scans, so a download is the only way to get one out of the browser.
+            try:
+                root = (studio_store.folder() / "training_runs" / run_id / "snapshots").resolve()
+            except RuntimeError:
+                return Response("No project open", status_code=404)
+            target = (root / f"step-{step:06d}.safetensors").resolve()
+            if target.parent != root:  # no traversal out of the run's own folder
+                return Response("Forbidden", status_code=403)
+            if not target.is_file():
+                return Response("Not found", status_code=404)
+            return FileResponse(
+                target, filename=target.name, media_type="application/octet-stream"
+            )
 
         @app.get("/media/{media_path:path}")
         async def media(media_path: str, request: Request) -> Response:

@@ -409,6 +409,94 @@ export interface GenerationErrorEvent {
   targetFrameId: string
   frameId?: string
   error: string
+  runId?: string
+}
+
+/** Main → renderer: a run was cancelled, so its node can stop showing as busy. */
+export interface GenerationCancelledEvent {
+  targetFrameId: string
+  runId?: string
+}
+
+/** What a run is doing. Mirrors Core's `RunStatus`, plus `interrupted` for a run lost to a crash. */
+export type ActivityStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted'
+
+/**
+ * One run in the activity panel. Covers Core generations, fal generations and training runs, from
+ * any project - Core is a single process, so its queue spans whichever project happens to be open.
+ */
+export interface ActivityRun {
+  runId: string
+  kind: 'generation' | 'training'
+  engine: 'core' | 'fal'
+  /** `api` is a run submitted straight to `POST /v1/runs` rather than started from this UI. */
+  origin: 'studio' | 'api'
+  status: ActivityStatus
+  title: string
+  /** 0..1, or null when the run has not reported yet (a long model load reports nothing). */
+  fraction: number | null
+  statusLabel: string | null
+  /** 0-based place in the pending line; null once the run has left the queue. */
+  queuePosition: number | null
+  queuedAt: number
+  startedAt: number | null
+  endedAt: number | null
+  error: string | null
+  takeId: string | null
+  /** Studio-origin only. An API run has no project and no canvas node behind it. */
+  projectId: string | null
+  projectName: string | null
+  projectPath: string | null
+  itemId: string | null
+  surface: string | null
+}
+
+/** Main → renderer: the live run list changed. Carries the whole list, so it replaces state. */
+export interface ActivityChangedEvent {
+  runs: ActivityRun[]
+}
+
+/** One file under a models root. */
+export interface ModelTreeFile {
+  name: string
+  path: string
+  kind: 'file'
+  sizeBytes: number
+  mtime: number
+}
+
+/** A folder under a models root. Only folders containing weights are listed. */
+export interface ModelTreeDir {
+  name: string
+  path: string
+  kind: 'dir'
+  children: ModelTreeNode[]
+  fileCount: number
+}
+
+export type ModelTreeNode = ModelTreeFile | ModelTreeDir
+
+/** One scanned models root. Only the first is writable; the rest are read-only extras. */
+export interface ModelTreeRoot {
+  path: string
+  label: string
+  writable: boolean
+  exists: boolean
+  categories: ModelTreeDir[]
+}
+
+/**
+ * A LoRA written partway through a training run, so a run can be judged before it finishes.
+ * Lives in the project's working dir, which no model picker scans - `exportSnapshot` copies one
+ * into `models/loras/` to make it selectable.
+ */
+export interface TrainingSnapshot {
+  runId: string
+  step: number
+  /** Project-relative path, for the download link. */
+  path: string
+  sizeBytes: number
+  createdAt: number
 }
 
 /** Main → renderer: progress (0..1) of an explicit model download (the node's model popup). */
@@ -521,6 +609,9 @@ export interface TrainingHyperparams {
   captionDropout?: number
   /** Mirror every image, doubling the dataset. Wrong for text or anything asymmetric. */
   flipAugment?: boolean
+  /** Keep a usable LoRA at every checkpoint, not just at the end. Off by default: each one is a
+   *  full adapter, so a long run costs real disk. */
+  saveSnapshots?: boolean
   /** LoRA rank (dim). */
   rank: number
   /** LoRA alpha; defaults to `rank`. */

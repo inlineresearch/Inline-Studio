@@ -24,6 +24,10 @@ import type {
   GenerationNodeDoneEvent,
   GenerationDoneEvent,
   GenerationErrorEvent,
+  GenerationCancelledEvent,
+  ActivityRun,
+  ActivityChangedEvent,
+  ModelTreeRoot,
   Frame,
   Take,
   FrameInput,
@@ -44,6 +48,7 @@ import type {
   CaptionProgressEvent,
   TrainingLogEvent,
   TrainingSampleEvent,
+  TrainingSnapshot,
   TrainingDoneEvent,
   TrainingErrorEvent,
   SystemStatsEvent,
@@ -129,6 +134,15 @@ export const IpcChannels = {
     /** Re-poll + finish any runs that were in flight when the app last closed. */
     resumePending: 'generation:resumePending',
   },
+  activity: {
+    /** Queued + running, across every project and both tabs. */
+    list: 'activity:list',
+    /** Finished runs for the open project. */
+    history: 'activity:history',
+    /** Cancel any run by its id, whether it is a Core, fal, or training run. */
+    cancel: 'activity:cancel',
+    clearHistory: 'activity:clearHistory',
+  },
   training: {
     listDatasets: 'training:listDatasets',
     createDataset: 'training:createDataset',
@@ -145,6 +159,10 @@ export const IpcChannels = {
     cancel: 'training:cancel',
     discard: 'training:discard',
     status: 'training:status',
+    /** Mid-run LoRAs this run has written. */
+    snapshots: 'training:snapshots',
+    /** Copy one snapshot into models/loras/ so a Load LoRA node can pick it. */
+    exportSnapshot: 'training:exportSnapshot',
   },
   falSettings: {
     status: 'falSettings:status',
@@ -164,6 +182,10 @@ export const IpcChannels = {
     requirements: 'models:requirements',
     /** Explicitly download one component (by id) or `'all'` missing ones into models/. */
     download: 'models:download',
+    /** Read-only listing of every models root on disk, for the Models panel. */
+    tree: 'models:tree',
+    /** Re-read the models roots so files added or removed on disk reach the pickers. */
+    rescan: 'models:rescan',
   },
   extensions: {
     /** Installed extensions + whether the machine has the tools to install more. */
@@ -251,6 +273,15 @@ export const IpcChannels = {
     generationNodeDone: 'events:generationNodeDone',
     generationDone: 'events:generationDone',
     generationError: 'events:generationError',
+    /**
+     * Main → renderer: a run was cancelled. Without this a node cancelled from anywhere but the
+     * tab that started it keeps spinning forever.
+     */
+    generationCancelled: 'events:generationCancelled',
+    /** Main → renderer: the live run list changed (queued, started, progressed, finished). */
+    activityChanged: 'events:activityChanged',
+    /** Main → renderer: the installed model set changed, so every open client should refetch. */
+    modelsChanged: 'events:modelsChanged',
     /** Main → renderer: explicit model-download lifecycle (the node's model popup). */
     modelDownloadProgress: 'events:modelDownloadProgress',
     modelDownloadDone: 'events:modelDownloadDone',
@@ -258,6 +289,8 @@ export const IpcChannels = {
     /** Main → renderer: LoRA training lifecycle (per-run progress, sample preview, done, error). */
     trainingProgress: 'events:trainingProgress',
     trainingSample: 'events:trainingSample',
+    /** Main → renderer: a mid-run LoRA landed on disk. */
+    trainingSnapshot: 'events:trainingSnapshot',
     trainingLog: 'events:trainingLog',
     captionProgress: 'events:captionProgress',
     trainingDone: 'events:trainingDone',
@@ -442,6 +475,18 @@ export interface InlineStudioApi {
     /** Re-poll + finish any generations that were in flight when the app last closed. */
     resumePending(): Promise<Result<void>>
   }
+  activity: {
+    /**
+     * Every run Core still has queued or running, across projects and both tabs, including ones
+     * submitted straight to the Core API rather than started here.
+     */
+    list(): Promise<Result<ActivityRun[]>>
+    /** Finished runs for the open project, newest first. Empty when no project is open. */
+    history(limit?: number): Promise<Result<ActivityRun[]>>
+    /** Cancel a run by id; routes to the Core, fal, or training machinery as needed. */
+    cancel(runId: string): Promise<Result<void>>
+    clearHistory(): Promise<Result<void>>
+  }
   training: {
     /** All training datasets in the open project. */
     listDatasets(): Promise<Result<TrainingDataset[]>>
@@ -484,6 +529,13 @@ export interface InlineStudioApi {
     discard(runId: string): Promise<Result<TrainingRun>>
     /** One run's current durable state. */
     status(runId: string): Promise<Result<TrainingRun>>
+    /** Every mid-run LoRA this run has written, oldest first. */
+    snapshots(runId: string): Promise<Result<TrainingSnapshot[]>>
+    /**
+     * Copy one snapshot into `models/loras/` so a Load LoRA node can select it. Snapshots live in
+     * the project's working dir, which no model picker scans.
+     */
+    exportSnapshot(runId: string, step: number): Promise<Result<{ path: string }>>
   }
   falSettings: {
     /** Is a fal API key saved, and is it stored encrypted? */
@@ -507,6 +559,13 @@ export interface InlineStudioApi {
     /** Download one component (its `id`) or `'all'` missing ones into models/. Fire-and-forget;
      * progress arrives on `events:modelDownload*`. */
     download(nodeType: string, componentId: string): Promise<Result<void>>
+    /** Every models root on disk as a read-only tree. No file actions. */
+    tree(): Promise<Result<ModelTreeRoot[]>>
+    /**
+     * Re-scan the models roots and return the new registry version. The catalog caches its scan,
+     * so a weight file dropped in by hand is invisible to the pickers until this runs.
+     */
+    rescan(): Promise<Result<{ registryVersion: string }>>
   }
   extensions: {
     /** Installed extensions + whether git/uv are available to install more. */
@@ -656,6 +715,9 @@ export interface InlineStudioApi {
     onGenerationNodeDone(callback: (e: GenerationNodeDoneEvent) => void): () => void
     onGenerationDone(callback: (e: GenerationDoneEvent) => void): () => void
     onGenerationError(callback: (e: GenerationErrorEvent) => void): () => void
+    onGenerationCancelled(callback: (e: GenerationCancelledEvent) => void): () => void
+    onActivityChanged(callback: (e: ActivityChangedEvent) => void): () => void
+    onModelsChanged(callback: (e: { registryVersion: string }) => void): () => void
     /** Subscribe to explicit model-download lifecycle pushes. Each returns an unsubscribe fn. */
     onModelDownloadProgress(callback: (e: ModelDownloadProgressEvent) => void): () => void
     onModelDownloadDone(callback: (e: ModelDownloadDoneEvent) => void): () => void
@@ -663,6 +725,7 @@ export interface InlineStudioApi {
     /** Subscribe to LoRA training lifecycle pushes. Each returns an unsubscribe fn. */
     onTrainingProgress(callback: (e: TrainingProgressEvent) => void): () => void
     onTrainingSample(callback: (e: TrainingSampleEvent) => void): () => void
+    onTrainingSnapshot(callback: (e: TrainingSnapshot) => void): () => void
     /** One stdout line from the trainer subprocess. */
     onTrainingLog(callback: (e: TrainingLogEvent) => void): () => void
     /** Auto-caption progress for a dataset. */

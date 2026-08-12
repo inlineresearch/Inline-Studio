@@ -16,12 +16,16 @@ import json
 import re
 import shutil
 import sys
+import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from ..config import models_dir
 from . import training_store as ts
+from .activity import ActivityRun
 
 _CAPTION_EXT = ".txt"
 
@@ -44,9 +48,14 @@ def _unique_lora_name(loras: Path, stem: str) -> str:
 class Training:
     """Owns the LoRA training lifecycle: dataset CRUD, auto-caption, and one run at a time."""
 
-    def __init__(self, store: Any, events: Any, on_output: Any = None) -> None:
+    def __init__(
+        self, store: Any, events: Any, on_output: Any = None, activity: Any = None
+    ) -> None:
         self._store = store
         self._events = events
+        self._activity = activity
+        #: run id -> the project it was started in, so its row stays reachable across a switch.
+        self._refs: dict[str, Any] = {}
         # Rescans the model catalog when a run's LoRA lands in models/loras/, so it appears in the
         # loader node's dropdown + bumps the registry version - the same hook model downloads use.
         self._on_output = on_output
@@ -136,22 +145,62 @@ class Training:
     def status(self, run_id: str) -> dict[str, Any]:
         return ts.get_run(self._conn(), run_id)
 
-    def _persist(self, run_id: str, patch: dict[str, Any]) -> bool:
-        """Write a run patch, tolerating the row having gone away. False when it has.
+    @contextmanager
+    def _run_conn(self, run_id: str) -> Iterator[Any]:
+        """A connection to the project the run was started in, not whichever one is open now.
 
-        `_conn()` resolves the *currently open* project, but a run belongs to the project it was
-        started in - switching projects mid-run makes its row unreachable. That used to raise
-        inside the training task ("Training run not found", an unretrieved task exception) and
-        left the run stuck as `training` forever."""
+        Switching projects mid-run used to make the row unreachable, which left the run stuck as
+        `training` forever."""
+        ref = self._refs.get(run_id)
+        if ref is None:
+            yield self._conn()
+            return
+        with self._store.bind(ref) as conn:
+            yield conn
+
+    # training_runs is the durable record; these are the same states as the activity panel shows.
+    _ACTIVITY_STATUS = {
+        "queued": "queued",
+        "training": "running",
+        "done": "done",
+        "failed": "error",
+        "cancelled": "cancelled",
+        "interrupted": "interrupted",
+    }
+
+    def _persist(self, run_id: str, patch: dict[str, Any]) -> bool:
+        """Write a run patch, tolerating the row having gone away. False when it has."""
         try:
-            ts.update_run(self._conn(), run_id, patch)
+            with self._run_conn(run_id) as conn:
+                ts.update_run(conn, run_id, patch)
+            self._mirror(run_id, patch)
             return True
         except ValueError:
             return False
 
+    def _mirror(self, run_id: str, patch: dict[str, Any]) -> None:
+        """Reflect a training patch into the activity panel. Its history stays in training_runs."""
+        if self._activity is None:
+            return
+        status = self._ACTIVITY_STATUS.get(str(patch.get("status") or ""))
+        if status in ("done", "error", "cancelled", "interrupted"):
+            self._refs.pop(run_id, None)
+            self._activity.finish(run_id, status, error=patch.get("error"))
+            return
+        fields: dict[str, Any] = {}
+        if status is not None:
+            fields["status"] = status
+        if "progressFraction" in patch:
+            fields["fraction"] = patch["progressFraction"]
+        if "progressStatus" in patch:
+            fields["status_label"] = patch["progressStatus"]
+        if fields:
+            self._activity.update(run_id, **fields)
+
     def _lookup(self, run_id: str) -> dict[str, Any] | None:
         try:
-            return ts.get_run(self._conn(), run_id)
+            with self._run_conn(run_id) as conn:
+                return ts.get_run(conn, run_id)
         except ValueError:
             return None
 
@@ -244,6 +293,7 @@ class Training:
             raise RuntimeError("A training run is already in progress; wait for it to finish.")
         dataset = ts.get_dataset(self._conn(), dataset_id)
         run = ts.create_run(self._conn(), dataset_id, dataset["name"], hyperparams)
+        self._pin(run["id"], run["name"])
         asyncio.create_task(self._run(run["id"], resume=False))
         return run
 
@@ -253,8 +303,33 @@ class Training:
         run = ts.get_run(self._conn(), run_id)
         if run["status"] not in ("interrupted", "failed"):
             raise RuntimeError("Only an interrupted run can be resumed.")
+        self._pin(run_id, run["name"])
         asyncio.create_task(self._run(run_id, resume=True))
         return ts.update_run(self._conn(), run_id, {"status": "queued", "error": None})
+
+    def _pin(self, run_id: str, name: str) -> None:
+        ref = self._store.project_ref()
+        if ref is None:
+            return
+        self._refs[run_id] = ref
+        if self._activity is None:
+            return
+        self._activity.track(
+            ActivityRun(
+                run_id=run_id,
+                kind="training",
+                engine="core",
+                origin="studio",
+                status="queued",
+                title=name or "Training run",
+                queued_at=int(time.time() * 1000),
+                project_id=ref.id,
+                project_name=ref.name,
+                project_path=str(ref.folder),
+                item_id=run_id,
+                surface="trainer",
+            )
+        )
 
     def discard(self, run_id: str) -> dict[str, Any]:
         """Delete a run's working dir and make it unresumable.
@@ -270,6 +345,56 @@ class Training:
         if run["status"] in ("interrupted", "failed"):
             patch |= {"status": "cancelled", "error": "Checkpoints discarded; settings changed."}
         return ts.update_run(self._conn(), run_id, patch)
+
+    def _run_dir(self, run_id: str) -> Path:
+        """The run's working dir, in the project it was started in rather than the open one."""
+        ref = self._refs.get(run_id)
+        folder = ref.folder if ref is not None else self._store.folder()
+        return Path(folder) / "training_runs" / run_id
+
+    def snapshots(self, run_id: str) -> list[dict[str, Any]]:
+        """Every mid-run LoRA this run has written, oldest first.
+
+        Read from disk rather than tracked in the row: the trainer owns the folder, and a listing
+        that drifts from what is actually there is worse than no listing.
+        """
+        folder = self._run_dir(run_id) / "snapshots"
+        if not folder.is_dir():
+            return []
+        out: list[dict[str, Any]] = []
+        for file in sorted(folder.glob("step-*.safetensors")):
+            digits = file.stem.removeprefix("step-")
+            stat = file.stat()
+            out.append(
+                {
+                    "runId": run_id,
+                    "step": int(digits) if digits.isdigit() else 0,
+                    "path": self._relativize(str(file)),
+                    "sizeBytes": stat.st_size,
+                    "createdAt": int(stat.st_mtime * 1000),
+                }
+            )
+        return out
+
+    def export_snapshot(self, run_id: str, step: int) -> dict[str, Any]:
+        """Copy one snapshot into ``models/loras/`` so a Load LoRA node can actually pick it.
+
+        Snapshots live in the project's working dir, which no model picker scans. Copying is what
+        turns "a file exists" into something a user can experiment with.
+        """
+        source = self._run_dir(run_id) / "snapshots" / f"step-{step:06d}.safetensors"
+        if not source.is_file():
+            raise ValueError(f"Run {run_id} has no snapshot at step {step}.")
+        run = self._lookup(run_id) or {}
+        loras = models_dir() / "loras"
+        loras.mkdir(parents=True, exist_ok=True)
+        stem = f"{_safe(str(run.get('name') or run_id))}-step{step}"
+        rel = _unique_lora_name(loras, stem)
+        shutil.copyfile(source, models_dir() / rel)
+        # Same hook a finished run uses, so the new file bumps the registry and reaches the picker.
+        if self._on_output is not None:
+            self._on_output()
+        return {"path": rel}
 
     def cancel(self, run_id: str) -> None:
         proc = self._active.get(run_id)
@@ -334,6 +459,17 @@ class Training:
                 )
             elif kind == "checkpoint" and msg.get("path"):
                 self._persist(run_id, {"checkpointPath": msg["path"]})
+            elif kind == "snapshot" and msg.get("path"):
+                # The trainer has emitted these all along; nothing listened, so a mid-run LoRA sat
+                # on disk with no way to reach it.
+                self._events.broadcast(
+                    "events:trainingSnapshot",
+                    {
+                        "runId": run_id,
+                        "step": int(msg.get("step", 0)),
+                        "path": self._relativize(msg["path"]),
+                    },
+                )
             elif kind == "error" and msg.get("message"):
                 # A trainer-side failure: keep it in the run's log so the node shows why it died.
                 self._events.broadcast(
@@ -451,6 +587,10 @@ class Training:
             "checkpointDir": str(checkpoint_dir),
             "outputPath": str(models_dir() / output_rel),
             "resumeFrom": resume_from,
+            # Beside the project, not inside the run: the dataset is re-exported per run, so a
+            # cache under workingDir would be thrown away by the very resume it exists to serve.
+            "precacheDir": str(self._store.folder() / "precache"),
+            "snapshotDir": str(work / "snapshots"),
             "modelsDir": str(models_dir()),
             # Defaulted so a run started before Krea 2 existed still resumes as Z-Image.
             "arch": run["hyperparams"].get("arch") or "z-image",

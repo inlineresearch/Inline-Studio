@@ -31,6 +31,7 @@ import {
 } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
 import { NodeRunToolbar } from './NodeRunToolbar'
+import { useGraphMenu } from './useGraphMenu'
 import { resolveInputThumbs } from './inputThumbs'
 import { ModelPicker } from '../ModelPicker'
 import { resolveMedia } from '@/lib/media'
@@ -121,6 +122,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
   const status = useGenerationStore((s) => s.statusByFrame[frameId])
   // This node is the selected graph's output node → it floats the graph's single Run control.
   const isRunTarget = useGraphSelectionStore((s) => s.runTargets.includes(id))
+  const graphMenu = useGraphMenu(id, 'graph')
   const onMediaContextMenu = useMediaContextMenu()
   const openLightbox = useLightboxStore((s) => s.open)
   const [dropActive, setDropActive] = useState(false)
@@ -251,6 +253,8 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
         onStop={() => void cancel(frameId)}
         disabled={!!missing}
         disabledReason={missing ?? undefined}
+        menuItems={graphMenu.items}
+        menuNote={graphMenu.note}
       />
       {/* Title + live price-estimate badges - float above the node. */}
       <NodeBadgeRow dragNodeId={id}>

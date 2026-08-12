@@ -30,6 +30,8 @@ _DEFAULT_HYPERPARAMS: dict[str, Any] = {
     "batchSize": 1,
     "resolution": 1024,
     "saveEvery": 250,
+    # Off by default: a snapshot is a full LoRA, so keeping one per checkpoint costs real disk.
+    "saveSnapshots": False,
     "gpuIds": [],
 }
 

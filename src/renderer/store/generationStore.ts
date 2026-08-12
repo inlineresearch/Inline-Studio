@@ -10,6 +10,7 @@ import type { FalRunRequest } from '@shared/ipc'
 import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
 import { useFrameStore } from './frameStore'
+import { useMoodboardStore } from './moodboardStore'
 
 interface GenerationState {
   /** Per-frame "currently generating" flag. */
@@ -51,8 +52,13 @@ interface GenerationState {
   closeModelInfo: () => void
   setProgress: (frameId: string, fraction: number | null, status?: string) => void
   setBusy: (frameId: string, busy: boolean) => void
-  /** Clear all busy/progress (call when a run finishes or fails). */
-  finishAll: () => void
+  /**
+   * Clear one node's busy/progress. Keyed by id rather than clearing everything, because with a
+   * visible queue more than one node is legitimately in flight at a time.
+   */
+  finishRun: (frameId: string) => void
+  /** Drop all local node state (project close). The runs themselves keep going server-side. */
+  reset: () => void
   setError: (error: string | null) => void
 }
 
@@ -147,16 +153,20 @@ export const useGenerationStore = create<GenerationState>((set) => ({
   },
 
   cancel: async (frameId) => {
-    // Reset the node right away - the run is also cancelled server-side, but the UI shouldn't
-    // wait on the round-trip. Without a frame id, clear every in-flight node.
+    // The node stays busy and says "Stopping…" until Core confirms. Cancellation is cooperative:
+    // the run stops at its next checkpoint, and inside a model load that is seconds away. Clearing
+    // the node here used to claim it had stopped while the GPU was still working.
+    const stopping = 'Stopping…'
     set((s) =>
       frameId
-        ? {
-            busyByFrame: { ...s.busyByFrame, [frameId]: false },
-            progressByFrame: { ...s.progressByFrame, [frameId]: null },
-            statusByFrame: { ...s.statusByFrame, [frameId]: undefined },
-          }
-        : { busyByFrame: {}, progressByFrame: {}, statusByFrame: {} },
+        ? { statusByFrame: { ...s.statusByFrame, [frameId]: stopping } }
+        : {
+            statusByFrame: Object.fromEntries(
+              Object.keys(s.busyByFrame)
+                .filter((id) => s.busyByFrame[id])
+                .map((id) => [id, stopping]),
+            ),
+          },
     )
     try {
       await studio().generation.cancel(frameId)
@@ -177,17 +187,18 @@ export const useGenerationStore = create<GenerationState>((set) => ({
     try {
       const res = await studio().generation.active()
       if (!res.ok) return
-      set((s) => {
-        const busy = { ...s.busyByFrame }
-        const progress = { ...s.progressByFrame }
-        const status = { ...s.statusByFrame }
-        for (const run of res.value) {
-          busy[run.frameId] = true
-          progress[run.frameId] = run.fraction
-          status[run.frameId] = run.status
-        }
-        return { busyByFrame: busy, progressByFrame: progress, statusByFrame: status }
-      })
+      // Core's answer REPLACES local state rather than merging into it. Restarting Core kills every
+      // run, and a merge left the nodes spinning forever because nothing ever said they stopped.
+      // Anything absent here is not running, whatever this tab last saw.
+      const busy: Record<string, boolean> = {}
+      const progress: Record<string, number | null> = {}
+      const status: Record<string, string | undefined> = {}
+      for (const run of res.value) {
+        busy[run.frameId] = true
+        progress[run.frameId] = run.fraction
+        status[run.frameId] = run.status
+      }
+      set({ busyByFrame: busy, progressByFrame: progress, statusByFrame: status })
     } catch {
       // A backend that predates the channel simply has no queue to restore.
     }
@@ -245,7 +256,51 @@ export const useGenerationStore = create<GenerationState>((set) => ({
 
   setBusy: (frameId, busy) => set((s) => ({ busyByFrame: { ...s.busyByFrame, [frameId]: busy } })),
 
-  finishAll: () => set({ busyByFrame: {}, progressByFrame: {}, statusByFrame: {} }),
+  finishRun: (frameId) =>
+    set((s) => ({
+      busyByFrame: { ...s.busyByFrame, [frameId]: false },
+      progressByFrame: { ...s.progressByFrame, [frameId]: null },
+      statusByFrame: { ...s.statusByFrame, [frameId]: undefined },
+    })),
+
+  reset: () => set({ busyByFrame: {}, progressByFrame: {}, statusByFrame: {}, error: null }),
 
   setError: (error) => set({ error }),
 }))
+
+/**
+ * Subscribe once for the whole app (see App.tsx). This used to live inside MoodboardPanel, which
+ * unmounts on a tab switch - so switching to the Trainer mid-render dropped every progress event.
+ */
+export function subscribeGenerationEvents(): () => void {
+  const gen = useGenerationStore.getState()
+  // Finish any generations still running when the app last closed; their events arrive below.
+  void gen.resumePending()
+  // A page refresh throws away this tab's copy of the queue while Core keeps working, and a run
+  // inside a long model load emits nothing for minutes, so waiting for an event is not enough.
+  void gen.hydrateActive()
+  const unsubs = [
+    studio().events.onGenerationProgress((e) => {
+      gen.setBusy(e.frameId, true)
+      gen.setProgress(e.frameId, e.fraction, e.status)
+    }),
+    studio().events.onGenerationNodeDone((e) => {
+      gen.setBusy(e.frameId, false)
+      gen.setProgress(e.frameId, null)
+      void useFrameStore.getState().load()
+    }),
+    studio().events.onGenerationDone((e) => {
+      gen.finishRun(e.targetFrameId)
+      void useFrameStore.getState().load()
+      void useMoodboardStore.getState().load()
+    }),
+    studio().events.onGenerationError((e) => {
+      gen.finishRun(e.frameId ?? e.targetFrameId)
+      gen.setError(e.error)
+    }),
+    studio().events.onGenerationCancelled((e) => {
+      gen.finishRun(e.targetFrameId)
+    }),
+  ]
+  return () => unsubs.forEach((u) => u())
+}

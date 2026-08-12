@@ -18,6 +18,7 @@ import type {
   CaptionProgressEvent,
   TrainingLogEvent,
   TrainingSampleEvent,
+  TrainingSnapshot,
 } from '@shared/types'
 import { studio } from '@/lib/studio'
 import { ipcErrorMessage } from '../lib/ipcError'
@@ -46,6 +47,8 @@ interface TrainingState {
   /** Live auto-caption progress per dataset, cleared when the captioner exits. */
   captionProgress: Record<string, { done: number; total: number }>
   samplesByRun: Record<string, string[]>
+  /** Mid-run LoRAs per run, oldest first. */
+  snapshotsByRun: Record<string, TrainingSnapshot[]>
   systemStats: SystemStatsEvent | null
 
   loadDatasets: () => Promise<void>
@@ -73,6 +76,10 @@ interface TrainingState {
 
   applyProgress: (e: TrainingProgressEvent) => void
   applySample: (e: TrainingSampleEvent) => void
+  applySnapshot: (e: TrainingSnapshot) => void
+  loadSnapshots: (runId: string) => Promise<void>
+  /** Copy a snapshot into models/loras/ so a Load LoRA node can select it. */
+  exportSnapshot: (runId: string, step: number) => Promise<string | null>
   applyLog: (e: TrainingLogEvent) => void
   applyCaptionProgress: (e: CaptionProgressEvent) => void
   applyDone: (e: TrainingDoneEvent) => void
@@ -92,6 +99,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   progressByRun: {},
   lossByRun: {},
   samplesByRun: {},
+  snapshotsByRun: {},
   logsByRun: {},
   captionProgress: {},
   systemStats: null,
@@ -245,6 +253,39 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       samplesByRun: { ...s.samplesByRun, [e.runId]: [...(s.samplesByRun[e.runId] ?? []), e.path] },
     })),
 
+  applySnapshot: (e) =>
+    set((s) => {
+      const existing = s.snapshotsByRun[e.runId] ?? []
+      // The trainer can re-emit a step on resume, so key on the step rather than appending.
+      const next = [...existing.filter((x) => x.step !== e.step), e].sort((a, b) => a.step - b.step)
+      return { snapshotsByRun: { ...s.snapshotsByRun, [e.runId]: next } }
+    }),
+
+  loadSnapshots: async (runId) => {
+    try {
+      const res = await studio().training.snapshots(runId)
+      if (res.ok) {
+        set((s) => ({ snapshotsByRun: { ...s.snapshotsByRun, [runId]: res.value } }))
+      }
+    } catch {
+      // A backend that predates the channel simply has no snapshots to list.
+    }
+  },
+
+  exportSnapshot: async (runId, step) => {
+    try {
+      const res = await studio().training.exportSnapshot(runId, step)
+      if (!res.ok) {
+        set({ error: res.error })
+        return null
+      }
+      return res.value.path
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+      return null
+    }
+  },
+
   applyLog: (e) =>
     set((s) => ({
       // Capped so a long run can't grow the buffer without bound; the node shows the tail. Deep
@@ -294,6 +335,7 @@ export function subscribeTrainingEvents(): () => void {
   const unsubs = [
     studio().events.onTrainingProgress((e) => s.applyProgress(e)),
     studio().events.onTrainingSample((e) => s.applySample(e)),
+    studio().events.onTrainingSnapshot((e) => s.applySnapshot(e)),
     studio().events.onTrainingLog((e) => s.applyLog(e)),
     studio().events.onCaptionProgress((e) => s.applyCaptionProgress(e)),
     studio().events.onTrainingDone((e) => s.applyDone(e)),

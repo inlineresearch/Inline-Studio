@@ -75,7 +75,7 @@ import { FirstRunHints } from './GettingStarted/FirstRunHints'
 import { StarterCards } from './GettingStarted/StarterCards'
 import { useStarterGraph } from './GettingStarted/useStarterGraph'
 import { Modal } from '../../components/Modal'
-import { readRecipeFromBlob, type Recipe } from '../../lib/pngRecipe'
+import { readRecipeFromBlob, readRecipeFromJsonFile, type Recipe } from '../../lib/pngRecipe'
 import { buildGraphFromRecipe } from '../../lib/recipeGraph'
 import { FrameInspector } from './FrameInspector'
 import { CheckIcon, CloseIcon, CopyIcon } from '../../components/icons'
@@ -411,37 +411,10 @@ function Board(): React.JSX.Element {
     })
   }, [])
 
-  // fal generation lifecycle (main → renderer): drive per-node progress, and refresh takes as
-  // nodes complete so their thumbnails, downstream inputs, and the Library all update live.
+  // Generation events are subscribed app-wide (App.tsx) so they survive a tab or project switch.
+  // Only the model-download stream is Studio-local.
   useEffect(() => {
-    const gen = useGenerationStore.getState()
-    // Finish any generations that were still running when the app last closed (they keep
-    // running server-side); their progress/completion arrives through the events below.
-    void gen.resumePending()
-    // A page refresh throws away this tab's copy of the queue while Core keeps working, and a run
-    // inside a long model load emits nothing for minutes, so waiting for the next event is not
-    // enough. Ask Core what is still in flight.
-    void gen.hydrateActive()
     const unsubs = [
-      studio().events.onGenerationProgress((e) => {
-        gen.setBusy(e.frameId, true)
-        gen.setProgress(e.frameId, e.fraction, e.status)
-      }),
-      studio().events.onGenerationNodeDone((e) => {
-        gen.setBusy(e.frameId, false)
-        gen.setProgress(e.frameId, null)
-        void useFrameStore.getState().load()
-      }),
-      studio().events.onGenerationDone(() => {
-        gen.finishAll()
-        void useFrameStore.getState().load()
-        // Core workflow outputs are stored on their canvas items - refresh the board to show them.
-        void useMoodboardStore.getState().load()
-      }),
-      studio().events.onGenerationError((e) => {
-        gen.finishAll()
-        gen.setError(e.error)
-      }),
       // Explicit model downloads (the node's "missing models" popup) stream here.
       studio().events.onModelDownloadProgress((e) => {
         useModelRequirementsStore.getState().onProgress(e)
@@ -937,6 +910,12 @@ function Board(): React.JSX.Element {
       // PNG carries its recipe, so offer to rebuild the graph instead of just importing it.
       const files = Array.from(e.dataTransfer.files ?? [])
       if (files.length === 0) return
+      // An exported graph is not media, so it never goes to the library: rebuild it or say why not.
+      const json = files.find((f) => f.type === 'application/json' || f.name.endsWith('.json'))
+      if (json && files.length === 1) {
+        void dropGraphJson(json, drop)
+        return
+      }
       const png = files.find((f) => f.type === 'image/png')
       if (png && files.length === 1) {
         void offerRecipeOrRun(png, drop, () => void placeDroppedFiles(files, drop))
@@ -961,6 +940,17 @@ function Board(): React.JSX.Element {
     await loadAssets()
     const loader = await addLoader(drop.x, drop.y)
     if (loader) await addLoaderAssets(loader.id, [asset.id])
+  }
+
+  /** Rebuild an exported `.inline-graph.json` at the drop point. Unlike a PNG there is no
+   * "load as asset" alternative, so it builds straight away or reports why it could not. */
+  const dropGraphJson = async (file: File, drop: { x: number; y: number }): Promise<void> => {
+    const recipe = await readRecipeFromJsonFile(file)
+    if (!recipe?.graph?.items?.length) {
+      useGenerationStore.getState().setError(`${file.name} is not an Inline Studio graph export.`)
+      return
+    }
+    await buildGraphFromRecipe(recipe, drop)
   }
 
   /** Read a recipe from the dropped image; if present, prompt Load-graph vs Load-as-asset, else run

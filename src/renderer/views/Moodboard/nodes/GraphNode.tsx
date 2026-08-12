@@ -17,6 +17,8 @@ import { CoreOutputPreview, CoreOutputThumb } from './CoreOutputPreview'
 import { NodeFrame } from './NodeFrame'
 import { ReferenceStrip } from './ReferenceStrip'
 import { NodeRunToolbar } from './NodeRunToolbar'
+import { missingInputs, missingInputsMessage } from '../missingInputs'
+import { useGraphMenu } from './useGraphMenu'
 import {
   AdjustIcon,
   AlertIcon,
@@ -126,6 +128,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const busy = useGenerationStore((s) => s.busyByFrame[itemId] ?? false)
   const progress = useGenerationStore((s) => s.progressByFrame[itemId])
   const status = useGenerationStore((s) => s.statusByFrame[itemId])
+  const graphMenu = useGraphMenu(itemId, descriptor?.title ?? 'graph')
 
   // Model requirements (per node type) drive the blinking "missing models" hint + its popup, and
   // surface an in-node download indicator. Refetched when the model registry version changes (a
@@ -195,6 +198,10 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   const core = item.data.core
   const pct = typeof progress === 'number' ? Math.round(progress * 100) : null
+
+  // A graph imported from JSON names files the author had; flag the ones this machine does not.
+  const missing = missingInputs(descriptor, core.params)
+  const missingMessage = missingInputsMessage(missing)
 
   // Take history for the on-node output strip (newest first). Older items predate history and only
   // carry a single `output` - treat that as a one-entry history. `output` marks the active take.
@@ -345,6 +352,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           padded={false}
           subtleSelect
           running={busy}
+          invalid={missing.length > 0}
         >
           <div className="flex h-full w-full flex-col gap-1 px-2 py-1.5">
             {selectParams.length > 0 ? (
@@ -415,6 +423,8 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         onStop={() => void cancel(itemId)}
         disabled={download !== null}
         disabledReason="Downloading model…"
+        menuItems={graphMenu.items}
+        menuNote={graphMenu.note}
       />
       {/* Floating title badge - matches the fal Generate node. */}
       <NodeBadgeRow dragNodeId={id}>
@@ -422,6 +432,13 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         {extName && (
           <NodeBadge tone="info" title={`From the ${extName} extension`}>
             {extName}
+          </NodeBadge>
+        )}
+        {/* A pick the catalog does not have, e.g. the LoRA an imported graph was authored with.
+            Distinct from `modelsMissing`, which is about a node type's own downloadable weights. */}
+        {missing.length > 0 && (
+          <NodeBadge tone="info" accent="text-red-400" title={missingMessage}>
+            {missing.length === 1 ? missing[0].label : `${missing.length} inputs`} missing
           </NodeBadge>
         )}
         {modelsMissing && (
@@ -456,6 +473,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         padded={false}
         subtleSelect
         running={busy}
+        invalid={missing.length > 0}
       >
         <div className="relative flex h-full w-full flex-col">
           {/* Edge-to-edge output preview. */}

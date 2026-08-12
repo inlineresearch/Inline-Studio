@@ -44,6 +44,14 @@ class NodeDoneEvent:
 
 
 @dataclass(frozen=True)
+class RunStartedEvent:
+    """A queued run reached the worker. Without it nothing distinguishes queued from running, so a
+    client cannot tell a long model load from a run still waiting behind another."""
+
+    run_id: str
+
+
+@dataclass(frozen=True)
 class RunDoneEvent:
     run_id: str
 
@@ -60,7 +68,9 @@ class ErrorEvent:
     node_id: str | None = None
 
 
-RunEvent = ProgressEvent | NodeDoneEvent | RunDoneEvent | CancelledEvent | ErrorEvent
+RunEvent = (
+    ProgressEvent | NodeDoneEvent | RunStartedEvent | RunDoneEvent | CancelledEvent | ErrorEvent
+)
 
 
 class ProgressEmitter(ABC):

@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import type { Project } from '@shared/types'
 import { Logo } from '../../components/Logo'
 import { SettingsIcon } from '../../components/icons'
@@ -6,8 +5,8 @@ import { useProjectStore } from '../../store/projectStore'
 import { useAssetStore } from '../../store/assetStore'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useFrameStore } from '../../store/frameStore'
+import { useGenerationStore } from '../../store/generationStore'
 import { useUiStore, type WorkspaceTab } from '../../store/uiStore'
-import { subscribeTrainingEvents } from '../../store/trainingStore'
 import { MoodboardPanel } from '../Moodboard/MoodboardPanel'
 import { SettingsPanel } from '../Settings/SettingsPanel'
 import { ExtensionsDialog } from '../Extensions/ExtensionsDialog'
@@ -15,6 +14,7 @@ import { TrainerPanel } from '../Trainer/TrainerPanel'
 import { ContextMenu } from '../../components/ContextMenu'
 import { MediaLightbox } from '../../components/MediaLightbox'
 import { ControlSpaceEditorMount } from '../ControlSpace/ControlSpaceEditorMount'
+import { ActivityIndicator } from '../Activity/ActivityIndicator'
 
 function TabButton({
   tab,
@@ -46,19 +46,19 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen)
   const activeTab = useUiStore((s) => s.activeTab)
 
-  // Subscribed once for the whole workspace (not per tab): host telemetry feeds the Resource node
-  // on either canvas, and a single subscription keeps training logs/loss from being applied twice.
-  useEffect(() => subscribeTrainingEvents(), [])
   const setActiveTab = useUiStore((s) => s.setActiveTab)
   const closeProject = useProjectStore((s) => s.closeProject)
   const resetAssets = useAssetStore((s) => s.reset)
   const resetBoard = useMoodboardStore((s) => s.reset)
   const resetFrames = useFrameStore((s) => s.reset)
+  const resetGeneration = useGenerationStore((s) => s.reset)
 
   const onClose = (): void => {
     resetAssets()
     resetBoard()
     resetFrames()
+    // Only the local node badges: the runs keep going in Core and stay in the activity panel.
+    resetGeneration()
     closeProject()
   }
 
@@ -93,7 +93,8 @@ export function Workspace({ project }: { project: Project }): React.JSX.Element 
           />
         </div>
 
-        <div className="flex items-center">
+        <div className="flex items-center gap-1">
+          <ActivityIndicator />
           <button
             onClick={() => setSettingsOpen(!settingsOpen)}
             title="Settings"

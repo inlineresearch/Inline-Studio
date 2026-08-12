@@ -12,6 +12,7 @@ from ..runtime.progress import (
     ProgressEvent,
     RunDoneEvent,
     RunEvent,
+    RunStartedEvent,
 )
 from ..runtime.run import NodeRuntimeState, RunState
 from ..takes import Take
@@ -131,6 +132,17 @@ def run_json(state: RunState) -> dict[str, Any]:
     }
 
 
+def run_summary_json(state: RunState, queue_position: int | None) -> dict[str, Any]:
+    """A run as it appears in the queue listing: status and place in line, no node detail."""
+    return {
+        "runId": state.run_id,
+        "status": state.status.value,
+        "target": state.target,
+        "fraction": state.fraction,
+        "queuePosition": queue_position,
+    }
+
+
 def event_json(event: RunEvent) -> dict[str, Any]:
     if isinstance(event, ProgressEvent):
         out: dict[str, Any] = {
@@ -156,6 +168,8 @@ def event_json(event: RunEvent) -> dict[str, Any]:
             "cached": event.cached,
             "takes": [take_json(t) for t in event.takes],
         }
+    if isinstance(event, RunStartedEvent):
+        return {"type": "run_started", "runId": event.run_id}
     if isinstance(event, RunDoneEvent):
         return {"type": "run_done", "runId": event.run_id}
     if isinstance(event, CancelledEvent):

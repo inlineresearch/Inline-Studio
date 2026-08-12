@@ -341,7 +341,12 @@ class MiniMaxH3Runner(NodeRunner):
         rt.attach_step_progress(pipe, on_step)
         started = time.perf_counter()
         try:
-            state = render_staged(pipe, self._policy.placement('denoiser').device, **call)
+            state = render_staged(
+                pipe,
+                self._policy.placement('denoiser').device,
+                cancel_check=lambda: rt.raise_if_cancelled(ctx),
+                **call,
+            )
         except CancelledError:
             rt.free_vram()
             raise

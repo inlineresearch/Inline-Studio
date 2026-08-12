@@ -45,6 +45,7 @@ const DEFAULT_HP = {
   batchSize: 1,
   resolution: 1024,
   saveEvery: 250,
+  saveSnapshots: false,
   gpuIds: [] as number[],
 }
 

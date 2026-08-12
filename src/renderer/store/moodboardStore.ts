@@ -83,6 +83,9 @@ interface MoodboardState {
     sources: MoodboardItem[],
     offset: { x: number; y: number },
   ) => Promise<MoodboardItem[]>
+  /** Old id -> new id from the last `duplicateItems`. The returned array is reordered (layers
+   * first, plus their children), so index matching cannot recover the pairing. */
+  lastDuplicateIdMap: Map<string, string>
   /** `recordHistory: false` skips the undo snapshot - used by programmatic layout fits. */
   updateItem: (id: string, patch: MoodboardItemPatch, recordHistory?: boolean) => Promise<void>
   /** Restore the text of the prompt node wired into `nodeId`'s `prompt` input (no-op if none). Used
@@ -96,6 +99,8 @@ interface MoodboardState {
     toItemId: string,
     sourceHandle?: string | null,
     targetHandle?: string | null,
+    /** `false` folds this into the caller's undo step (duplicating a graph is one action). */
+    recordHistory?: boolean,
   ) => Promise<void>
   disconnect: (connectorId: string) => Promise<void>
   setConnectorVolume: (connectorId: string, volume: number) => Promise<void>
@@ -157,16 +162,50 @@ async function copyOne(
     case 'trim':
       res = await m.addTrim(x, y)
       break
+    case 'core': {
+      const coreType = String((item.data?.core as { type?: string } | undefined)?.type ?? '')
+      if (!coreType) return null
+      res = await m.addCoreNode(coreType, x, y)
+      break
+    }
+    case 'prompt':
+      res = await m.addPrompt(x, y)
+      break
+    case 'loader':
+      res = await m.addLoader(x, y)
+      break
+    case 'controlSpace':
+      res = await m.addControlSpace(x, y)
+      break
     default:
       return null
   }
   if (!res.ok) {
     return null
   }
-  // Carry over size + parent; copy data only where it holds styling/labels (text,
-  // layer) - for frame/asset/preview the identity lives in their own column.
+  // Carry over size + parent, plus the data that makes the copy behave like the original. For
+  // frame/asset/preview the identity lives in its own column, so there is nothing to carry.
   const patch: MoodboardItemPatch = { width: item.width, height: item.height, parentId }
+  const data = item.data ?? {}
   if (item.type === 'text' || item.type === 'layer') patch.data = item.data
+  else if (item.type === 'core') {
+    // Settings only: the copy is a fresh slot, so it must not claim the original's takes.
+    const core = (data.core ?? {}) as { type?: string; params?: Record<string, unknown> }
+    patch.data = {
+      ...res.value.data,
+      core: { type: String(core.type ?? ''), params: core.params ?? {} },
+    }
+  } else if (item.type === 'prompt') {
+    patch.data = { ...res.value.data, promptText: data.promptText ?? '' }
+  } else if (item.type === 'loader') {
+    patch.data = { ...res.value.data, assetIds: data.assetIds ?? [] }
+  } else if (item.type === 'controlSpace') {
+    patch.data = {
+      ...res.value.data,
+      controlAssetId: data.controlAssetId,
+      controlScene: data.controlScene,
+    }
+  }
   const patched = await m.updateItem(res.value.id, patch)
   return patched.ok ? patched.value : res.value
 }
@@ -180,6 +219,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
   error: null,
   past: [],
   future: [],
+  lastDuplicateIdMap: new Map(),
 
   load: async () => {
     set({ loading: true, error: null })
@@ -540,9 +580,15 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     }
   },
 
-  connect: async (fromItemId, toItemId, sourceHandle = null, targetHandle = null) => {
+  connect: async (
+    fromItemId,
+    toItemId,
+    sourceHandle = null,
+    targetHandle = null,
+    recordHistory = true,
+  ) => {
     try {
-      get().record()
+      if (recordHistory) get().record()
       const res = await studio().moodboard.createConnector(
         fromItemId,
         toItemId,
@@ -619,6 +665,8 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
       for (const s of sources) if (s.type !== 'layer') toCopy.set(s.id, s)
       for (const it of items) if (it.parentId && layerMap.has(it.parentId)) toCopy.set(it.id, it)
 
+      // Old id -> new id, for callers that must re-create the wiring between the copies.
+      const idMap = new Map<string, string>(layerMap)
       let clonedFrame = false
       for (const it of toCopy.values()) {
         const parentCopied = it.parentId != null && layerMap.has(it.parentId)
@@ -632,6 +680,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
         const copy = await copyOne(it, x, y, newParentId)
         if (copy) {
           created.push(copy)
+          idMap.set(it.id, copy.id)
           if (it.type === 'frame') clonedFrame = true
         }
       }
@@ -639,6 +688,7 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
       if (created.length) set((s) => ({ items: [...s.items, ...created] }))
       // Cloned frames are new entities in main - refresh so their nodes resolve.
       if (clonedFrame) await useFrameStore.getState().load()
+      set({ lastDuplicateIdMap: idMap })
       return created
     } catch (e) {
       set({ error: ipcErrorMessage(e) })

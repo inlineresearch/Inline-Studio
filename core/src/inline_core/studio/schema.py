@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS project (
@@ -182,6 +182,23 @@ CREATE TABLE IF NOT EXISTS training_runs (
   updated_at        INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS generation_runs (
+  id          TEXT PRIMARY KEY,
+  project_id  TEXT NOT NULL,
+  item_id     TEXT NOT NULL,
+  surface     TEXT NOT NULL DEFAULT 'studio',
+  engine      TEXT NOT NULL DEFAULT 'core',
+  title       TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL,
+  error       TEXT,
+  take_id     TEXT,
+  queued_at   INTEGER NOT NULL,
+  started_at  INTEGER,
+  ended_at    INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_generation_runs_project ON generation_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_generation_runs_queued ON generation_runs(queued_at);
 CREATE INDEX IF NOT EXISTS idx_moodboard_items_project ON moodboard_items(project_id);
 CREATE INDEX IF NOT EXISTS idx_moodboard_connectors_project ON moodboard_connectors(project_id);
 CREATE INDEX IF NOT EXISTS idx_training_datasets_project ON training_datasets(project_id);

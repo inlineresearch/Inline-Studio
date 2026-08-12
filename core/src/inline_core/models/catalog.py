@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
-from ..config import models_dir
+from ..config import models_dirs
 
 # Category subfolders scanned under the models root. These are the keys a param's `options_from`
 # may reference (see graph/primitives.py); ensure_dirs() creates them so drop-in is obvious.
@@ -29,6 +31,9 @@ CATEGORIES: tuple[str, ...] = (
     "controlnet",
     "upscale_models",
     "embeddings",
+    # Written by the preprocess runner rather than the user, but it holds real weights and the
+    # panel is meant to show everything on disk.
+    "annotators",
 )
 
 # Extensions we treat as model weights. A folder counts as a model if it contains one of these.
@@ -45,33 +50,110 @@ def _folder_has_weight(path: Path) -> bool:
     return any(_is_weight(child) for child in path.rglob("*"))
 
 
+def _file_node(path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "name": path.name,
+        "path": str(path),
+        "kind": "file",
+        "sizeBytes": stat.st_size,
+        "mtime": int(stat.st_mtime * 1000),
+    }
+
+
+def _dir_node(path: Path, name: str) -> dict[str, Any] | None:
+    """A directory as a tree node, or None when it holds nothing worth showing."""
+    if not path.is_dir():
+        return None
+    children: list[dict[str, Any]] = []
+    try:
+        entries = sorted(path.iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        return None
+    for entry in entries:
+        # Caches like loras/.cache and text_encoders/.snap are noise in a panel about weights.
+        if entry.name.startswith("."):
+            continue
+        if _is_weight(entry):
+            children.append(_file_node(entry))
+        elif entry.is_dir():
+            child = _dir_node(entry, entry.name)
+            if child is not None:
+                children.append(child)
+    if not children:
+        return None
+    return {
+        "name": name,
+        "path": str(path),
+        "kind": "dir",
+        "children": children,
+        "fileCount": sum(1 for c in children if c["kind"] == "file"),
+    }
+
+
 class ModelCatalog:
-    """Scans the models root and answers "what's installed" per category.
+    """Scans the models roots and answers "what's installed" per category.
 
     Cheap to construct; nothing touches disk until ``ensure_dirs`` or ``rescan``/``scan``. Results
-    are cached so ``list`` and ``fingerprint`` are hits between scans.
+    are cached so ``list`` and ``fingerprint`` are hits between scans. Several roots may be scanned
+    (see ``config.models_dirs``); only the first is ever written to.
     """
 
-    def __init__(self, root: Path) -> None:
-        self._root = Path(root)
+    def __init__(self, root: Path | Sequence[Path]) -> None:
+        roots = [Path(root)] if isinstance(root, str | Path) else [Path(r) for r in root]
+        self._roots = roots or [Path("models")]
         self._entries: dict[str, list[str]] = {category: [] for category in CATEGORIES}
 
     @property
     def root(self) -> Path:
-        return self._root
+        """The writable root. Downloads and trained LoRAs land here."""
+        return self._roots[0]
+
+    @property
+    def roots(self) -> list[Path]:
+        return list(self._roots)
 
     def ensure_dirs(self) -> None:
-        """Create the root and every category subfolder, so users have somewhere to drop weights."""
+        """Create the writable root and its category subfolders, so drop-in has somewhere to go."""
         for category in CATEGORIES:
-            (self._root / category).mkdir(parents=True, exist_ok=True)
+            (self.root / category).mkdir(parents=True, exist_ok=True)
 
     def rescan(self) -> dict[str, list[str]]:
-        """Re-read every category from disk, cache the result, and return it."""
+        """Re-read every category from every root, cache the result, and return it."""
         entries: dict[str, list[str]] = {}
         for category in CATEGORIES:
-            entries[category] = self._scan_category(self._root / category)
+            names: list[str] = []
+            for root in self._roots:
+                for name in self._scan_category(root / category):
+                    if name not in names:
+                        names.append(name)
+            entries[category] = sorted(names)
         self._entries = entries
         return entries
+
+    def tree(self) -> list[dict[str, Any]]:
+        """Every root as a nested, read-only listing for the Models panel.
+
+        Separate from ``rescan`` because the select only needs flat names, while the panel wants
+        nesting, sizes and mtimes; keeping them apart stops the hot path paying for the detail.
+        """
+        out: list[dict[str, Any]] = []
+        for index, root in enumerate(self._roots):
+            categories = [
+                node
+                for category in CATEGORIES
+                if (node := _dir_node(root / category, category)) is not None
+            ]
+            out.append(
+                {
+                    "path": str(root),
+                    "label": root.name or str(root),
+                    "writable": index == 0,
+                    "exists": root.is_dir(),
+                    "categories": categories,
+                }
+            )
+        return out
 
     # app.py calls scan() in the lifespan; rescan() is the same work exposed for tests/callers that
     # want the mapping back. Keep both so neither call site has to know about the other.
@@ -92,6 +174,8 @@ class ModelCatalog:
             return []
         names: list[str] = []
         for entry in directory.iterdir():
+            if entry.name.startswith("."):
+                continue
             if _is_weight(entry):
                 names.append(entry.name)
             elif entry.is_dir() and _folder_has_weight(entry):
@@ -112,8 +196,11 @@ def resolve_picked(category: str, chosen: object) -> Path | None:
     name = str(chosen or "").strip()
     if not name:
         return None
-    root = models_dir() / category
-    for candidate in (root / name, root / Path(name).name, Path(name)):
-        if candidate.exists():
-            return candidate
-    return None
+    # Every root, writable one first, so a pick resolves wherever the user actually keeps it.
+    for models_root in models_dirs():
+        root = models_root / category
+        for candidate in (root / name, root / Path(name).name):
+            if candidate.exists():
+                return candidate
+    bare = Path(name)
+    return bare if bare.exists() else None

@@ -5,7 +5,7 @@ import { useProjectStore } from '../../store/projectStore'
 import { useUpdateStore } from '../../store/updateStore'
 import { DemoSampleCard } from './DemoSampleCard'
 import { GettingStartedCard } from './GettingStartedCard'
-import { FalKeyCard } from './FalKeyCard'
+import { H3TrainingCard } from './H3TrainingCard'
 
 export function ProjectLauncher(): React.JSX.Element {
   const {
@@ -137,7 +137,7 @@ export function ProjectLauncher(): React.JSX.Element {
             {/* Right column - getting started + demo */}
             <div className="flex flex-col gap-6">
               <GettingStartedCard />
-              <FalKeyCard />
+              <H3TrainingCard />
               <DemoSampleCard />
             </div>
           </div>

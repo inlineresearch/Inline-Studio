@@ -60,6 +60,9 @@ def register_studio_handlers(
     timeline: Any = None,
     training: Any = None,
     model_downloads: Any = None,
+    activity: Any = None,
+    model_tree: Callable[[], Any] | None = None,
+    model_rescan: Callable[[], Any] | None = None,
     # Empty falls back to the installed package version; the launcher footer shows this.
     app_version: str = "",
 ) -> None:
@@ -81,13 +84,30 @@ def register_studio_handlers(
 
         return fn
 
+    def _open_project(path: str) -> Any:
+        opened = store.open_project(path)
+        _settle_orphans()
+        return opened
+
+    def _current_project() -> Any:
+        # Also the restore path: after a Core restart the client asks for the current project
+        # rather than opening one, and its rows still need settling.
+        current = store.current_project()
+        _settle_orphans()
+        return current
+
+    def _settle_orphans() -> None:
+        """A restart leaves rows stuck at running; settle them before anyone reads the history."""
+        if activity is not None:
+            activity.reconcile()
+
     # --- project + app-global -------------------------------------------------------------------
     reg("project:create", lambda inp: store.create_project(inp["name"], inp.get("parentDir")))
-    reg("project:open", lambda path: store.open_project(path))
+    reg("project:open", _open_project)
     reg("project:openDialog", lambda: None)  # no native folder picker in a browser
     reg("project:openZip", lambda: None)
     reg("project:listRecent", store.list_recent)
-    reg("project:current", store.current_project)
+    reg("project:current", _current_project)
     reg("project:close", store.close_project)
     reg("project:mediaDirs", store.media_dirs)
     reg("project:export", lambda _path: None)  # zip export: pending (see plan)
@@ -105,6 +125,11 @@ def register_studio_handlers(
     else:
         reg("models:requirements", lambda _node_type: {"components": [], "allPresent": True})
         reg("models:download", not_wired("Model downloads"))
+
+    # Read-only listing of every models root, for the Models side panel.
+    reg("models:tree", model_tree if model_tree is not None else lambda: [])
+    # Pick up weight files added or removed on disk since start.
+    reg("models:rescan", model_rescan if model_rescan is not None else lambda: {})
 
     # --- folders --------------------------------------------------------------------------------
     reg("folders:list", lambda: ax.list_folders(conn()))
@@ -269,6 +294,18 @@ def register_studio_handlers(
     reg("generation:active", active_generations)
     reg("generation:resumePending", lambda: None)
 
+    # --- activity -------------------------------------------------------------------------------
+    if activity is not None:
+        reg("activity:list", activity.snapshot)
+        reg("activity:history", lambda limit=50: activity.history(limit))
+        reg("activity:cancel", activity.cancel)
+        reg("activity:clearHistory", activity.clear_history)
+    else:
+        reg("activity:list", lambda: [])
+        reg("activity:history", lambda _limit=50: [])
+        reg("activity:cancel", not_wired("Run activity"))
+        reg("activity:clearHistory", not_wired("Run activity"))
+
     # --- LoRA training (dataset CRUD + the training run subprocess) ------------------------------
     if training is not None:
         reg("training:listDatasets", lambda: training.list_datasets())
@@ -287,10 +324,12 @@ def register_studio_handlers(
         reg("training:cancel", lambda rid: training.cancel(rid))
         reg("training:discard", lambda rid: training.discard(rid))
         reg("training:status", lambda rid: training.status(rid))
+        reg("training:snapshots", lambda rid: training.snapshots(rid))
+        reg("training:exportSnapshot", lambda rid, step: training.export_snapshot(rid, step))
     else:
         for ch in ("listDatasets", "createDataset", "listItems", "addItems", "removeItem",
                    "setCaption", "autoCaption", "captioners", "listRuns", "start", "resume",
-                   "cancel", "discard", "status"):
+                   "cancel", "discard", "status", "snapshots", "exportSnapshot"):
             reg(f"training:{ch}", not_wired("LoRA training"))
 
     # --- fal settings (key stored server-side) --------------------------------------------------

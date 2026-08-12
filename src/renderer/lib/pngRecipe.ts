@@ -102,3 +102,26 @@ export async function readRecipeFromBlob(blob: Blob): Promise<Recipe | null> {
     return null
   }
 }
+
+/** Parse an exported `.inline-graph.json`. Same shape and same `app` guard as the PNG chunk, so a
+ * graph round-trips whether it was shared as an image or as a file. */
+export function parseRecipeJson(text: string): Recipe | null {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (parsed && typeof parsed === 'object' && (parsed as Recipe).app === 'inline-studio') {
+      return parsed as Recipe
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+/** Read a recipe from a dropped JSON File. */
+export async function readRecipeFromJsonFile(file: Blob): Promise<Recipe | null> {
+  try {
+    return parseRecipeJson(await file.text())
+  } catch {
+    return null
+  }
+}

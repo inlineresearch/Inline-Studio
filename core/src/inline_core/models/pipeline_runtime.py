@@ -66,6 +66,38 @@ def is_resident(policy: DevicePolicy) -> bool:
     )
 
 
+# VRAM the denoise should still have spare, with the encoder kept resident, before parking is worth
+# its two multi-GB copies. Sized for activations at a large resolution, not for the weights.
+_ENCODER_RESIDENT_HEADROOM_MB = 8 * 1024
+
+
+def module_bytes(module: Any) -> int:
+    """On-device size of a module's parameters and buffers."""
+    try:
+        params = sum(p.numel() * p.element_size() for p in module.parameters())
+        buffers = sum(b.numel() * b.element_size() for b in module.buffers())
+        return params + buffers
+    except Exception:  # noqa: BLE001 - a size estimate must never break a run
+        return 0
+
+
+def should_park_encoder(policy: DevicePolicy, text_encoder: Any) -> bool:
+    """Whether to evict the text encoder to the CPU for the denoise.
+
+    Parking buys VRAM at the cost of a GPU->CPU copy now and a CPU->GPU copy on the next run, which
+    on a large card is seconds of PCIe traffic for headroom that was never contended. So it is only
+    worth it when keeping the encoder would actually crowd the denoise.
+    """
+    if policy.profile is Profile.LOWVRAM:
+        return True
+    free_mb = policy.free_vram_mb()
+    if free_mb is None:
+        return True  # unmeasurable card: keep the conservative behaviour
+    # Measured with the encoder already on the card, so this is exactly what the denoise would get
+    # if it stayed. Parking would hand back its own size on top.
+    return free_mb < _ENCODER_RESIDENT_HEADROOM_MB
+
+
 def configure_pipeline(pipe: Any, policy: DevicePolicy) -> None:
     """Place the pipeline and enable the low-VRAM savers the policy asks for."""
     placement = policy.placement("denoiser")
@@ -340,9 +372,12 @@ def encoded_prompt_kwargs(
         text_encoder.to(device)
         with torch.no_grad():
             kwargs = encode(device)
-        # torchao's .to() round-trip on quantized weights is unreliable, so only the encoder moves.
-        text_encoder.to("cpu")
-        free_vram()
+        park = should_park_encoder(policy, text_encoder)
+        if park:
+            # torchao's .to() round-trip on quantized weights is unreliable, so only the encoder
+            # moves.
+            text_encoder.to("cpu")
+            free_vram()
     except Exception as error:  # noqa: BLE001 - an optimization must never break generation
         logger.warning(
             "Text-encoder GPU encode failed (%s); denoising with the encoder resident.", error
@@ -350,7 +385,17 @@ def encoded_prompt_kwargs(
         try_call(text_encoder.to, device)
         return fallback()
 
-    logger.info("Text encoder parked on the CPU for the denoise | host RAM %.1fGB", host_ram_gb())
+    if park:
+        logger.info(
+            "Text encoder parked on the CPU for the denoise | host RAM %.1fGB", host_ram_gb()
+        )
+    else:
+        logger.info(
+            "Text encoder kept on %s for the denoise (%.1fGB VRAM free) | host RAM %.1fGB",
+            device,
+            (policy.free_vram_mb() or 0) / 1024,
+            host_ram_gb(),
+        )
     return kwargs
 
 
@@ -634,6 +679,7 @@ __all__ = [
     "is_resident",
     "load_image",
     "lora_stack",
+    "module_bytes",
     "oom_message",
     "path_or_none",
     "peak_vram_gb",
@@ -642,6 +688,7 @@ __all__ = [
     "reset_peak_vram",
     "resolve_seed",
     "shrink_vae_tiles",
+    "should_park_encoder",
     "smaller_resolutions",
     "supports_prompt_embeds",
     "text_encoder_detached",

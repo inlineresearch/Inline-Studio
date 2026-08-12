@@ -14,6 +14,7 @@ from .progress import (
     ProgressEvent,
     RunDoneEvent,
     RunEvent,
+    RunStartedEvent,
 )
 
 
@@ -89,6 +90,8 @@ def apply_event(state: RunState, event: RunEvent) -> None:
         known = {t.id for t in state.takes}
         state.takes.extend(t for t in event.takes if t.id not in known)
         _recompute_fraction(state)
+    elif isinstance(event, RunStartedEvent):
+        state.status = RunStatus.RUNNING
     elif isinstance(event, RunDoneEvent):
         state.status = RunStatus.DONE
         state.fraction = 1.0

@@ -48,6 +48,11 @@ def checkpoint(path: str) -> None:
     emit({"type": "checkpoint", "path": path})
 
 
+def snapshot(path: str, step: int) -> None:
+    """A usable LoRA written mid-run, so the orchestrator can list it without scanning."""
+    emit({"type": "snapshot", "path": path, "step": step})
+
+
 def done(output: str) -> None:
     emit({"type": "done", "output": output})
 

@@ -1,5 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CoreParamField } from '@shared/coreNodes'
+import { useModelsTreeStore } from '../../store/modelsTreeStore'
+import { RefreshIcon } from '../../components/icons'
+
+/** Re-scan the models folders so a file added since Core started reaches this picker. */
+function ModelRefreshButton(): React.JSX.Element {
+  const refresh = useModelsTreeStore((s) => s.refresh)
+  const loading = useModelsTreeStore((s) => s.loading)
+  return (
+    <button
+      type="button"
+      onClick={() => void refresh()}
+      disabled={loading}
+      title="Rescan models folder"
+      aria-label="Rescan models folder"
+      className="shrink-0 rounded p-1 text-zinc-500 transition-colors hover:bg-black/30 hover:text-zinc-200 disabled:opacity-40"
+    >
+      <RefreshIcon className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+    </button>
+  )
+}
 
 /**
  * One editable widget for an Inline Core node param, driven by the descriptor's field schema. Mirrors
@@ -52,18 +72,23 @@ export function CoreParamWidget({
     return (
       <label className="flex flex-col gap-1">
         <span className={labelCls}>{field.label}</span>
-        <select
-          value={String(selected)}
-          onChange={(e) => onCommit(e.target.value)}
-          className={inputCls}
-        >
-          {needsEmpty && <option value="">{emptyLabel}</option>}
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-1">
+          <select
+            value={String(selected)}
+            onChange={(e) => onCommit(e.target.value)}
+            className={`${inputCls} min-w-0 flex-1`}
+          >
+            {needsEmpty && <option value="">{emptyLabel}</option>}
+            {options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {/* A file added to models/ after Core started is not in this list until a rescan, and
+              this is where the user notices it is missing. */}
+          {field.optionsFrom && <ModelRefreshButton />}
+        </div>
       </label>
     )
   }
