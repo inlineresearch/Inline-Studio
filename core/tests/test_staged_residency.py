@@ -99,3 +99,95 @@ def test_releasing_a_component_that_is_not_there_is_not_an_error() -> None:
     pipe = _Pipe()
     release_components(pipe, ["audio_vae", "text_encoder", "audio_vae"])
     assert pipe.registered == {}
+
+
+# --- cancellation on the staged path ------------------------------------------------------------
+
+
+class _Module:
+    """Records every device it is moved to, so the transfer traffic is visible to a test."""
+
+    def __init__(self) -> None:
+        self.moves: list[str] = []
+
+    def to(self, device: Any) -> _Module:
+        self.moves.append(str(device))
+        return self
+
+
+class _Phase:
+    def __init__(self, result: Any = "state", boom: Any = None) -> None:
+        self.result = result
+        self.boom = boom
+        self.calls = 0
+
+    def __call__(self, *_args: Any, **_kw: Any) -> Any:
+        self.calls += 1
+        if self.boom is not None:
+            raise self.boom
+        return self.result
+
+
+class _StagedPipe:
+    def __init__(self, head: _Phase, tail: _Phase) -> None:
+        self._inline_phases = (head, tail)
+        self.text_encoder = _Module()
+        self.transformer = _Module()
+
+
+def _render(pipe: Any, **kw: Any) -> Any:
+    from inline_core.models.minimaxh3.pipeline import render_staged
+
+    return render_staged(pipe, "cuda:0", **kw)
+
+
+def test_a_cancelled_denoise_does_not_pay_the_restore_transfers() -> None:
+    """The old `finally` moved the denoiser off and the conditioner back before the exception got
+    out - about 40GB of PCIe traffic, which read as the cancel being ignored."""
+    from inline_core.errors import CancelledError
+
+    pipe = _StagedPipe(_Phase(), _Phase(boom=CancelledError("Run cancelled.")))
+    with pytest.raises(CancelledError):
+        _render(pipe)
+
+    # Setup moves only: the denoiser parked, the conditioner up then parked, the denoiser placed.
+    assert pipe.transformer.moves == ["cpu", "cuda:0"]
+    assert pipe.text_encoder.moves == ["cuda:0", "cpu"]
+
+
+def test_each_half_claims_the_card_before_it_runs() -> None:
+    pipe = _StagedPipe(_Phase(), _Phase(result="video"))
+    assert _render(pipe) == "video"
+    # The conditioner never holds the card while the denoiser does, in either direction.
+    assert pipe.transformer.moves == ["cpu", "cuda:0"]
+    assert pipe.text_encoder.moves == ["cuda:0", "cpu"]
+
+
+def test_cancelling_before_the_encode_skips_both_halves() -> None:
+    from inline_core.errors import CancelledError
+
+    head, tail = _Phase(), _Phase()
+
+    def cancel_check() -> None:
+        raise CancelledError("Run cancelled.")
+
+    with pytest.raises(CancelledError):
+        _render(_StagedPipe(head, tail), cancel_check=cancel_check)
+    assert head.calls == 0 and tail.calls == 0
+
+
+def test_cancelling_after_the_encode_skips_the_denoise() -> None:
+    """The 32B conditioner runs with no step hook, so this is the only checkpoint covering it."""
+    from inline_core.errors import CancelledError
+
+    head, tail = _Phase(), _Phase()
+    seen = {"n": 0}
+
+    def cancel_check() -> None:
+        seen["n"] += 1
+        if seen["n"] > 1:  # let the pre-encode check pass, fail the post-encode one
+            raise CancelledError("Run cancelled.")
+
+    with pytest.raises(CancelledError):
+        _render(_StagedPipe(head, tail), cancel_check=cancel_check)
+    assert head.calls == 1 and tail.calls == 0

@@ -53,7 +53,7 @@ beforeEach(() => {
     generation: { active: async () => ok([]) },
     events: { onActivityChanged: () => () => undefined },
   } as unknown as InlineStudioApi)
-  useActivityStore.setState({ live: [], history: [], error: null })
+  useActivityStore.setState({ live: [], history: [], stopping: [], error: null })
 })
 
 describe('activityStore', () => {
@@ -81,11 +81,20 @@ describe('activityStore', () => {
     expect(historyCalls).toBe(0)
   })
 
-  it('drops a cancelled run locally before the round trip lands', async () => {
+  it('marks a cancelled run stopping rather than claiming it already stopped', async () => {
+    // Cancellation is cooperative: the run ends at its next checkpoint, which inside a model load
+    // is seconds away. Dropping the row here would lie about the GPU being free.
     useActivityStore.getState().applySnapshot([run('r1'), run('r2')])
     await useActivityStore.getState().cancel('r1')
-    expect(useActivityStore.getState().live.map((r) => r.runId)).toEqual(['r2'])
+    expect(useActivityStore.getState().live.map((r) => r.runId)).toEqual(['r1', 'r2'])
+    expect(useActivityStore.getState().stopping).toEqual(['r1'])
     expect(cancelled).toEqual(['r1'])
+  })
+
+  it('clears stopping once Core stops reporting the run', () => {
+    useActivityStore.setState({ live: [run('r1'), run('r2')], stopping: ['r1'] })
+    useActivityStore.getState().applySnapshot([run('r2')])
+    expect(useActivityStore.getState().stopping).toEqual([])
   })
 
   it('cancelAll cancels every live run by id', () => {
@@ -96,7 +105,7 @@ describe('activityStore', () => {
       .cancelAll()
       .then(() => {
         expect(cancelled).toEqual(['r1', 'r2'])
-        expect(useActivityStore.getState().live).toEqual([])
+        expect(useActivityStore.getState().stopping).toEqual(['r1', 'r2'])
       })
   })
 

@@ -33,9 +33,12 @@ function statusLabel(run: ActivityRun): string {
 function RunRow({
   run,
   onCancel,
+  stopping = false,
 }: {
   run: ActivityRun
   onCancel?: (runId: string) => void
+  /** Cancel has been asked for; the run stops at its next checkpoint, not instantly. */
+  stopping?: boolean
 }): React.JSX.Element {
   return (
     <li className="flex items-center gap-2 px-3 py-1.5 hover:bg-black/20">
@@ -48,7 +51,7 @@ function RunRow({
           )}
         </div>
         <div className="truncate text-[10px] text-zinc-500">
-          {statusLabel(run)}
+          {stopping ? 'Stopping…' : statusLabel(run)}
           {run.projectName ? ` · ${run.projectName}` : ''}
         </div>
         {run.status === 'running' && run.fraction !== null && (
@@ -63,10 +66,11 @@ function RunRow({
       {onCancel && (
         <button
           onClick={() => onCancel(run.runId)}
-          title="Cancel this run"
-          className="shrink-0 rounded bg-red-500/15 px-2 py-1 text-[10px] font-medium text-red-300 transition-colors hover:bg-red-500 hover:text-white"
+          disabled={stopping}
+          title={stopping ? 'Stopping at the next checkpoint' : 'Cancel this run'}
+          className="shrink-0 rounded bg-red-500/15 px-2 py-1 text-[10px] font-medium text-red-300 transition-colors hover:bg-red-500 hover:text-white disabled:cursor-not-allowed disabled:bg-red-500/5 disabled:text-red-400/40 disabled:hover:bg-red-500/5"
         >
-          Cancel Run
+          {stopping ? 'Stopping…' : 'Cancel Run'}
         </button>
       )}
     </li>
@@ -96,6 +100,7 @@ export function ActivityIndicator(): React.JSX.Element {
   const cancel = useActivityStore((s) => s.cancel)
   const cancelAll = useActivityStore((s) => s.cancelAll)
   const clearHistory = useActivityStore((s) => s.clearHistory)
+  const stopping = useActivityStore((s) => s.stopping)
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const connected = useSyncExternalStore(subscribeCoreConnection, isCoreConnected, isCoreConnected)
@@ -197,14 +202,24 @@ export function ActivityIndicator(): React.JSX.Element {
             {running.length > 0 && (
               <Section title="Running">
                 {running.map((r) => (
-                  <RunRow key={r.runId} run={r} onCancel={cancel} />
+                  <RunRow
+                    key={r.runId}
+                    run={r}
+                    onCancel={cancel}
+                    stopping={stopping.includes(r.runId)}
+                  />
                 ))}
               </Section>
             )}
             {queued.length > 0 && (
               <Section title="Queued">
                 {queued.map((r) => (
-                  <RunRow key={r.runId} run={r} onCancel={cancel} />
+                  <RunRow
+                    key={r.runId}
+                    run={r}
+                    onCancel={cancel}
+                    stopping={stopping.includes(r.runId)}
+                  />
                 ))}
               </Section>
             )}

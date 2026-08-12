@@ -48,6 +48,7 @@ import type {
   CaptionProgressEvent,
   TrainingLogEvent,
   TrainingSampleEvent,
+  TrainingSnapshot,
   TrainingDoneEvent,
   TrainingErrorEvent,
   SystemStatsEvent,
@@ -158,6 +159,10 @@ export const IpcChannels = {
     cancel: 'training:cancel',
     discard: 'training:discard',
     status: 'training:status',
+    /** Mid-run LoRAs this run has written. */
+    snapshots: 'training:snapshots',
+    /** Copy one snapshot into models/loras/ so a Load LoRA node can pick it. */
+    exportSnapshot: 'training:exportSnapshot',
   },
   falSettings: {
     status: 'falSettings:status',
@@ -284,6 +289,8 @@ export const IpcChannels = {
     /** Main → renderer: LoRA training lifecycle (per-run progress, sample preview, done, error). */
     trainingProgress: 'events:trainingProgress',
     trainingSample: 'events:trainingSample',
+    /** Main → renderer: a mid-run LoRA landed on disk. */
+    trainingSnapshot: 'events:trainingSnapshot',
     trainingLog: 'events:trainingLog',
     captionProgress: 'events:captionProgress',
     trainingDone: 'events:trainingDone',
@@ -522,6 +529,13 @@ export interface InlineStudioApi {
     discard(runId: string): Promise<Result<TrainingRun>>
     /** One run's current durable state. */
     status(runId: string): Promise<Result<TrainingRun>>
+    /** Every mid-run LoRA this run has written, oldest first. */
+    snapshots(runId: string): Promise<Result<TrainingSnapshot[]>>
+    /**
+     * Copy one snapshot into `models/loras/` so a Load LoRA node can select it. Snapshots live in
+     * the project's working dir, which no model picker scans.
+     */
+    exportSnapshot(runId: string, step: number): Promise<Result<{ path: string }>>
   }
   falSettings: {
     /** Is a fal API key saved, and is it stored encrypted? */
@@ -711,6 +725,7 @@ export interface InlineStudioApi {
     /** Subscribe to LoRA training lifecycle pushes. Each returns an unsubscribe fn. */
     onTrainingProgress(callback: (e: TrainingProgressEvent) => void): () => void
     onTrainingSample(callback: (e: TrainingSampleEvent) => void): () => void
+    onTrainingSnapshot(callback: (e: TrainingSnapshot) => void): () => void
     /** One stdout line from the trainer subprocess. */
     onTrainingLog(callback: (e: TrainingLogEvent) => void): () => void
     /** Auto-caption progress for a dataset. */

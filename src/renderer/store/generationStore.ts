@@ -153,16 +153,20 @@ export const useGenerationStore = create<GenerationState>((set) => ({
   },
 
   cancel: async (frameId) => {
-    // Reset the node right away - the run is also cancelled server-side, but the UI shouldn't
-    // wait on the round-trip. Without a frame id, clear every in-flight node.
+    // The node stays busy and says "Stopping…" until Core confirms. Cancellation is cooperative:
+    // the run stops at its next checkpoint, and inside a model load that is seconds away. Clearing
+    // the node here used to claim it had stopped while the GPU was still working.
+    const stopping = 'Stopping…'
     set((s) =>
       frameId
-        ? {
-            busyByFrame: { ...s.busyByFrame, [frameId]: false },
-            progressByFrame: { ...s.progressByFrame, [frameId]: null },
-            statusByFrame: { ...s.statusByFrame, [frameId]: undefined },
-          }
-        : { busyByFrame: {}, progressByFrame: {}, statusByFrame: {} },
+        ? { statusByFrame: { ...s.statusByFrame, [frameId]: stopping } }
+        : {
+            statusByFrame: Object.fromEntries(
+              Object.keys(s.busyByFrame)
+                .filter((id) => s.busyByFrame[id])
+                .map((id) => [id, stopping]),
+            ),
+          },
     )
     try {
       await studio().generation.cancel(frameId)

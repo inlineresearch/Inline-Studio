@@ -485,6 +485,20 @@ export interface ModelTreeRoot {
   categories: ModelTreeDir[]
 }
 
+/**
+ * A LoRA written partway through a training run, so a run can be judged before it finishes.
+ * Lives in the project's working dir, which no model picker scans - `exportSnapshot` copies one
+ * into `models/loras/` to make it selectable.
+ */
+export interface TrainingSnapshot {
+  runId: string
+  step: number
+  /** Project-relative path, for the download link. */
+  path: string
+  sizeBytes: number
+  createdAt: number
+}
+
 /** Main → renderer: progress (0..1) of an explicit model download (the node's model popup). */
 export interface ModelDownloadProgressEvent {
   nodeType: string

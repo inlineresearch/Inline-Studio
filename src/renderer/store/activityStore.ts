@@ -17,6 +17,8 @@ interface ActivityState {
   live: ActivityRun[]
   /** Finished runs for the open project, newest first. */
   history: ActivityRun[]
+  /** Runs we have asked Core to stop, until it confirms they are gone. */
+  stopping: string[]
   error: string | null
 
   load: () => Promise<void>
@@ -31,6 +33,7 @@ interface ActivityState {
 export const useActivityStore = create<ActivityState>((set, get) => ({
   live: [],
   history: [],
+  stopping: [],
   error: null,
 
   load: async () => {
@@ -52,8 +55,10 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   },
 
   cancel: async (runId) => {
-    // Drop it locally first so the row stops looking live during the round trip.
-    set((s) => ({ live: s.live.filter((r) => r.runId !== runId) }))
+    // Kept in the list, marked stopping. Cancellation is cooperative: the run stops at its next
+    // checkpoint, which during a model load is seconds away. Dropping the row here would claim it
+    // had already stopped while the GPU was still working.
+    set((s) => ({ stopping: [...new Set([...s.stopping, runId])] }))
     try {
       const res = await studio().activity.cancel(runId)
       if (!res.ok) set({ error: res.error })
@@ -64,7 +69,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
 
   cancelAll: async () => {
     const runs = get().live
-    set({ live: [] })
+    set({ stopping: runs.map((r) => r.runId) })
     // One call per run rather than a blanket cancel: training and fal runs do not share the
     // generation cancel path, and the registry already knows how to route each id.
     for (const run of runs) {
@@ -88,7 +93,9 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
 
   applySnapshot: (runs) => {
     const previous = get().live
-    set({ live: runs })
+    const alive = new Set(runs.map((r) => r.runId))
+    // Core is authoritative: a run it no longer reports has genuinely stopped.
+    set({ live: runs, stopping: get().stopping.filter((id) => alive.has(id)) })
     // A run leaving the live list finished, so the open project's history is now stale.
     if (previous.some((r) => !runs.find((n) => n.runId === r.runId))) void get().loadHistory()
   },

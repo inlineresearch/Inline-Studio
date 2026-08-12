@@ -397,6 +397,23 @@ def create_app(
             ),
         )
 
+        @app.get("/download/snapshot/{run_id}/{step}")
+        async def download_snapshot(run_id: str, step: int) -> Response:
+            # A mid-run LoRA lives in the project's working dir, which /media does not surface and
+            # no model picker scans, so a download is the only way to get one out of the browser.
+            try:
+                root = (studio_store.folder() / "training_runs" / run_id / "snapshots").resolve()
+            except RuntimeError:
+                return Response("No project open", status_code=404)
+            target = (root / f"step-{step:06d}.safetensors").resolve()
+            if target.parent != root:  # no traversal out of the run's own folder
+                return Response("Forbidden", status_code=403)
+            if not target.is_file():
+                return Response("Not found", status_code=404)
+            return FileResponse(
+                target, filename=target.name, media_type="application/octet-stream"
+            )
+
         @app.get("/media/{media_path:path}")
         async def media(media_path: str, request: Request) -> Response:
             try:

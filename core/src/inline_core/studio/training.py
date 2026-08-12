@@ -346,6 +346,56 @@ class Training:
             patch |= {"status": "cancelled", "error": "Checkpoints discarded; settings changed."}
         return ts.update_run(self._conn(), run_id, patch)
 
+    def _run_dir(self, run_id: str) -> Path:
+        """The run's working dir, in the project it was started in rather than the open one."""
+        ref = self._refs.get(run_id)
+        folder = ref.folder if ref is not None else self._store.folder()
+        return Path(folder) / "training_runs" / run_id
+
+    def snapshots(self, run_id: str) -> list[dict[str, Any]]:
+        """Every mid-run LoRA this run has written, oldest first.
+
+        Read from disk rather than tracked in the row: the trainer owns the folder, and a listing
+        that drifts from what is actually there is worse than no listing.
+        """
+        folder = self._run_dir(run_id) / "snapshots"
+        if not folder.is_dir():
+            return []
+        out: list[dict[str, Any]] = []
+        for file in sorted(folder.glob("step-*.safetensors")):
+            digits = file.stem.removeprefix("step-")
+            stat = file.stat()
+            out.append(
+                {
+                    "runId": run_id,
+                    "step": int(digits) if digits.isdigit() else 0,
+                    "path": self._relativize(str(file)),
+                    "sizeBytes": stat.st_size,
+                    "createdAt": int(stat.st_mtime * 1000),
+                }
+            )
+        return out
+
+    def export_snapshot(self, run_id: str, step: int) -> dict[str, Any]:
+        """Copy one snapshot into ``models/loras/`` so a Load LoRA node can actually pick it.
+
+        Snapshots live in the project's working dir, which no model picker scans. Copying is what
+        turns "a file exists" into something a user can experiment with.
+        """
+        source = self._run_dir(run_id) / "snapshots" / f"step-{step:06d}.safetensors"
+        if not source.is_file():
+            raise ValueError(f"Run {run_id} has no snapshot at step {step}.")
+        run = self._lookup(run_id) or {}
+        loras = models_dir() / "loras"
+        loras.mkdir(parents=True, exist_ok=True)
+        stem = f"{_safe(str(run.get('name') or run_id))}-step{step}"
+        rel = _unique_lora_name(loras, stem)
+        shutil.copyfile(source, models_dir() / rel)
+        # Same hook a finished run uses, so the new file bumps the registry and reaches the picker.
+        if self._on_output is not None:
+            self._on_output()
+        return {"path": rel}
+
     def cancel(self, run_id: str) -> None:
         proc = self._active.get(run_id)
         if proc is not None:
@@ -409,6 +459,17 @@ class Training:
                 )
             elif kind == "checkpoint" and msg.get("path"):
                 self._persist(run_id, {"checkpointPath": msg["path"]})
+            elif kind == "snapshot" and msg.get("path"):
+                # The trainer has emitted these all along; nothing listened, so a mid-run LoRA sat
+                # on disk with no way to reach it.
+                self._events.broadcast(
+                    "events:trainingSnapshot",
+                    {
+                        "runId": run_id,
+                        "step": int(msg.get("step", 0)),
+                        "path": self._relativize(msg["path"]),
+                    },
+                )
             elif kind == "error" and msg.get("message"):
                 # A trainer-side failure: keep it in the run's log so the node shows why it died.
                 self._events.broadcast(

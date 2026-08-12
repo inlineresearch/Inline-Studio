@@ -452,7 +452,7 @@ def _denoiser_name(blocks: Any) -> str:
     raise ComponentError("This MiniMax H3 blockset declares no denoiser component.")
 
 
-def render_staged(pipe: Any, device: Any, **call: Any) -> Any:
+def render_staged(pipe: Any, device: Any, cancel_check: Any = None, **call: Any) -> Any:
     """Encode the prompt, get the conditioner off the card, then denoise with the card to itself.
 
     H3's conditioner is a 32B model that rivals its denoiser, and holding both means the denoiser
@@ -463,20 +463,39 @@ def render_staged(pipe: Any, device: Any, **call: Any) -> Any:
     Falls back to the single call when the pipeline was not built staged, so a caller never has to
     ask which kind it holds.
     """
+    def check() -> None:
+        if cancel_check is not None:
+            cancel_check()
+
     phases = getattr(pipe, "_inline_phases", None)
     if phases is None:
+        check()
         return pipe(**call)
     head, tail = phases
     device = str(device)
+
+    # Parked, not released: the next render needs it again, and 19.5 GB across the bus is seconds
+    # against the minutes of streaming it buys back.
+    denoiser = getattr(pipe, getattr(pipe, "_inline_denoiser", "transformer"))
+    resident = getattr(pipe, "_inline_resident_denoiser", True)
+
+    # Each half claims the card *before* it runs rather than the previous one restoring the layout
+    # on its way out. Same two transfers per render in the steady state, but a cancelled denoise no
+    # longer pays ~40 GB of restore traffic before the exception surfaces, which read as the cancel
+    # being ignored for half a minute. A `.to()` onto the device a module already sits on is free.
+    check()
+    if resident:
+        denoiser.to("cpu")
+    pipe.text_encoder.to(device)
+    rt.free_vram()
 
     # Every kwarg goes to BOTH halves, not just the first. `set_timesteps` lives in the tail, so a
     # head-only handoff left it reading the descriptor default: a render that asked for 8 steps
     # silently took 49. The halves ignore what their own blocks do not declare, so this is safe.
     state = head(**call)
-    # Parked, not released: the next render needs it again, and 19.5 GB across the bus is seconds
-    # against the minutes of streaming it buys back.
-    denoiser = getattr(pipe, getattr(pipe, "_inline_denoiser", "transformer"))
-    resident = getattr(pipe, "_inline_resident_denoiser", True)
+    # The conditioner is a 32B model, so the encode alone runs for a while with no step hook to
+    # cancel from; without this a cancel there waits for the whole denoise as well.
+    check()
 
     # Parking the conditioner is worth doing either way: it frees the card for activations even when
     # the denoiser is too big to take it. Moving the denoiser across is only right when it fits.
@@ -487,9 +506,6 @@ def render_staged(pipe: Any, device: Any, **call: Any) -> Any:
     try:
         return tail(state, **call)
     finally:
-        if resident:
-            denoiser.to("cpu")
-        pipe.text_encoder.to(device)
         rt.free_vram()
 
 
