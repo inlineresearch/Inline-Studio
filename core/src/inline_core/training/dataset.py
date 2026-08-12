@@ -10,6 +10,7 @@ path never produces, so each arch reuses its own pipeline's encoder rather than 
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,40 @@ def media_pairs(root: Path) -> list[tuple[Path, str]]:
     Public because the video archs and the on-disk cache both need the same enumeration, and the
     suffix lists that define it belong to this module."""
     return _pairs(root, _IMAGE_SUFFIXES + _VIDEO_SUFFIXES)
+
+
+#: A Motion LoRA's reference sits beside its target as ``0001.ref.mp4`` next to ``0001.mp4``, so a
+#: pair is discoverable from the folder alone and survives being copied somewhere else.
+_REFERENCE_INFIX = ".ref"
+
+
+@dataclass(frozen=True)
+class MediaTriple:
+    """One dataset item: what to train on, what to call it, and what to transform from."""
+
+    target: Path
+    caption: str
+    #: The `before` of a Motion LoRA pair, or None on a clip-mode item.
+    reference: Path | None
+
+
+def media_triples(root: Path) -> list[MediaTriple]:
+    """Every dataset item with its reference, where one was exported beside it.
+
+    Added rather than folded into ``media_pairs`` so the H3 path keeps the enumeration it was
+    written against; the reference convention is LTX's alone.
+    """
+    out: list[MediaTriple] = []
+    for media, caption in media_pairs(root):
+        if _REFERENCE_INFIX in media.suffixes[:-1] or media.stem.endswith(_REFERENCE_INFIX):
+            continue  # a reference is discovered through its target, never as an item of its own
+        reference = next(
+            (c for c in (media.with_suffix(f"{_REFERENCE_INFIX}{s}") for s in _VIDEO_SUFFIXES)
+             if c.exists()),
+            None,
+        )
+        out.append(MediaTriple(media, caption, reference))
+    return out
 
 
 def _pairs(
