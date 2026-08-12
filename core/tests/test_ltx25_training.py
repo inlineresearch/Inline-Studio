@@ -122,3 +122,36 @@ def test_narrowing_to_attention_works_on_both_modes() -> None:
 
 def test_an_unknown_mode_falls_back_to_the_arch_default() -> None:
     assert archs.target_modules(ARCH, "full", None) == ARCH.target_modules
+
+
+# --- latent tools --------------------------------------------------------------------------------
+
+
+def test_latent_tools_are_derived_from_the_shape_in_hand() -> None:
+    """`VideoLatentTools` asserts the latent matches its `target_shape`, so carrying one on the item
+    would turn a mixed-shape dataset into an assertion. It is built from the latent instead."""
+    from inline_core.training.arch import ltx25_latent_tools
+
+    tools = ltx25_latent_tools((1, 128, 7, 18, 30))
+    state = tools.create_initial_state("cpu", torch.float32, torch.zeros(1, 128, 7, 18, 30))
+    assert state is not None
+    assert tools.patchifier.get_token_count(tools.target_shape) > 0
+
+
+def test_a_second_shape_gets_its_own_tools() -> None:
+    from inline_core.training.arch import ltx25_latent_tools
+
+    a = ltx25_latent_tools((1, 128, 7, 18, 30))
+    b = ltx25_latent_tools((1, 128, 13, 18, 30))
+    assert a is not b
+    assert a is ltx25_latent_tools((1, 128, 7, 18, 30)), "same shape reuses the cached tools"
+
+
+def test_the_wrong_shape_is_refused_rather_than_reshaped() -> None:
+    """The assertion is the safety net: a latent that does not match would otherwise be patchified
+    against the wrong grid and train on nonsense."""
+    from inline_core.training.arch import ltx25_latent_tools
+
+    tools = ltx25_latent_tools((1, 128, 7, 18, 30))
+    with pytest.raises(AssertionError):
+        tools.create_initial_state("cpu", torch.float32, torch.zeros(1, 128, 9, 18, 30))

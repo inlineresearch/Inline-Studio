@@ -122,6 +122,15 @@ class Training:
     def set_caption(self, item_id: str, caption: str) -> dict[str, Any]:
         return ts.set_caption(self._conn(), item_id, caption)
 
+    def set_item_reference(
+        self, item_id: str, reference_asset_id: str | None
+    ) -> dict[str, Any]:
+        """Pair a reference clip with an item, for a Motion LoRA."""
+        return ts.set_item_reference(self._conn(), item_id, reference_asset_id or None)
+
+    def set_dataset_mode(self, dataset_id: str, mode: str) -> dict[str, Any]:
+        return ts.set_dataset_mode(self._conn(), dataset_id, mode)
+
     def list_runs(self) -> list[dict[str, Any]]:
         conn = self._conn()
         self._reconcile_orphans(conn)

@@ -37,7 +37,27 @@ It runs as a **single process on one port**: the Inline Core engine (Python) ser
 
 ## Get Started
 
-The built web UI ships as a Python package, so all you need is [Python 3.11+](https://python.org), no Node. **`--install --extra all` is the single command that installs everything** - the engine, the local model runtime, the LoRA trainer, and the UI. On an NVIDIA machine it reads the GPU's compute capability and pulls the CUDA build of PyTorch that has kernels for it, RTX 50-series included.
+The built web UI ships as a Python package, so there is no Node and no build step. You need two
+things: [Python 3.11+](https://python.org) and [**uv**](https://github.com/astral-sh/uv), which the
+installer uses to create the environment and resolve packages. `--install` stops with
+`uv not found` if it is missing.
+
+**Install uv first** (one line, no Python needed):
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+```powershell
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Or use whatever you already have: `brew install uv`, `pipx install uv`, `pip install uv`. Full
+options: [docs.astral.sh/uv/getting-started/installation](https://docs.astral.sh/uv/getting-started/installation/).
+
+Then **`--install --extra all` is the single command that installs everything** - the engine, the local model runtime, the LoRA trainer, and the UI. On an NVIDIA machine it reads the GPU's compute capability and pulls the CUDA build of PyTorch that has kernels for it, RTX 50-series included.
 
 [**No GPU? Deploy Inline Studio on RunPod →**](https://console.runpod.io/deploy?template=c0qkyaypuv&ref=hs2l4qhc)
 
@@ -66,7 +86,7 @@ That's it: `--install` sets up the environment and installs everything once, the
 
 Everything lands in `core/.venv`, which Inline Studio owns. If you already have another virtualenv or conda env activated in that shell (a ComfyUI one, say), it is left completely untouched - `--install` says so and carries on. Re-running `--install` is safe: an existing `core/.venv` is reused, so adding an extra later is just another `--install --extra NAME`.
 
-Prefer pip over the launcher? `pip install -r requirements.txt` (from the repo root) installs the whole app - engine, UI, model runtime, and trainer - from PyPI; then run `inline-studio`.
+Prefer pip over the launcher, or would rather not install uv at all? `pip install -r requirements.txt` (from the repo root) installs the whole app - engine, UI, model runtime, and trainer - from PyPI; then run `inline-studio`. This path uses no uv, but it also does not detect your GPU, so on Windows you may need to name the CUDA build yourself.
 
 ### Hardware support
 
@@ -397,7 +417,8 @@ core/models/
 Worth knowing before you start a download this size:
 
 - **You have to accept the licence first.** The weights are gated on Hugging Face. Open the model page, accept the LTX-2 Community License, and make sure the account you accepted with is the one your token belongs to. Without that every download returns a permission error rather than a file.
-- **71 GB for fast mode, 122 GB with quality mode.** The transformer is 42 GB and the text encoder another 26, and they are never on the card together: the prompt is encoded first and the encoder steps off before the denoiser loads.
+- **71 GB for fast mode, 122 GB with quality mode.** The transformer is 42 GB and the text encoder another 26, and they are on the card at the same time while the prompt is encoded. That peak, not either file on its own, is what your card has to hold, and it is why a 48 GB card runs the transformer at half precision rather than full.
+- **Measured on a 48 GB L40S:** a 2 second clip at 960x576 takes about **3.8 minutes**, or **7.8 minutes** on the first render while the model loads, peaking at 32 GB VRAM. Longer clips and larger canvases scale from there.
 - **LTX streams its own weights, which changes what a small card means.** Most models here either fit or are refused. LTX can stream from system RAM, or from disk through a buffer of about 5 GB, so a card that cannot hold the model is slow rather than excluded. It picks for you from what your machine actually has.
 - **The `int8_convrot` builds do not load.** Their weights are stored rotated and only ComfyUI can undo that. The picker lists them with the reason rather than hiding them. The bf16 builds load everywhere; the NVFP4 build loads on Blackwell cards with `ltx-kernels` installed.
 - **The distilled and dev transformers are indistinguishable.** Same architecture, same metadata, same byte count. Which is which is recorded when the popup downloads them. If you move or rename one by hand, point the node at it explicitly with the Diffusion model dropdown.

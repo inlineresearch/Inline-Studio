@@ -569,22 +569,34 @@ export type TrainingStatus =
   /** Died to a crash/OOM/restart; resumable from its last checkpoint. */
   | 'interrupted'
 
-/** A named set of images (+ captions) that trains one LoRA. */
+/** A named set of images or clips (+ captions) that trains one LoRA. */
 export interface TrainingDataset {
   id: string
   projectId: string
   name: string
   /** Token injected into every caption (the character/style trigger); may be empty. */
   triggerWord: string
+  /**
+   * `clip` trains on one media file per item. `motion` is LTX-2.5's IC-LoRA: every item also needs
+   * a reference clip, and the model learns the transform between the pair. Defaults to `clip`, so
+   * a dataset made before this existed keeps its meaning.
+   */
+  mode: TrainingMode
   createdAt: number
   updatedAt: number
 }
 
-/** One image in a dataset, with its caption. Backed by a library asset. */
+/** One image or clip in a dataset, with its caption. Backed by a library asset. */
 export interface TrainingDatasetItem {
   id: string
   datasetId: string
   assetId: string
+  /**
+   * The `before` of a Motion LoRA pair, or null on a clip-mode item. A motion run refuses to start
+   * while any item is unpaired, because a missing reference does not fail loudly once training is
+   * under way - the pair is simply absent.
+   */
+  referenceAssetId: string | null
   caption: string
   position: number
   createdAt: number

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 Z_IMAGE = "z-image"
@@ -345,6 +346,14 @@ def _h3_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, Any
 
 # --- LTX-2.5 --------------------------------------------------------------------------------------
 
+
+def _ltx25_export_keys(state: dict[str, Any]) -> dict[str, Any]:
+    """Published LTX naming, and the alpha scale folded in so other loaders read it the same."""
+    from ..models.ltx25.lora_keys import export_reference
+
+    return export_reference(state)
+
+
 #: Video-only IC-LoRA, for a Motion LoRA learning a transform from a reference clip. Explicit
 #: `attn1`/`attn2` prefixes so the audio branch is left alone, plus the feed-forward, which is
 #: upstream's advice for transformation quality.
@@ -361,6 +370,27 @@ _LTX25_MOTION_TARGETS = [
 _LTX25_CLIP_TARGETS = ["to_k", "to_q", "to_v", "to_out.0"]
 
 
+@lru_cache(maxsize=8)
+def ltx25_latent_tools(shape: tuple[int, ...], fps: float = 24.0) -> Any:
+    """`VideoLatentTools` for one latent shape, built the way the pipeline builds them.
+
+    Shape-bound by design - ``create_initial_state`` asserts the latent matches its ``target_shape``
+    - so it is derived from the latent in hand rather than carried on the item, which would make a
+    mixed-shape dataset an assertion instead of a run. Cached because a run at one resolution and
+    clip length asks for the same shape every step.
+    """
+    from ..models.ltx25.vendor.ltx_core.components.patchifiers import VideoLatentPatchifier
+    from ..models.ltx25.vendor.ltx_core.tools import VideoLatentTools
+    from ..models.ltx25.vendor.ltx_core.types import VideoLatentShape
+
+    batch, channels, frames, height, width = shape
+    return VideoLatentTools(
+        VideoLatentPatchifier(patch_size=1),
+        VideoLatentShape(batch, channels, frames, height, width),
+        fps,
+    )
+
+
 def _ltx25_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, Any]) -> Any:
     """One velocity prediction from LTX's transformer.
 
@@ -374,17 +404,19 @@ def _ltx25_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, 
     """
     from ..models.ltx25.vendor.ltx_pipelines.utils.helpers import modality_from_latent_state
 
-    tools = item["latent_tools"]
-    state = tools.create_initial_state(noisy.device, noisy.dtype, noisy.unsqueeze(0))
-    if (reference := item.get("reference")) is not None:
+    batched = noisy.unsqueeze(0)
+    tools = ltx25_latent_tools(tuple(batched.shape))
+    state = tools.create_initial_state(noisy.device, noisy.dtype, batched)
+    reference = item.get("reference")
+    if reference is not None:
         state = reference.apply_to(latent_state=state, latent_tools=tools)
     modality = modality_from_latent_state(state, item["embed"].unsqueeze(0), timestep.reshape(1))
 
     velocity, _audio = transformer(video=modality, audio=None, perturbations=None)
-    # Reference tokens are prepended, so only the trailing target tokens are compared to the target.
-    if item.get("reference") is not None:
-        velocity = velocity[:, -state.target_token_count:]
-    return tools.unpatchify(velocity, noisy.shape)[0]
+    if reference is not None:
+        # Reference tokens are prepended and carry no loss, so only the target tail is compared.
+        velocity = velocity[:, -tools.patchifier.get_token_count(tools.target_shape):]
+    return tools.unpatchify(velocity, batched.shape)[0]
 
 
 ARCHS: dict[str, TrainingArch] = {
@@ -433,6 +465,7 @@ ARCHS: dict[str, TrainingArch] = {
     ),
     LTX25: TrainingArch(
         key=LTX25,
+        export_keys=_ltx25_export_keys,
         target_modules=_LTX25_CLIP_TARGETS,
         mode_target_modules={MODE_CLIP: _LTX25_CLIP_TARGETS, MODE_MOTION: _LTX25_MOTION_TARGETS},
         sigma=_zimage_sigma,

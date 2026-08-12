@@ -161,9 +161,16 @@ def _looks_like_single_image(array: np.ndarray[Any, Any]) -> bool:
 
 
 def _to_numpy(value: Any) -> Any:
-    if hasattr(value, "detach"):  # a torch tensor
-        return value.detach().to("cpu").numpy()
-    return value
+    if not hasattr(value, "detach"):  # not a torch tensor
+        return value
+    tensor = value.detach().to("cpu")
+    try:
+        return tensor.numpy()
+    except TypeError:
+        # numpy has no bfloat16 and no fp8, and a model hands its frames back in whatever compute
+        # dtype it ran in - LTX-2.5 returns bf16. Upcasting is the only conversion available, and
+        # doing it here keeps this module torch-free rather than naming dtypes it cannot import.
+        return tensor.float().numpy()
 
 
 def _to_rgb(frame: Any) -> np.ndarray[Any, Any]:

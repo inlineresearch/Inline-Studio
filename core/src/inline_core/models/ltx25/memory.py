@@ -32,6 +32,18 @@ _CPU_OFFLOAD_RAM_HEADROOM_BYTES = 8 * 1024**3
 #: checkpoint halves. It needs no hardware fp8 support: the cast is storage, not arithmetic.
 _FP8_FACTOR = 0.5
 
+#: Working room for the denoise on top of every resident weight. Video activations dwarf an image
+#: model's - a 121-frame clip carries tens of thousands of tokens through attention - so Core's
+#: 2.5 GB image-tuned headroom is not enough. Measured, not guessed: a 960x576 clip peaked at
+#: 7.71 GiB with the weights streamed, and bf16 resident left 0.6 GiB spare on a 44.39 GiB L40S and
+#: OOMed while the transformer was still streaming in.
+_ACTIVATION_RESERVE_BYTES = 8 * 1024**3
+
+#: What a streamed prompt encoder needs on the card while it runs. The encoder is 24.5 GiB resident,
+#: which is what forced the transformer to stream in the first place; streaming the encoder instead
+#: costs a buffer this size and frees the rest of the card for the model that actually denoises.
+_ENCODER_STREAM_BYTES = 5 * 1024**3
+
 QUANT_NONE = ""
 QUANT_FP8_CAST = "fp8-cast"
 QUANT_NVFP4_PREQUANT = "nvfp4-prequant"
@@ -40,14 +52,36 @@ OFFLOAD_NONE = "none"
 OFFLOAD_CPU = "cpu"
 OFFLOAD_DISK = "disk"
 
+#: `DevicePolicy.vram_budget_mb` is **not** MiB. The policy stores capacity as decimal GB
+#: (`torch.cuda.mem_get_info()[1] / 1e9`) and multiplies by 1024, so an L40S reports 48811 for a
+#: card holding 44.39 GiB. Reading it as MiB overstates the card by 7.4% - and overstating is the
+#: dangerous direction, because it promises "fully resident" on a card that then has nothing left
+#: for activations. Everything else here is real bytes, so the conversion belongs in one place.
+_VRAM_MB_TO_BYTES = 1e9 / 1024
+
+
+def vram_bytes(policy: Any) -> int:
+    """The accelerator's capacity in real bytes, from the policy's decimal-GB budget."""
+    budget = policy.vram_budget_mb() if policy is not None else None
+    return int(budget * _VRAM_MB_TO_BYTES) if budget else 0
+
+
+def ram_bytes(policy: Any) -> int:
+    """Free host RAM in real bytes. Same convention as ``vram_budget_mb``."""
+    free = policy.free_ram_mb() if policy is not None else None
+    return int(free * _VRAM_MB_TO_BYTES) if free else 0
+
 
 @dataclass(frozen=True)
 class Ltx25Plan:
-    """How to load the transformer on this machine."""
+    """How to load the transformer on this machine, and how to load the encoder beside it."""
 
     quantization: str
     offload: str
     note: str
+    #: The prompt encoder's own offload mode. Separate from the transformer's on purpose - see
+    #: ``plan_for``. Streaming it is what lets the transformer stay resident.
+    encoder_offload: str = OFFLOAD_CPU
 
     @property
     def streams(self) -> bool:
@@ -60,6 +94,7 @@ def plan_for(
     model_bytes: int,
     total_vram_bytes: int,
     free_ram_bytes: int,
+    fixed_bytes: int = 0,
     prequantised: bool = False,
     kernels_available: bool = False,
 ) -> Ltx25Plan | None:
@@ -72,9 +107,23 @@ def plan_for(
 
     A prequantised NVFP4 checkpoint is already in its target form and is never re-quantised, which
     is the rule `core/CLAUDE.md` states for FLUX.2's prequantised builds and applies unchanged here.
+
+    **The encoder and the transformer get different offload modes**, which is the whole point. They
+    are never both needed at once - Gemma runs, is freed, and only then does the denoise start - but
+    the pipeline holds the transformer from construction, so sizing them as one resident block made
+    a 39 GiB transformer stream on a card with room for it. Measured: the denoise itself peaked at
+    7.71 GiB. Streaming the encoder costs a 5 GiB buffer and buys back 24.5 GiB.
     """
     if total_vram_bytes and total_vram_bytes < _STREAM_VRAM_FLOOR_BYTES:
         return None
+
+    # The transformer never has the card to itself: both VAEs and the spatial upscaler stay
+    # resident beside it, and the denoise needs working room on top. Sizing against the transformer
+    # alone is what promised "fully resident" on a 44 GiB L40S and then OOMed mid-load.
+    budget = max(
+        0,
+        total_vram_bytes - fixed_bytes - _ACTIVATION_RESERVE_BYTES - _ENCODER_STREAM_BYTES,
+    )
 
     if prequantised:
         # The file only loads through the NVFP4 path; without the kernels there is nothing to fall
@@ -82,21 +131,24 @@ def plan_for(
         if not kernels_available:
             return None
         return _fit(
-            QUANT_NVFP4_PREQUANT, model_bytes, total_vram_bytes, free_ram_bytes,
+            QUANT_NVFP4_PREQUANT, model_bytes, budget, free_ram_bytes,
             "NVFP4, prequantised.",
         )
 
-    if fit_plan == "resident" and model_bytes and total_vram_bytes >= model_bytes:
+    if fit_plan == "resident" and model_bytes and budget >= model_bytes:
         return Ltx25Plan(QUANT_NONE, OFFLOAD_NONE, "bf16, fully resident.")
 
     return _fit(
-        QUANT_FP8_CAST, int(model_bytes * _FP8_FACTOR), total_vram_bytes, free_ram_bytes,
+        QUANT_FP8_CAST, int(model_bytes * _FP8_FACTOR), budget, free_ram_bytes,
         "fp8-cast, which halves the transformer and costs a little fidelity.",
     )
 
 
 def _fit(quant: str, resident_bytes: int, vram: int, ram: int, note: str) -> Ltx25Plan:
-    """Whether a quantised model sits on the card, streams from RAM, or streams from disk."""
+    """Whether a quantised model sits on the card, streams from RAM, or streams from disk.
+
+    ``vram`` is already net of the resident components and the activation reserve.
+    """
     if vram and resident_bytes and vram >= resident_bytes:
         return Ltx25Plan(quant, OFFLOAD_NONE, note)
     if ram and resident_bytes and ram >= resident_bytes + _CPU_OFFLOAD_RAM_HEADROOM_BYTES:
@@ -109,13 +161,18 @@ def _fit(quant: str, resident_bytes: int, vram: int, ram: int, note: str) -> Ltx
 
 def offload_mode(plan: Ltx25Plan) -> Any:
     """``plan.offload`` as the vendored enum."""
+    return offload_mode_for(plan.offload)
+
+
+def offload_mode_for(mode: str) -> Any:
+    """One of our offload names as the vendored enum."""
     from .vendor.ltx_pipelines.utils.types import OffloadMode
 
     return {
         OFFLOAD_NONE: OffloadMode.NONE,
         OFFLOAD_CPU: OffloadMode.CPU,
         OFFLOAD_DISK: OffloadMode.DISK,
-    }[plan.offload]
+    }[mode]
 
 
 def quantization_policy(plan: Ltx25Plan, checkpoint_path: str) -> Any | None:

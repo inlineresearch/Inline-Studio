@@ -184,3 +184,18 @@ class _Asset:
 
 def _asset(path: Path) -> Any:
     return _Asset(path)
+
+
+def test_a_yielded_chunk_is_split_into_frames() -> None:
+    """The pipeline yields batches, not frames: a 2 second clip arrives as one (49,576,960,3)
+    tensor. Wrapping a batch as a single frame reaches the encoder before it fails."""
+    torch = pytest.importorskip("torch")
+    from inline_core.models.ltx25.pipeline import _frames_in
+
+    batch = torch.zeros(49, 8, 8, 3)
+    assert len(_frames_in(batch)) == 49
+    assert _frames_in(batch)[0].shape == (8, 8, 3)
+
+    single = torch.zeros(8, 8, 3)
+    assert len(_frames_in(single)) == 1
+    assert len(_frames_in([single, single])) == 2

@@ -74,16 +74,15 @@ class Ltx25Provider:
         """LTX files that are present but unusable, each with the reason."""
         return [
             {"file": candidate.path.name, "reason": candidate.reason}
-            for candidate in reqs.rejected_transformers()
+            for candidate in reqs.rejected_files()
         ]
 
     def estimate(self, policy: Any) -> dict[str, Any] | None:
         """Whether this will fit, before a 71 GB download rather than after.
 
-        Peak is staged, not the sum of every component: the prompt is encoded first and the 26 GB
-        Gemma 4 encoder freed before the 42 GB transformer loads, because nothing short of an 80 GB
-        card holds both. So the number that matters is max(encoder, transformer + VAEs), and the
-        encoder is the smaller half.
+        Not staged. The pipeline puts the transformer on the card in its constructor and loads Gemma
+        lazily at encode time, so both are resident at the peak - measured, after an OOM that said
+        so. The estimate therefore sums every component rather than taking the larger half.
         """
         if policy is None:
             return None
@@ -94,14 +93,12 @@ class Ltx25Provider:
         sizes = reqs.footprint_bytes(self._build)
         if not any(sizes.values()):
             return None
-        staged = ModelFootprint(
+        peak = ModelFootprint(
             diffusion_bytes=sizes["diffusion_bytes"],
-            # Staged loading means the encoder is not resident while the denoiser runs, so it does
-            # not belong in the peak the fit ladder sizes against.
-            text_encoder_bytes=0,
+            text_encoder_bytes=sizes["text_encoder_bytes"],
             vae_bytes=sizes["vae_bytes"],
         )
-        fit = policy.estimate_fit(staged)
+        fit = policy.estimate_fit(peak)
         if fit is None:
             return None
         soft = not fit.fits or fit.plan in ("int8", "offload")

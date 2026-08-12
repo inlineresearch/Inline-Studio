@@ -157,9 +157,24 @@ together, which is what keeps a generated soundtrack in step with a changed pict
 
 ## Benchmark results
 
-> **LTX-2.5 has not been measured yet.** The tables below carry no LTX rows on purpose. The runbook
-> for producing them is at the end of this section; until it has been run on real hardware there is
-> no honest number to publish, and a guessed one is worse than a gap.
+> **LTX-2.5 generation is measured; LTX-2.5 training is not.** Generation numbers are below. The
+> training tables carry no LTX rows on purpose - the trainer's LTX data path is not finished, so
+> there is nothing to measure yet, and a guessed number is worse than a gap.
+
+### LTX-2.5 generation, measured on an L40S (44.4 GiB)
+
+A 2 second clip at 960x576, distilled, same clip each time. The **cached** column is the one a
+sequence actually pays, for every shot after the first.
+
+|                          | cold render | cached render | peak VRAM |
+| ------------------------ | ----------- | ------------- | --------- |
+| Streaming weights        | 944.8s      | 844.3s        | 7.71 GiB  |
+| Transformer resident     | 538.7s      | 534.2s        | 21.90 GiB |
+| + shared weight registry | **465.4s**  | **229.2s**    | 32.19 GiB |
+
+Three fixes got from the first row to the third, and each needed the one before it. The full
+write-up is in [docs/ltx-2-5.md](docs/ltx-2-5.md#performance-measured). The remaining cost is the
+prompt encoder, reloaded on every render.
 
 12 steps at rank 16, batch 1, gradient checkpointing on. The number is `torch.cuda.max_memory_allocated`, so leave headroom for the CUDA context and allocator slack.
 

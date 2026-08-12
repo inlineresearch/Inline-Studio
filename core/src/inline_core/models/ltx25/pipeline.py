@@ -2,6 +2,11 @@
 
 Two things here differ from every other model runner, and both are deliberate.
 
+**The built pipeline is cached.** Constructing one loads the transformer, so without a cache every
+render pays the full load again - which on a 39 GiB checkpoint is most of the wall clock for a short
+clip. The key carries the plan as well as the paths, because a change of quantisation or offload
+changes what is placed and where.
+
 **LTX streams its own weights, so we choose but do not implement.** `models/offload.py` exists for
 models that have no streaming of their own; layering its group offload on top of `ltx_core`'s block
 streaming would mean two systems moving the same tensors. The device policy still owns the decision
@@ -9,10 +14,13 @@ streaming would mean two systems moving the same tensors. The device policy stil
 mechanism. `models/prepared.py` is likewise unused: quantisation happens as weights stream, so there
 is no separate artifact to cache.
 
-**The text encoder and the transformer are never co-resident.** Gemma 4 is 26 GB beside a 42 GB
-transformer, which nothing short of an 80 GB card holds at once, so the prompt is encoded first and
-the encoder freed before the transformer loads. That decision has to be made before the load: by the
-time an OOM fires there is nothing left to free.
+**The text encoder and the transformer ARE co-resident, and that is not negotiable from here.**
+`DistilledPipeline.__init__` puts the transformer on the card, and `PromptEncoder` then loads Gemma
+lazily on the first call - so by the time the prompt is encoded, both are resident. Upstream frees
+Gemma afterwards, which helps the denoise but not the peak. Measured on a 44.39 GiB L40S: an
+fp8-cast transformer (19.6 GiB) plus Gemma (24.5 GiB) is 44.0 GiB, and it OOMed building the
+processor. So the encoder counts toward the peak the plan is sized against, and a card that cannot
+hold both streams the transformer instead.
 """
 
 from __future__ import annotations
@@ -38,6 +46,9 @@ _LABEL = "LTX-2.5"
 #: NVFP4 needs Blackwell. Loading packed nibbles anywhere else does not raise, it renders noise,
 #: so this is checked before the load rather than discovered in the output.
 _NVFP4_MIN_CAPABILITY = 10
+
+#: LTX's trained frame rate, mirrored from the runner's grid to keep this module import-light.
+_FPS = 24.0
 
 
 @dataclass
@@ -102,12 +113,10 @@ def _plan(policy: DevicePolicy, paths: dict[str, Path], build: str) -> memory.Lt
     sizes = reqs.footprint_bytes(
         build, transformer=paths["transformer"], video_vae=paths["video_vae"]
     )
-    # The encoder is freed before the transformer loads, so it is not part of the peak the ladder
-    # sizes against - the same staged accounting the model popup's estimate uses.
     policy.set_footprint(
         ModelFootprint(
             diffusion_bytes=sizes["diffusion_bytes"],
-            text_encoder_bytes=0,
+            text_encoder_bytes=sizes["text_encoder_bytes"],
             vae_bytes=sizes["vae_bytes"],
         )
     )
@@ -121,8 +130,14 @@ def _plan(policy: DevicePolicy, paths: dict[str, Path], build: str) -> memory.Lt
     plan = memory.plan_for(
         fit_plan=fit.plan if fit else "offload",
         model_bytes=sizes["diffusion_bytes"],
-        total_vram_bytes=int((policy.vram_budget_mb() or 0) * 1024**2),
-        free_ram_bytes=int((policy.free_ram_mb() or 0) * 1024**2),
+        # Everything that shares the card with the transformer: both VAEs, the spatial upscaler,
+        # and Gemma - which is still resident when the prompt is encoded, whatever the loading
+        # order suggests. All of it comes off the budget before the transformer is sized.
+        # The encoder is deliberately absent: it streams rather than sitting resident, so what it
+        # costs the card is a buffer (already inside plan_for's reserve) and not its 24.5 GiB.
+        fixed_bytes=sizes["vae_bytes"],
+        total_vram_bytes=memory.vram_bytes(policy),
+        free_ram_bytes=memory.ram_bytes(policy),
         prequantised=prequantised,
         kernels_available=memory.kernels_available(),
     )
@@ -152,6 +167,24 @@ def load_pipeline(
     paths = resolve_paths(params, request.build, transformer, video_vae, text_encoder)
     plan = _plan(policy, paths, request.build)
 
+    key = rt.PipelineKey(
+        arch="ltx-2-5",
+        diffusion=str(paths["transformer"]),
+        vae=str(paths["video_vae"]),
+        text_encoder=str(paths["text_encoder"]),
+        # The distilled and dev builds are the same architecture behind different pipelines, and
+        # audio changes which VAEs are loaded - both would otherwise share one entry.
+        variant=f"{request.mode}{'' if request.generate_audio else '+silent'}",
+        # Part of the key because it changes what is placed and where, not only how it runs.
+        quant=f"{plan.quantization or 'bf16'}+{plan.offload}",
+        loras=tuple(str(getattr(ref, "file", "")) for ref in loras),
+    )
+    cached = rt.PIPELINES.get(key)
+    if cached is not None:
+        return cached
+    # A second LTX pipeline would hold another 20-40 GB of weights beside the first.
+    rt.PIPELINES.evict_stale(key)
+
     model_paths = ModelPaths.from_split(
         transformer_path=str(paths["transformer"]),
         text_encoder_path=str(paths["text_encoder"]),
@@ -160,16 +193,59 @@ def load_pipeline(
     )
     common: dict[str, Any] = {
         "model_paths": model_paths,
+        "registry": _weight_caching_registry(),
         "spatial_upsampler_path": str(paths["upscaler"]),
         "loras": [_lora(ref) for ref in loras],
         "quantization": memory.quantization_policy(plan, str(paths["transformer"])),
         "offload_mode": memory.offload_mode(plan),
     }
     if request.mode == "quality":
-        return _quality_pipeline(common)
-    from .vendor.ltx_pipelines.distilled import DistilledPipeline
+        pipe = _quality_pipeline(common)
+    else:
+        from .vendor.ltx_pipelines.distilled import DistilledPipeline
 
-    return DistilledPipeline(**common)
+        pipe = DistilledPipeline(**common)
+    _stream_the_encoder(pipe, model_paths, plan)
+    rt.PIPELINES.put(key, pipe)
+    return pipe
+
+
+def _weight_caching_registry() -> Any:
+    """A registry that keeps loaded weights, not just model shells.
+
+    Left to itself every block builds ``ModelRegistry(cache_models=True, cache_weights=False)``,
+    which reuses the structure and **re-reads the weights on every build**. A two-stage pipeline
+    builds its transformer once per stage, so a single render read 19.6 GiB from disk twice, and the
+    next render did it again - which is why caching the pipeline object bought only 4 seconds.
+
+    Safe only because the encoder is built separately (see ``_stream_the_encoder``) and keeps its
+    own non-caching registry. Sharing this one with Gemma would hold 24.5 GiB beside the transformer
+    and put the peak straight back over the card.
+    """
+    from .vendor.ltx_core.loader.registry import ModelRegistry
+
+    return ModelRegistry(cache_weights=True, cache_models=True)
+
+
+def _stream_the_encoder(pipe: Any, model_paths: Any, plan: memory.Ltx25Plan) -> None:
+    """Give the prompt encoder its own offload mode, independent of the transformer's.
+
+    The constructor builds both from one ``offload_mode``, which forces a choice that does not need
+    making: Gemma runs and is freed before the denoise starts, so the two are never busy at once.
+    Sizing them as one resident block is what made a 39 GiB transformer stream on a card measured to
+    need only 7.71 GiB for the denoise itself. Rebuilding just the encoder is a public constructor
+    away and leaves the vendored code untouched.
+    """
+    from .vendor.ltx_pipelines.utils.blocks import PromptEncoder
+
+    # Deliberately no ``registry``: PromptEncoder then builds its own non-weight-caching one, so
+    # Gemma is freed after encoding instead of held beside the transformer for the whole run.
+    pipe.prompt_encoder = PromptEncoder(
+        model_paths,
+        pipe.dtype,
+        pipe.device,
+        offload_mode=memory.offload_mode_for(plan.encoder_offload),
+    )
 
 
 def _quality_pipeline(common: dict[str, Any]) -> Any:
@@ -193,6 +269,19 @@ def _lora(ref: Any) -> Any:
     return LoraPathStrengthAndSDOps(str(path), float(getattr(ref, "strength", 1.0)))
 
 
+def _frames_in(chunk: Any) -> list[Any]:
+    """The individual frames in one yielded chunk.
+
+    The iterator yields **batches**, not frames: a 2 second clip arrives as a single
+    ``(49, 576, 960, 3)`` tensor. Treating a chunk as one frame gets it all the way to the encoder
+    before failing, because nothing upstream of that cares how many dimensions it has.
+    """
+    if isinstance(chunk, list):
+        return chunk
+    shape = getattr(chunk, "shape", ())
+    return list(chunk) if len(shape) == 4 else [chunk]
+
+
 def render(
     pipe: Any,
     request: Request,
@@ -206,16 +295,47 @@ def render(
     The pipeline returns a frame **iterator**, not a list: decode happens as it is consumed, which
     is what keeps a 20-second clip from existing as one tensor. Draining it here is where decode
     actually costs its time, so the cancel check runs per chunk rather than only between stages.
-    """
-    rt.attach_step_progress(pipe, on_step)
-    frames_iter, audio, sample_rate, _tiling = pipe(**call)
 
+    ``inference_mode`` is ours to apply. Upstream decorates its **CLI entry point**, not
+    ``__call__``, so calling the pipeline directly leaves autograd live and the first timestep
+    embedding raises "Inference tensors cannot be saved for backward". The iterator is drained
+    inside the same block, because decode runs lazily and would otherwise escape it.
+    """
+    import torch
+
+    rt.attach_step_progress(pipe, on_step)
     frames: list[Any] = []
-    for chunk in frames_iter:
-        if cancel_check is not None:
-            cancel_check()
-        frames.extend(chunk if isinstance(chunk, list) else [chunk])
+    with torch.inference_mode():
+        # The third element is the **frame count**, not a sample rate. The rate lives on the Audio
+        # container as ``sampling_rate``, and taking the positional one wrote a WAV headed 49 Hz -
+        # the video's frame count - which plays back forty minutes long and raises nothing.
+        frames_iter, audio, _num_frames, _tiling = pipe(**call)
+        for chunk in frames_iter:
+            if cancel_check is not None:
+                cancel_check()
+            frames.extend(_frames_in(chunk))
 
     waveform = getattr(audio, "waveform", None) if request.generate_audio else None
+    rate = int(getattr(audio, "sampling_rate", 0) or 0) or None
     rt.free_vram()
-    return Rendered(frames=frames, waveform=waveform, sample_rate=sample_rate)
+    _warn_on_audio_drift(len(frames), waveform, rate)
+    return Rendered(frames=frames, waveform=waveform, sample_rate=rate)
+
+
+def _warn_on_audio_drift(frame_count: int, waveform: Any, rate: int | None) -> None:
+    """Warn when the soundtrack's duration does not match the picture's.
+
+    A wrong sample rate is silent in every sense: the file writes, the muxer accepts it, and only a
+    human pressing play finds out. Comparing the two durations is the cheapest check that would
+    have caught it.
+    """
+    if waveform is None or not rate or not frame_count:
+        return
+    shape = tuple(getattr(waveform, "shape", ()) or ())
+    samples = max(shape) if shape else 0
+    audio_seconds, video_seconds = samples / rate, frame_count / _FPS
+    if abs(audio_seconds - video_seconds) > max(0.5, video_seconds * 0.25):
+        logger.warning(
+            "%s: soundtrack is %.2fs against %.2fs of picture (%d samples at %d Hz).",
+            _LABEL, audio_seconds, video_seconds, samples, rate,
+        )

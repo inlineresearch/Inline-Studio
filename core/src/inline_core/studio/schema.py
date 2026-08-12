@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS project (
@@ -149,17 +149,22 @@ CREATE TABLE IF NOT EXISTS training_datasets (
   project_id   TEXT NOT NULL,
   name         TEXT NOT NULL,
   trigger_word TEXT NOT NULL DEFAULT '',
+  -- 'clip' trains on one clip per item; 'motion' pairs each with a reference (LTX-2.5 IC-LoRA).
+  mode         TEXT NOT NULL DEFAULT 'clip',
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS training_dataset_items (
-  id          TEXT PRIMARY KEY,
-  dataset_id  TEXT NOT NULL,
-  asset_id    TEXT NOT NULL,
-  caption     TEXT NOT NULL DEFAULT '',
-  position    INTEGER NOT NULL,
-  created_at  INTEGER NOT NULL
+  id                  TEXT PRIMARY KEY,
+  dataset_id          TEXT NOT NULL,
+  asset_id            TEXT NOT NULL,
+  -- The 'before' of a Motion LoRA pair. NULL on every clip-mode item, which is every item that
+  -- existed before schema 19.
+  reference_asset_id  TEXT,
+  caption             TEXT NOT NULL DEFAULT '',
+  position            INTEGER NOT NULL,
+  created_at          INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS training_runs (
@@ -240,6 +245,11 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
     _migrate_renames(conn)  # v7 -> v8: shot -> frame
 
     _add_column_if_missing(conn, "assets", "folder_id", "TEXT")
+
+    # v18 -> v19: Motion LoRA pairs a reference clip with each target. Both are additive and
+    # nullable/defaulted, so an existing project reads as a clip-mode dataset with no references.
+    _add_column_if_missing(conn, "training_datasets", "mode", "TEXT NOT NULL DEFAULT 'clip'")
+    _add_column_if_missing(conn, "training_dataset_items", "reference_asset_id", "TEXT")
 
     _add_column_if_missing(conn, "moodboard_items", "type", "TEXT NOT NULL DEFAULT 'asset'")
     _add_column_if_missing(conn, "moodboard_items", "data", "TEXT")

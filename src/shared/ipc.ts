@@ -41,6 +41,7 @@ import type {
   ModelDownloadErrorEvent,
   TrainingDataset,
   TrainingDatasetItem,
+  TrainingMode,
   CaptionerModel,
   TrainingHyperparams,
   TrainingRun,
@@ -151,6 +152,10 @@ export const IpcChannels = {
     addFromPath: 'training:addFromPath',
     removeItem: 'training:removeItem',
     setCaption: 'training:setCaption',
+    /** Pair a reference clip with an item (Motion LoRA), or clear it with null. */
+    setItemReference: 'training:setItemReference',
+    /** Switch a dataset between clip and motion training. */
+    setDatasetMode: 'training:setDatasetMode',
     autoCaption: 'training:autoCaption',
     captioners: 'training:captioners',
     listRuns: 'training:listRuns',
@@ -502,6 +507,17 @@ export interface InlineStudioApi {
     addFromPath(datasetId: string, path: string): Promise<Result<TrainingDatasetItem[]>>
     removeItem(itemId: string): Promise<Result<void>>
     setCaption(itemId: string, caption: string): Promise<Result<TrainingDatasetItem>>
+    /**
+     * Pair a reference clip with an item, or clear it by passing null. Separate from `addItems`
+     * because the two halves arrive separately: targets are dropped in first and paired afterwards,
+     * so an unpaired item has to be a legible state rather than a failed import.
+     */
+    setItemReference(
+      itemId: string,
+      referenceAssetId: string | null,
+    ): Promise<Result<TrainingDatasetItem>>
+    /** Switch a dataset between clip and motion training. */
+    setDatasetMode(datasetId: string, mode: TrainingMode): Promise<Result<TrainingDataset>>
     /**
      * Auto-caption items with the local captioner; `overwrite` re-captions ones that already have
      * one. `model` picks a captioner (a `CaptionerModel.id` or a raw HF repo); omit for the default.

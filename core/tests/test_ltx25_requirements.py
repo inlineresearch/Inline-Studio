@@ -245,21 +245,27 @@ def test_footprint_counts_the_upscaler_with_the_vaes(models_root: Path) -> None:
 GB = 1024**3
 
 
-def test_a_48gb_card_holds_the_bf16_transformer() -> None:
+def test_a_48gb_card_does_not_hold_the_bf16_transformer() -> None:
+    """42 GiB of weights looks like it fits 48 until the VAEs, the denoise's working room and the
+    encoder's streaming buffer are all taken off first."""
     plan = memory.plan_for(
         fit_plan="resident", model_bytes=42 * GB, total_vram_bytes=48 * GB,
         free_ram_bytes=64 * GB,
     )
-    assert plan == memory.Ltx25Plan(memory.QUANT_NONE, memory.OFFLOAD_NONE, plan.note)
+    assert plan is not None
+    assert plan.quantization == memory.QUANT_FP8_CAST
+    assert plan.offload == memory.OFFLOAD_NONE, "halved, it is resident with room to spare"
 
 
-def test_a_24gb_card_halves_the_transformer_and_keeps_it_resident() -> None:
+def test_a_24gb_card_halves_the_transformer_and_streams_it() -> None:
+    """fp8-cast brings 42 GiB down to 21, which still does not sit on a 24 GiB card once the
+    denoise needs working room - so it streams from RAM rather than pretending to fit."""
     plan = memory.plan_for(
         fit_plan="int8", model_bytes=42 * GB, total_vram_bytes=24 * GB, free_ram_bytes=64 * GB,
     )
     assert plan is not None
     assert plan.quantization == memory.QUANT_FP8_CAST
-    assert plan.offload == memory.OFFLOAD_NONE
+    assert plan.offload == memory.OFFLOAD_CPU
 
 
 def test_a_16gb_card_with_ram_streams_from_ram() -> None:
@@ -348,3 +354,85 @@ def test_the_distilled_lora_is_not_offered_as_a_style_lora(models_root: Path) ->
     (models_root / "loras" / reqs.DISTILLED_LORA_FILE).write_bytes(b"x")
     (models_root / "loras" / "my-style.safetensors").write_bytes(b"x")
     assert reqs.selectable_loras() == ["my-style.safetensors"]
+
+
+# --- regressions from the first real render on an L40S ----------------------------------------
+
+
+class _StubPolicy:
+    """Mimics `MemoryPolicy`'s units: capacity is decimal GB, then multiplied by 1024."""
+
+    def __init__(self, gib: float) -> None:
+        self._bytes = int(gib * 1024**3)
+
+    def vram_budget_mb(self) -> int:
+        return int((self._bytes / 1e9) * 1024)
+
+    def free_ram_mb(self) -> int:
+        return int((64 * 1024**3 / 1e9) * 1024)
+
+
+def test_vram_budget_is_decimal_gb_not_mebibytes() -> None:
+    """`vram_budget_mb` is `bytes / 1e9 * 1024`, so reading it as MiB overstates an L40S by
+    7.4% and promises a residency the card cannot honour. This is the conversion, pinned."""
+    policy = _StubPolicy(44.39)
+    assert memory.vram_bytes(policy) == pytest.approx(44.39 * 1024**3, rel=1e-3)
+    naive = policy.vram_budget_mb() * 1024**2
+    assert naive / (44.39 * 1024**3) == pytest.approx(1.074, abs=0.01)  # the bug, quantified
+
+
+def test_bf16_is_refused_on_a_44gb_card() -> None:
+    """The measured case: a 39.13 GiB transformer looks like it fits 44.39 GiB until the VAEs
+    and the upscaler are counted, and it OOMed mid-load when they were not."""
+    plan = memory.plan_for(
+        fit_plan="resident",
+        model_bytes=int(39.13 * 1024**3),
+        fixed_bytes=int(2.64 * 1024**3),
+        total_vram_bytes=int(44.39 * 1024**3),
+        free_ram_bytes=64 * 1024**3,
+    )
+    assert plan is not None
+    assert plan.quantization == memory.QUANT_FP8_CAST
+    assert plan.offload == memory.OFFLOAD_NONE
+
+
+def test_bf16_is_still_chosen_when_there_is_genuinely_room() -> None:
+    """The reserve must not be so eager that an 80GB card gives up full precision."""
+    plan = memory.plan_for(
+        fit_plan="resident",
+        model_bytes=int(39.13 * 1024**3),
+        fixed_bytes=int(2.64 * 1024**3),
+        total_vram_bytes=int(79.0 * 1024**3),
+        free_ram_bytes=128 * 1024**3,
+    )
+    assert plan is not None
+    assert plan.quantization == memory.QUANT_NONE
+    assert plan.offload == memory.OFFLOAD_NONE
+
+
+def test_the_resident_components_come_off_the_budget_before_the_transformer() -> None:
+    """Same card, same transformer: only the fixed components differ."""
+    args = dict(
+        fit_plan="resident", model_bytes=int(20 * 1024**3),
+        total_vram_bytes=int(48 * 1024**3), free_ram_bytes=64 * 1024**3,
+    )
+    assert memory.plan_for(fixed_bytes=0, **args).quantization == memory.QUANT_NONE
+    assert memory.plan_for(fixed_bytes=int(20 * 1024**3), **args).quantization == (
+        memory.QUANT_FP8_CAST
+    )
+
+
+def test_the_encoder_streams_so_the_transformer_does_not() -> None:
+    """The measured case, and the reason the two are planned separately: sized as one resident
+    block, a 39 GiB transformer streamed on a card whose denoise needed only 7.71 GiB."""
+    plan = memory.plan_for(
+        fit_plan="resident",
+        model_bytes=int(39.13 * 1024**3),
+        fixed_bytes=int(2.64 * 1024**3),
+        total_vram_bytes=int(44.39 * 1024**3),
+        free_ram_bytes=64 * 1024**3,
+    )
+    assert plan is not None
+    assert plan.offload == memory.OFFLOAD_NONE, "the transformer stays on the card"
+    assert plan.encoder_offload == memory.OFFLOAD_CPU, "the encoder is what gives way"
+    assert plan.quantization == memory.QUANT_FP8_CAST
