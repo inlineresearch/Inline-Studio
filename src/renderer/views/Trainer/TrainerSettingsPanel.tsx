@@ -400,21 +400,19 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
         />
       </div>
 
-      <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
-        Keep a LoRA at every checkpoint
-        <button
-          onClick={() => set('saveSnapshots', !hp.saveSnapshots)}
-          className={`rounded-md border px-2 py-1 text-left text-sm ${
-            hp.saveSnapshots
-              ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300'
-              : 'border-border bg-black/30 text-zinc-400 hover:bg-panel'
-          }`}
-        >
-          {hp.saveSnapshots ? 'On' : 'Off'}
-        </button>
-        <span className="text-[10px] text-zinc-600">
-          Saves a usable LoRA at each save point, so you can pick the step before a run overtrains.
-          A stopped run always keeps one, whatever this is set to.
+      <label className="flex items-start gap-2 text-[11px] text-zinc-400">
+        <input
+          type="checkbox"
+          checked={hp.saveSnapshots ?? false}
+          onChange={(e) => set('saveSnapshots', e.target.checked)}
+          className="mt-0.5 accent-emerald-500"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-zinc-200">Keep a LoRA at every checkpoint</span>
+          <span className="text-zinc-500">
+            Saves a usable LoRA at each save point, so you can pick the step before a run
+            overtrains. A stopped run always keeps one, whatever this is set to.
+          </span>
         </span>
       </label>
 
