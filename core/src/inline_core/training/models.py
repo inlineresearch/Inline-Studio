@@ -44,6 +44,13 @@ _ENV = {
         "text_encoders": "INLINE_MINIMAXH3_TEXT_ENCODER",
         "adapter": "INLINE_MINIMAXH3_TRAIN_ADAPTER",
     },
+    # No adapter entry: LTX publishes a dev build to train on, so there is no de-distillation
+    # adapter to fuse first the way Z-Image and Krea 2 need one.
+    archs.LTX25: {
+        "diffusion_models": "INLINE_LTX25_MODEL",
+        "vae": "INLINE_LTX25_VIDEO_VAE",
+        "text_encoders": "INLINE_LTX25_TEXT_ENCODER",
+    },
 }
 
 
@@ -448,6 +455,12 @@ def load_transformer(
         del base_mode
         return h3.load_base(models_dir, device, dtype, quant)
 
+    if arch == archs.LTX25:
+        # One base, and it loads through `ltx_core`'s own builder rather than `models/loaders.py`:
+        # the checkpoint is LTX's format and nothing in the diffusers path can read it.
+        del base_mode
+        return _load_ltx25_base(device, dtype)
+
     root = Path(models_dir)
     adapter = _adapter_path(root, arch, base_mode)
     loras: tuple[LoraRef, ...] = (LoraRef(file=adapter, strength=1.0),) if adapter else ()
@@ -473,6 +486,8 @@ def load_transformer(
 
 def _base_file(root: Path, arch: str, base_mode: str) -> str:
     """The base checkpoint this run trains against."""
+    if arch == archs.LTX25:
+        return _ltx25_base_file()
     if arch == archs.FLUX2:
         return _flux2_base_file(root)
     if arch != archs.KREA2:
@@ -522,3 +537,60 @@ def _flux2_base_file(root: Path) -> str:
         f"No FLUX.2 checkpoint found under {folder}. Download one from the node's model popup "
         f"(or set {_ENV[archs.FLUX2]['diffusion_models']})."
     )
+
+
+# --- LTX-2.5 ------------------------------------------------------------------------------------
+
+
+def _ltx25_base_file() -> str:
+    """The dev transformer, which is the only LTX build that trains.
+
+    Resolution goes through the model's own requirements module, so a run finds the same file the
+    generation nodes would - including one recorded in the download sidecar, since dev and distilled
+    are byte-identical and cannot be told apart by inspection.
+    """
+    from ..models.ltx25 import requirements as reqs
+
+    override = os.environ.get(_ENV[archs.LTX25]["diffusion_models"])
+    if override:
+        return override
+    path = reqs.resolve_transformer("dev")
+    if path is None:
+        raise RuntimeError(
+            "LTX-2.5 training needs the dev transformer "
+            f"({reqs.DEV_FILE}). Download it from an LTX node's model popup - the distilled "
+            "build cannot be trained."
+        )
+    return str(path)
+
+
+def _load_ltx25_base(device: str, dtype: Any) -> Any:
+    """The frozen transformer, built through `ltx_core`'s own loader.
+
+    The published checkpoint carries Comfy-convention key names, and
+    ``LTXV_MODEL_COMFY_RENAMING_MAP`` is what reconciles them with the model - loading without it
+    fails on every key in the file. Both it and the configurator come from upstream rather than
+    being restated here.
+
+    This returns the velocity model, which is what training attaches to. The ``X0Model`` wrapper
+    generation uses holds no weights and converts velocity to a denoised latent, which is the
+    opposite of what the step predicts.
+    """
+    import torch
+
+    from ..models.ltx25.vendor.ltx_core.loader.single_gpu_model_builder import (
+        SingleGPUModelBuilder,
+    )
+    from ..models.ltx25.vendor.ltx_core.model.transformer import (
+        LTXV_MODEL_COMFY_RENAMING_MAP,
+    )
+    from ..models.ltx25.vendor.ltx_core.model.transformer.model_configurator import (
+        LTXModelConfigurator,
+    )
+
+    builder = SingleGPUModelBuilder(
+        model_path=_ltx25_base_file(),
+        model_class_configurator=LTXModelConfigurator,
+        model_sd_ops=LTXV_MODEL_COMFY_RENAMING_MAP,
+    )
+    return builder.build(device=torch.device(device), dtype=dtype).eval()

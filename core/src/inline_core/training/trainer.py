@@ -231,6 +231,7 @@ def train(manifest: dict[str, Any]) -> str | None:
         flip=bool(hp.get("flipAugment")), dropout=dropout,
         clip_frames=archs.clip_frames(arch, hp.get("clipSeconds")),
         clip_window=str(hp.get("clipWindow") or "start"),
+        training_mode=str(hp.get("trainingMode") or archs.MODE_CLIP),
         cache_dir=manifest.get("precacheDir"),
         on_status=lambda text: protocol.progress(0, steps, status=text),
     )
@@ -264,14 +265,30 @@ def train(manifest: dict[str, Any]) -> str | None:
     if quant is Quantization.NF4:
         transformer.is_loaded_in_4bit = True
     lora_alpha = int(hp.get("alpha") or hp["rank"])
-    transformer.add_adapter(
-        LoraConfig(
-            r=int(hp["rank"]),
-            lora_alpha=lora_alpha,
-            lora_dropout=0.0,
-            target_modules=archs.target_modules(arch, str(hp.get("loraScope") or "full")),
-        )
+    config = LoraConfig(
+        r=int(hp["rank"]),
+        lora_alpha=lora_alpha,
+        lora_dropout=0.0,
+        # The mode picks the Linears too, not only the dataset shape: a Control LoRA adapts the
+        # video branch alone while a Clip LoRA also reaches audio and the cross-modal blocks.
+        target_modules=archs.target_modules(
+            arch,
+            str(hp.get("loraScope") or "full"),
+            str(hp.get("trainingMode") or archs.MODE_CLIP),
+        ),
     )
+    # ``add_adapter`` is diffusers' PeftAdapterMixin, which every arch loaded through diffusers
+    # carries. LTX's transformer is a plain nn.Module from its own loader and has no such method,
+    # so it takes peft's model-agnostic injection instead. Both leave the adapter where
+    # ``get_peft_model_state_dict`` finds it, which is what ``_save_lora`` reads.
+    if hasattr(transformer, "add_adapter"):
+        transformer.add_adapter(config)
+    else:
+        from peft import inject_adapter_in_model
+
+        inject_adapter_in_model(config, transformer)
+        for name, param in transformer.named_parameters():
+            param.requires_grad = "lora_" in name
     if hasattr(transformer, "enable_gradient_checkpointing"):
         transformer.enable_gradient_checkpointing()
     lora_params = [p for p in transformer.parameters() if p.requires_grad]

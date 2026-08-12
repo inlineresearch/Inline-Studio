@@ -417,7 +417,9 @@ def _ltx25_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, 
     if reference is not None:
         # Reference tokens are prepended and carry no loss, so only the target tail is compared.
         velocity = velocity[:, -tools.patchifier.get_token_count(tools.target_shape):]
-    return tools.unpatchify(velocity, batched.shape)[0]
+    # The patchifier's unpatchify takes tokens and a latent shape; `tools.unpatchify` is the
+    # whole-LatentState variant and takes neither.
+    return tools.patchifier.unpatchify(velocity, output_shape=tools.target_shape)[0]
 
 
 ARCHS: dict[str, TrainingArch] = {
