@@ -106,7 +106,7 @@ def test_a_clip_lora_reaches_the_audio_and_cross_modal_branches() -> None:
 
 def test_a_motion_lora_leaves_the_audio_branch_alone() -> None:
     """An IC-LoRA learns a video-to-video transform, so the audio branch is not its business."""
-    modules = archs.target_modules(ARCH, "full", archs.MODE_MOTION)
+    modules = archs.target_modules(ARCH, "full", archs.MODE_CONTROL)
     assert all(m.startswith(("attn1.", "attn2.", "ff.")) for m in modules)
     assert "ff.net.0.proj" in modules
 
@@ -114,7 +114,7 @@ def test_a_motion_lora_leaves_the_audio_branch_alone() -> None:
 def test_narrowing_to_attention_works_on_both_modes() -> None:
     """`attention` has to mean the same thing whichever mode is selected, including when the mode's
     patterns carry an `attn1.` prefix the shared table does not."""
-    for mode in (archs.MODE_CLIP, archs.MODE_MOTION):
+    for mode in (archs.MODE_CLIP, archs.MODE_CONTROL):
         narrowed = archs.target_modules(ARCH, "attention", mode)
         assert narrowed
         assert not any("ff." in m for m in narrowed)

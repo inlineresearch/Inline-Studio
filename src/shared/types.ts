@@ -530,11 +530,11 @@ export interface ModelDownloadErrorEvent {
 export type TrainingArch = 'z-image' | 'krea2' | 'flux2' | 'minimax-h3' | 'ltx-2-5'
 
 /**
- * Which shape an LTX-2.5 run trains in. `clip` learns look and motion from single clips; `motion`
- * is an IC-LoRA that learns a transform from paired reference and target clips, so every dataset
- * item needs a second clip wired to it.
+ * Which shape an LTX-2.5 run trains in. `clip` learns a look and how it moves, from single clips.
+ * `control` learns a transform from paired reference and target clips - upstream calls this an
+ * IC-LoRA - so every dataset item needs a second clip wired to it as the reference.
  */
-export type TrainingMode = 'clip' | 'motion'
+export type TrainingMode = 'clip' | 'control'
 
 /**
  * Which base checkpoint a run trains against. `raw` is Krea 2's undistilled base (the recommended
@@ -577,9 +577,9 @@ export interface TrainingDataset {
   /** Token injected into every caption (the character/style trigger); may be empty. */
   triggerWord: string
   /**
-   * `clip` trains on one media file per item. `motion` is LTX-2.5's IC-LoRA: every item also needs
-   * a reference clip, and the model learns the transform between the pair. Defaults to `clip`, so
-   * a dataset made before this existed keeps its meaning.
+   * `clip` trains on one media file per item. `control` is LTX-2.5's IC-LoRA: every item also
+   * needs a reference clip, and the model learns the transform between the pair. Defaults to
+   * `clip`, so a dataset made before this existed keeps its meaning.
    */
   mode: TrainingMode
   createdAt: number
@@ -592,9 +592,9 @@ export interface TrainingDatasetItem {
   datasetId: string
   assetId: string
   /**
-   * The `before` of a Motion LoRA pair, or null on a clip-mode item. A motion run refuses to start
-   * while any item is unpaired, because a missing reference does not fail loudly once training is
-   * under way - the pair is simply absent.
+   * The `before` of a Control LoRA pair, or null on a clip-mode item. A control run refuses to
+   * start while any item is unpaired, because a missing reference does not fail loudly once
+   * training is under way - the pair is simply absent.
    */
   referenceAssetId: string | null
   caption: string

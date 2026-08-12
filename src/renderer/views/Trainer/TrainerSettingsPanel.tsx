@@ -307,12 +307,13 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
                 onChange={(e) => set('trainingMode', e.target.value as TrainingMode)}
                 className="rounded-md border border-border bg-black/30 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-zinc-500"
               >
-                <option value="clip">Clip LoRA (look and motion)</option>
-                <option value="motion">Motion LoRA (reference to target)</option>
+                <option value="clip">Clip LoRA (a look and how it moves)</option>
+                <option value="control">Control LoRA (reference to target)</option>
               </select>
               <span className="text-[10px] text-zinc-600">
-                A Motion LoRA learns a transform, so every item needs a second clip wired to it as
-                the reference. A Clip LoRA needs only the one.
+                A Clip LoRA learns a look and its movement from single clips. A Control LoRA learns
+                the change between a pair, so every item needs a reference clip as well as a target.
+                Upstream calls that an IC-LoRA.
               </span>
             </label>
           )}

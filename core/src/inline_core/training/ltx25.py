@@ -9,7 +9,7 @@ whole point of a precache; re-cutting a different window every step would defeat
 at all. The grid only snaps down, so part of every clip is always dropped - ``clip_window="end"``
 takes the tail instead of the head, for footage whose action is at the finish.
 
-Motion mode encodes a second clip per item as the reference. It is held as a
+Control mode encodes a second clip per item as the reference. It is held as a
 ``VideoConditionByReferenceLatent`` at ``downscale_factor=1``: upstream allows a smaller reference
 than the target, but the factor used in training has to match the one used at inference, and a
 mismatch degrades output without raising. Keeping it at 1 removes the chance to get that wrong.
@@ -65,11 +65,11 @@ def precache(
     triples = ds.media_triples(Path(dataset_dir))
     if not triples:
         raise RuntimeError("The exported dataset is empty.")
-    if mode == archs.MODE_MOTION:
+    if mode == archs.MODE_CONTROL:
         unpaired = [t.target.name for t in triples if t.reference is None]
         if unpaired:
             raise RuntimeError(
-                f"A Motion LoRA needs a reference clip for every item; {len(unpaired)} have none "
+                f"A Control LoRA needs a reference clip for every item; {len(unpaired)} have none "
                 f"(first: {unpaired[0]}). Pair them in the dataset panel, or train a Clip LoRA."
             )
 
@@ -94,7 +94,7 @@ def precache(
     items: list[dict[str, Any]] = []
     for index, (latent, embed) in enumerate(zip(latents, embeds, strict=True)):
         item: dict[str, Any] = {"latent": latent, "embed": embed}
-        if mode == archs.MODE_MOTION:
+        if mode == archs.MODE_CONTROL:
             item["reference"] = references[index]
         items.append(item)
     say(f"cached {len(items)} items")
@@ -144,7 +144,7 @@ def _encode_clips(
                 continue
             with torch.no_grad():
                 latent = encoder(pixels)
-            if mode == archs.MODE_MOTION:
+            if mode == archs.MODE_CONTROL:
                 ref_pixels = _clip_pixels(
                     triple.reference, resolution, frames, clip_window, device, dtype
                 )

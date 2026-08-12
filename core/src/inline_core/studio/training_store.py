@@ -113,7 +113,7 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
         "id": row["id"],
         "datasetId": row["dataset_id"],
         "assetId": row["asset_id"],
-        # NULL on every clip-mode item; a Motion LoRA pairs this with the target above.
+        # NULL on every clip-mode item; a Control LoRA pairs this with the target above.
         "referenceAssetId": row["reference_asset_id"] if "reference_asset_id" in row.keys()
         else None,
         "caption": row["caption"],
@@ -306,8 +306,8 @@ def set_item_reference(
 
 
 def set_dataset_mode(conn: sqlite3.Connection, dataset_id: str, mode: str) -> dict[str, Any]:
-    """Switch a dataset between clip and motion training."""
-    if mode not in ("clip", "motion"):
+    """Switch a dataset between clip and control training."""
+    if mode not in ("clip", "control"):
         raise ValueError(f"Unknown training dataset mode {mode!r}.")
     get_dataset(conn, dataset_id)  # validate
     conn.execute("UPDATE training_datasets SET mode = ? WHERE id = ?", (mode, dataset_id))
@@ -316,7 +316,7 @@ def set_dataset_mode(conn: sqlite3.Connection, dataset_id: str, mode: str) -> di
 
 
 def unpaired_items(conn: sqlite3.Connection, dataset_id: str) -> list[str]:
-    """Item ids that a motion run cannot use, so the Trainer can refuse before it starts.
+    """Item ids that a control run cannot use, so the Trainer can refuse before it starts.
 
     A missing reference does not fail loudly during training - the pair is simply absent - so it has
     to be caught at submit, next to the tile the user can actually fix.

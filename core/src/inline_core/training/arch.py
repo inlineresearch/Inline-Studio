@@ -27,11 +27,12 @@ FLUX2 = "flux2"
 MINIMAX_H3 = "minimax-h3"
 LTX25 = "ltx-2-5"
 
-#: LTX-2.5 trains in two shapes: a Clip LoRA over single clips, and a Motion LoRA over paired
-#: reference and target clips (upstream calls it IC-LoRA). They differ in which Linears the adapter
-#: reaches, so the mode is part of the arch rather than only a dataset shape.
+#: LTX-2.5 trains in two shapes. A **Clip LoRA** learns a look and how it moves, from single clips.
+#: A **Control LoRA** learns a transform from paired reference and target clips - upstream calls
+#: this an IC-LoRA, and their published sets are tagged that way. They differ in which Linears the
+#: adapter reaches, so the mode is part of the arch rather than only a dataset shape.
 MODE_CLIP = "clip"
-MODE_MOTION = "motion"
+MODE_CONTROL = "control"
 
 #: Z-Image: every ZImageTransformerBlock's attention + SwiGLU feed-forward Linears, confirmed
 #: against ZImageTransformer2DModel.named_modules() (34 blocks, 238 Linears).
@@ -354,10 +355,10 @@ def _ltx25_export_keys(state: dict[str, Any]) -> dict[str, Any]:
     return export_reference(state)
 
 
-#: Video-only IC-LoRA, for a Motion LoRA learning a transform from a reference clip. Explicit
+#: Video-only IC-LoRA, for a Control LoRA learning a transform from a reference clip. Explicit
 #: `attn1`/`attn2` prefixes so the audio branch is left alone, plus the feed-forward, which is
 #: upstream's advice for transformation quality.
-_LTX25_MOTION_TARGETS = [
+_LTX25_CONTROL_TARGETS = [
     "attn1.to_k", "attn1.to_q", "attn1.to_v", "attn1.to_out.0",
     "attn2.to_k", "attn2.to_q", "attn2.to_v", "attn2.to_out.0",
     "ff.net.0.proj", "ff.net.2",
@@ -467,7 +468,7 @@ ARCHS: dict[str, TrainingArch] = {
         key=LTX25,
         export_keys=_ltx25_export_keys,
         target_modules=_LTX25_CLIP_TARGETS,
-        mode_target_modules={MODE_CLIP: _LTX25_CLIP_TARGETS, MODE_MOTION: _LTX25_MOTION_TARGETS},
+        mode_target_modules={MODE_CLIP: _LTX25_CLIP_TARGETS, MODE_CONTROL: _LTX25_CONTROL_TARGETS},
         sigma=_zimage_sigma,
         # Krea 2's and FLUX.2's convention, not Z-Image's: LTX's velocity model is called at the
         # sigma itself and predicts `noise - clean`. Derived from the vendored `to_velocity` /

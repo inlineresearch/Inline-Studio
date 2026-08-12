@@ -35,8 +35,8 @@ def media_pairs(root: Path) -> list[tuple[Path, str]]:
     return _pairs(root, _IMAGE_SUFFIXES + _VIDEO_SUFFIXES)
 
 
-#: A Motion LoRA's reference sits beside its target, so a pair is discoverable from the folder alone
-#: and survives being copied somewhere else. Two spellings: ours, written by the dataset export, and
+#: A Control LoRA's reference sits beside its target, so a pair is discoverable from the folder
+#: alone and survives being copied. Two spellings: ours, written by the dataset export, and
 #: Lightricks', because their published IC-LoRA sets (Canny-Control-Dataset and friends) name pairs
 #: ``bear.mp4`` / ``bear_reference.mp4`` and people will train on those directly.
 _REFERENCE_INFIX = ".ref"
@@ -49,7 +49,7 @@ class MediaTriple:
 
     target: Path
     caption: str
-    #: The `before` of a Motion LoRA pair, or None on a clip-mode item.
+    #: The `before` of a Control LoRA pair, or None on a clip-mode item.
     reference: Path | None
 
 

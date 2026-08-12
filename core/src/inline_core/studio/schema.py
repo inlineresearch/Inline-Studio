@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS training_datasets (
   project_id   TEXT NOT NULL,
   name         TEXT NOT NULL,
   trigger_word TEXT NOT NULL DEFAULT '',
-  -- 'clip' trains on one clip per item; 'motion' pairs each with a reference (LTX-2.5 IC-LoRA).
+  -- 'clip' trains on one clip per item; 'control' pairs each with a reference (an IC-LoRA).
   mode         TEXT NOT NULL DEFAULT 'clip',
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS training_dataset_items (
   id                  TEXT PRIMARY KEY,
   dataset_id          TEXT NOT NULL,
   asset_id            TEXT NOT NULL,
-  -- The 'before' of a Motion LoRA pair. NULL on every clip-mode item, which is every item that
+  -- The 'before' of a Control LoRA pair. NULL on every clip-mode item, which is every item that
   -- existed before schema 19.
   reference_asset_id  TEXT,
   caption             TEXT NOT NULL DEFAULT '',
@@ -246,7 +246,7 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
 
     _add_column_if_missing(conn, "assets", "folder_id", "TEXT")
 
-    # v18 -> v19: Motion LoRA pairs a reference clip with each target. Both are additive and
+    # v18 -> v19: a Control LoRA pairs a reference clip with each target. Both are additive and
     # nullable/defaulted, so an existing project reads as a clip-mode dataset with no references.
     _add_column_if_missing(conn, "training_datasets", "mode", "TEXT NOT NULL DEFAULT 'clip'")
     _add_column_if_missing(conn, "training_dataset_items", "reference_asset_id", "TEXT")

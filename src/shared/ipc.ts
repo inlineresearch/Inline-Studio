@@ -152,9 +152,9 @@ export const IpcChannels = {
     addFromPath: 'training:addFromPath',
     removeItem: 'training:removeItem',
     setCaption: 'training:setCaption',
-    /** Pair a reference clip with an item (Motion LoRA), or clear it with null. */
+    /** Pair a reference clip with an item (Control LoRA), or clear it with null. */
     setItemReference: 'training:setItemReference',
-    /** Switch a dataset between clip and motion training. */
+    /** Switch a dataset between clip and control training. */
     setDatasetMode: 'training:setDatasetMode',
     autoCaption: 'training:autoCaption',
     captioners: 'training:captioners',
@@ -516,7 +516,7 @@ export interface InlineStudioApi {
       itemId: string,
       referenceAssetId: string | null,
     ): Promise<Result<TrainingDatasetItem>>
-    /** Switch a dataset between clip and motion training. */
+    /** Switch a dataset between clip and control training. */
     setDatasetMode(datasetId: string, mode: TrainingMode): Promise<Result<TrainingDataset>>
     /**
      * Auto-caption items with the local captioner; `overwrite` re-captions ones that already have

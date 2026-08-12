@@ -125,7 +125,7 @@ class Training:
     def set_item_reference(
         self, item_id: str, reference_asset_id: str | None
     ) -> dict[str, Any]:
-        """Pair a reference clip with an item, for a Motion LoRA."""
+        """Pair a reference clip with an item, for a Control LoRA."""
         return ts.set_item_reference(self._conn(), item_id, reference_asset_id or None)
 
     def set_dataset_mode(self, dataset_id: str, mode: str) -> dict[str, Any]:
