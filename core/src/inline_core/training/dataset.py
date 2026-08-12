@@ -35,9 +35,12 @@ def media_pairs(root: Path) -> list[tuple[Path, str]]:
     return _pairs(root, _IMAGE_SUFFIXES + _VIDEO_SUFFIXES)
 
 
-#: A Motion LoRA's reference sits beside its target as ``0001.ref.mp4`` next to ``0001.mp4``, so a
-#: pair is discoverable from the folder alone and survives being copied somewhere else.
+#: A Motion LoRA's reference sits beside its target, so a pair is discoverable from the folder alone
+#: and survives being copied somewhere else. Two spellings: ours, written by the dataset export, and
+#: Lightricks', because their published IC-LoRA sets (Canny-Control-Dataset and friends) name pairs
+#: ``bear.mp4`` / ``bear_reference.mp4`` and people will train on those directly.
 _REFERENCE_INFIX = ".ref"
+_REFERENCE_SUFFIX = "_reference"
 
 
 @dataclass(frozen=True)
@@ -58,15 +61,28 @@ def media_triples(root: Path) -> list[MediaTriple]:
     """
     out: list[MediaTriple] = []
     for media, caption in media_pairs(root):
-        if _REFERENCE_INFIX in media.suffixes[:-1] or media.stem.endswith(_REFERENCE_INFIX):
+        if _is_reference(media):
             continue  # a reference is discovered through its target, never as an item of its own
-        reference = next(
-            (c for c in (media.with_suffix(f"{_REFERENCE_INFIX}{s}") for s in _VIDEO_SUFFIXES)
-             if c.exists()),
-            None,
-        )
-        out.append(MediaTriple(media, caption, reference))
+        out.append(MediaTriple(media, caption, _reference_for(media)))
     return out
+
+
+def _is_reference(media: Path) -> bool:
+    return _REFERENCE_INFIX in media.suffixes[:-1] or media.stem.endswith(
+        (_REFERENCE_INFIX, _REFERENCE_SUFFIX)
+    )
+
+
+def _reference_for(media: Path) -> Path | None:
+    """The reference beside a target, in either naming convention."""
+    candidates = (
+        media.with_suffix(f"{_REFERENCE_INFIX}{suffix}") for suffix in _VIDEO_SUFFIXES
+    )
+    named = (
+        media.with_name(f"{media.stem}{_REFERENCE_SUFFIX}{suffix}")
+        for suffix in _VIDEO_SUFFIXES
+    )
+    return next((c for c in (*candidates, *named) if c.exists()), None)
 
 
 def _pairs(

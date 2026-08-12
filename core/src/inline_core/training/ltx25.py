@@ -174,20 +174,43 @@ def _reclaim() -> None:
 
 
 def _vram() -> str:
-    """Allocated and reserved VRAM, for the status line.
+    """What this process holds, and what the whole card has left.
 
-    Both, because `nvidia-smi` shows only reserved: allocator cache and a leaked reference look
-    identical from outside, and telling them apart is the whole question when a pass OOMs.
+    Both halves, and the device-wide one is the important half. ``memory_allocated`` counts only
+    this process: it read 0.0 GiB through three OOM diagnoses while a separate Inline Core server
+    held 15 GiB of the same card, which is a very convincing way to look at an empty number and
+    conclude the card is empty.
     """
     import torch
 
     if not torch.cuda.is_available():
         return "cpu"
     gib = 1024**3
+    free, total = torch.cuda.mem_get_info()
     return (
-        f"{torch.cuda.memory_allocated() / gib:.1f} GiB allocated, "
-        f"{torch.cuda.memory_reserved() / gib:.1f} GiB reserved"
+        f"{torch.cuda.memory_allocated() / gib:.1f} GiB ours, "
+        f"{free / gib:.1f} of {total / gib:.1f} GiB free on the card"
     )
+
+
+def _check_card(needed_gib: float, say: Callable[[str], None]) -> None:
+    """Warn when another process has taken the room this pass needs.
+
+    A precache that dies inside an RMSNorm tells the user nothing about the generation server they
+    left running in another window. Naming it costs one call to the driver.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        return
+    gib = 1024**3
+    free, total = torch.cuda.mem_get_info()
+    used_elsewhere = (total - free) / gib - torch.cuda.memory_allocated() / gib
+    if free / gib < needed_gib and used_elsewhere > 1.0:
+        say(
+            f"warning: {used_elsewhere:.1f} GiB of this card is held by another process and only "
+            f"{free / gib:.1f} GiB is free. Stop any running Inline Core server before training."
+        )
 
 
 def _clip_pixels(
@@ -290,6 +313,8 @@ def _encode_captions(
         )
 
     say(f"encoding {len(captions)} captions ({_vram()})")
+    # Gemma alone measured 21.9 GiB on an L40S, encoding one caption at a time.
+    _check_card(22.0, say)
     prompts = [*captions, ""] if want_unconditional else list(captions)
     from ..models.ltx25.vendor.ltx_pipelines.utils.types import OffloadMode
 
