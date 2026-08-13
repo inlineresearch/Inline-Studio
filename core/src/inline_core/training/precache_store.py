@@ -25,7 +25,9 @@ from typing import Any
 logger = logging.getLogger("inline_core.training.precache")
 
 #: Bumping this invalidates every cache written by an older layout.
-FORMAT = "1"
+#: 2: a Control run's reference is cached unbatched, matching its target. A cache written at 1 holds
+#: five-dimensional references that the forward then makes six-dimensional.
+FORMAT = "2"
 
 #: Nested dicts on an item (H3 keeps an unconditional layout there) flatten onto one key with this.
 _NEST = "//"

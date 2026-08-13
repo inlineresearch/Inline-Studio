@@ -153,7 +153,10 @@ def _encode_clips(
             with torch.no_grad():
                 latent = encoder(pixels)
                 if ref_pixels is not None:
-                    references.append(encoder(ref_pixels).to("cpu"))
+                    # `[0]` like the target below: both are cached unbatched, and the forward adds
+                    # the batch dim back to each. Storing one batched and one not made the
+                    # reference six-dimensional by the time it reached the patchifier.
+                    references.append(encoder(ref_pixels)[0].to("cpu"))
             latents.append(latent[0].to("cpu"))
             kept.append(triple)
 

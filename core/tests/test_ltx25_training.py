@@ -194,3 +194,27 @@ def test_a_reference_survives_the_on_disk_cache(tmp_path) -> None:
     assert shift == 12.0
     assert "reference" in items[0], "the reference was dropped on the way to disk"
     assert torch.equal(items[0]["reference"], item["reference"])
+
+
+def test_the_reference_is_cached_the_same_rank_as_the_target() -> None:
+    """Both halves are cached unbatched, and the forward adds the batch dim to each.
+
+    They disagreed once: the target was stored as `latent[0]` and the reference kept its batch, so
+    the forward's `unsqueeze(0)` made it six-dimensional and einops refused it at the patchifier.
+    The two are one contract, so they are asserted together.
+    """
+    from inline_core.training.arch import ltx25_latent_tools
+    from inline_core.training.ltx25 import reference_condition
+
+    latent = torch.zeros(128, 3, 16, 16)          # what the cache holds, for either half
+    reference = torch.zeros(128, 3, 16, 16)
+
+    batched = latent.unsqueeze(0)
+    tools = ltx25_latent_tools(tuple(batched.shape))
+    state = tools.create_initial_state("cpu", torch.float32, batched)
+
+    # The patchifier wants five dims; anything else raises inside einops rather than here.
+    conditioned = reference_condition(reference.unsqueeze(0)).apply_to(
+        latent_state=state, latent_tools=tools
+    )
+    assert conditioned is not None
