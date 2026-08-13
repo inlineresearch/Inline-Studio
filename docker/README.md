@@ -114,7 +114,7 @@ model: [inlinestudio.art/lora-training](https://inlinestudio.art/lora-training).
 | Tag                  | What                                             |
 | -------------------- | ------------------------------------------------ |
 | `latest`             | the most recent stable release                   |
-| `1.2.69` and similar | a specific release, pin this for reproducibility |
+| `1.2.70` and similar | a specific release, pin this for reproducibility |
 
 Every tag is built from the matching GitHub release by CI, so the image and the source always agree.
 
