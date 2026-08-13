@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.68-blue?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.69-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -18,7 +18,7 @@
 **Contents:** [What is Inline Studio?](#what-is-inline-studio) · [Get Started](#get-started) ·
 [Features](#features) · [LoRA training](#lora-training) · [How it works](#how-it-works) ·
 [Two ways to generate](#two-ways-to-generate) · [Inline Core engine](#inline-core-generation-engine)
-([Krea 2](#krea-2), [FLUX.2](#flux2), [MiniMax H3](#minimax-h3), [ControlNet](#controlnet)) ·
+([Krea 2](#krea-2), [FLUX.2](#flux2), [MiniMax H3](#minimax-h3), [LTX-2.5](#ltx-25), [ControlNet](#controlnet)) ·
 [API Nodes](#api-nodes) · [FAQ](#faq) · [Contributing](#contributing)
 
 ## What is Inline Studio?
@@ -26,7 +26,7 @@
 Inline Studio is a free, open-source app for **AI filmmaking on a node canvas**, powered by the built-in **Inline Core** engine (local diffusion models) and hosted [fal](https://fal.ai) models. It gives AI filmmakers a free-form canvas to build a whole visual pipeline, from moodboard to final cut.
 
 - **Non-destructive by default** - every render is kept as a versioned take; generating again adds one, nothing is overwritten.
-- **Local diffusion generation engine** - the built-in Inline Core engine runs popular diffusion models locally, on your own GPU, from a single model file, no external server. Currently supported: **Z-Image Turbo**, **Krea 2** (RAW + Turbo), **FLUX.2**, and **MiniMax H3** for video with sound.
+- **Local diffusion generation engine** - the built-in Inline Core engine runs popular diffusion models locally, on your own GPU, from a single model file, no external server. Currently supported: **Z-Image Turbo**, **Krea 2** (RAW + Turbo), **FLUX.2**, and **MiniMax H3** and **LTX-2.5** for video with sound.
 - **Train LoRAs locally** - the Trainer canvas fine-tunes Z-Image, Krea 2, FLUX.2 or MiniMax H3 on your own images, on your own GPU. H3 also trains on short video clips, so a LoRA can learn motion and not just look. With a 4-bit base, Krea 2 trains at 512px inside about 12GB, so a 16GB card can train a LoRA for a 26GB model. See [LoRA training](#lora-training).
 - **Hosted models via API Nodes** - reach for closed models with no GPU and no setup for instant creative range; see [API Nodes](#api-nodes).
 - **Mix both in the same film** - Inline Studio handles everything around the render: exploring options, keeping what works, and shaping a repeatable process you can iterate on and share.
@@ -37,7 +37,27 @@ It runs as a **single process on one port**: the Inline Core engine (Python) ser
 
 ## Get Started
 
-The built web UI ships as a Python package, so all you need is [Python 3.11+](https://python.org), no Node. **`--install --extra all` is the single command that installs everything** - the engine, the local model runtime, the LoRA trainer, and the UI. On an NVIDIA machine it reads the GPU's compute capability and pulls the CUDA build of PyTorch that has kernels for it, RTX 50-series included.
+The built web UI ships as a Python package, so there is no Node and no build step. You need two
+things: [Python 3.11+](https://python.org) and [**uv**](https://github.com/astral-sh/uv), which the
+installer uses to create the environment and resolve packages. `--install` stops with
+`uv not found` if it is missing.
+
+**Install uv first** (one line, no Python needed):
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+```powershell
+# Windows
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Or use whatever you already have: `brew install uv`, `pipx install uv`, `pip install uv`. Full
+options: [docs.astral.sh/uv/getting-started/installation](https://docs.astral.sh/uv/getting-started/installation/).
+
+Then **`--install --extra all` is the single command that installs everything** - the engine, the local model runtime, the LoRA trainer, and the UI. On an NVIDIA machine it reads the GPU's compute capability and pulls the CUDA build of PyTorch that has kernels for it, RTX 50-series included.
 
 [**No GPU? Deploy Inline Studio on RunPod →**](https://console.runpod.io/deploy?template=c0qkyaypuv&ref=hs2l4qhc)
 
@@ -66,7 +86,7 @@ That's it: `--install` sets up the environment and installs everything once, the
 
 Everything lands in `core/.venv`, which Inline Studio owns. If you already have another virtualenv or conda env activated in that shell (a ComfyUI one, say), it is left completely untouched - `--install` says so and carries on. Re-running `--install` is safe: an existing `core/.venv` is reused, so adding an extra later is just another `--install --extra NAME`.
 
-Prefer pip over the launcher? `pip install -r requirements.txt` (from the repo root) installs the whole app - engine, UI, model runtime, and trainer - from PyPI; then run `inline-studio`.
+Prefer pip over the launcher, or would rather not install uv at all? `pip install -r requirements.txt` (from the repo root) installs the whole app - engine, UI, model runtime, and trainer - from PyPI; then run `inline-studio`. This path uses no uv, but it also does not detect your GPU, so on Windows you may need to name the CUDA build yourself.
 
 ### Hardware support
 
@@ -231,6 +251,9 @@ Peak VRAM at 512px, 12 steps, rank 16, batch 1, gradient checkpointing on:
 | Krea 2 (4-bit base)       | ~11.9GB    | yes         |
 | Z-Image                   | ~13.4GB    | yes         |
 | MiniMax H3 (4-bit, video) | ~20.6GB    | yes, slowly |
+| LTX-2.5 (22B, video)      | ~42GB      | no, 48GB    |
+
+LTX-2.5 is the exception to the row above it. It is a 22B base against MiniMax H3's 33B, but it has no 4-bit training path here, so nothing shrinks it: the base alone is 38GB once loaded and training peaks at 42GB, measured on an L40S. A 48GB card is the floor, and a 24GB one cannot run it at any resolution. Generating is far more forgiving than training here, because LTX streams its own weights: [Benchmark results](TRAINING.md#benchmark-results).
 
 Training is cheaper than generating, and a LoRA trained at 512 applies at any generation resolution. Full per-card matrix, both resolutions and the timings: [Benchmark results](TRAINING.md#benchmark-results).
 
@@ -257,10 +280,10 @@ From the home screen, **Export** zips a project into one archive. Import it on t
 
 Pick whatever fits the shot, and mix both in one film. However you render, the frame keeps its full take history, so you never lose a good version.
 
-| How you render                          | What it's like                                                                                                                                                                                                                                                                                                                                                                                        | What you need                                                                                                                                                                                                             |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Local GPU: Inline Core** _(built in)_ | Drop a **Z-Image Turbo**, **Krea 2**, **FLUX.2**, or **MiniMax H3** node, wire a prompt, hit Run: one node, no loader/sampler wiring. A single `.safetensors` is usually all you bring (a prequantized build can be a diffusers folder); the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Runs locally on your own GPU. No account, no external server. Low-VRAM friendly: it auto-fits the model to your card (streaming weights, int8, then NF4) so a model too big for full precision still runs, with no flags. |
-| **Hosted: API Nodes**                   | Add a Generate node and pick a model: hosted, closed models across image, video, and audio. No GPU, instant range. See [API Nodes](#api-nodes) for the model list and providers.                                                                                                                                                                                                                      | A provider key (currently [fal](https://fal.ai/dashboard/keys)); it stays on your machine, and you pay per render (each node estimates the price first).                                                                  |
+| How you render                          | What it's like                                                                                                                                                                                                                                                                                                                                                                                                    | What you need                                                                                                                                                                                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Local GPU: Inline Core** _(built in)_ | Drop a **Z-Image Turbo**, **Krea 2**, **FLUX.2**, **MiniMax H3** or **LTX-2.5** node, wire a prompt, hit Run: one node, no loader/sampler wiring. A single `.safetensors` is usually all you bring (a prequantized build can be a diffusers folder); the engine pairs it with a VAE + text-encoder and downloads nothing behind your back. Two or more GPUs? It can split one image's denoise across them (xDiT). | Runs locally on your own GPU. No account, no external server. Low-VRAM friendly: it auto-fits the model to your card (streaming weights, int8, then NF4) so a model too big for full precision still runs, with no flags. |
+| **Hosted: API Nodes**                   | Add a Generate node and pick a model: hosted, closed models across image, video, and audio. No GPU, instant range. See [API Nodes](#api-nodes) for the model list and providers.                                                                                                                                                                                                                                  | A provider key (currently [fal](https://fal.ai/dashboard/keys)); it stays on your machine, and you pay per render (each node estimates the price first).                                                                  |
 
 For local generation, either drop a `.safetensors` into `core/models/diffusion_models/`, or add a model node and use its **model popup** (a blinking hint shows up when something's missing) to download the diffusion model, VAE, and text-encoder into `core/models/`, with visible progress. The canvas and planning work with no models at all. See [Krea 2](#krea-2) and [FLUX.2](#flux2) for those models' files and VRAM.
 
@@ -366,6 +389,41 @@ Worth knowing before you start a download this size:
 - **A smaller file is a smaller download, not a smaller model.** All of them occupy the same memory once loaded, so the choice is bandwidth and disk, not VRAM. **Training needs the bf16 build**: a pruned one has no timestep path to derive the modulation basis from, and it would save nothing anyway, since the base trains at 4-bit whichever file it starts from.
 - **LoRAs work.** Every H3 node has a LoRA input, and adapters are fused into each block as it streams, before the factorisation and the quantisation. You can train one in the Trainer tab: see [LoRA training](#lora-training). An H3 LoRA is trained on stills and applies to video, so it carries look and style rather than motion.
 
+### LTX-2.5
+
+[LTX-2.5](https://huggingface.co/Lightricks/LTX-2.5) is Lightricks' 22B open-weights video model, and the second here that generates a soundtrack rather than a silent clip. It ships as a split pack, one file per component, laid out in exactly the folders Inline Core already scans - so setting it up is dropping files in, not assembling a repo.
+
+Three nodes, because the inputs differ and a node should say what it takes:
+
+- **Text → Video** for a shot from nothing but a prompt.
+- **Image → Video** to bring a still you already like into motion.
+- **First and Last Frame** to pin the opening and closing frames and let the model fill in between.
+
+Output is 24 fps between 1 and 20 seconds. Duration snaps onto the frame grid the video decoder works in, so 5 seconds renders 121 frames. Width and height snap to a multiple of 64, because the second stage renders at full size from a first stage at half, and both halves have to be legal.
+
+Two modes on every node. **Fast** runs the distilled transformer on its fixed twelve-step schedule with no guidance. **Quality** runs the dev transformer with guidance and refines the second stage with the published distilled LoRA, which is a separate download.
+
+```
+core/models/
+  diffusion_models/      ltx-2.5-22b-distilled-transformer-bf16.safetensors  <- fast mode
+                         ltx-2.5-22b-dev-transformer-bf16.safetensors        <- quality mode, and training
+  text_encoders/         gemma4-12b-with-proj-ltx-2.5-bf16.safetensors       <- Gemma 4 12B
+  vae/                   ltx-2.5-video-vae-bf16.safetensors
+                         ltx-2.5-audio-vae-bf16.safetensors
+  latent_upscale_models/ ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors
+  model_patches/         ltx-2.5-duration-head-bf16.safetensors
+```
+
+Worth knowing before you start a download this size:
+
+- **You have to accept the licence first.** The weights are gated on Hugging Face. Open the model page, accept the LTX-2 Community License, and make sure the account you accepted with is the one your token belongs to. Without that every download returns a permission error rather than a file.
+- **71 GB for fast mode, 122 GB with quality mode.** The transformer is 42 GB and the text encoder another 26, and they are on the card at the same time while the prompt is encoded. That peak, not either file on its own, is what your card has to hold, and it is why a 48 GB card runs the transformer at half precision rather than full.
+- **Measured on a 48 GB L40S:** a 2 second clip at 960x576 takes about **3.8 minutes**, or **7.8 minutes** on the first render while the model loads, peaking at 32 GB VRAM. Longer clips and larger canvases scale from there.
+- **LTX streams its own weights, which changes what a small card means.** Most models here either fit or are refused. LTX can stream from system RAM, or from disk through a buffer of about 5 GB, so a card that cannot hold the model is slow rather than excluded. It picks for you from what your machine actually has.
+- **The `int8_convrot` builds do not load.** Their weights are stored rotated and only ComfyUI can undo that. The picker lists them with the reason rather than hiding them. The bf16 builds load everywhere; the NVFP4 build loads on Blackwell cards with `ltx-kernels` installed.
+- **The distilled and dev transformers are indistinguishable.** Same architecture, same metadata, same byte count. Which is which is recorded when the popup downloads them. If you move or rename one by hand, point the node at it explicitly with the Diffusion model dropdown.
+- **LoRAs work.** Every LTX node has a LoRA input, and you can train one in the Trainer tab: see [LoRA training](#lora-training). Training runs against the dev transformer and the adapter then loads in both modes.
+
 ### ControlNet
 
 Steer a local render with a pose, depth, or edge map. Wire a control map into a gen node's **Control** input and pick a ControlNet in the node's Adjust sidebar.
@@ -437,11 +495,11 @@ Only for **local** generation. The built-in Inline Core engine renders on the GP
 
 ### Can I train a LoRA locally?
 
-Yes, that is what the [Trainer tab](#lora-training) is for, and it runs entirely on your own GPU with no cloud step. It trains LoRAs for Z-Image, Krea 2, FLUX.2, and MiniMax H3. Training is cheaper than generating: FLUX.2 klein Base trains at 512px in about 8.6GB, Z-Image in about 13GB, and Krea 2 with a 4-bit base in about 12GB, so a 16GB card handles all three. See [Benchmark results](TRAINING.md#benchmark-results) for the measured table.
+Yes, that is what the [Trainer tab](#lora-training) is for, and it runs entirely on your own GPU with no cloud step. It trains LoRAs for Z-Image, Krea 2, FLUX.2, MiniMax H3 and LTX-2.5. Training is cheaper than generating: FLUX.2 klein Base trains at 512px in about 8.6GB, Z-Image in about 13GB, and Krea 2 with a 4-bit base in about 12GB, so a 16GB card handles all three. See [Benchmark results](TRAINING.md#benchmark-results) for the measured table.
 
 ### What models can I run?
 
-See [Two ways to generate](#two-ways-to-generate): Z-Image, [Krea 2](#krea-2), [FLUX.2](#flux2), or [MiniMax H3](#minimax-h3) locally on your own GPU, or hosted fal models. You can train a LoRA locally for any of the four as well, see [LoRA training](#lora-training). Adding a new local model is a Core change (a model runner), no UI release.
+See [Two ways to generate](#two-ways-to-generate): Z-Image, [Krea 2](#krea-2), [FLUX.2](#flux2), [MiniMax H3](#minimax-h3) or [LTX-2.5](#ltx-25) locally on your own GPU, or hosted fal models. You can train a LoRA locally for any of the five as well, see [LoRA training](#lora-training). Adding a new local model is a Core change (a model runner), no UI release.
 
 ## Contributing
 

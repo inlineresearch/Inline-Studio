@@ -93,6 +93,17 @@ def _register_builtins(
     except ImportError:
         pass
     try:
+        from ..models.ltx25.provider import Ltx25Provider
+        from ..models.ltx25.runner import VARIANTS as LTX25_VARIANTS
+        from ..models.ltx25.runner import register_ltx25
+
+        register_ltx25(registry, store, policy)
+        for variant in LTX25_VARIANTS:
+            requirements.register(variant.node_type, Ltx25Provider())
+            registered.append(variant.node_type)
+    except ImportError:
+        pass
+    try:
         from ..models.zimage.primitives import register_zimage_primitives
 
         register_zimage_primitives(registry, store, policy)

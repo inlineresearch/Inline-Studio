@@ -524,10 +524,38 @@ export interface ModelDownloadErrorEvent {
 
 /** Turbo needs a training adapter to avoid "turbo drift"; a de-turbo base trains without one. */
 /**
- * The model family a LoRA is trained for. `minimax-h3` is the video model: it trains on stills and
- * the adapter applies to every H3 node at generation time.
+ * The model family a LoRA is trained for. `minimax-h3` and `ltx-2-5` are the video models: they
+ * train on stills or clips, and the adapter applies to every node of that family at generation time.
  */
-export type TrainingArch = 'z-image' | 'krea2' | 'flux2' | 'minimax-h3'
+export type TrainingArch = 'z-image' | 'krea2' | 'flux2' | 'minimax-h3' | 'ltx-2-5'
+
+/**
+ * Which shape an LTX-2.5 run trains in. `clip` learns a look and how it moves, from single clips.
+ * `control` learns a transform from paired reference and target clips - upstream calls this an
+ * IC-LoRA - so every dataset item needs a second clip wired to it as the reference.
+ */
+export type TrainingMode = 'clip' | 'control'
+
+/** One row a source produced, held in the dialog until the reader commits it to a dataset. */
+export interface StagedDatasetItem {
+  assetId: string
+  name: string
+  caption: string
+  referenceAssetId: string | null
+}
+
+/** A Hugging Face dataset repo, summarised before anyone commits to downloading it. */
+export interface DatasetRepoPreview {
+  repo: string
+  /** Trainable items, excluding reference clips (which are the `before` half of a pair). */
+  items: number
+  /** How many of those items have a reference, so a control set is recognisable up front. */
+  pairs: number
+  bytes: number
+  metadataFile: string | null
+  /** Set when the repo cannot be used, with the reason to show instead of a count. */
+  problem: string | null
+}
 
 /**
  * Which base checkpoint a run trains against. `raw` is Krea 2's undistilled base (the recommended
@@ -562,22 +590,34 @@ export type TrainingStatus =
   /** Died to a crash/OOM/restart; resumable from its last checkpoint. */
   | 'interrupted'
 
-/** A named set of images (+ captions) that trains one LoRA. */
+/** A named set of images or clips (+ captions) that trains one LoRA. */
 export interface TrainingDataset {
   id: string
   projectId: string
   name: string
   /** Token injected into every caption (the character/style trigger); may be empty. */
   triggerWord: string
+  /**
+   * `clip` trains on one media file per item. `control` is LTX-2.5's IC-LoRA: every item also
+   * needs a reference clip, and the model learns the transform between the pair. Defaults to
+   * `clip`, so a dataset made before this existed keeps its meaning.
+   */
+  mode: TrainingMode
   createdAt: number
   updatedAt: number
 }
 
-/** One image in a dataset, with its caption. Backed by a library asset. */
+/** One image or clip in a dataset, with its caption. Backed by a library asset. */
 export interface TrainingDatasetItem {
   id: string
   datasetId: string
   assetId: string
+  /**
+   * The `before` of a Control LoRA pair, or null on a clip-mode item. A control run refuses to
+   * start while any item is unpaired, because a missing reference does not fail loudly once
+   * training is under way - the pair is simply absent.
+   */
+  referenceAssetId: string | null
   caption: string
   position: number
   createdAt: number
@@ -631,6 +671,11 @@ export interface TrainingHyperparams {
    * the clip, so `end` exists for footage whose action is at the finish. Defaults to `start`.
    */
   clipWindow?: 'start' | 'end'
+  /**
+   * Which shape an LTX-2.5 run trains in. Defaults to `clip`. It changes which Linears the adapter
+   * reaches as well as what the dataset must hold, so it is a hyperparameter rather than a view.
+   */
+  trainingMode?: TrainingMode
   /** Checkpoint every N steps. */
   saveEvery: number
   /** GPU indices to train on; `[]` = auto (first available). */

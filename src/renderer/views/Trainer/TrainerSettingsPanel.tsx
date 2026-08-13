@@ -8,7 +8,7 @@
  * resumable run asks first, then discards that run's checkpoints.
  */
 import { useEffect, useState } from 'react'
-import { resolveClipLength } from '@shared/clipGrid'
+import { clipGridFor, resolveClipLengthFor } from '@shared/clipGrid'
 
 import type {
   TrainingArch,
@@ -16,6 +16,7 @@ import type {
   TrainingBaseQuant,
   TrainingHyperparams,
   TrainingLoraScope,
+  TrainingMode,
   TrainingOffload,
 } from '@shared/types'
 import { Modal } from '../../components/Modal'
@@ -60,6 +61,9 @@ const BASES: Record<TrainingArch, { value: TrainingBaseMode; label: string }[]> 
   // H3 ships one undistilled build per partition, and only fl2va trains. The LoRA loads on all four
   // H3 nodes afterwards, ref2va included - the two partitions are the same architecture.
   'minimax-h3': [{ value: 'raw', label: 'MiniMax H3 FL2VA (required)' }],
+  // LTX-2.5 trains on the dev transformer. The adapter then loads on all three LTX nodes, in fast
+  // mode as well as quality - they are the same architecture.
+  'ltx-2-5': [{ value: 'raw', label: 'LTX-2.5 dev (required)' }],
 }
 
 /**
@@ -92,6 +96,9 @@ const ARCHS: { value: TrainingArch; label: string }[] = [
   { value: 'krea2', label: 'Krea 2' },
   { value: 'flux2', label: 'FLUX.2' },
   { value: 'minimax-h3', label: 'MiniMax H3 (video)' },
+  // "(video)" like H3, not "(video + audio)": the model generates a soundtrack, but training only
+  // adapts the video branch, and this label sits in the Trainer.
+  { value: 'ltx-2-5', label: 'LTX-2.5 (video)' },
 ]
 
 function NumberField({
@@ -171,7 +178,8 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
     setHp((current) => ({ ...current, arch: next, baseMode: BASES[next][0].value }))
 
   // What the typed seconds actually resolve to on H3's frame grid, shown under the field.
-  const resolved = resolveClipLength(hp.clipSeconds ?? 1)
+  const clipGrid = clipGridFor(arch)
+  const resolved = clipGrid ? resolveClipLengthFor(clipGrid, hp.clipSeconds ?? 1) : null
 
   const toggleGpu = (index: number): void =>
     set(
@@ -283,10 +291,35 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
             node's LoRA input. 4-bit base, so it needs a big card.
           </span>
         )}
+        {arch === 'ltx-2-5' && (
+          <span className="text-[10px] text-zinc-600">
+            Trains on clips. Wire the result into any LTX-2.5 node's LoRA input. A 22B base, so this
+            wants a 48GB card.
+          </span>
+        )}
       </label>
 
-      {arch === 'minimax-h3' && (
+      {clipGrid && (
         <>
+          {arch === 'ltx-2-5' && (
+            <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
+              Training mode
+              <select
+                value={hp.trainingMode ?? 'clip'}
+                onChange={(e) => set('trainingMode', e.target.value as TrainingMode)}
+                className="rounded-md border border-border bg-black/30 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-zinc-500"
+              >
+                <option value="clip">Clip LoRA (a look and how it moves)</option>
+                <option value="control">Control LoRA (reference to target)</option>
+              </select>
+              <span className="text-[10px] text-zinc-600">
+                A Clip LoRA learns a look and its movement from single clips. A Control LoRA learns
+                the change between a pair, so every item needs a reference clip as well as a target.
+                Upstream calls that an IC-LoRA.
+              </span>
+            </label>
+          )}
+
           <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
             Clip length (seconds)
             <NumberField
@@ -300,14 +333,16 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
             <span className="text-[10px] text-zinc-500">
               Trains on{' '}
               <span className="text-zinc-300">
-                {resolved.frames} frames ({resolved.seconds.toFixed(2)}s)
+                {resolved?.frames} frames ({resolved?.seconds.toFixed(2)}s)
               </span>{' '}
-              per clip. H3 encodes only 17n+5 frames at 24fps, so this snaps down, never up.
+              per clip. This VAE encodes only {clipGrid.grid}n+{clipGrid.offset} frames at{' '}
+              {clipGrid.fps}fps, so the length snaps down, never up.
             </span>
             <span className="text-[10px] text-zinc-600">
-              Stills ignore this, and the floor is 0.92s. Length costs time rather than memory: a
-              clip peaks about the same as a still, but a second of video is roughly four times the
-              step time.
+              Stills ignore this, and the floor is{' '}
+              {((clipGrid.grid + clipGrid.offset) / clipGrid.fps).toFixed(2)}s. Length costs time
+              rather than memory: a clip peaks about the same as a still, but a second of video is
+              roughly four times the step time.
             </span>
           </label>
 

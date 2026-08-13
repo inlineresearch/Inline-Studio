@@ -101,3 +101,41 @@ def test_the_unconditional_embedding_encodes_an_empty_caption(dataset) -> None:
 def test_precache_refuses_an_empty_folder(tmp_path) -> None:
     with pytest.raises(RuntimeError, match="empty"):
         ds.precache(str(tmp_path), _Components(), archs.Z_IMAGE, "cpu", torch.float32, 32)
+
+
+def test_the_export_naming_is_the_naming_the_reader_looks_for(tmp_path) -> None:
+    """The round trip the Studio export depends on.
+
+    The export renames items positionally (`0000.mp4`), so a reference has to be re-named onto the
+    convention too. Writer and reader lived in different modules and the writer simply did not
+    exist: every paired dataset exported its targets alone and trained unconditioned, which is legal
+    for a Clip LoRA and therefore silent. Both halves go through `reference_path_for` now, and this
+    asserts they still agree.
+    """
+    from inline_core.training.dataset import media_triples, reference_path_for
+
+    for i in range(2):
+        target = tmp_path / f"{i:04d}.mp4"
+        target.write_bytes(b"target")
+        target.with_suffix(".txt").write_text(f"clip {i}")
+        reference_path_for(target).write_bytes(b"reference")
+
+    triples = media_triples(tmp_path)
+    assert [t.target.name for t in triples] == ["0000.mp4", "0001.mp4"]
+    assert [t.reference.name for t in triples if t.reference] == ["0000.ref.mp4", "0001.ref.mp4"]
+    assert [t.caption for t in triples] == ["clip 0", "clip 1"]
+
+
+def test_an_unpaired_item_is_a_clip_item_not_an_error(tmp_path) -> None:
+    """A Clip LoRA dataset is the same folder without references, so a missing one is not a fault.
+
+    This is also why the export bug was invisible: `reference=None` is the normal case.
+    """
+    from inline_core.training.dataset import media_triples
+
+    (tmp_path / "0000.mp4").write_bytes(b"target")
+    (tmp_path / "0000.txt").write_text("a clip")
+
+    triples = media_triples(tmp_path)
+    assert len(triples) == 1
+    assert triples[0].reference is None

@@ -156,3 +156,26 @@ def test_a_store_that_only_does_images_says_so_rather_than_crashing() -> None:
 
     with pytest.raises(NotImplementedError, match="ImagesOnly"):
         ImagesOnly().save_video("r", "n", [], {}, fps=24)
+
+
+def test_bfloat16_frames_are_upcast_rather_than_refused() -> None:
+    """numpy has no bfloat16, and a video model hands frames back in its compute dtype. LTX-2.5
+    returns bf16, and `.numpy()` on it raises `TypeError: Got unsupported ScalarType BFloat16`
+    at save time - after the whole clip has been generated."""
+    torch = pytest.importorskip("torch")
+    from inline_core.runtime.video_encode import _to_rgb
+
+    frame = torch.rand(3, 8, 8, dtype=torch.bfloat16)
+    rgb = _to_rgb(frame)
+    assert rgb.shape == (8, 8, 3)
+    assert rgb.dtype.name == "uint8"
+
+
+def test_bfloat16_audio_is_upcast_too() -> None:
+    """The same seam carries the soundtrack, and LTX denoises audio in the same dtype."""
+    torch = pytest.importorskip("torch")
+    from inline_core.runtime.video_encode import _pcm16
+
+    pcm = _pcm16(torch.rand(64, 2, dtype=torch.bfloat16) * 2 - 1)
+    assert pcm.dtype.name == "int16"
+    assert pcm.shape == (64, 2)

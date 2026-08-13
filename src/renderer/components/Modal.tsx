@@ -10,11 +10,20 @@ export function Modal({
   onClose,
   title,
   children,
+  panelClassName = 'max-h-[85vh] w-full max-w-3xl',
+  bodyClassName = 'min-h-0 flex-1 overflow-y-auto',
+  headerAction,
 }: {
   open: boolean
   onClose: () => void
   title?: string
   children: React.ReactNode
+  /** Overrides the default sizing, for a dialog that wants the screen rather than its content. */
+  panelClassName?: string
+  /** Overrides the body's own scrolling, for a dialog that scrolls a section instead. */
+  bodyClassName?: string
+  /** Rendered in the header, before the close button: the dialog's primary action. */
+  headerAction?: React.ReactNode
 }): React.JSX.Element | null {
   useEffect(() => {
     if (!open) return
@@ -33,20 +42,23 @@ export function Modal({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+        className={`flex flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <h2 className="text-sm font-semibold text-zinc-100">{title}</h2>
-          <button
-            onClick={onClose}
-            title="Close"
-            className="-m-1 rounded p-1 text-zinc-400 hover:text-zinc-100"
-          >
-            <CloseIcon />
-          </button>
+          <div className="flex items-center gap-3">
+            {headerAction}
+            <button
+              onClick={onClose}
+              title="Close"
+              className="-m-1 rounded p-1 text-zinc-400 hover:text-zinc-100"
+            >
+              <CloseIcon />
+            </button>
+          </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+        <div className={bodyClassName}>{children}</div>
       </div>
     </div>
   )

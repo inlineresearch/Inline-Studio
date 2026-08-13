@@ -16,9 +16,10 @@ from . import dataset as ds
 from . import models
 from . import precache_store as store
 
-#: MiniMax H3's video sigma shift. Its scheduler applies the same expression Z-Image's does, so the
-#: arch samples through it unchanged.
-_H3_SHIFT = 12.0
+#: Each video arch's sigma shift. H3's scheduler applies the same expression Z-Image's does, so the
+#: arch samples through it unchanged; LTX's distilled schedule is shifted the same way. An arch
+#: absent here reads its shift off the scheduler its encoders carry, as the image archs do.
+_VIDEO_SHIFTS = {archs.MINIMAX_H3: 12.0, archs.LTX25: 12.0}
 
 
 def build(
@@ -33,6 +34,7 @@ def build(
     dropout: float = 0.0,
     clip_frames: int = 1,
     clip_window: str = "start",
+    training_mode: str = archs.MODE_CLIP,
     cache_dir: str | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, float]:
@@ -49,6 +51,8 @@ def build(
     settings = {
         "resolution": resolution, "flip": flip, "dropout": dropout > 0,
         "clip_frames": clip_frames, "clip_window": clip_window,
+        # A motion run caches a different shape of item, so it must not read a clip run's latents.
+        "training_mode": training_mode,
     }
     say = on_status or (lambda _text: None)
     key = None
@@ -64,7 +68,7 @@ def build(
     items, unconditional, shift = _encode(
         dataset_dir, models_dir, arch, device, dtype, resolution,
         flip=flip, dropout=dropout, clip_frames=clip_frames, clip_window=clip_window,
-        on_status=on_status,
+        training_mode=training_mode, on_status=on_status,
     )
     if cache_dir and key is not None:
         store.save(Path(cache_dir), key, items, unconditional, shift)
@@ -83,6 +87,7 @@ def _encode(
     dropout: float = 0.0,
     clip_frames: int = 1,
     clip_window: str = "start",
+    training_mode: str = archs.MODE_CLIP,
     on_status: Callable[[str], None] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, float]:
     if arch == archs.MINIMAX_H3:
@@ -92,7 +97,16 @@ def _encode(
             dataset_dir, models_dir, device, dtype, resolution, flip, dropout > 0, clip_frames,
             clip_window=clip_window, on_status=on_status,
         )
-        return items, unconditional, _H3_SHIFT
+        return items, unconditional, _VIDEO_SHIFTS[archs.MINIMAX_H3]
+
+    if arch == archs.LTX25:
+        from . import ltx25
+
+        items, unconditional = ltx25.precache(
+            dataset_dir, models_dir, device, dtype, resolution, flip, dropout > 0, clip_frames,
+            clip_window=clip_window, mode=training_mode, on_status=on_status,
+        )
+        return items, unconditional, _VIDEO_SHIFTS[archs.LTX25]
 
     encoders = models.load_encoders(models_dir, arch, device, dtype)
     items = ds.precache(dataset_dir, encoders, arch, device, dtype, resolution, flip=flip)

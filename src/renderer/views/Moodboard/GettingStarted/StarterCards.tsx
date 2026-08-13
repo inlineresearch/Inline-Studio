@@ -21,6 +21,7 @@ import { StarterCard, type CardStatus } from './StarterCard'
 // The glyph reinforces the kind colour: a wand for image generation, a camera for video, a stack
 // for the dataset that training starts from.
 const ICONS: Record<StarterKey, React.JSX.Element> = {
+  ltx25: <VideoGlyph className="h-4 w-4" />,
   minimaxh3: <VideoGlyph className="h-4 w-4" />,
   zimage: <WandIcon className="h-4 w-4" />,
   flux2: <WandIcon className="h-4 w-4" />,

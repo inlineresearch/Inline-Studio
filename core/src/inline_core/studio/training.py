@@ -24,10 +24,27 @@ from pathlib import Path
 from typing import Any
 
 from ..config import models_dir
+from ..training.dataset import (
+    is_reference_name,
+    reference_for_name,
+    reference_path_for,
+)
 from . import training_store as ts
 from .activity import ActivityRun
+from .dataset_import import read_metadata
 
 _CAPTION_EXT = ".txt"
+
+
+def _preview_json(preview: Any) -> dict[str, Any]:
+    return {
+        "repo": preview.repo,
+        "items": preview.items,
+        "pairs": preview.pairs,
+        "bytes": preview.bytes,
+        "metadataFile": preview.metadata_file,
+        "problem": preview.problem,
+    }
 
 
 def _safe(name: str) -> str:
@@ -78,14 +95,62 @@ class Training:
         return ts.list_items(self._conn(), dataset_id)
 
     def add_items(self, dataset_id: str, asset_ids: list[str]) -> list[dict[str, Any]]:
-        return ts.add_items(self._conn(), dataset_id, asset_ids)
+        """Add library assets as items, pairing any that name each other."""
+        return self.commit_staged(dataset_id, self.stage_assets(asset_ids))
+
+    def stage_assets(self, asset_ids: list[str]) -> list[dict[str, Any]]:
+        """Assets the reader picked, paired by name, without touching any dataset.
+
+        Drag-and-drop and the file picker come through here, so the pairing rule lives in one place
+        for all three sources: dropping `bear.mp4` and `bear_reference.mp4` is one row, not two.
+        """
+        from . import assets as ax
+
+        conn = self._conn()
+        names: dict[str, str] = {}
+        for asset_id in asset_ids:
+            row = ax.asset_file(conn, asset_id)
+            if row is not None:
+                # `name`, not `filePath`: an asset is stored under its uuid, so the path carries no
+                # filename to pair on.
+                names[Path(row["name"]).name] = asset_id
+        present = set(names)
+        staged: list[dict[str, Any]] = []
+        for name, asset_id in names.items():
+            if is_reference_name(Path(name)):
+                continue
+            reference_name = reference_for_name(Path(name), present)
+            staged.append(
+                {
+                    "assetId": asset_id,
+                    "name": name,
+                    "caption": "",
+                    "referenceAssetId": names.get(reference_name) if reference_name else None,
+                }
+            )
+        return staged
 
     def add_from_path(self, dataset_id: str, path: str) -> list[dict[str, Any]]:
-        """Import a folder of images and clips into the dataset, captions included.
+        """Stage a folder and commit it in one step, for callers that want the old behaviour."""
+        return self.commit_staged(dataset_id, self.stage_from_path(path))
 
-        The browser cannot hand over a folder, and uploading a clip dataset through it means
-        pushing gigabytes over HTTP to a server that can already see the disk. Paths come from the
-        client here the same way ``assets:importPaths`` already accepts them.
+    def inspect_dataset_path(self, path: str) -> dict[str, Any]:
+        """What importing a folder would get, before committing to it."""
+        from .dataset_import import inspect_folder
+
+        return _preview_json(inspect_folder(path.strip()))
+
+    def inspect_dataset_repo(self, repo: str) -> dict[str, Any]:
+        """What pulling a Hugging Face dataset would get, without pulling it."""
+        from .dataset_import import inspect_repo
+
+        return _preview_json(inspect_repo(repo.strip()))
+
+    def stage_from_path(self, path: str) -> list[dict[str, Any]]:
+        """Import a folder's media as library assets and work out the pairing.
+
+        Deliberately touches no dataset: the Trainer shows what was staged and only writes rows
+        when the reader accepts them, so a browse never mutates the project.
         """
         from . import assets as ax
 
@@ -101,26 +166,106 @@ class Training:
         if not media:
             raise ValueError(f"No images or clips in {path}")
 
+        metadata = read_metadata(folder)
+        references = {e.reference for e in metadata.values() if e.reference} | {
+            p.name for p in media if is_reference_name(p)
+        }
         imported = [(p, ax.import_file(conn, project, str(p), None)) for p in media]
-        added = ts.add_items(conn, dataset_id, [a["id"] for _p, a in imported if a])
+        by_name = {p.name: a["id"] for p, a in imported if a}
+        names = {p.name for p in media}
 
-        # `NNNN.txt` beside `NNNN.png` is the caption, the convention the drag-drop path already
-        # follows. Only newly added items are touched, so re-importing cannot clobber an edit.
-        by_asset = {item["assetId"]: item for item in added}
+        staged: list[dict[str, Any]] = []
         for source, asset in imported:
-            item = by_asset.get(asset["id"]) if asset else None
-            sidecar = source.with_suffix(".txt")
-            if item and sidecar.is_file():
+            if asset is None or source.name in references:
+                continue
+            entry = metadata.get(source.name)
+            sidecar = source.with_suffix(_CAPTION_EXT)
+            caption = ""
+            if sidecar.is_file():
                 caption = sidecar.read_text(encoding="utf-8").strip()
-                if caption:
-                    ts.set_caption(conn, item["id"], caption)
+            elif entry is not None:
+                caption = entry.caption
+            reference_name = entry.reference if entry else reference_for_name(source, names)
+            staged.append(
+                {
+                    "assetId": asset["id"],
+                    "name": source.name,
+                    "caption": caption,
+                    "referenceAssetId": by_name.get(reference_name) if reference_name else None,
+                }
+            )
+        if not staged:
+            raise ValueError(f"Only reference clips in {path}; nothing to train on.")
+        return staged
+
+    def commit_staged(
+        self, dataset_id: str, staged: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Make the dataset match the staged rows. The only call that changes what will be trained.
+
+        A reconcile rather than an append, because the same dialog manages an existing dataset: it
+        opens holding what is already there, so a row the reader dropped has to leave the dataset
+        too. Rows are keyed by asset, which is what makes an unchanged row a no-op.
+        """
+        conn = self._conn()
+        wanted = {row["assetId"]: row for row in staged}
+        existing = {item["assetId"]: item for item in ts.list_items(conn, dataset_id)}
+
+        for asset_id, item in existing.items():
+            if asset_id not in wanted:
+                ts.remove_item(conn, item["id"])
+
+        added = ts.add_items(conn, dataset_id, [a for a in wanted if a not in existing])
+        by_asset = {**existing, **{item["assetId"]: item for item in added}}
+
+        for asset_id, row in wanted.items():
+            item = by_asset.get(asset_id)
+            if item is None:
+                continue
+            if (row.get("caption") or "") != (item.get("caption") or ""):
+                ts.set_caption(conn, item["id"], row.get("caption") or "")
+            if row.get("referenceAssetId") != item.get("referenceAssetId"):
+                ts.set_item_reference(conn, item["id"], row.get("referenceAssetId"))
         return ts.list_items(conn, dataset_id)
+
+    async def stage_from_repo(self, repo: str) -> list[dict[str, Any]]:
+        """Download a Hugging Face dataset and stage it, pairing included.
+
+        Downloads into the project rather than the models tree: this is somebody's training data,
+        not a model, and it should travel with the project folder. Staging only, like the folder
+        path it shares: the dataset is untouched until the reader commits.
+        """
+        from huggingface_hub import snapshot_download
+
+        repo = repo.strip()
+        preview = self.inspect_dataset_repo(repo)
+        if preview["problem"]:
+            raise ValueError(preview["problem"])
+
+        target = self._store.folder() / "datasets" / _safe(repo.replace("/", "__"))
+        target.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(
+            snapshot_download,
+            repo,
+            repo_type="dataset",
+            local_dir=str(target),
+        )
+        return self.stage_from_path(str(target))
 
     def remove_item(self, item_id: str) -> None:
         ts.remove_item(self._conn(), item_id)
 
     def set_caption(self, item_id: str, caption: str) -> dict[str, Any]:
         return ts.set_caption(self._conn(), item_id, caption)
+
+    def set_item_reference(
+        self, item_id: str, reference_asset_id: str | None
+    ) -> dict[str, Any]:
+        """Pair a reference clip with an item, for a Control LoRA."""
+        return ts.set_item_reference(self._conn(), item_id, reference_asset_id or None)
+
+    def set_dataset_mode(self, dataset_id: str, mode: str) -> dict[str, Any]:
+        return ts.set_dataset_mode(self._conn(), dataset_id, mode)
 
     def list_runs(self) -> list[dict[str, Any]]:
         conn = self._conn()
@@ -251,6 +396,43 @@ class Training:
         await proc.wait()
         self._progress_caption(dataset_id, done, total, finished=True)
         return ts.list_items(conn, dataset_id)
+
+    async def caption_assets(
+        self, asset_ids: list[str], model: str | None = None
+    ) -> dict[str, str]:
+        """Caption assets directly, returning asset id -> caption.
+
+        The dataset-shaped `auto_caption` cannot serve staged rows, which have no items yet, so the
+        captioner is addressed by asset. Same subprocess, same protocol; only the ids differ.
+        """
+        folder = self._store.folder()
+        targets = [
+            {"id": asset_id, "path": str(folder / self._asset_path(asset_id))}
+            for asset_id in asset_ids
+        ]
+        if not targets:
+            return {}
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "inline_core.training.caption",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write(json.dumps({"items": targets, "model": model}).encode())
+        await proc.stdin.drain()
+        proc.stdin.close()
+
+        out: dict[str, str] = {}
+        total = len(targets)
+        self._progress_caption("", 0, total)
+        async for raw in proc.stdout:
+            msg = _parse_json_line(raw.decode(errors="replace"))
+            if msg and msg.get("id") and isinstance(msg.get("caption"), str):
+                out[msg["id"]] = msg["caption"]
+                self._progress_caption("", len(out), total, item_id=msg["id"])
+        await proc.wait()
+        self._progress_caption("", len(out), total, finished=True)
+        return out
 
     def _progress_caption(
         self,
@@ -568,6 +750,15 @@ class Training:
             shutil.copyfile(src, dest)
             caption = ", ".join(p for p in (trigger, item["caption"].strip()) if p)
             dest.with_suffix(_CAPTION_EXT).write_text(caption, encoding="utf-8")
+            # The export renames positionally, which destroys whatever the file was called, so a
+            # Control LoRA's reference has to be re-named onto the convention the trainer reads.
+            # Without this the pairing is stored, exported away, and every item trains
+            # unconditioned - silently, because a missing reference is a legal Clip LoRA item.
+            reference_id = item.get("referenceAssetId")
+            if reference_id:
+                ref_src = folder / self._asset_path(reference_id)
+                ref_dest = reference_path_for(dest.with_suffix(ref_src.suffix.lower()))
+                shutil.copyfile(ref_src, ref_dest)
 
         loras = models_dir() / "loras"
         loras.mkdir(parents=True, exist_ok=True)

@@ -313,8 +313,18 @@ def register_studio_handlers(
         reg("training:listItems", lambda did: training.list_items(did))
         reg("training:addItems", lambda did, aids: training.add_items(did, aids))
         reg("training:addFromPath", lambda did, path: training.add_from_path(did, path))
+        reg("training:inspectDatasetPath", lambda p: training.inspect_dataset_path(p))
+        reg("training:inspectDatasetRepo", lambda repo: training.inspect_dataset_repo(repo))
+        reg("training:stageAssets", lambda ids: training.stage_assets(ids))
+        reg("training:captionAssets", lambda ids, m=None: training.caption_assets(ids, m))
+        reg("training:stageFromPath", lambda path: training.stage_from_path(path))
+        reg("training:stageFromRepo", lambda repo: training.stage_from_repo(repo))
+        reg("training:commitStaged", lambda did, rows: training.commit_staged(did, rows))
         reg("training:removeItem", lambda iid: training.remove_item(iid))
         reg("training:setCaption", lambda iid, cap: training.set_caption(iid, cap))
+        reg("training:setItemReference",
+            lambda iid, aid: training.set_item_reference(iid, aid))
+        reg("training:setDatasetMode", lambda did, mode: training.set_dataset_mode(did, mode))
         reg("training:autoCaption",
             lambda did, overwrite, model=None: training.auto_caption(did, overwrite, model))
         reg("training:captioners", lambda: training.captioners())
@@ -328,7 +338,8 @@ def register_studio_handlers(
         reg("training:exportSnapshot", lambda rid, step: training.export_snapshot(rid, step))
     else:
         for ch in ("listDatasets", "createDataset", "listItems", "addItems", "removeItem",
-                   "setCaption", "autoCaption", "captioners", "listRuns", "start", "resume",
+                   "setCaption", "setItemReference", "setDatasetMode", "autoCaption",
+                   "captioners", "listRuns", "start", "resume",
                    "cancel", "discard", "status", "snapshots", "exportSnapshot"):
             reg(f"training:{ch}", not_wired("LoRA training"))
 

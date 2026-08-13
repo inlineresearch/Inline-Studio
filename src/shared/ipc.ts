@@ -40,7 +40,10 @@ import type {
   ModelDownloadDoneEvent,
   ModelDownloadErrorEvent,
   TrainingDataset,
+  DatasetRepoPreview,
+  StagedDatasetItem,
   TrainingDatasetItem,
+  TrainingMode,
   CaptionerModel,
   TrainingHyperparams,
   TrainingRun,
@@ -149,8 +152,19 @@ export const IpcChannels = {
     listItems: 'training:listItems',
     addItems: 'training:addItems',
     addFromPath: 'training:addFromPath',
+    inspectDatasetPath: 'training:inspectDatasetPath',
+    inspectDatasetRepo: 'training:inspectDatasetRepo',
+    stageAssets: 'training:stageAssets',
+    captionAssets: 'training:captionAssets',
+    stageFromPath: 'training:stageFromPath',
+    stageFromRepo: 'training:stageFromRepo',
+    commitStaged: 'training:commitStaged',
     removeItem: 'training:removeItem',
     setCaption: 'training:setCaption',
+    /** Pair a reference clip with an item (Control LoRA), or clear it with null. */
+    setItemReference: 'training:setItemReference',
+    /** Switch a dataset between clip and control training. */
+    setDatasetMode: 'training:setDatasetMode',
     autoCaption: 'training:autoCaption',
     captioners: 'training:captioners',
     listRuns: 'training:listRuns',
@@ -493,15 +507,53 @@ export interface InlineStudioApi {
     createDataset(input: CreateTrainingDatasetInput): Promise<Result<TrainingDataset>>
     /** A dataset's items (images + captions), in order. */
     listItems(datasetId: string): Promise<Result<TrainingDatasetItem[]>>
-    /** Append library assets as dataset items (skips duplicates). */
+    /**
+     * Append library assets as dataset items (skips duplicates) and return the dataset's items.
+     * Assets that name each other are paired: `bear_reference.mp4` becomes the reference of
+     * `bear.mp4` rather than an item of its own, and a fully paired set switches to control mode.
+     */
     addItems(datasetId: string, assetIds: string[]): Promise<Result<TrainingDatasetItem[]>>
     /**
      * Import every image and clip in a folder on the machine running Core, with any
      * `NNNN.txt` sidecar as that item's caption. Returns the dataset's full item list.
      */
     addFromPath(datasetId: string, path: string): Promise<Result<TrainingDatasetItem[]>>
+    /**
+     * What pulling a Hugging Face dataset would get, without pulling it. A video set is tens of
+     * gigabytes, so the count and size are shown for confirmation first.
+     */
+    /** What importing a folder would get, before committing to it. */
+    inspectDatasetPath(path: string): Promise<Result<DatasetRepoPreview>>
+    inspectDatasetRepo(repo: string): Promise<Result<DatasetRepoPreview>>
+    /**
+     * Import a folder's media as library assets and work out the pairing, without touching any
+     * dataset. Staging is what lets the Trainer show what a source holds before it is accepted.
+     */
+    /** Pair already-imported assets by name, without touching any dataset. */
+    stageAssets(assetIds: string[]): Promise<Result<StagedDatasetItem[]>>
+    /** Caption assets directly, for rows not yet in a dataset. Asset id -> caption. */
+    captionAssets(assetIds: string[], model?: string): Promise<Result<Record<string, string>>>
+    stageFromPath(path: string): Promise<Result<StagedDatasetItem[]>>
+    /** The same for a Hugging Face dataset, downloading it into the project first. */
+    stageFromRepo(repo: string): Promise<Result<StagedDatasetItem[]>>
+    /** Write staged rows into a dataset. The only call that changes what will be trained. */
+    commitStaged(
+      datasetId: string,
+      rows: StagedDatasetItem[],
+    ): Promise<Result<TrainingDatasetItem[]>>
     removeItem(itemId: string): Promise<Result<void>>
     setCaption(itemId: string, caption: string): Promise<Result<TrainingDatasetItem>>
+    /**
+     * Pair a reference clip with an item, or clear it by passing null. Separate from `addItems`
+     * because the two halves arrive separately: targets are dropped in first and paired afterwards,
+     * so an unpaired item has to be a legible state rather than a failed import.
+     */
+    setItemReference(
+      itemId: string,
+      referenceAssetId: string | null,
+    ): Promise<Result<TrainingDatasetItem>>
+    /** Switch a dataset between clip and control training. */
+    setDatasetMode(datasetId: string, mode: TrainingMode): Promise<Result<TrainingDataset>>
     /**
      * Auto-caption items with the local captioner; `overwrite` re-captions ones that already have
      * one. `model` picks a captioner (a `CaptionerModel.id` or a raw HF repo); omit for the default.

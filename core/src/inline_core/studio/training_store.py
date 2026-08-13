@@ -60,6 +60,7 @@ def _row_to_dataset(row: sqlite3.Row) -> dict[str, Any]:
         "projectId": row["project_id"],
         "name": row["name"],
         "triggerWord": row["trigger_word"],
+        "mode": row["mode"] if "mode" in row.keys() else "clip",
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
     }
@@ -112,6 +113,9 @@ def _row_to_item(row: sqlite3.Row) -> dict[str, Any]:
         "id": row["id"],
         "datasetId": row["dataset_id"],
         "assetId": row["asset_id"],
+        # NULL on every clip-mode item; a Control LoRA pairs this with the target above.
+        "referenceAssetId": row["reference_asset_id"] if "reference_asset_id" in row.keys()
+        else None,
         "caption": row["caption"],
         "position": row["position"],
         "createdAt": row["created_at"],
@@ -274,3 +278,53 @@ def update_run(conn: sqlite3.Connection, run_id: str, patch: dict[str, Any]) -> 
     values.append(run_id)
     conn.execute(f"UPDATE training_runs SET {', '.join(sets)} WHERE id = ?", tuple(values))
     return get_run(conn, run_id)
+
+
+def set_item_reference(
+    conn: sqlite3.Connection, item_id: str, reference_asset_id: str | None
+) -> dict[str, Any]:
+    """Pair a reference clip with an item, or clear it by passing None.
+
+    Separate from ``add_items`` because the two halves arrive separately: a user drops the targets
+    in first and pairs them afterwards, and an unpaired item has to be a legible state rather than
+    a reason the import failed.
+    """
+    row = conn.execute(
+        "SELECT * FROM training_dataset_items WHERE id = ?", (item_id,)
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"No training dataset item {item_id!r}.")
+    conn.execute(
+        "UPDATE training_dataset_items SET reference_asset_id = ? WHERE id = ?",
+        (reference_asset_id, item_id),
+    )
+    conn.commit()
+    updated = conn.execute(
+        "SELECT * FROM training_dataset_items WHERE id = ?", (item_id,)
+    ).fetchone()
+    return _row_to_item(updated)
+
+
+def set_dataset_mode(conn: sqlite3.Connection, dataset_id: str, mode: str) -> dict[str, Any]:
+    """Switch a dataset between clip and control training."""
+    if mode not in ("clip", "control"):
+        raise ValueError(f"Unknown training dataset mode {mode!r}.")
+    get_dataset(conn, dataset_id)  # validate
+    conn.execute("UPDATE training_datasets SET mode = ? WHERE id = ?", (mode, dataset_id))
+    conn.commit()
+    return get_dataset(conn, dataset_id)
+
+
+def unpaired_items(conn: sqlite3.Connection, dataset_id: str) -> list[str]:
+    """Item ids that a control run cannot use, so the Trainer can refuse before it starts.
+
+    A missing reference does not fail loudly during training - the pair is simply absent - so it has
+    to be caught at submit, next to the tile the user can actually fix.
+    """
+    rows = conn.execute(
+        "SELECT id FROM training_dataset_items "
+        "WHERE dataset_id = ? AND (reference_asset_id IS NULL OR reference_asset_id = '') "
+        "ORDER BY position",
+        (dataset_id,),
+    ).fetchall()
+    return [r["id"] for r in rows]

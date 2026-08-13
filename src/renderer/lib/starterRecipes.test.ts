@@ -17,6 +17,10 @@ const KNOWN_PARAM_KEYS = new Set([
   // `num_inference_steps` from the vendored blocks rather than the image nodes' `steps`.
   'duration',
   'num_inference_steps',
+  // LTX-2.5 picks a pipeline rather than a step count, and denoises its soundtrack alongside the
+  // picture, so both of those are params rather than something the runner infers.
+  'mode',
+  'generate_audio',
   'guidance',
   'seed',
   'negative_prompt',
@@ -35,8 +39,9 @@ const gen = STARTER_RECIPES.filter((r) => r.coreType !== null)
 const withPrompt = STARTER_RECIPES.filter((r) => r.coreType !== null || r.falModelId)
 
 describe('starter recipes', () => {
-  it('covers the five cards with unique keys', () => {
+  it('covers the six cards with unique keys', () => {
     expect(STARTER_RECIPES.map((r) => r.key)).toEqual([
+      'ltx25',
       'minimaxh3',
       'zimage',
       'flux2',
@@ -53,6 +58,7 @@ describe('starter recipes', () => {
 
   it('names real Core node types', () => {
     expect(gen.map((r) => r.coreType)).toEqual([
+      'lightricks/ltx-2-5-text-to-video',
       'minimax/h3-text-to-video',
       'alibaba/z-image-turbo',
       'black-forest-labs/flux-2',
@@ -102,6 +108,7 @@ describe('starter recipes', () => {
 
   it('labels each card with what it generates, which drives the colour coding', () => {
     expect(Object.fromEntries(STARTER_RECIPES.map((r) => [r.key, r.kind]))).toEqual({
+      ltx25: 'video',
       minimaxh3: 'video',
       zimage: 'image',
       flux2: 'image',
@@ -112,7 +119,8 @@ describe('starter recipes', () => {
 
   it('tags the newest models, and says which kind of new H3 is', () => {
     const tagged = STARTER_RECIPES.filter((r) => r.tag).map((r) => r.key)
-    expect(tagged).toEqual(['minimaxh3', 'flux2'])
+    expect(tagged).toEqual(['ltx25', 'minimaxh3', 'flux2'])
+    expect(recipeFor('ltx25')?.tag).toBe('New')
     expect(recipeFor('minimaxh3')?.tag).toBe('Open weights')
     expect(recipeFor('flux2')?.tag).toBe('New')
   })

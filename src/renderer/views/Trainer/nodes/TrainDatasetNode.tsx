@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { resolveMedia } from '@/lib/media'
+import { PairTile } from '../PairTile'
 import { useAssetStore } from '../../../store/assetStore'
 import { useTrainingStore } from '../../../store/trainingStore'
 import { useTrainerBoardStore } from '../../../store/trainerBoardStore'
@@ -101,30 +101,13 @@ export function TrainDatasetNode({ id, selected }: NodeProps): React.JSX.Element
                 className="grid gap-1"
                 style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(36px, 1fr))' }}
               >
-                {thumbs.map((it) => {
-                  const asset = byId.get(it.assetId)
-                  const src = asset ? resolveMedia(asset.thumbPath ?? asset.filePath) : ''
-                  return (
-                    <div
-                      key={it.id}
-                      className="aspect-square overflow-hidden rounded-sm bg-zinc-900"
-                    >
-                      {src &&
-                        (asset?.kind === 'video' ? (
-                          // Poster generation is deferred, so a clip has no thumbPath and an <img>
-                          // pointed at an mp4 renders broken. `#t=` seeks the browser to a frame.
-                          <video
-                            src={`${src}#t=0.1`}
-                            muted
-                            preload="metadata"
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <img src={src} alt="" className="h-full w-full object-cover" />
-                        ))}
-                    </div>
-                  )
-                })}
+                {thumbs.map((it) => (
+                  <PairTile
+                    key={it.id}
+                    target={byId.get(it.assetId)}
+                    reference={it.referenceAssetId ? byId.get(it.referenceAssetId) : undefined}
+                  />
+                ))}
               </div>
             )}
           </div>

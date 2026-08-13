@@ -139,3 +139,44 @@ def test_generation_runs_table_is_added_to_an_existing_project() -> None:
         "VALUES ('r1', 'p1', 'i1', 'done', 1)"
     )
     assert conn.execute("SELECT status FROM generation_runs").fetchone()[0] == "done"
+
+
+def test_v18_project_gains_the_motion_lora_columns(tmp_path) -> None:
+    """A pre-19 project must open and read as a clip-mode dataset with no references, rather than
+    needing a rebuild. Both columns are additive and defaulted for exactly that reason."""
+    import sqlite3
+
+    from inline_core.studio.schema import apply_schema
+
+    db = tmp_path / "v18.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE training_datasets (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL,
+          trigger_word TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+        CREATE TABLE training_dataset_items (
+          id TEXT PRIMARY KEY, dataset_id TEXT NOT NULL, asset_id TEXT NOT NULL,
+          caption TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL,
+          created_at INTEGER NOT NULL);
+        """
+    )
+    conn.execute(
+        "INSERT INTO training_datasets VALUES ('d1','p1','old','trigger',0,0)"
+    )
+    conn.execute(
+        "INSERT INTO training_dataset_items VALUES ('i1','d1','a1','a caption',0,0)"
+    )
+    conn.commit()
+
+    apply_schema(conn)
+
+    dataset = conn.execute("SELECT mode FROM training_datasets WHERE id='d1'").fetchone()
+    item = conn.execute(
+        "SELECT reference_asset_id, caption FROM training_dataset_items WHERE id='i1'"
+    ).fetchone()
+    assert dataset[0] == "clip"
+    assert item[0] is None
+    assert item[1] == "a caption", "the existing row survived the migration"
+    conn.close()

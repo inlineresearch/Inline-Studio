@@ -30,6 +30,12 @@ CATEGORIES: tuple[str, ...] = (
     "clip_vision",
     "controlnet",
     "upscale_models",
+    # Latent-space upsamplers, kept apart from `upscale_models` (which is pixel-space) because they
+    # are not interchangeable: LTX-2.5's two-stage pipeline upsamples between denoise stages.
+    "latent_upscale_models",
+    # Small weight patches applied to a loaded model rather than loaded as one, e.g. LTX-2.5's
+    # duration head. Mirrors the folder the split packs publish them under.
+    "model_patches",
     "embeddings",
     # Written by the preprocess runner rather than the user, but it holds real weights and the
     # panel is meant to show everything on disk.

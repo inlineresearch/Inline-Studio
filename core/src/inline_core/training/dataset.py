@@ -10,6 +10,7 @@ path never produces, so each arch reuses its own pipeline's encoder rather than 
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,85 @@ def media_pairs(root: Path) -> list[tuple[Path, str]]:
     Public because the video archs and the on-disk cache both need the same enumeration, and the
     suffix lists that define it belong to this module."""
     return _pairs(root, _IMAGE_SUFFIXES + _VIDEO_SUFFIXES)
+
+
+#: A Control LoRA's reference sits beside its target, so a pair is discoverable from the folder
+#: alone and survives being copied. Two spellings: ours, written by the dataset export, and
+#: Lightricks', because their published IC-LoRA sets (Canny-Control-Dataset and friends) name pairs
+#: ``bear.mp4`` / ``bear_reference.mp4`` and people will train on those directly.
+_REFERENCE_INFIX = ".ref"
+_REFERENCE_SUFFIX = "_reference"
+
+
+def is_reference_name(media: Path) -> bool:
+    """Whether a filename is the reference half of a pair, so import can skip it as an item."""
+    return _is_reference(media)
+
+
+def reference_for_name(target: Path, names: set[str]) -> str | None:
+    """The reference filename for a target, chosen from names already in hand.
+
+    Import works against a listing rather than the filesystem, so it cannot use ``_reference_for``:
+    the folder is the user's and may hold a `bear_reference.mp4` for a `bear.mp4` that was filtered
+    out. Same two spellings, matched against what is actually being imported.
+    """
+    for suffix in (_REFERENCE_INFIX, _REFERENCE_SUFFIX):
+        candidate = f"{target.stem}{suffix}{target.suffix.lower()}"
+        if candidate in names:
+            return candidate
+    return None
+
+
+def reference_path_for(target: Path) -> Path:
+    """Where the export must write a reference so `_reference_for` will find it again.
+
+    Exported here rather than spelled out at the call site: the writer lives in the Studio dataset
+    export and the reader lives below, and a convention held in two places is one rename away from
+    silently training every item unconditioned.
+    """
+    return target.with_suffix(f"{_REFERENCE_INFIX}{target.suffix.lower()}")
+
+
+@dataclass(frozen=True)
+class MediaTriple:
+    """One dataset item: what to train on, what to call it, and what to transform from."""
+
+    target: Path
+    caption: str
+    #: The `before` of a Control LoRA pair, or None on a clip-mode item.
+    reference: Path | None
+
+
+def media_triples(root: Path) -> list[MediaTriple]:
+    """Every dataset item with its reference, where one was exported beside it.
+
+    Added rather than folded into ``media_pairs`` so the H3 path keeps the enumeration it was
+    written against; the reference convention is LTX's alone.
+    """
+    out: list[MediaTriple] = []
+    for media, caption in media_pairs(root):
+        if _is_reference(media):
+            continue  # a reference is discovered through its target, never as an item of its own
+        out.append(MediaTriple(media, caption, _reference_for(media)))
+    return out
+
+
+def _is_reference(media: Path) -> bool:
+    return _REFERENCE_INFIX in media.suffixes[:-1] or media.stem.endswith(
+        (_REFERENCE_INFIX, _REFERENCE_SUFFIX)
+    )
+
+
+def _reference_for(media: Path) -> Path | None:
+    """The reference beside a target, in either naming convention."""
+    candidates = (
+        media.with_suffix(f"{_REFERENCE_INFIX}{suffix}") for suffix in _VIDEO_SUFFIXES
+    )
+    named = (
+        media.with_name(f"{media.stem}{_REFERENCE_SUFFIX}{suffix}")
+        for suffix in _VIDEO_SUFFIXES
+    )
+    return next((c for c in (*candidates, *named) if c.exists()), None)
 
 
 def _pairs(

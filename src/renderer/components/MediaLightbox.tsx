@@ -29,21 +29,13 @@ export function MediaLightbox(): React.JSX.Element | null {
       className="fixed inset-0 z-[300] flex items-center justify-center bg-black/85 p-8 backdrop-blur-sm"
       onClick={close}
     >
-      {media.kind === 'video' ? (
-        <video
-          src={media.src}
-          controls
-          autoPlay
-          onClick={(e) => e.stopPropagation()}
-          className="max-h-full max-w-full rounded-lg shadow-2xl"
-        />
+      {media.compare ? (
+        <div className="flex h-full w-full items-center justify-center gap-3">
+          <Pane media={media} half />
+          <Pane media={media.compare} half />
+        </div>
       ) : (
-        <img
-          src={media.src}
-          alt={media.name ?? ''}
-          onClick={(e) => e.stopPropagation()}
-          className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
-        />
+        <Pane media={media} />
       )}
       <button
         onClick={close}
@@ -55,5 +47,28 @@ export function MediaLightbox(): React.JSX.Element | null {
       </button>
     </div>,
     document.body,
+  )
+}
+
+function Pane({
+  media,
+  half,
+}: {
+  media: { src: string; kind: 'image' | 'video'; name?: string }
+  /** One of a side-by-side pair, so it may claim at most half the width. */
+  half?: boolean
+}): React.JSX.Element {
+  const stop = (e: React.MouseEvent): void => e.stopPropagation()
+  // Sized against the viewport rather than the parent: a video reports its intrinsic dimensions
+  // before any layout applies, so `max-w-full` alone lets a 1920-wide clip push past the screen,
+  // and two of them in a row overflow it outright. The 4rem is the backdrop's own padding.
+  const size = half
+    ? 'max-h-[calc(100vh-4rem)] max-w-[calc(50vw-2.5rem)]'
+    : 'max-h-[calc(100vh-4rem)] max-w-[calc(100vw-4rem)]'
+  const className = `${size} rounded-lg object-contain shadow-2xl`
+  return media.kind === 'video' ? (
+    <video src={media.src} controls autoPlay loop muted onClick={stop} className={className} />
+  ) : (
+    <img src={media.src} alt={media.name ?? ''} onClick={stop} className={className} />
   )
 }

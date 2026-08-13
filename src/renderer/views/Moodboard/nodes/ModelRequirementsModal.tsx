@@ -37,7 +37,7 @@ function ComponentRow({
         ) : comp.optional && !busy ? (
           <button
             onClick={() => void download(nodeType, comp.id)}
-            title="Optional - enables ControlNet, but not required to generate"
+            title={`Optional. ${comp.label}. Not required to generate.`}
             className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-panel px-2 py-1 text-[10px] font-medium text-zinc-300 hover:border-emerald-500/50 hover:text-emerald-300"
           >
             <DownloadIcon className="h-3.5 w-3.5" />

@@ -1,7 +1,7 @@
 [project]
 # PyPI name; the import package is `inline_core` (src/inline_core).
 name = "inline-core"
-version = "1.2.68"
+version = "1.2.69"
 description = "The generation engine behind Inline Studio."
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -21,9 +21,16 @@ runtime = [
   # Pinned, not floored: MiniMax H3 is vendored from an unmerged PR and imports six symbols
   # from the experimental Modular Diffusers surface, which a minor release may rename.
   "diffusers==0.39.0",
-  "transformers>=4.44",
+  # Floored at 5.8 because LTX-2.5's text encoder is Gemma 4, which does not exist below it.
+  # Capped below 5.15 because 5.15 routes config attribute access through the heterogeneity layer
+  # and raises on the global `config.head_dim` that transformers' own Gemma 4 code still reads, so
+  # the encoder cannot be built at all. Lightricks verify against 5.14.1; so do we.
+  "transformers>=5.8,<5.15",
   "accelerate>=0.30",
   "safetensors>=0.4",
+  # LTX-2.5's audio VAE and vocoder; the audio branch raises a bare ImportError without it, which
+  # would leave every LTX node advertising an audio port it cannot fill.
+  "torchaudio",
   # int8 weight-only quant for smart memory; best-effort at load, falls back if absent.
   "torchao>=0.14",
   # Backs the Beta sigma schedule (diffusers gates use_beta_sigmas on scipy).
@@ -41,6 +48,13 @@ runtime = [
   # The blocks raise a plain ImportError without it, so the node would advertise two ports it
   # cannot read. Video output goes out through ffmpeg, not this.
   "av>=12",
+  # Reached only by paths we do not call (LTX's EXR/HDR export and its multi-GPU fleet), but both
+  # are imported at module level by the vendored package roots. Two small wheels are a cheaper
+  # price than deleting files out of `models/ltx25/vendor/` and making every re-sync a merge.
+  "openimageio>=3.0",
+  "cloudpickle>=3.1",
+  # Tensor reshaping throughout LTX-2.5's vendored transformer and VAEs.
+  "einops>=0.7",
 ]
 server = [
   "fastapi>=0.110",
@@ -65,7 +79,6 @@ training = [
   "nvidia-ml-py>=12",
   # Florence-2 auto-captioner is loaded via trust_remote_code and needs these.
   "timm>=1.0",
-  "einops>=0.7",
 ]
 dev = [
   "pytest>=8",
@@ -81,12 +94,16 @@ all = [
   # runtime
   "torch>=2.2",
   "diffusers==0.39.0",
-  "transformers>=4.44",
+  # See the `runtime` extra: floored by LTX-2.5's Gemma 4 encoder, capped by transformers 5.15.
+  "transformers>=5.8,<5.15",
   "accelerate>=0.30",
   "safetensors>=0.4",
+  "torchaudio",
   "torchao>=0.14",
-  # Clip decode for MiniMax H3 LoRA training, and H3's reference node.
+  # Clip decode for MiniMax H3 and LTX-2.5 LoRA training, and H3's reference node.
   "av>=12",
+  "openimageio>=3.0",
+  "cloudpickle>=3.1",
   "scipy>=1.11",
   # 0.32 is where hf_xet became a hard dependency rather than an extra. Below it, Hugging Face
   # refuses the largest files outright ("too large to be downloaded using the regular download
