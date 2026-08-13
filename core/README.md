@@ -12,7 +12,7 @@ start; **Krea 2** (Krea AI), a 12.9B single-stream MMDiT released as an undistil
 its soundtrack in a single pass.
 
 Core also runs the **LoRA trainer** behind Inline Studio's Trainer canvas, so the same engine that
-generates can fine-tune Z-Image, Krea 2, FLUX.2 and MiniMax H3 on your own images without a cloud
+generates can fine-tune Z-Image, Krea 2, FLUX.2, MiniMax H3 and LTX-2.5 on your own images without a cloud
 step. Training is cheaper than generating: Krea 2 fits a 16GB card at 512px with a 4-bit base. Its
 dependencies sit behind the `training` extra. See the
 [LoRA training guide](https://inlinestudio.art/lora-training) for the measured VRAM table.

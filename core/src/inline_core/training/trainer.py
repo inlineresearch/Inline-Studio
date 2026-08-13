@@ -269,8 +269,8 @@ def train(manifest: dict[str, Any]) -> str | None:
         r=int(hp["rank"]),
         lora_alpha=lora_alpha,
         lora_dropout=0.0,
-        # The mode picks the Linears too, not only the dataset shape: a Control LoRA adapts the
-        # video branch alone while a Clip LoRA also reaches audio and the cross-modal blocks.
+        # The mode shapes the dataset and the forward pass, not the Linears: both LTX modes adapt
+        # the video branch, because that is the only branch the forward pass runs.
         target_modules=archs.target_modules(
             arch,
             str(hp.get("loraScope") or "full"),
@@ -289,8 +289,13 @@ def train(manifest: dict[str, Any]) -> str | None:
         inject_adapter_in_model(config, transformer)
         for name, param in transformer.named_parameters():
             param.requires_grad = "lora_" in name
+    # Two spellings. diffusers exposes ``enable_gradient_checkpointing()``; LTX's own transformer
+    # names it ``set_gradient_checkpointing(enable)``. Matching only the first meant LTX was the one
+    # arch training without checkpointing at all - silently, because the guard just skipped it.
     if hasattr(transformer, "enable_gradient_checkpointing"):
         transformer.enable_gradient_checkpointing()
+    elif hasattr(transformer, "set_gradient_checkpointing"):
+        transformer.set_gradient_checkpointing(True)
     lora_params = [p for p in transformer.parameters() if p.requires_grad]
     optimizer = _optimizer(lora_params, float(hp["learningRate"]))
     transformer, optimizer = accelerator.prepare(transformer, optimizer)

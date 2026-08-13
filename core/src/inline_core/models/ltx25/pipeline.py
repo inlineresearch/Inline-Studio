@@ -172,9 +172,10 @@ def load_pipeline(
         diffusion=str(paths["transformer"]),
         vae=str(paths["video_vae"]),
         text_encoder=str(paths["text_encoder"]),
-        # The distilled and dev builds are the same architecture behind different pipelines, and
-        # audio changes which VAEs are loaded - both would otherwise share one entry.
-        variant=f"{request.mode}{'' if request.generate_audio else '+silent'}",
+        # The distilled and dev builds are the same architecture behind different pipelines, so the
+        # mode has to be in the key. Audio does not: the pipeline loads the same components either
+        # way, and keying on it would cache two identical copies of a 42 GB model.
+        variant=request.mode,
         # Part of the key because it changes what is placed and where, not only how it runs.
         quant=f"{plan.quantization or 'bf16'}+{plan.offload}",
         loras=tuple(str(getattr(ref, "file", "")) for ref in loras),
@@ -189,7 +190,10 @@ def load_pipeline(
         transformer_path=str(paths["transformer"]),
         text_encoder_path=str(paths["text_encoder"]),
         video_vae_path=str(paths["video_vae"]),
-        audio_vae_path=str(paths["audio_vae"]) if request.generate_audio else None,
+        # Unconditional: `DistilledPipeline.__init__` calls `model_paths.audio_vae()` while it
+        # builds, so withholding it to render silently raised instead. `generate_audio` drops the
+        # waveform after the fact, further down.
+        audio_vae_path=str(paths["audio_vae"]),
     )
     common: dict[str, Any] = {
         "model_paths": model_paths,
@@ -260,13 +264,19 @@ def _quality_pipeline(common: dict[str, Any]) -> Any:
 
 
 def _lora(ref: Any) -> Any:
-    """One of our `LoraRef`s as the vendored path-and-strength tuple."""
+    """One of our `LoraRef`s as the vendored path, strength and key-rename triple."""
     from .vendor.ltx_core.loader import LoraPathStrengthAndSDOps
+    from .vendor.ltx_core.loader.sd_ops import LTXV_LORA_COMFY_RENAMING_MAP
 
     path = reqs.resolve("loras", str(getattr(ref, "file", "")))
     if path is None:
         raise ComponentError(f"{_LABEL} could not find the LoRA {getattr(ref, 'file', '')!r}.")
-    return LoraPathStrengthAndSDOps(str(path), float(getattr(ref, "strength", 1.0)))
+    # The rename map is not optional: published LTX adapters (and the ones the Trainer exports) key
+    # on `diffusion_model.`, which this strips to reach the module names. Every upstream caller
+    # passes it, including for the distilled LoRA.
+    return LoraPathStrengthAndSDOps(
+        str(path), float(getattr(ref, "strength", 1.0)), LTXV_LORA_COMFY_RENAMING_MAP
+    )
 
 
 def _frames_in(chunk: Any) -> list[Any]:

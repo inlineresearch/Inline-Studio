@@ -96,12 +96,26 @@ def test_the_generation_and_training_grids_describe_the_same_vae() -> None:
 # --- target modules ------------------------------------------------------------------------------
 
 
-def test_a_clip_lora_reaches_the_audio_and_cross_modal_branches() -> None:
-    """Short patterns match by suffix, so `to_k` reaches `attn1`, `attn2`, `audio_attn*` and the two
-    cross-modal blocks. That reach is what keeps the soundtrack in step with the adapter."""
-    modules = archs.target_modules(ARCH, "full", archs.MODE_CLIP)
-    assert modules == ["to_k", "to_q", "to_v", "to_out.0"]
-    assert not any(m.startswith("attn1.") for m in modules)
+def test_neither_mode_targets_a_branch_the_forward_pass_cannot_run() -> None:
+    """`_ltx25_forward` passes `audio=None`, so an audio or cross-modal Linear never runs and never
+    receives a gradient. Asserted through PEFT's own matcher rather than against the pattern list,
+    because the bug this pins was in the matching: PEFT tests `key.endswith("." + target)`, so a
+    bare `to_k` silently also matched `audio_attn1` and left two thirds of the adapter at zero."""
+    from peft import LoraConfig
+    from peft.tuners.tuners_utils import check_target_module_exists
+
+    branches = ("attn1", "attn2", "audio_attn1", "audio_attn2",
+                "audio_to_video_attn", "video_to_audio_attn")
+    keys = [f"transformer_blocks.0.{b}.{p}" for b in branches
+            for p in ("to_k", "to_q", "to_v", "to_out.0")]
+
+    for mode in (archs.MODE_CLIP, archs.MODE_CONTROL):
+        for scope in ("full", "attention"):
+            config = LoraConfig(target_modules=archs.target_modules(ARCH, scope, mode))
+            matched = [k for k in keys if check_target_module_exists(config, k)]
+            assert matched, f"{mode}/{scope} matched nothing"
+            leaked = [k for k in matched if "audio" in k]
+            assert not leaked, f"{mode}/{scope} reached the audio branch: {leaked[:2]}"
 
 
 def test_a_motion_lora_leaves_the_audio_branch_alone() -> None:
@@ -155,3 +169,28 @@ def test_the_wrong_shape_is_refused_rather_than_reshaped() -> None:
     tools = ltx25_latent_tools((1, 128, 7, 18, 30))
     with pytest.raises(AssertionError):
         tools.create_initial_state("cpu", torch.float32, torch.zeros(1, 128, 9, 18, 30))
+
+
+def test_a_reference_survives_the_on_disk_cache(tmp_path) -> None:
+    """The precache is a flat map of tensors and drops everything else.
+
+    A conditioning object was cached here at first, so a fresh run trained conditioned and every
+    cached run after it trained unconditioned: legal, silent, and wrong. The reference is a plain
+    tensor now, and this pins that it comes back.
+    """
+    import torch
+
+    from inline_core.training import precache_store
+
+    item = {
+        "latent": torch.zeros(4, 2, 8, 8),
+        "embed": torch.zeros(16, 32),
+        "reference": torch.ones(4, 2, 8, 8),
+    }
+    precache_store.save(tmp_path, "k", [item], None, 12.0)
+    loaded = precache_store.load(tmp_path, "k")
+    assert loaded is not None
+    items, _uncond, shift = loaded
+    assert shift == 12.0
+    assert "reference" in items[0], "the reference was dropped on the way to disk"
+    assert torch.equal(items[0]["reference"], item["reference"])

@@ -536,6 +536,27 @@ export type TrainingArch = 'z-image' | 'krea2' | 'flux2' | 'minimax-h3' | 'ltx-2
  */
 export type TrainingMode = 'clip' | 'control'
 
+/** One row a source produced, held in the dialog until the reader commits it to a dataset. */
+export interface StagedDatasetItem {
+  assetId: string
+  name: string
+  caption: string
+  referenceAssetId: string | null
+}
+
+/** A Hugging Face dataset repo, summarised before anyone commits to downloading it. */
+export interface DatasetRepoPreview {
+  repo: string
+  /** Trainable items, excluding reference clips (which are the `before` half of a pair). */
+  items: number
+  /** How many of those items have a reference, so a control set is recognisable up front. */
+  pairs: number
+  bytes: number
+  metadataFile: string | null
+  /** Set when the repo cannot be used, with the reason to show instead of a count. */
+  problem: string | null
+}
+
 /**
  * Which base checkpoint a run trains against. `raw` is Krea 2's undistilled base (the recommended
  * path - the LoRA then applies to Turbo at generation time); the turbo modes train against a

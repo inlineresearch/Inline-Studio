@@ -67,6 +67,7 @@
     "husky": "^9.1.7",
     "konva": "^9.3.18",
     "lint-staged": "^15.3.0",
+    "playwright": "^1.62.1",
     "postcss": "^8.4.49",
     "prettier": "^3.4.2",
     "react": "^19.0.0",

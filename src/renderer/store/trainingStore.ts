@@ -8,7 +8,10 @@ import { create } from 'zustand'
 import type {
   SystemStatsEvent,
   CaptionerModel,
+  DatasetRepoPreview,
+  StagedDatasetItem,
   TrainingDataset,
+  TrainingMode,
   TrainingDatasetItem,
   TrainingDoneEvent,
   TrainingErrorEvent,
@@ -20,6 +23,8 @@ import type {
   TrainingSampleEvent,
   TrainingSnapshot,
 } from '@shared/types'
+import { uploadFiles } from '../lib/importFiles'
+import { useAssetStore } from './assetStore'
 import { studio } from '@/lib/studio'
 import { ipcErrorMessage } from '../lib/ipcError'
 
@@ -63,6 +68,27 @@ interface TrainingState {
   /** Remove every image from a dataset in one go, refetching once when done. */
   removeAll: (datasetId: string) => Promise<void>
   setCaption: (datasetId: string, itemId: string, caption: string) => Promise<void>
+  /** Pair a reference clip with an item, or clear it with null. Control LoRAs only. */
+  setItemReference: (
+    datasetId: string,
+    itemId: string,
+    referenceAssetId: string | null,
+  ) => Promise<void>
+  /** Switch a dataset between clip and control training. */
+  setDatasetMode: (datasetId: string, mode: TrainingMode) => Promise<void>
+  /** Summarise a Hugging Face dataset repo without downloading it. */
+  inspectDatasetPath: (path: string) => Promise<DatasetRepoPreview | null>
+  inspectDatasetRepo: (repo: string) => Promise<DatasetRepoPreview | null>
+  /** Stage a folder: assets are imported, but no dataset row is written. */
+  /** Upload picked files and pair them, without touching any dataset. */
+  stageFiles: (files: File[]) => Promise<StagedDatasetItem[] | null>
+  /** Caption staged assets directly; returns asset id -> caption. */
+  captionAssets: (assetIds: string[], model?: string) => Promise<Record<string, string>>
+  stageFromPath: (path: string) => Promise<StagedDatasetItem[] | null>
+  /** The same for a Hugging Face dataset, downloading it first. */
+  stageFromRepo: (repo: string) => Promise<StagedDatasetItem[] | null>
+  /** Accept staged rows into a dataset. */
+  commitStaged: (datasetId: string, rows: StagedDatasetItem[]) => Promise<void>
   autoCaption: (datasetId: string, overwrite: boolean, model?: string) => Promise<void>
   /** The caption models Core offers; loaded once, lazily. */
   loadCaptioners: () => Promise<void>
@@ -138,6 +164,11 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       return []
     }
     await get().loadItems(datasetId)
+    // Pairing can fold a reference into another item, so the mode may have changed too.
+    await get().loadDatasets()
+    // The import creates library assets too; without reloading them the new items have no asset to
+    // resolve and every tile renders empty.
+    await useAssetStore.getState().load()
     return res.value
   },
 
@@ -150,6 +181,9 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
       return ipcErrorMessage(res.error)
     }
     await get().loadItems(datasetId)
+    // The import creates library assets too; without reloading them the new items have no asset to
+    // resolve and every tile renders empty.
+    await useAssetStore.getState().load()
     return null
   },
 
@@ -178,6 +212,99 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
         ),
       },
     }))
+  },
+
+  setItemReference: async (datasetId, itemId, referenceAssetId) => {
+    const res = await studio().training.setItemReference(itemId, referenceAssetId)
+    if (!res.ok) return set({ error: res.error })
+    set((s) => ({
+      itemsByDataset: {
+        ...s.itemsByDataset,
+        [datasetId]: (s.itemsByDataset[datasetId] ?? []).map((it) =>
+          it.id === itemId ? res.value : it,
+        ),
+      },
+    }))
+  },
+
+  setDatasetMode: async (datasetId, mode) => {
+    const res = await studio().training.setDatasetMode(datasetId, mode)
+    if (!res.ok) return set({ error: res.error })
+    set((s) => ({
+      datasets: s.datasets.map((d) => (d.id === datasetId ? res.value : d)),
+    }))
+  },
+
+  inspectDatasetPath: async (path) => {
+    const res = await studio().training.inspectDatasetPath(path)
+    if (!res.ok) {
+      set({ error: res.error })
+      return null
+    }
+    return res.value
+  },
+
+  inspectDatasetRepo: async (repo) => {
+    const res = await studio().training.inspectDatasetRepo(repo)
+    if (!res.ok) {
+      set({ error: res.error })
+      return null
+    }
+    return res.value
+  },
+
+  captionAssets: async (assetIds, model) => {
+    set({ captioning: true, error: null })
+    try {
+      const res = await studio().training.captionAssets(assetIds, model)
+      if (!res.ok) {
+        set({ error: res.error })
+        return {}
+      }
+      return res.value
+    } finally {
+      set({ captioning: false })
+    }
+  },
+
+  stageFiles: async (files) => {
+    const assets = await uploadFiles(files, null)
+    if (!assets.length) return []
+    const res = await studio().training.stageAssets(assets.map((a) => a.id))
+    if (!res.ok) {
+      set({ error: res.error })
+      return null
+    }
+    await useAssetStore.getState().load()
+    return res.value
+  },
+
+  stageFromPath: async (path) => {
+    const res = await studio().training.stageFromPath(path)
+    if (!res.ok) {
+      set({ error: res.error })
+      return null
+    }
+    // Assets exist now even though no dataset row does, so previews can resolve.
+    await useAssetStore.getState().load()
+    return res.value
+  },
+
+  stageFromRepo: async (repo) => {
+    const res = await studio().training.stageFromRepo(repo)
+    if (!res.ok) {
+      set({ error: res.error })
+      return null
+    }
+    await useAssetStore.getState().load()
+    return res.value
+  },
+
+  commitStaged: async (datasetId, rows) => {
+    const res = await studio().training.commitStaged(datasetId, rows)
+    if (!res.ok) return set({ error: res.error })
+    set((s) => ({ itemsByDataset: { ...s.itemsByDataset, [datasetId]: res.value } }))
+    await get().loadDatasets()
   },
 
   autoCaption: async (datasetId, overwrite, model) => {

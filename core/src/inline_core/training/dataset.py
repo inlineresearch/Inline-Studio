@@ -43,6 +43,35 @@ _REFERENCE_INFIX = ".ref"
 _REFERENCE_SUFFIX = "_reference"
 
 
+def is_reference_name(media: Path) -> bool:
+    """Whether a filename is the reference half of a pair, so import can skip it as an item."""
+    return _is_reference(media)
+
+
+def reference_for_name(target: Path, names: set[str]) -> str | None:
+    """The reference filename for a target, chosen from names already in hand.
+
+    Import works against a listing rather than the filesystem, so it cannot use ``_reference_for``:
+    the folder is the user's and may hold a `bear_reference.mp4` for a `bear.mp4` that was filtered
+    out. Same two spellings, matched against what is actually being imported.
+    """
+    for suffix in (_REFERENCE_INFIX, _REFERENCE_SUFFIX):
+        candidate = f"{target.stem}{suffix}{target.suffix.lower()}"
+        if candidate in names:
+            return candidate
+    return None
+
+
+def reference_path_for(target: Path) -> Path:
+    """Where the export must write a reference so `_reference_for` will find it again.
+
+    Exported here rather than spelled out at the call site: the writer lives in the Studio dataset
+    export and the reader lives below, and a convention held in two places is one rename away from
+    silently training every item unconditioned.
+    """
+    return target.with_suffix(f"{_REFERENCE_INFIX}{target.suffix.lower()}")
+
+
 @dataclass(frozen=True)
 class MediaTriple:
     """One dataset item: what to train on, what to call it, and what to transform from."""

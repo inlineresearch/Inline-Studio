@@ -1,39 +1,12 @@
-/** The dataset editor: a grid of images with per-image captions, plus add + auto-caption controls. */
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Asset, TrainingDatasetItem } from '@shared/types'
-import { resolveMedia } from '@/lib/media'
+/** The dataset panel: what a dataset holds, with one entry point for changing it. */
+import { useMemo, useState } from 'react'
 import { uploadFiles } from '@/lib/importFiles'
-import { Modal } from '../../components/Modal'
 import { useAssetStore } from '../../store/assetStore'
 import { useTrainingStore } from '../../store/trainingStore'
-import { useLightboxStore } from '../../store/lightboxStore'
+import { AddDataDialog } from './AddDataDialog'
+import { PairTile } from './PairTile'
 import { ipcErrorMessage } from '../../lib/ipcError'
 
-function CaptionBox({
-  item,
-  datasetId,
-}: {
-  item: TrainingDatasetItem
-  datasetId: string
-}): React.JSX.Element {
-  const [text, setText] = useState(item.caption)
-  const setCaption = useTrainingStore((s) => s.setCaption)
-  // `useState(item.caption)` only seeds the FIRST render, so an externally-changed caption (the
-  // auto-captioner writing one) would never appear. Re-sync whenever the stored caption changes.
-  useEffect(() => setText(item.caption), [item.caption])
-  return (
-    <textarea
-      value={text}
-      placeholder="caption…"
-      rows={2}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={() => text !== item.caption && void setCaption(datasetId, item.id, text)}
-      className="w-full resize-none rounded-b-md border-t border-border bg-black/40 px-2 py-1 text-[11px] text-zinc-200 outline-none focus:bg-black/60"
-    />
-  )
-}
-
-/** A filename without its extension, lowercased, so `1.PNG` pairs with `1.txt`. */
 function baseName(name: string): string {
   const stem = name.replace(/\.[^.]+$/, '')
   return stem.toLowerCase()
@@ -60,238 +33,6 @@ const isMedia = (f: File): boolean =>
   f.type.startsWith('video/') ||
   /\.(png|jpe?g|webp|bmp|mp4|mov|webm|mkv|avi)$/i.test(f.name)
 
-/** A dataset tile. Video needs a real <video>: the Library defers poster generation, so a clip has
- *  no thumbPath and an <img> pointed at an mp4 renders nothing. The `#t=` fragment seeks the browser
- *  to one frame and paints it; autoplaying instead leaves a large dataset black, because
- *  preload="metadata" decodes nothing and Chromium caps concurrent playback well below a few hundred. */
-function Thumb({ asset, src }: { asset?: Asset; src: string }): React.JSX.Element {
-  const openLightbox = useLightboxStore((s) => s.open)
-  const ref = useRef<HTMLVideoElement>(null)
-
-  if (asset?.kind === 'video') {
-    return (
-      <video
-        ref={ref}
-        src={`${src}#t=0.1`}
-        muted
-        loop
-        playsInline
-        preload="metadata"
-        onMouseEnter={() => void ref.current?.play().catch(() => {})}
-        onMouseLeave={() => {
-          const v = ref.current
-          if (!v) return
-          v.pause()
-          v.currentTime = 0.1
-        }}
-        // previewPath is the transcode for codecs Chromium cannot decode; the original otherwise.
-        onDoubleClick={() =>
-          openLightbox({
-            src: resolveMedia(asset.previewPath ?? asset.filePath),
-            kind: 'video',
-            name: asset.name,
-          })
-        }
-        className="h-full w-full cursor-pointer object-cover"
-      />
-    )
-  }
-  return (
-    <img
-      src={src}
-      alt=""
-      onDoubleClick={() =>
-        asset &&
-        openLightbox({ src: resolveMedia(asset.filePath), kind: 'image', name: asset.name })
-      }
-      className="h-full w-full cursor-pointer object-cover"
-    />
-  )
-}
-
-/**
- * The Captioning hub: add or delete images, auto-caption, and edit every caption side by side with
- * its image so long captions are not clipped the way the grid's two-row box clips them. Caption
- * edits are staged and written on Save; add, delete, and auto-caption apply immediately.
- */
-function CaptionEditor({
-  datasetId,
-  items,
-  byId,
-  busy,
-  onAddFiles,
-  onClose,
-}: {
-  datasetId: string
-  items: TrainingDatasetItem[]
-  byId: Map<string, Asset>
-  busy: boolean
-  onAddFiles: (files: File[]) => Promise<void>
-  onClose: () => void
-}): React.JSX.Element {
-  const setCaption = useTrainingStore((s) => s.setCaption)
-  const autoCaption = useTrainingStore((s) => s.autoCaption)
-  const captioning = useTrainingStore((s) => s.captioning)
-  const removeItem = useTrainingStore((s) => s.removeItem)
-  const removeAll = useTrainingStore((s) => s.removeAll)
-  const captioners = useTrainingStore((s) => s.captioners)
-  const loadCaptioners = useTrainingStore((s) => s.loadCaptioners)
-  // Only edited items get a draft; the rest read live from the store, so a caption added by
-  // auto-caption or a freshly imported .txt shows up without reseeding.
-  const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [saving, setSaving] = useState(false)
-  const [confirmClear, setConfirmClear] = useState(false)
-  const [model, setModel] = useState('')
-
-  useEffect(() => {
-    void loadCaptioners()
-  }, [loadCaptioners])
-  // Reflect the real default (first captioner) in the select once the list arrives.
-  useEffect(() => {
-    if (!model && captioners.length) setModel(captioners[0].id)
-  }, [captioners, model])
-
-  const dirty = items.some((it) => it.id in drafts && drafts[it.id] !== it.caption)
-
-  const save = async (): Promise<void> => {
-    setSaving(true)
-    try {
-      await Promise.all(
-        items
-          .filter((it) => it.id in drafts && drafts[it.id] !== it.caption)
-          .map((it) => setCaption(datasetId, it.id, drafts[it.id])),
-      )
-      onClose()
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    const files = Array.from(e.target.files ?? [])
-    e.target.value = ''
-    if (files.length) void onAddFiles(files)
-  }
-
-  return (
-    <Modal open onClose={onClose} title="Captioning">
-      <div className="flex flex-col">
-        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-surface px-4 py-2.5">
-          <label
-            className={`cursor-pointer rounded-md border border-border px-2.5 py-1 text-xs text-zinc-200 hover:bg-panel ${
-              busy ? 'pointer-events-none opacity-40' : ''
-            }`}
-          >
-            {busy ? 'Adding…' : 'Add files'}
-            <input
-              type="file"
-              multiple
-              accept="image/*,video/*,.txt"
-              className="hidden"
-              onChange={onPick}
-            />
-          </label>
-          <button
-            onClick={() => void autoCaption(datasetId, false, model || undefined)}
-            disabled={captioning || items.length === 0}
-            className="rounded-md border border-border px-2.5 py-1 text-xs text-zinc-200 hover:bg-panel disabled:opacity-40"
-          >
-            {captioning ? 'Captioning…' : 'Auto-caption'}
-          </button>
-          {captioners.length > 1 && (
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              disabled={captioning}
-              title="Caption model"
-              className="rounded-md border border-border bg-panel px-2 py-1 text-xs text-zinc-200 disabled:opacity-40"
-            >
-              {captioners.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          )}
-          <span className="ml-1 text-[11px] text-zinc-500">{items.length} items</span>
-          {items.length > 0 &&
-            (confirmClear ? (
-              <button
-                onClick={() => {
-                  void removeAll(datasetId)
-                  setConfirmClear(false)
-                }}
-                className="ml-auto rounded-md border border-red-500/60 px-2.5 py-1 text-xs font-medium text-red-300 hover:bg-red-500/10"
-              >
-                Confirm delete all
-              </button>
-            ) : (
-              <button
-                onClick={() => setConfirmClear(true)}
-                className="ml-auto rounded-md border border-border px-2.5 py-1 text-xs text-zinc-400 hover:bg-panel hover:text-zinc-200"
-              >
-                Delete all
-              </button>
-            ))}
-        </div>
-
-        {items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-1 px-6 py-16 text-center text-sm text-zinc-500">
-            <p>Nothing here yet. Add files to get started.</p>
-            <p className="text-xs">
-              A .txt next to an image (1.png + 1.txt) is read as its caption.
-            </p>
-          </div>
-        ) : (
-          <div className="flex flex-col divide-y divide-border">
-            {items.map((item) => {
-              const asset = byId.get(item.assetId)
-              const src = asset ? resolveMedia(asset.thumbPath ?? asset.filePath) : ''
-              return (
-                <div key={item.id} className="group flex gap-3 p-4">
-                  <div className="relative h-28 w-28 shrink-0 overflow-hidden rounded-md bg-black">
-                    {src && <Thumb asset={asset} src={src} />}
-                    <button
-                      onClick={() => void removeItem(datasetId, item.id)}
-                      title="Delete this item"
-                      className="absolute right-1 top-1 hidden rounded bg-black/70 px-1.5 py-0.5 text-[11px] text-white group-hover:block"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                  <textarea
-                    value={drafts[item.id] ?? item.caption}
-                    placeholder="caption…"
-                    rows={4}
-                    onChange={(e) => setDrafts((d) => ({ ...d, [item.id]: e.target.value }))}
-                    className="min-h-28 w-full resize-y rounded-md border border-border bg-black/40 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-500"
-                  />
-                </div>
-              )
-            })}
-          </div>
-        )}
-
-        <div className="sticky bottom-0 flex items-center justify-end gap-2 border-t border-border bg-surface px-4 py-3">
-          <button
-            onClick={onClose}
-            className="rounded-md border border-border px-3 py-1.5 text-sm text-zinc-300 hover:bg-panel"
-          >
-            Close
-          </button>
-          <button
-            onClick={() => void save()}
-            disabled={saving || !dirty}
-            className="rounded-md bg-emerald-500/90 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40"
-          >
-            {saving ? 'Saving…' : 'Save captions'}
-          </button>
-        </div>
-      </div>
-    </Modal>
-  )
-}
-
 export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JSX.Element {
   // `?? []` outside the selector: returning a fresh [] from the selector loops the store (Object.is).
   const items = useTrainingStore((s) => s.itemsByDataset[datasetId]) ?? []
@@ -304,12 +45,11 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
   const setError = useTrainingStore((s) => s.setError)
   const [busy, setBusy] = useState(false)
   const [fromPath, setFromPath] = useState(false)
+  const [adding, setAdding] = useState(false)
   const [path, setPath] = useState('')
   const [pathError, setPathError] = useState<string | null>(null)
   // Highlight while OS files are dragged over the grid.
   const [fileOver, setFileOver] = useState(false)
-
-  const [editing, setEditing] = useState(false)
 
   const byId = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets])
 
@@ -396,13 +136,6 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
     if (files.length > 0) void attachFiles(files)
   }
 
-  /** The browser file picker: multi-select images and, optionally, their .txt caption sidecars. */
-  const onPick = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    const files = Array.from(e.target.files ?? [])
-    e.target.value = '' // let the same selection fire change again next time
-    if (files.length > 0) void attachFiles(files)
-  }
-
   return (
     <div
       className={`relative flex min-h-0 flex-1 flex-col gap-3 rounded-lg ${
@@ -423,32 +156,14 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
         </div>
       )}
       <div className="flex items-center gap-2">
-        <label
-          className={`cursor-pointer rounded-md border border-border px-3 py-1.5 text-sm text-zinc-200 hover:bg-panel ${
-            busy ? 'pointer-events-none opacity-40' : ''
-          }`}
-        >
-          {busy ? 'Adding…' : 'Add files'}
-          <input
-            type="file"
-            multiple
-            accept="image/*,video/*,.txt"
-            className="hidden"
-            onChange={onPick}
-          />
-        </label>
         <button
-          onClick={() => setEditing(true)}
-          className="rounded-md border border-border px-3 py-1.5 text-sm text-zinc-200 hover:bg-panel"
+          onClick={() => setAdding(true)}
+          disabled={busy}
+          className="rounded-md border border-accent/40 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/10 disabled:opacity-40"
         >
-          Captioning
+          {busy ? 'Adding…' : 'Add/Manage Training Data'}
         </button>
-        <button
-          onClick={() => setFromPath((v) => !v)}
-          className="rounded-md border border-border px-3 py-1.5 text-sm text-zinc-200 hover:bg-panel"
-        >
-          Load from path
-        </button>
+
         <span className="text-[11px] text-zinc-500">{items.length} items</span>
       </div>
 
@@ -494,14 +209,17 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
         <div className="grid min-h-0 flex-1 auto-rows-min content-start grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">
           {items.map((item) => {
             const asset = byId.get(item.assetId)
-            const src = asset ? resolveMedia(asset.thumbPath ?? asset.filePath) : ''
             return (
               <div
                 key={item.id}
                 className="group flex flex-col rounded-md border border-border bg-surface/60"
               >
-                <div className="relative aspect-square overflow-hidden rounded-t-md bg-black">
-                  {src && <Thumb asset={asset} src={src} />}
+                <div className="relative">
+                  <PairTile
+                    target={asset}
+                    reference={item.referenceAssetId ? byId.get(item.referenceAssetId) : undefined}
+                    className="rounded-t-md"
+                  />
                   <button
                     onClick={() => void removeItem(datasetId, item.id)}
                     className="absolute right-1 top-1 hidden rounded bg-black/70 px-1.5 py-0.5 text-[11px] text-white group-hover:block"
@@ -509,22 +227,14 @@ export function DatasetItemsGrid({ datasetId }: { datasetId: string }): React.JS
                     Remove
                   </button>
                 </div>
-                <CaptionBox item={item} datasetId={datasetId} />
               </div>
             )
           })}
         </div>
       )}
 
-      {editing && (
-        <CaptionEditor
-          datasetId={datasetId}
-          items={items}
-          byId={byId}
-          busy={busy}
-          onAddFiles={attachFiles}
-          onClose={() => setEditing(false)}
-        />
+      {adding && (
+        <AddDataDialog datasetId={datasetId} assets={assets} onClose={() => setAdding(false)} />
       )}
     </div>
   )

@@ -313,6 +313,13 @@ def register_studio_handlers(
         reg("training:listItems", lambda did: training.list_items(did))
         reg("training:addItems", lambda did, aids: training.add_items(did, aids))
         reg("training:addFromPath", lambda did, path: training.add_from_path(did, path))
+        reg("training:inspectDatasetPath", lambda p: training.inspect_dataset_path(p))
+        reg("training:inspectDatasetRepo", lambda repo: training.inspect_dataset_repo(repo))
+        reg("training:stageAssets", lambda ids: training.stage_assets(ids))
+        reg("training:captionAssets", lambda ids, m=None: training.caption_assets(ids, m))
+        reg("training:stageFromPath", lambda path: training.stage_from_path(path))
+        reg("training:stageFromRepo", lambda repo: training.stage_from_repo(repo))
+        reg("training:commitStaged", lambda did, rows: training.commit_staged(did, rows))
         reg("training:removeItem", lambda iid: training.remove_item(iid))
         reg("training:setCaption", lambda iid, cap: training.set_caption(iid, cap))
         reg("training:setItemReference",

@@ -153,7 +153,7 @@ def _encode_clips(
             with torch.no_grad():
                 latent = encoder(pixels)
                 if ref_pixels is not None:
-                    references.append(_reference_condition(encoder(ref_pixels).to("cpu")))
+                    references.append(encoder(ref_pixels).to("cpu"))
             latents.append(latent[0].to("cpu"))
             kept.append(triple)
 
@@ -278,14 +278,21 @@ def _resample(frames: list[Any], source_fps: float, target_fps: float) -> list[A
     return [frames[min(len(frames) - 1, int(i * step))] for i in range(wanted)]
 
 
-def _reference_condition(latent: Any) -> Any:
-    """A reference latent as the conditioning item the transformer forward applies."""
+def reference_condition(latent: Any) -> Any:
+    """A reference latent as the conditioning item the transformer forward applies.
+
+    Built at forward time rather than at precache, because the on-disk cache is a flat map of
+    tensors and silently drops anything else. Caching the object meant a fresh run trained
+    conditioned and every cached run after it trained unconditioned, with nothing to see.
+    """
     from ..models.ltx25.vendor.ltx_core.conditioning.types.reference_video_cond import (
         VideoConditionByReferenceLatent,
     )
 
+    # `latent`, not `reference_latent`: the class names its own argument for what it holds, and the
+    # name only mattered once a Control run actually reached this line.
     return VideoConditionByReferenceLatent(
-        reference_latent=latent, downscale_factor=_REFERENCE_DOWNSCALE
+        latent=latent, downscale_factor=_REFERENCE_DOWNSCALE
     )
 
 

@@ -5,6 +5,8 @@ export interface LightboxMedia {
   src: string
   kind: 'image' | 'video'
   name?: string
+  /** Shown beside the first, for a Control LoRA pair: the two halves only mean anything together. */
+  compare?: { src: string; kind: 'image' | 'video'; name?: string }
 }
 
 interface LightboxState {

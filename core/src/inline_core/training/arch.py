@@ -355,20 +355,17 @@ def _ltx25_export_keys(state: dict[str, Any]) -> dict[str, Any]:
     return export_reference(state)
 
 
-#: Video-only IC-LoRA, for a Control LoRA learning a transform from a reference clip. Explicit
-#: `attn1`/`attn2` prefixes so the audio branch is left alone, plus the feed-forward, which is
-#: upstream's advice for transformation quality.
-_LTX25_CONTROL_TARGETS = [
+#: The video branches only, for both modes. The explicit `attn1`/`attn2` prefixes matter: PEFT tests
+#: `key.endswith("." + target)`, so a bare `to_k` also matches `audio_attn1`, `audio_attn2` and the
+#: two cross-modal blocks. Those Linears cannot train - `_ltx25_forward` passes `audio=None`, so
+#: they never run and never receive a gradient - and a 500-step run proved it: 768 of 1152 `lora_B`
+#: tensors were still exactly zero, two thirds of a 428 MB adapter carrying nothing. Widen this only
+#: alongside a forward pass that actually feeds the audio branch.
+_LTX25_VIDEO_TARGETS = [
     "attn1.to_k", "attn1.to_q", "attn1.to_v", "attn1.to_out.0",
     "attn2.to_k", "attn2.to_q", "attn2.to_v", "attn2.to_out.0",
     "ff.net.0.proj", "ff.net.2",
 ]
-
-#: A Clip LoRA trains video and its soundtrack together, so the patterns are deliberately short:
-#: PEFT matches by suffix, so `to_k` reaches `attn1`, `attn2`, the audio branch and the two
-#: cross-modal blocks at once. That cross-modal reach is what keeps the audio in sync with what the
-#: adapter changed, and it is the only difference between this list and the one above.
-_LTX25_CLIP_TARGETS = ["to_k", "to_q", "to_v", "to_out.0"]
 
 
 @lru_cache(maxsize=8)
@@ -408,8 +405,12 @@ def _ltx25_forward(transformer: Any, noisy: Any, timestep: Any, item: dict[str, 
     batched = noisy.unsqueeze(0)
     tools = ltx25_latent_tools(tuple(batched.shape))
     state = tools.create_initial_state(noisy.device, noisy.dtype, batched)
-    reference = item.get("reference")
-    if reference is not None:
+    reference_latent = item.get("reference")
+    reference = None
+    if reference_latent is not None:
+        from .ltx25 import reference_condition
+
+        reference = reference_condition(reference_latent.unsqueeze(0))
         state = reference.apply_to(latent_state=state, latent_tools=tools)
     modality = modality_from_latent_state(state, item["embed"].unsqueeze(0), timestep.reshape(1))
 
@@ -469,8 +470,7 @@ ARCHS: dict[str, TrainingArch] = {
     LTX25: TrainingArch(
         key=LTX25,
         export_keys=_ltx25_export_keys,
-        target_modules=_LTX25_CLIP_TARGETS,
-        mode_target_modules={MODE_CLIP: _LTX25_CLIP_TARGETS, MODE_CONTROL: _LTX25_CONTROL_TARGETS},
+        target_modules=_LTX25_VIDEO_TARGETS,
         sigma=_zimage_sigma,
         # Krea 2's and FLUX.2's convention, not Z-Image's: LTX's velocity model is called at the
         # sigma itself and predicts `noise - clean`. Derived from the vendored `to_velocity` /

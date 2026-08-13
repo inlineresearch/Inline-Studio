@@ -303,6 +303,17 @@ def resolve_quant(
             )
         return Quantization.NF4
 
+    if arch == archs.LTX25:
+        # LTX loads through its own builder, which takes no torchao/bitsandbytes config - so a
+        # quantization chosen here would be computed, returned, and then silently dropped at load.
+        # Saying so is better than a bf16 OOM that looks like the setting was ignored, which it was.
+        if base_quant == "nf4":
+            raise RuntimeError(
+                "LTX-2.5 has no 4-bit training path: its loader takes no quantization config, so "
+                "the base trains in bf16. Set the base precision back to auto."
+            )
+        return Quantization.NONE
+
     if base_quant == "none":
         return Quantization.NONE
     if base_quant == "nf4":

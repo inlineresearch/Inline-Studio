@@ -96,7 +96,9 @@ const ARCHS: { value: TrainingArch; label: string }[] = [
   { value: 'krea2', label: 'Krea 2' },
   { value: 'flux2', label: 'FLUX.2' },
   { value: 'minimax-h3', label: 'MiniMax H3 (video)' },
-  { value: 'ltx-2-5', label: 'LTX-2.5 (video + audio)' },
+  // "(video)" like H3, not "(video + audio)": the model generates a soundtrack, but training only
+  // adapts the video branch, and this label sits in the Trainer.
+  { value: 'ltx-2-5', label: 'LTX-2.5 (video)' },
 ]
 
 function NumberField({

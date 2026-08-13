@@ -29,6 +29,30 @@ export interface StarterRecipe {
  */
 export const STARTER_RECIPES: readonly StarterRecipe[] = [
   {
+    key: 'ltx25',
+    coreType: 'lightricks/ltx-2-5-text-to-video',
+    title: 'LTX-2.5',
+    tag: 'New',
+    kind: 'video',
+    blurb: 'A 22B open-weights model: video and its soundtrack in one pass. A 71 GB download.',
+    // 2 seconds at 960x576 in fast mode, which is the shape the performance work was measured on:
+    // 229s cached on an L40S. The defaults (quality mode, longer clip) turn a first click into a
+    // twenty-minute wait, and a starter card should end in a render.
+    params: {
+      width: 960,
+      height: 576,
+      duration: 2.0,
+      mode: 'fast',
+      generate_audio: true,
+      seed: -1,
+    },
+    // Prose rather than comma-separated fragments, and the sound described explicitly: LTX
+    // denoises the soundtrack alongside the picture, so a prompt that says nothing about audio
+    // still gets audio.
+    promptText:
+      'A fishing boat cutting across turquoise water at golden hour, seen from a low drone shot that keeps pace alongside it, spray catching the light off the bow. Audio: the hull slapping through swell, gulls, a steady diesel engine.',
+  },
+  {
     key: 'minimaxh3',
     coreType: 'minimax/h3-text-to-video',
     title: 'MiniMax H3',

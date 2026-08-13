@@ -12,7 +12,7 @@
  */
 import type { SystemStatsEvent } from '@shared/types'
 
-export type StarterKey = 'minimaxh3' | 'zimage' | 'flux2' | 'krea2' | 'training'
+export type StarterKey = 'ltx25' | 'minimaxh3' | 'zimage' | 'flux2' | 'krea2' | 'training'
 export type Tier = 'best' | 'good' | 'ok' | 'heavy'
 
 /** Every starter now runs on this machine, so VRAM has something to say about all of them. */
@@ -85,6 +85,18 @@ const TIERS: Record<LocalKey, TierRow[]> = {
       note: 'Expect long renders. Needs 64 GB of RAM and 144 GB on disk.',
     },
   ],
+  // Measured, not estimated: streaming weights peaked at 7.71 GiB and took 944s cold, while the
+  // resident path peaked at 32.19 GiB and got a cached render to 229s. The card decides which of
+  // those two experiences you get, so the tiers are drawn at that boundary rather than at "fits".
+  ltx25: [
+    {
+      minGb: 39.5,
+      tier: 'good',
+      note: 'Holds the transformer resident. Roughly 4x faster than streaming.',
+    },
+    { minGb: 23.5, tier: 'ok', note: 'Streams weights from RAM. It renders, slowly.' },
+    { minGb: 0, tier: 'heavy', note: 'Streams from RAM or disk. Expect several minutes a clip.' },
+  ],
   training: [
     { minGb: 23.5, tier: 'best', note: 'Comfortable for LoRA training.' },
     { minGb: 15.5, tier: 'ok', note: 'Trainable at 512 to 768 px with a small batch.' },
@@ -94,6 +106,7 @@ const TIERS: Record<LocalKey, TierRow[]> = {
 
 /** Static requirement copy, shown when the hardware cannot be read. */
 const STATIC_NOTE: Record<LocalKey, string> = {
+  ltx25: 'Around 48 GB of VRAM to stay resident, and 71 GB on disk. It streams on less.',
   minimaxh3: '64 GB of system RAM and 144 GB on disk. The RAM is the binding constraint.',
   zimage: 'Around 12 GB of VRAM for a comfortable run.',
   flux2: 'Around 16 GB of VRAM for a comfortable run.',
@@ -115,8 +128,8 @@ export function tierFor(key: StarterKey, reading: VramReading): Advice {
 
 const SCORE: Record<Tier, number> = { best: 3, good: 2, ok: 1, heavy: 0 }
 /** Ties break lightest-first, so a new user is pointed at the quickest thing that works. */
-// 'minimaxh3' is deliberately absent. It can score a tier, but the ribbon points a new user at
-// their first render, and no first render should begin with a 144 GB download.
+// 'minimaxh3' and 'ltx25' are deliberately absent. Both can score a tier, but the ribbon points
+// a new user at their first render, and no first render should begin with a 71 GB download.
 const PREFERENCE: LocalKey[] = ['zimage', 'flux2', 'krea2', 'training']
 
 /**

@@ -4,10 +4,10 @@ The full reference for Inline Studio's **Trainer**: which base to train on, what
 on a real card, and every setting that shapes the result. For the short version and a screenshot of
 the canvas, see [LoRA training in the README](README.md#lora-training).
 
-Inline Studio trains LoRAs for **Z-Image**, **Krea 2**, **FLUX.2** and **MiniMax H3** on your own
-GPU, with no cloud step and nothing uploaded. Training is cheaper than generating: a 16GB card
-trains all three image models at 512px, and a LoRA trained at 512 applies at any generation
-resolution.
+Inline Studio trains LoRAs for **Z-Image**, **Krea 2**, **FLUX.2**, **MiniMax H3** and **LTX-2.5**
+on your own GPU, with no cloud step and nothing uploaded. Training is cheaper than generating: a
+16GB card trains all three image models at 512px, and a LoRA trained at 512 applies at any
+generation resolution. The two video models are the exception, and LTX-2.5 wants a 48GB card.
 
 **Contents:** [The graph](#the-graph) · [Datasets and outputs](#datasets-and-outputs) ·
 [Stop and resume](#stop-and-resume) · [Trigger words](#trigger-words) ·
@@ -72,10 +72,11 @@ The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FL
 - **The dev transformer is the only base.** It is the undistilled build, published beside the
   distilled one specifically to be trained. The adapter then loads on all three LTX nodes, in fast
   mode as well as quality - they are the same architecture.
-- **Two training modes.** A **Clip LoRA** learns look and motion from single clips, and adapts the
-  video, audio and cross-modal attention together so the soundtrack stays in step with whatever you
-  changed. A **Control LoRA** learns a transform from paired reference and target clips, adapts the
-  video branch only, and is what upstream calls an IC-LoRA.
+- **Two training modes.** A **Clip LoRA** learns look and motion from single clips. A **Control
+  LoRA** learns a transform from paired reference and target clips, conditioning on the reference,
+  and is what upstream calls an IC-LoRA. Both adapt the video attention and feed-forward layers, and
+  **neither trains the audio**: the training forward pass runs the video branch alone, so a trained
+  adapter changes the picture and leaves the soundtrack to the base model.
 - **Clip length snaps down onto 8n+1 at 24fps.** The floor is 9 frames, and the panel shows what
   your setting actually resolves to before you start.
 - **It wants a 48GB card.** A 22B base with no 4-bit training path here; upstream's own floor is
@@ -151,9 +152,15 @@ Set **Training mode** to _Control LoRA_ in the Adjust panel. Each dataset item t
 clip wired to it as the reference, and the pair must agree on frame count - a mismatch trains a
 broken adapter without erroring, so the Trainer refuses the run rather than starting it.
 
-A Control LoRA adapts the video branch only, including the feed-forward layers, which is upstream's
-advice for transformation quality. A Clip LoRA adapts video, audio and the cross-modal attention
-together, which is what keeps a generated soundtrack in step with a changed picture.
+Both modes adapt the same Linears: the video attention projections plus the feed-forward layers,
+which is upstream's advice for transformation quality. The mode changes the dataset and the forward
+pass, not the targets.
+
+The audio and cross-modal branches are deliberately excluded. Targeting them looks free, because
+PEFT matches by suffix and a pattern like `to_k` reaches them too, but the training forward pass
+runs with no audio, so those Linears never execute and never receive a gradient. A 500-step run
+proved it: 768 of 1152 up-projections were still exactly zero at the end, half the adapter's bytes
+carrying nothing. Adapting audio would need a forward pass that feeds it.
 
 ### Preparing a paired dataset
 
@@ -176,9 +183,9 @@ well as its own `0001.ref.mp4`, so a downloaded set can be trained on directly.
 
 ## Benchmark results
 
-> **LTX-2.5 generation is measured; LTX-2.5 training is not.** Generation numbers are below. The
-> training tables carry no LTX rows on purpose - the trainer's LTX data path is not finished, so
-> there is nothing to measure yet, and a guessed number is worse than a gap.
+> **LTX-2.5 training is measured on an L40S only.** The T4 column stays empty for it rather than
+> guessing: LTX needs Ampere or newer for the same reason generation does (see the runbook below),
+> and a 42GB bf16 base does not fit a 15GB card in any case.
 
 ### LTX-2.5 generation, measured on an L40S (44.4 GiB)
 
@@ -219,6 +226,7 @@ prompt encoder, reloaded on every render.
 | MiniMax H3 | FL2VA           | 768  | **4-bit**      | **20.6GB**    | not measured  |
 | MiniMax H3 | FL2VA           | 1024 | **4-bit**      | **20.6GB**    | not measured  |
 | MiniMax H3 | FL2VA, clips    | 512  | **4-bit**      | **20.4GB**    | not measured  |
+| LTX-2.5    | dev, clips      | 512  | bf16           | **42.0GB**    | not supported |
 
 **MiniMax H3 costs less on a smaller card, which is not a typo.** The run has three phases that never overlap, and the tallest is not the one doing the learning:
 
@@ -249,16 +257,34 @@ Narrowing the LoRA will not buy the difference: at rank 16 the whole adapter is 
 
 A training adapter is free: it is fused into the base before training starts, so Turbo-plus-adapter and the undistilled base peak identically.
 
+**LTX-2.5 is the opposite case: the base is nearly the whole bill, and it barely fits.** The 22B dev
+transformer lands at 38.0GB allocated before a step runs, and training peaks at 42.0GB allocated
+against 43.4GB reserved on a 46GB card. That leaves under 3GB of headroom, so a 48GB card is the
+floor rather than a comfort. There is no 4-bit rung to fall back on: the loader refuses to quantise
+this architecture, and the trainer now says so instead of dropping the setting silently.
+
+|                            | L40S (46GB) |
+| -------------------------- | ----------- |
+| Peak VRAM, 512px           | 42.0GB      |
+| Seconds per step, 512px    | 0.67        |
+| Precache, 25 clips of 0.7s | 13 min      |
+
+The step is cheap and the startup is not, which inverts the usual advice about run length. A
+300-step run spends 3 minutes training and 13 minutes getting ready; a 3000-step run spends 34
+minutes training against the same 13. Precache is keyed and reused, so a second run over the same
+dataset, resolution and clip length skips most of it. Prefer long runs, and expect a short one to be
+dominated by setup.
+
 **FLUX.2 is the cheapest of the three to train, and 4-bit does nothing for it.** Both precisions peak at the same number because the peak is not the transformer: klein's base is 7.4GB while its Qwen3-4B text encoder is 7.5GB, so the caption and latent caching pass at the start of the run costs more than training itself does. Dropping the frozen base to 4-bit shrinks a part of the run that was never the high-water mark, and the step gets slower for nothing. Leave base precision on Auto for FLUX.2, which is what it already picks. The rows above are klein Base 4B, the only checkpoint the trainer accepts for this architecture.
 
 Which card fits what (24GB and 32GB are interpolated, not measured, as are the FLUX.2 columns on 16GB: those peaks were measured on an L40S and leave room on a smaller card, but no 16GB run has been done):
 
-| Card | Z-Image 512 | Z-Image 1024 | Krea 2 512 | Krea 2 1024 | FLUX.2 512 | FLUX.2 1024 | MiniMax H3  |
-| ---- | ----------- | ------------ | ---------- | ----------- | ---------- | ----------- | ----------- |
-| 16GB | yes         | no           | yes, 4-bit | no          | yes        | yes         | yes, slowly |
-| 24GB | yes         | yes          | yes        | no          | yes        | yes         | yes         |
-| 32GB | yes         | yes          | yes        | yes, 4-bit  | yes        | yes         | yes         |
-| 48GB | yes         | yes          | yes        | 4-bit only  | yes        | yes         | yes         |
+| Card | Z-Image 512 | Z-Image 1024 | Krea 2 512 | Krea 2 1024 | FLUX.2 512 | FLUX.2 1024 | MiniMax H3  | LTX-2.5 512 |
+| ---- | ----------- | ------------ | ---------- | ----------- | ---------- | ----------- | ----------- | ----------- |
+| 16GB | yes         | no           | yes, 4-bit | no          | yes        | yes         | yes, slowly | no          |
+| 24GB | yes         | yes          | yes        | no          | yes        | yes         | yes         | no          |
+| 32GB | yes         | yes          | yes        | yes, 4-bit  | yes        | yes         | yes         | no          |
+| 48GB | yes         | yes          | yes        | 4-bit only  | yes        | yes         | yes         | yes         |
 
 H3 has one column because resolution barely moves it. The 16GB entry is measured on a T4 with 64GB of RAM, where the conditioner spills to the CPU: it fits in 12.7GB of VRAM but costs 16.2s a step and a 19 minute caption pass. The 24GB entry is interpolated from the 20.6GB peak, not measured on a 24GB card. A 16GB card with only 16GB of RAM is refused up front.
 

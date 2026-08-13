@@ -245,15 +245,15 @@ Five nodes, wired left to right, with the hyperparameters behind an Adjust butto
 
 Peak VRAM at 512px, 12 steps, rank 16, batch 1, gradient checkpointing on:
 
-| Architecture              | 512px peak       | 16GB card   |
-| ------------------------- | ---------------- | ----------- |
-| FLUX.2 (klein Base 4B)    | ~8.6GB           | yes         |
-| Krea 2 (4-bit base)       | ~11.9GB          | yes         |
-| Z-Image                   | ~13.4GB          | yes         |
-| MiniMax H3 (4-bit, video) | ~20.6GB          | yes, slowly |
-| LTX-2.5 (22B, video)      | not yet measured | see below   |
+| Architecture              | 512px peak | 16GB card   |
+| ------------------------- | ---------- | ----------- |
+| FLUX.2 (klein Base 4B)    | ~8.6GB     | yes         |
+| Krea 2 (4-bit base)       | ~11.9GB    | yes         |
+| Z-Image                   | ~13.4GB    | yes         |
+| MiniMax H3 (4-bit, video) | ~20.6GB    | yes, slowly |
+| LTX-2.5 (22B, video)      | ~42GB      | no, 48GB    |
 
-LTX-2.5 is the exception to the row above it. It is a 22B base against MiniMax H3's 33B, but it has no 4-bit training path here, and upstream's own floor is a 32GB card. Treat 48GB as the target and read the numbers when they land rather than before: [Benchmark results](TRAINING.md#benchmark-results).
+LTX-2.5 is the exception to the row above it. It is a 22B base against MiniMax H3's 33B, but it has no 4-bit training path here, so nothing shrinks it: the base alone is 38GB once loaded and training peaks at 42GB, measured on an L40S. A 48GB card is the floor, and a 24GB one cannot run it at any resolution. Generating is far more forgiving than training here, because LTX streams its own weights: [Benchmark results](TRAINING.md#benchmark-results).
 
 Training is cheaper than generating, and a LoRA trained at 512 applies at any generation resolution. Full per-card matrix, both resolutions and the timings: [Benchmark results](TRAINING.md#benchmark-results).
 
