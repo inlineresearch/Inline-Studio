@@ -69,8 +69,11 @@ def _require(path: Path | None, what: str) -> Path:
 
 
 def _wired(ref: Any) -> Path | None:
-    """A path handed in over a wired model port, if one was."""
-    value = getattr(ref, "path", None) if ref is not None else None
+    """The file a wired ``load/*`` node already resolved, if one is wired.
+
+    Its refs carry ``file``. Reading ``path`` matched nothing, so every wired model, VAE and text
+    encoder was silently ignored and the node fell back to the dropdown."""
+    value = getattr(ref, "file", None) if ref is not None else None
     return Path(str(value)) if value else None
 
 
@@ -168,7 +171,11 @@ def load_pipeline(
     plan = _plan(policy, paths, request.build)
 
     key = rt.PipelineKey(
-        arch="ltx-2-5",
+        # A reference render builds a different pipeline class with its own weight registry, so it
+        # cannot share a cached distilled one. That has to go in `arch` rather than `variant`:
+        # `evict_stale` keeps entries whose only difference is the variant, so putting it there left
+        # the old pipeline resident while the new one loaded on top and the card ran out at 44 GiB.
+        arch="ltx-2-5-ic" if request.reference else "ltx-2-5",
         diffusion=str(paths["transformer"]),
         vae=str(paths["video_vae"]),
         text_encoder=str(paths["text_encoder"]),
@@ -203,7 +210,14 @@ def load_pipeline(
         "quantization": memory.quantization_policy(plan, str(paths["transformer"])),
         "offload_mode": memory.offload_mode(plan),
     }
-    if request.mode == "quality":
+    if request.reference:
+        # A Control LoRA conditions on a reference clip, which the distilled pipeline cannot take.
+        # Upstream ships a separate one for it, built from the same arguments, that appends the
+        # reference as clean tokens the way the adapter was trained.
+        from .vendor.ltx_pipelines.ic_lora import ICLoraPipeline
+
+        pipe = ICLoraPipeline(**common)
+    elif request.mode == "quality":
         pipe = _quality_pipeline(common)
     else:
         from .vendor.ltx_pipelines.distilled import DistilledPipeline
@@ -265,12 +279,17 @@ def _quality_pipeline(common: dict[str, Any]) -> Any:
 
 def _lora(ref: Any) -> Any:
     """One of our `LoraRef`s as the vendored path, strength and key-rename triple."""
+    # The loader node hands over a path it already resolved under the models root, not a bare name.
+    # Re-resolving it as a name only looked right while that root was absolute, because an absolute
+    # right-hand side wins a join; under the default relative `./models` the prefix doubled.
+    # Checked before the vendored import so a missing file is reported without loading torch.
+    path = _wired(ref)
+    if path is None or not path.is_file():
+        raise ComponentError(f"{_LABEL} could not find the LoRA {getattr(ref, 'file', '')!r}.")
+
     from .vendor.ltx_core.loader import LoraPathStrengthAndSDOps
     from .vendor.ltx_core.loader.sd_ops import LTXV_LORA_COMFY_RENAMING_MAP
 
-    path = reqs.resolve("loras", str(getattr(ref, "file", "")))
-    if path is None:
-        raise ComponentError(f"{_LABEL} could not find the LoRA {getattr(ref, 'file', '')!r}.")
     # The rename map is not optional: published LTX adapters (and the ones the Trainer exports) key
     # on `diffusion_model.`, which this strips to reach the module names. Every upstream caller
     # passes it, including for the distilled LoRA.
@@ -319,7 +338,10 @@ def render(
         # The third element is the **frame count**, not a sample rate. The rate lives on the Audio
         # container as ``sampling_rate``, and taking the positional one wrote a WAV headed 49 Hz -
         # the video's frame count - which plays back forty minutes long and raises nothing.
-        frames_iter, audio, _num_frames, _tiling = pipe(**call)
+        # The IC-LoRA pipeline returns three values where the others return four: it takes an
+        # explicit `num_frames` and so has none to report back.
+        result = pipe(**call)
+        frames_iter, audio = result[0], result[1]
         for chunk in frames_iter:
             if cancel_check is not None:
                 cancel_check()

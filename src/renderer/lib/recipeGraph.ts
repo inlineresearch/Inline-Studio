@@ -3,13 +3,15 @@
  * nodes with fresh ids, offset so the producing node lands at the drop point, then re-wires the
  * links. Used by "Load graph" when an output image is dropped or a shared image is imported.
  *
- * v1 rebuilds Core-generation graphs (core / prompt / control-space / loader nodes). Media-bearing
- * nodes (asset/frame) and cross-project media refs are skipped or left dangling - the structure,
- * prompt and settings transfer; the actual input images don't (a follow-up embeds those bytes).
+ * Structure, prompt and settings transfer; the input media does not, because an asset id means
+ * nothing in another project. Media-bearing sources (asset / rendered frame) and loaders holding
+ * assets this project lacks land as **empty** Load Assets nodes, still wired, so the user drops
+ * their own file onto one and the graph is whole.
  */
 import type { MoodboardItem } from '@shared/types'
 import { useMoodboardStore } from '../store/moodboardStore'
 import { useGenerationStore } from '../store/generationStore'
+import { useAssetStore } from '../store/assetStore'
 import type { Recipe } from './pngRecipe'
 
 interface Point {
@@ -27,6 +29,11 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
   const offX = drop.x - target.x
   const offY = drop.y - target.y
   const idMap = new Map<string, string>()
+  // The Library may never have been opened on this board, and an empty store would read as "this
+  // project has no assets" and strip loaders that were in fact valid.
+  if (!useAssetStore.getState().assets.length) await useAssetStore.getState().load()
+  const known = new Set(useAssetStore.getState().assets.map((a) => a.id))
+  const substituted = new Set<string>()
 
   for (const it of graph.items) {
     const x = it.x + offX
@@ -61,21 +68,26 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
       }
     } else if (it.type === 'loader') {
       created = await store.addLoader(x, y)
-      const assetIds = (data.assetIds as string[] | undefined) ?? []
+      // Asset ids are project-scoped, so a recipe from another project names media this one has
+      // never seen. Keeping them would leave a loader that looks full and resolves to nothing.
+      const assetIds = ((data.assetIds as string[] | undefined) ?? []).filter((id) => known.has(id))
       if (created && assetIds.length) {
         await store.updateItem(created.id, { data: { ...created.data, assetIds } }, false)
       }
-    } else if (it.type === 'frame') {
-      // A fal gen node (Core authored it with the model + params); rendered-frame image sources
-      // have no `fal` block and are skipped (their media doesn't transfer across a rebuild).
-      const fal = data.fal as { modelId?: string; params?: Record<string, unknown> } | undefined
-      if (!fal?.modelId) continue
+    } else if (it.type === 'frame' && (data.fal as { modelId?: string } | undefined)?.modelId) {
+      // A fal gen node - Core authored it with the model + params.
+      const fal = data.fal as { modelId: string; params?: Record<string, unknown> }
       created = await store.addGenNode(fal.modelId, x, y)
       if (created?.frameId && fal.params) {
         await useGenerationStore.getState().setParams(created.frameId, fal.params)
       }
+    } else if (it.type === 'asset' || it.type === 'frame') {
+      // Media does not travel between projects, but the wiring should. An empty Load Assets node
+      // stands in, so the user drops their own clip onto it and the graph is whole again.
+      created = await store.addLoader(x, y)
+      if (created) substituted.add(it.id)
     } else {
-      continue // asset/text/etc. need existing project media - skipped in v1
+      continue // text/etc. - nothing to rebuild in v1
     }
 
     if (created) idMap.set(it.id, created.id)
@@ -86,7 +98,10 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
     const to = idMap.get(c.toItemId)
     if (!from || !to) continue
     const cd = c.data as { sourceHandle?: string; targetHandle?: string }
-    await store.connect(from, to, cd.sourceHandle ?? null, cd.targetHandle ?? null)
+    // A loader standing in for an asset carries the loader's own output handle, not the one the
+    // original node named; null lets the board fall back to it.
+    const src = substituted.has(c.fromItemId) ? null : (cd.sourceHandle ?? null)
+    await store.connect(from, to, src, cd.targetHandle ?? null)
   }
 
   return idMap.size

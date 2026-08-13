@@ -44,6 +44,13 @@ class ImageInputRunner(NodeRunner):
         return NodeResult(outputs={"image": _asset_ref(node.params.get("asset"))})
 
 
+class VideoInputRunner(NodeRunner):
+    produces_takes = False
+
+    def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
+        return NodeResult(outputs={"video": _asset_ref(node.params.get("asset"))})
+
+
 def _asset_ref(raw: Any) -> AssetRef:
     if isinstance(raw, dict):
         ref = raw.get("ref")
@@ -69,4 +76,15 @@ IMAGE_INPUT = NodeDescriptor(
     category="Input",
     outputs=(Port("image", "Image", PortKind.IMAGE),),
     icon="image",
+)
+
+#: The same frozen asset, typed as a clip. Needed because a wired video used to arrive as
+#: `input/image` whatever it actually held, so a video port refused it at validation: the reader saw
+#: "Cannot wire image into video" about a file that was already a video.
+VIDEO_INPUT = NodeDescriptor(
+    type="input/video",
+    title="Video",
+    category="Input",
+    outputs=(Port("video", "Video", PortKind.VIDEO),),
+    icon="film",
 )

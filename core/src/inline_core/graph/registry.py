@@ -10,7 +10,15 @@ from ..errors import UnknownNodeType
 from .descriptor import NodeDescriptor
 from .loader_runners import register_loaders
 from .primitives import register_primitives
-from .runners import IMAGE_INPUT, TEXT_INPUT, ImageInputRunner, NodeRunner, TextInputRunner
+from .runners import (
+    IMAGE_INPUT,
+    TEXT_INPUT,
+    VIDEO_INPUT,
+    ImageInputRunner,
+    NodeRunner,
+    TextInputRunner,
+    VideoInputRunner,
+)
 
 
 class Registry:
@@ -83,6 +91,7 @@ def build_default_registry() -> Registry:
     registry = Registry()
     registry.register(replace(TEXT_INPUT, hidden=True), TextInputRunner())
     registry.register(replace(IMAGE_INPUT, hidden=True), ImageInputRunner())
+    registry.register(replace(VIDEO_INPUT, hidden=True), VideoInputRunner())
     register_primitives(registry)
     register_loaders(registry)
     return registry

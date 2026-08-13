@@ -11,8 +11,10 @@ import { copyText } from '../../lib/clipboard'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { expandToGraphs, toEdges } from './graphSelection'
 
-/** Node types `buildGraphFromRecipe` can recreate. Anything else exports but will not re-import. */
-const REBUILDABLE = new Set(['core', 'prompt', 'controlSpace', 'loader', 'frame'])
+/** Node types `buildGraphFromRecipe` can recreate. Anything else exports but will not re-import.
+ * `asset` and a rendered `frame` come back as empty Load Assets nodes: the wiring rebuilds, the
+ * media does not, because asset ids mean nothing in another project. */
+const REBUILDABLE = new Set(['core', 'prompt', 'controlSpace', 'loader', 'frame', 'asset'])
 
 /** Item fields the recipe keeps, per type. Mirrors `studio/recipe.py::_clean_data`. */
 function cleanData(item: MoodboardItem): Record<string, unknown> {

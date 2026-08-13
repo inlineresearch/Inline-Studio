@@ -132,6 +132,11 @@ def _inputs(variant: Variant) -> tuple[Port, ...]:
         ports.append(Port("image", "First frame", PortKind.IMAGE, required=False))
     if variant.last_frame:
         ports.append(Port("last_image", "Last frame", PortKind.IMAGE, required=False))
+    # An IC-LoRA (Control LoRA) learns a transform from a reference clip, so it needs one at
+    # generation time too. Present on every variant: the reference is orthogonal to keyframes.
+    ports.append(
+        Port("reference", "Reference clip (Control LoRA)", PortKind.VIDEO, required=False)
+    )
     return tuple(ports)
 
 
@@ -183,6 +188,9 @@ class Request:
     generate_audio: bool
     enhance_prompt: bool
     conditionings: tuple[Conditioning, ...] = ()
+    #: A reference clip for a Control LoRA, as a local path. Upstream reads the file itself rather
+    #: than taking pixels, so this stays a path all the way down.
+    reference: str | None = None
 
     @property
     def seconds(self) -> float:
@@ -223,6 +231,7 @@ def build_request(
     if variant.first_frame and not conditionings:
         raise ComponentError(f"{variant.title} needs an image wired to its First frame input.")
 
+    reference = rt.first(inputs.get("reference"))
     return Request(
         prompt=prompt,
         num_frames=frames,
@@ -238,6 +247,7 @@ def build_request(
         mode=mode,
         generate_audio=bool(params.get("generate_audio", True)),
         enhance_prompt=bool(params.get("enhance_prompt", False)),
+        reference=rt.media_path(reference, "Reference clip") if reference else None,
         conditionings=tuple(conditionings),
     )
 
@@ -268,7 +278,7 @@ def call_kwargs(request: Request, scratch: Path, label: str = _LABEL) -> dict[st
     """
     from .vendor.ltx_pipelines.utils.args import ImageConditioningInput
 
-    return {
+    args: dict[str, Any] = {
         "prompt": request.prompt,
         "seed": request.seed,
         "height": request.height,
@@ -285,6 +295,12 @@ def call_kwargs(request: Request, scratch: Path, label: str = _LABEL) -> dict[st
             for c in request.conditionings
         ],
     }
+    if request.reference:
+        # Only the IC-LoRA pipeline takes this, and it is the pipeline `load_pipeline` picks when a
+        # reference is wired. Strength 1.0 keeps the reference tokens clean, which is how the
+        # adapter saw them in training.
+        args["video_conditioning"] = [(request.reference, 1.0)]
+    return args
 
 
 # --- the runner ----------------------------------------------------------------------------------

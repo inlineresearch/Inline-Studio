@@ -23,14 +23,34 @@ from . import frames as fr
 from . import moodboard as mb
 
 
-def _source_output_port(source: dict[str, Any] | None, source_handle: str | None) -> str:
+def _source_output_port(
+    source: dict[str, Any] | None,
+    source_handle: str | None,
+    source_path: Callable[[dict[str, Any]], str | None] | None = None,
+) -> str:
     if source and source["type"] == "prompt":
         return "text"
-    # An asset, a rendered frame, a Load Assets loader, or a Control Space render all become an
-    # ``input/image`` source node.
+    # An asset, a rendered frame, a Load Assets loader, or a Control Space render all become a
+    # frozen source node, image or video according to what the file actually is. The port id has to
+    # match the node `_item_to_node` emits, or the edge names an output that does not exist.
     if source and source["type"] in ("asset", "frame", "loader", "controlSpace"):
-        return "image"
+        path = source_path(source) if source_path else None
+        return "video" if path and _source_type(path) == "input/video" else "image"
     return source_handle or "out"  # a 'core' item's handles already are Core port ids
+
+
+#: Suffixes the video source node claims. Everything else stays an image, which is what the image
+#: ports and the list ports expect.
+_VIDEO_SUFFIXES = (".mp4", ".mov", ".webm", ".mkv", ".avi")
+
+
+def _source_type(path: str) -> str:
+    """`input/video` for a clip, `input/image` otherwise.
+
+    Every asset used to arrive as `input/image` whatever it held, so wiring a clip into a video port
+    failed validation with "Cannot wire image into video" about a file that was already a video.
+    """
+    return "input/video" if Path(path).suffix.lower() in _VIDEO_SUFFIXES else "input/image"
 
 
 def _loader_assets(item: dict[str, Any] | None) -> list[str]:
@@ -51,6 +71,7 @@ def _edges_for(
     by_id: dict[str, dict[str, Any]],
     is_list_port: Callable[[str, str], bool],
     fanned_out: dict[str, int],
+    source_path: Callable[[dict[str, Any]], str | None] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     """This node's input edges, keyed by target port.
 
@@ -73,7 +94,7 @@ def _edges_for(
         handle = data.get("targetHandle") or "in"
         source_id = c["fromItemId"]
         source = by_id.get(source_id)
-        output = _source_output_port(source, data.get("sourceHandle"))
+        output = _source_output_port(source, data.get("sourceHandle"), source_path)
         listed = bool(target_type) and is_list_port(target_type, handle)
 
         assets = _loader_assets(source) if listed else []
@@ -119,7 +140,7 @@ def _item_to_node(
             return None
         return {
             "id": item["id"],
-            "type": "input/image",
+            "type": _source_type(path),
             "params": {"asset": {"ref": "path", "path": path}},
         }
     # A Load Assets loader feeds its hero (first) asset as a frozen image source. Wired into a list
@@ -133,7 +154,7 @@ def _item_to_node(
             return None
         return {
             "id": item["id"],
-            "type": "input/image",
+            "type": _source_type(path),
             "params": {"asset": {"ref": "path", "path": path}},
         }
     # A Control Space node feeds its rendered OpenPose control map (a library asset) as a frozen
@@ -145,7 +166,7 @@ def _item_to_node(
             return None
         return {
             "id": item["id"],
-            "type": "input/image",
+            "type": _source_type(path),
             "params": {"asset": {"ref": "path", "path": path}},
         }
     # A rendered frame wired into a Core node feeds its output image as a frozen source (its hero
@@ -156,7 +177,7 @@ def _item_to_node(
             return None
         return {
             "id": item["id"],
-            "type": "input/image",
+            "type": _source_type(path),
             "params": {"asset": {"ref": "path", "path": path}},
         }
     return None
@@ -272,13 +293,27 @@ def build_workflow_graph(
         out = fr.resolve_frame_file(conn, frame_id)
         return str(folder / out["filePath"]) if out else None
 
+    def source_path(source: dict[str, Any]) -> str | None:
+        """The file behind a source item, so its node and its edge type themselves the same way."""
+        data = source.get("data") or {}
+        if source["type"] == "asset" and source.get("assetId"):
+            return resolve_asset_path(source["assetId"])
+        if source["type"] == "frame" and source.get("frameId"):
+            return resolve_frame_path(source["frameId"])
+        if source["type"] == "loader":
+            ids = data.get("assetIds") or []
+            return resolve_asset_path(ids[0]) if ids else None
+        if source["type"] == "controlSpace" and data.get("controlAssetId"):
+            return resolve_asset_path(data["controlAssetId"])
+        return None
+
     listed = is_list_port or (lambda _type, _port: False)
     closure = sorted(_upstream_closure(target_item_id, connectors))
     # Two passes: the edges decide which loaders fan out, so they must be resolved before the node
     # pass can know whether to emit one source per loader or one per asset.
     fanned_out: dict[str, int] = {}
     edges_by_node = {
-        node_id: _edges_for(node_id, connectors, by_id, listed, fanned_out)
+        node_id: _edges_for(node_id, connectors, by_id, listed, fanned_out, source_path)
         for node_id in closure
         if (by_id.get(node_id) or {}).get("type") == "core"
     }
@@ -296,8 +331,23 @@ def build_workflow_graph(
                 node["inputs"] = edges_by_node[node_id]
             nodes.append(node)
         nodes.extend(_fanned_out_sources(item, fanned_out, resolve_asset_path))
+    _prune_dangling_edges(nodes)
     _apply_facing_hints(nodes, by_id)
     return {"schemaVersion": 1, "nodes": nodes}, target_item_id
+
+
+def _prune_dangling_edges(nodes: list[dict[str, Any]]) -> None:
+    """Drop edges naming a source that produced no node - an asset that does not resolve in this
+    project (a board imported from another one, a deleted file). Those sources are skipped rather
+    than failing the run, so the edges have to go with them: left in, validation reports a bare
+    canvas id, where dropping them reports the port that is now unwired."""
+    ids = {n["id"] for n in nodes}
+    for node in nodes:
+        inputs: dict[str, list[dict[str, str]]] = node.get("inputs") or {}
+        if not inputs:
+            continue
+        kept = {port: [e for e in edges if e["from"] in ids] for port, edges in inputs.items()}
+        node["inputs"] = {port: edges for port, edges in kept.items() if edges}
 
 
 def _fanned_out_sources(

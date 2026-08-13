@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSeen } from '@/lib/useSeen'
 import { takeWaveformPath } from '@shared/media'
 import type { Frame, MoodboardItem } from '@shared/types'
 import { resolveMedia } from '@/lib/media'
@@ -582,15 +583,7 @@ function FileRow({
     <div className="flex items-center gap-1.5 py-0.5">
       <div className="h-7 w-7 shrink-0 overflow-hidden rounded border border-border bg-black/40">
         {kind === 'image' && <img src={thumb} alt="" className="h-full w-full object-cover" />}
-        {kind === 'video' && (
-          <video
-            src={thumb}
-            poster={poster}
-            muted
-            preload="metadata"
-            className="h-full w-full object-cover"
-          />
-        )}
+        {kind === 'video' && <AssetVideoThumb src={thumb} poster={poster} />}
         {kind === 'audio' &&
           (waveform ? (
             <Waveform url={waveform} bars={24} className="h-full w-full p-0.5 text-emerald-400" />
@@ -614,4 +607,23 @@ function FileRow({
 
 function Empty({ children }: { children: React.ReactNode }): React.JSX.Element {
   return <span className="py-0.5 text-[10px] text-zinc-600">{children}</span>
+}
+
+function AssetVideoThumb({ src, poster }: { src: string; poster?: string }): React.JSX.Element {
+  const [ref, seen] = useSeen<HTMLDivElement>()
+  return (
+    <div ref={ref} className="h-full w-full">
+      {seen ? (
+        <video
+          src={src}
+          poster={poster}
+          muted
+          preload="metadata"
+          className="h-full w-full object-cover"
+        />
+      ) : poster ? (
+        <img src={poster} alt="" loading="lazy" className="h-full w-full object-cover" />
+      ) : null}
+    </div>
+  )
 }

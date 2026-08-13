@@ -624,6 +624,20 @@ def load_image(ref: Any, label: str) -> Any:
     raise ComponentError(f"{label} needs a readable image input.")
 
 
+def media_path(ref: Any, label: str) -> str:
+    """A wired clip as a local path, for a pipeline that opens the file itself.
+
+    Deliberately not `load_image`'s shape: upstream's IC-LoRA conditioning takes `(path, strength)`
+    and does its own decode and resize, so handing it decoded pixels would mean decoding twice and
+    guessing at the resize it wants.
+    """
+    if isinstance(ref, AssetRef) and ref.ref == "path" and ref.path:
+        return str(ref.path)
+    if isinstance(ref, Take) and ref.uri:
+        return ref.uri.removeprefix("file://")
+    raise ComponentError(f"{label} needs a readable video input.")
+
+
 def first(values: list[Any] | None) -> Any:
     return values[0] if values else None
 

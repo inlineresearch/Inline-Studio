@@ -2,7 +2,7 @@
 import { useRef } from 'react'
 import type { Asset } from '@shared/types'
 import { useLightboxStore } from '../../store/lightboxStore'
-import { useSeen } from './useSeen'
+import { useSeen } from '@/lib/useSeen'
 import { resolveMedia } from '@/lib/media'
 
 /**
