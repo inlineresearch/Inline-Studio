@@ -322,6 +322,7 @@ def create_app(
         from ..extensions.handlers import register_extension_handlers
         from ..extensions.install import Installer
         from ..studio.activity import ActivityRegistry
+        from ..studio.characters import Characters
         from ..studio.fal import FalGeneration
         from ..studio.generation import CoreGeneration
         from ..studio.handlers import register_studio_handlers
@@ -364,6 +365,9 @@ def create_app(
         activity.set_canceller("fal", fal_generation.cancel_run)
         activity.set_canceller("training", training_service.cancel)
         activity_registry = activity
+        # Rescan on change, so a new character reaches the node's dropdown without a restart.
+        characters_service = Characters(studio_store, events, on_change=catalog.rescan)
+        core_generation.set_characters(characters_service)
 
         register_studio_handlers(
             rpc,
@@ -374,6 +378,7 @@ def create_app(
             fal_generation=fal_generation,
             timeline=Timeline(studio_store, events),
             training=training_service,
+            characters=characters_service,
             activity=activity,
             # Explicit model downloads write into models/; rescan so new files bump the registry.
             # The policy lets the requirements popup show a memory fit estimate before a load;
@@ -460,6 +465,56 @@ def create_app(
             return FileResponse(
                 target, filename=target.name, media_type="application/octet-stream"
             )
+
+        @app.get("/download/character/{name}")
+        async def download_character(name: str) -> Response:
+            # A character lives in the models root, which /media does not serve, so exporting one
+            # out of the browser needs its own route.
+            from ..characters import library as char_library
+
+            target = char_library.resolve(basename(name))
+            if target is None or not target.is_file():
+                return Response("Not found", status_code=404)
+            return FileResponse(
+                target, filename=target.name, media_type="application/octet-stream"
+            )
+
+        @app.get("/character-ref/{name}/{index}")
+        async def character_ref(name: str, index: int) -> Response:
+            """One reference image out of a `.char`, so the library can render without the browser
+            having to unzip a multi-megabyte archive."""
+            from ..characters import charfile as cf
+            from ..characters import library as char_library
+
+            target = char_library.resolve(basename(name))
+            if target is None:
+                return Response("Not found", status_code=404)
+            try:
+                doc = cf.read(target)
+                refs = doc.manifest.refs
+                if not 0 <= index < len(refs):
+                    return Response("Not found", status_code=404)
+                data = doc.members.get(str(refs[index].get("path")))
+            except cf.CharFileError:
+                return Response("Not found", status_code=404)
+            if data is None:
+                return Response("Not found", status_code=404)
+            return Response(data, media_type="image/png")
+
+        @app.post("/upload/character")
+        async def upload_character(request: Request) -> Response:
+            # /upload routes everything through assets.import_file, which returns None for an
+            # unknown extension - a .char posted there is silently dropped. Hence its own route.
+            from ..characters import library as char_library
+
+            name = basename(request.query_params.get("name") or "character.char")
+            try:
+                landed = char_library.import_bytes(await request.body(), name)
+                catalog.rescan()
+                events.broadcast("events:charactersChanged", {})
+                return JSONResponse({"ok": True, "value": {"file": landed.name}})
+            except Exception as error:  # noqa: BLE001 - Result envelope, errors never cross raw
+                return JSONResponse({"ok": False, "error": str(error)})
 
         @app.post("/upload")
         async def upload(request: Request) -> Response:

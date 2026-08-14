@@ -57,6 +57,7 @@ class CoreGeneration:
         self._events = events
         self._registry = registry
         self._activity = activity
+        self._characters: Any = None
         self._active: dict[str, str] = {}  # canvas item id -> run id
         # Last progress per item, so a reloaded page can rebuild its queue. Progress is broadcast
         # and forgotten otherwise, and a run mid-model-load emits nothing for minutes.
@@ -203,6 +204,28 @@ class CoreGeneration:
             {"frameId": item_id, "fraction": fraction, "status": status},
         )
 
+    def set_characters(self, characters: Any) -> None:
+        """Wire the character library in, so a take generated with one carries its continuity
+        score. Optional: without it takes are saved exactly as before."""
+        self._characters = characters
+
+    def _continuity(self, take: Any, path: Path) -> dict[str, Any]:
+        """`characterId` + `continuityScore` for a take that used a character, else nothing.
+
+        Runs inline rather than as a follow-up job: the encoders are CPU-resident and small, so a
+        few hundred milliseconds against a multi-second render does not earn an extra event
+        channel. `score_take` never raises, for the same reason the recipe embed never does.
+        """
+        params = dict(getattr(take, "params", {}) or {})
+        chosen = str(params.get("character") or "").strip()
+        if not chosen or self._characters is None:
+            return {}
+        result = self._characters.score_take(path, chosen)
+        if result is None:
+            # Measured nothing. Record the character anyway so the UI can say which one was used.
+            return {"characterId": chosen}
+        return {"characterId": chosen, "continuityScore": result["score"]}
+
     def _save_take(self, item_id: str, take: Any, ref: Any) -> None:
         """Copy a take's bytes into the project's takes/ dir and set its Core node's output. Image
         PNGs are re-saved with an embedded recipe (the params + upstream subgraph that made them) so
@@ -248,6 +271,7 @@ class CoreGeneration:
                     "createdAt": int(time.time() * 1000),
                     "params": dict(getattr(take, "params", {}) or {}),
                     "prompt": recipe.get("prompt", ""),
+                    **(self._continuity(take, dst) if kind == "image" else {}),
                 },
             )
 

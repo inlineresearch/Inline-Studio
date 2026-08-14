@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -92,6 +93,9 @@ FLUX2 = NodeDescriptor(
         ),
         # FLUX.2 is flow-match, so these tune the FlowMatchEuler scheduler - see models/sampling.py.
         *sampling_param_fields(SamplingFamily.FLOW_MATCH),
+        # A saved character from models/characters/. Its references are appended to whatever is
+        # wired, and its locked description is prepended to the prompt naming their positions.
+        ParamField("character", "Character", Widget.SELECT, "", options_from="characters"),
         # A FLUX.2 ControlNet Union (dev only). Empty = off, and a wired control map is then fed
         # through the reference channel instead, which works on every variant.
         ParamField("controlnet", "ControlNet (dev only)", Widget.SELECT, "",
@@ -199,6 +203,15 @@ class Flux2Runner(NodeRunner):
         # Without a ControlNet the map is just another reference, which is how klein does control.
         if control is not None and control_file is None:
             refs.append(control)
+
+        # A character's references are appended, never prepended: the numbered strip on the node
+        # face is built from wired connectors and cannot see these, so leading them would shift
+        # every number the user can see away from the number the prompt resolves.
+        character = _apply_character(params, len(refs))
+        if character is not None:
+            refs.extend(character.refs)
+            prompt = character.prefix + prompt
+
         images = [rt.load_image(ref, _LABEL) for ref in refs]
         control_map = rt.load_image(control, _LABEL) if control_file else None
 
@@ -284,7 +297,7 @@ class Flux2Runner(NodeRunner):
                 pipe,
                 self._policy,
                 prompt=prompt,
-                negative=negative,
+                negative=_cfg_negative(negative, variant, guidance),
                 text_encoder_file=te_file,
                 layers=variant.text_encoder_layers,
             )
@@ -408,6 +421,8 @@ class Flux2Runner(NodeRunner):
                 "scheduler": scheduler,
                 "seed": seed,
                 **({"references": len(images)} if images else {}),
+                # Studio reads this back to decide whether to score the take for continuity.
+                **({"character": str(params["character"])} if character else {}),
                 **(
                     {"controlnet": control_file,
                      "control_strength": float(params.get("control_strength", 0.75))}
@@ -507,6 +522,13 @@ def _resolve_guidance(params: dict[str, Any], variant: V.Flux2Variant) -> float:
     return variant.guidance if guidance < 0 else guidance
 
 
+def _cfg_negative(negative: str | None, variant: V.Flux2Variant, guidance: float) -> str | None:
+    """The negative to precompute: CFG substitutes an empty one, and the parked encoder is gone."""
+    if variant.supports_negative_prompt and guidance > 1:
+        return negative or ""
+    return negative
+
+
 def _resolve_negative(params: dict[str, Any], variant: V.Flux2Variant) -> str | None:
     """A negative prompt, but only where it does something. A distilled checkpoint runs no CFG and
     dev's pipeline has no negative path, so we log and drop it rather than pretending it applied."""
@@ -522,6 +544,30 @@ def _resolve_negative(params: dict[str, Any], variant: V.Flux2Variant) -> str | 
         return None
     return negative
 
+
+
+@dataclass(frozen=True)
+class _Character:
+    refs: list[Any]
+    prefix: str
+
+
+def _apply_character(params: dict[str, Any], wired: int) -> _Character | None:
+    """A picked character's references and prompt prefix, or None when none is picked.
+
+    ``wired`` is how many references the user already supplied, because the prefix has to name the
+    positions the character's own references will land on.
+    """
+    chosen = str(params.get("character") or "").strip()
+    if not chosen:
+        return None
+    from ...characters import apply as characters
+
+    applied = characters.char_apply(chosen)
+    if applied is None or not applied.refs:
+        return None
+    logger.info("Applying character %s: %d reference(s)", applied.name, len(applied.refs))
+    return _Character(refs=list(applied.refs), prefix=applied.prompt_prefix(wired + 1))
 
 
 def _resolve_controlnet(

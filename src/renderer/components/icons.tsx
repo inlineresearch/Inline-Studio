@@ -36,6 +36,15 @@ export function ImageIcon({ className }: { className?: string }): React.JSX.Elem
   )
 }
 
+/** `face` - a saved character (not the Control Space rig, which is a posable figure). */
+export function CharacterIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM9 8c.83 0 1.5.67 1.5 1.5S9.83 11 9 11s-1.5-.67-1.5-1.5S8.17 8 9 8zm3 10c-2.28 0-4.22-1.66-5-4h10c-.78 2.34-2.72 4-5 4zm3-7c-.83 0-1.5-.67-1.5-1.5S14.17 8 15 8s1.5.67 1.5 1.5S15.83 11 15 11z" />
+    </Svg>
+  )
+}
+
 /** `history` - timeline / past takes. */
 export function HistoryIcon({ className }: { className?: string }): React.JSX.Element {
   return (

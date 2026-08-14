@@ -124,3 +124,25 @@ def test_a_variant_override_that_contradicts_the_checkpoint_is_ignored(tmp_path)
     klein_file = _write_header_only(tmp_path / "anon.safetensors", _shapes(KLEIN_4B))
     forced, _ = runner._identify(str(klein_file), {"variant": "klein-4b-base"})
     assert forced is V.get("klein-4b-base")
+
+
+def test_a_base_checkpoint_precomputes_an_empty_negative_when_none_was_typed() -> None:
+    """CFG substitutes an empty negative, and the parked encoder is not there to encode it."""
+    base = next(v for v in V.VARIANTS if v.supports_negative_prompt)
+    assert runner._cfg_negative(None, base, guidance=4.0) == ""
+    assert runner._cfg_negative("", base, guidance=4.0) == ""
+    # A typed negative is passed through untouched.
+    assert runner._cfg_negative("blurry", base, guidance=4.0) == "blurry"
+
+
+def test_a_distilled_checkpoint_precomputes_no_negative() -> None:
+    """No CFG, so an empty negative would be an embedding computed for nothing."""
+    distilled = next(v for v in V.VARIANTS if not v.supports_negative_prompt)
+    assert runner._cfg_negative(None, distilled, guidance=4.0) is None
+    assert runner._cfg_negative(None, distilled, guidance=1.0) is None
+
+
+def test_guidance_of_one_needs_no_negative_even_on_a_base_checkpoint() -> None:
+    """`do_classifier_free_guidance` is `guidance > 1`, so at 1.0 the branch never runs."""
+    base = next(v for v in V.VARIANTS if v.supports_negative_prompt)
+    assert runner._cfg_negative(None, base, guidance=1.0) is None
