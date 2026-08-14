@@ -742,6 +742,10 @@ class _StepReporter:
         return getattr(self._inner, name)
 
 
+#: Marks our replacement so a re-attach unwraps to the real bar instead of stacking on itself.
+_ORIGINAL = "_inline_original"
+
+
 def attach_step_progress(pipe: Any, on_step: Any) -> bool:
     """Report every denoising step of ``pipe``. Returns whether a loop was found to hook.
 
@@ -754,13 +758,17 @@ def attach_step_progress(pipe: Any, on_step: Any) -> bool:
         if loop is None:
             continue
         found = True
-        original = loop.progress_bar
+        # Replace a previous hook rather than wrap it. The pipeline is cached across renders, so
+        # wrapping stacked a layer per render, each holding an earlier run's callback. A cancelled
+        # token stays cancelled, so one cancel made every later render raise at its first step.
+        original = getattr(loop.progress_bar, _ORIGINAL, loop.progress_bar)
 
         def progress_bar(
             total: Any = None, _original: Any = original, **kw: Any
         ) -> _StepReporter:
             return _StepReporter(_original(total=total, **kw), int(total or 0), on_step)
 
+        setattr(progress_bar, _ORIGINAL, original)
         loop.progress_bar = progress_bar
     return found
 

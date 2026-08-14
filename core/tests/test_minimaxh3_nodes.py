@@ -558,7 +558,8 @@ class _FakeLoop:
 
 def test_step_progress_hooks_the_denoise_loop() -> None:
     """The modular loop has no callback_on_step_end, so the progress bar is the only per-step hook.
-    Without it a long denoise emits nothing and the UI shows 'loading model' for the whole render."""
+    Without it a long denoise emits nothing and the UI shows 'loading model' for the whole
+    render."""
     from inline_core.models import pipeline_runtime as rt
 
     loop = _FakeLoop()
@@ -615,3 +616,60 @@ def test_step_progress_survives_the_blocks_property_returning_a_copy() -> None:
         bar.update()
         bar.update()
     assert seen == [(1, 2), (2, 2)]
+
+
+def test_re_attaching_replaces_the_hook_instead_of_stacking() -> None:
+    """The pipeline is cached across renders, so attach runs again on the same loop object.
+
+    Wrapping instead of replacing kept every earlier run's callback alive. Those closures hold the
+    run's cancel token, and a cancelled token stays cancelled, so one cancelled render made every
+    later render raise at its first step.
+    """
+    from inline_core.models import pipeline_runtime as rt
+
+    loop = _FakeLoop()
+
+    class _Blocks:
+        sub_blocks = {"denoise": loop}
+
+    class _Pipe:
+        _blocks = _Blocks()
+
+    pipe = _Pipe()
+    first: list[tuple[int, int]] = []
+    second: list[tuple[int, int]] = []
+    rt.attach_step_progress(pipe, lambda d, t: first.append((d, t)))
+    rt.attach_step_progress(pipe, lambda d, t: second.append((d, t)))
+
+    with loop.progress_bar(total=2) as bar:
+        bar.update()
+        bar.update()
+
+    assert second == [(1, 2), (2, 2)]
+    assert first == []  # the earlier run's callback is gone, not merely outvoted
+    assert loop.bar.updates == 2  # and the real bar is driven once per step, not twice
+
+
+def test_a_cancelled_run_does_not_poison_the_next_one() -> None:
+    """The symptom the stacking caused: render, cancel, then every later render dies immediately."""
+    from inline_core.errors import CancelledError
+    from inline_core.models import pipeline_runtime as rt
+
+    loop = _FakeLoop()
+
+    class _Blocks:
+        sub_blocks = {"denoise": loop}
+
+    class _Pipe:
+        _blocks = _Blocks()
+
+    pipe = _Pipe()
+
+    def cancelled(_done: int, _total: int) -> None:
+        raise CancelledError("Run cancelled.")
+
+    rt.attach_step_progress(pipe, cancelled)
+    rt.attach_step_progress(pipe, lambda _d, _t: None)
+
+    with loop.progress_bar(total=1) as bar:
+        bar.update()  # must not raise: the cancelled run's callback is no longer installed
