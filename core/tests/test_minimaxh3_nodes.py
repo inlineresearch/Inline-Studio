@@ -558,8 +558,7 @@ class _FakeLoop:
 
 def test_step_progress_hooks_the_denoise_loop() -> None:
     """The modular loop has no callback_on_step_end, so the progress bar is the only per-step hook.
-    Without it a long denoise emits nothing and the UI shows 'loading model' for the whole
-    render."""
+    Without it a long denoise emits nothing and the UI shows 'loading model' for the whole render."""
     from inline_core.models import pipeline_runtime as rt
 
     loop = _FakeLoop()
