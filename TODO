@@ -8,9 +8,19 @@ Backlog
 settings
 - project output share settings
 - Group based settings
+- HF Token
+
+handle: 
+- Clearly mention if gated model download failed 
 
 New models
 - Ltx 2.5
 
 Training: 
 - Snapshot export on checkpoint
+
+Char
+- Body & cloth cosistency
+- Support for minimax & krea2
+- Look into this error: https://www.reddit.com/r/StableDiffusion/comments/1vp0xct/comment/p3vef5w/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button
+
