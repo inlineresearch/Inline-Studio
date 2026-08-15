@@ -427,7 +427,7 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
               onClick={frameActive}
               disabled={busy}
               className={btn}
-              title="Frame the active character"
+              title="Frame the active figure"
             >
               Frame
             </button>
@@ -572,7 +572,7 @@ export default function ControlSpaceEditor(): React.JSX.Element | null {
           {/* Which way the camera sees the character, and the prompt text that facing adds. */}
           <div className="absolute right-3 top-3 max-w-[15rem] rounded-md bg-black/60 px-2.5 py-1.5 text-[11px]">
             <div className="flex items-center gap-1.5">
-              <span className="text-zinc-400">Character {active + 1}:</span>
+              <span className="text-zinc-400">Figure {active + 1}:</span>
               <span
                 className={
                   activeFacing === 'back'

@@ -59,6 +59,7 @@ def register_studio_handlers(
     fal_generation: Any = None,
     timeline: Any = None,
     training: Any = None,
+    characters: Any = None,
     model_downloads: Any = None,
     activity: Any = None,
     model_tree: Callable[[], Any] | None = None,
@@ -305,6 +306,23 @@ def register_studio_handlers(
         reg("activity:history", lambda _limit=50: [])
         reg("activity:cancel", not_wired("Run activity"))
         reg("activity:clearHistory", not_wired("Run activity"))
+
+    # --- Saved characters (the .char library + its editor) ---------------------------------------
+    if characters is not None:
+        reg("characters:list", lambda: characters.list())
+        reg("characters:create", lambda inp: characters.create(inp))
+        reg("characters:get", lambda file: characters.get(file))
+        reg("characters:rename", lambda file, name: characters.rename(file, name))
+        reg("characters:setDescription", lambda file, d: characters.set_description(file, d))
+        reg("characters:addRefs", lambda file, aids: characters.add_refs(file, aids))
+        reg("characters:removeRef", lambda file, index: characters.remove_ref(file, index))
+        reg("characters:delete", lambda file: characters.delete(file))
+        reg("characters:createFromTake",
+            lambda tid, name: characters.create_from_take(tid, name))
+    else:
+        for ch in ("list", "create", "get", "rename", "setDescription", "addRefs", "removeRef",
+                   "delete", "createFromTake"):
+            reg(f"characters:{ch}", not_wired("Characters"))
 
     # --- LoRA training (dataset CRUD + the training run subprocess) ------------------------------
     if training is not None:

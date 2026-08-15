@@ -40,6 +40,9 @@ CATEGORIES: tuple[str, ...] = (
     # Written by the preprocess runner rather than the user, but it holds real weights and the
     # panel is meant to show everything on disk.
     "annotators",
+    # Saved characters (`.char`). Not weights, but they are picked from a node dropdown the same
+    # way, so the catalog is what feeds `options_from="characters"`.
+    "characters",
 )
 
 # Extensions we treat as model weights. A folder counts as a model if it contains one of these.
@@ -47,9 +50,16 @@ _WEIGHT_SUFFIXES: frozenset[str] = frozenset(
     {".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf", ".onnx"}
 )
 
+# Categories holding something other than weights. A `.char` must not be offered in a diffusion
+# dropdown, so this narrows per category rather than widening _WEIGHT_SUFFIXES for everyone.
+_SUFFIXES_BY_CATEGORY: dict[str, frozenset[str]] = {"characters": frozenset({".char"})}
 
-def _is_weight(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in _WEIGHT_SUFFIXES
+# Categories whose entries are always single files, so a stray folder is not listed as a model.
+_FILE_ONLY_CATEGORIES = frozenset({"characters"})
+
+
+def _is_weight(path: Path, suffixes: frozenset[str] = _WEIGHT_SUFFIXES) -> bool:
+    return path.is_file() and path.suffix.lower() in suffixes
 
 
 def _folder_has_weight(path: Path) -> bool:
@@ -178,15 +188,18 @@ class ModelCatalog:
     def _scan_category(self, directory: Path) -> list[str]:
         if not directory.is_dir():
             return []
+        category = directory.name
+        suffixes = _SUFFIXES_BY_CATEGORY.get(category, _WEIGHT_SUFFIXES)
         names: list[str] = []
         for entry in directory.iterdir():
             if entry.name.startswith("."):
                 continue
-            if _is_weight(entry):
+            if _is_weight(entry, suffixes):
                 names.append(entry.name)
-            elif entry.is_dir() and _folder_has_weight(entry):
+            elif entry.is_dir() and category not in _FILE_ONLY_CATEGORIES:
                 # A sharded model (config + shards) is one entry, named for its folder.
-                names.append(entry.name)
+                if _folder_has_weight(entry):
+                    names.append(entry.name)
         return sorted(names)
 
 

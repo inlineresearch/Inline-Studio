@@ -12,6 +12,8 @@ import type {
   RecentProject,
   Asset,
   AssetFolder,
+  CharacterSummary,
+  CharacterDetail,
   MoodboardItem,
   CanvasSurface,
   MoodboardConnector,
@@ -220,6 +222,23 @@ export const IpcChannels = {
   export: {
     exportFrames: 'export:exportFrames',
   },
+  characters: {
+    /** Every saved character in `models/characters/`, newest first. */
+    list: 'characters:list',
+    /** Compile reference images (library asset ids) into a new `.char`. */
+    create: 'characters:create',
+    /** One character with its reference thumbnails resolved. */
+    get: 'characters:get',
+    rename: 'characters:rename',
+    /** Rewrite the locked description. Refs are untouched, so payloads survive. */
+    setDescription: 'characters:setDescription',
+    /** Add reference images, which recompiles the payload and the centroids. */
+    addRefs: 'characters:addRefs',
+    removeRef: 'characters:removeRef',
+    delete: 'characters:delete',
+    /** Turn a generated take into a character, so a good render becomes reusable. */
+    createFromTake: 'characters:createFromTake',
+  },
   moodboard: {
     list: 'moodboard:list',
     addAsset: 'moodboard:addAsset',
@@ -296,6 +315,8 @@ export const IpcChannels = {
     activityChanged: 'events:activityChanged',
     /** Main → renderer: the installed model set changed, so every open client should refetch. */
     modelsChanged: 'events:modelsChanged',
+    /** Main → renderer: the character library changed (created, edited, deleted, imported). */
+    charactersChanged: 'events:charactersChanged',
     /** Main → renderer: explicit model-download lifecycle (the node's model popup). */
     modelDownloadProgress: 'events:modelDownloadProgress',
     modelDownloadDone: 'events:modelDownloadDone',
@@ -345,6 +366,14 @@ export interface CreateTrainingDatasetInput {
   name: string
   /** Optional trigger token injected into every caption. */
   triggerWord?: string
+}
+
+/** A new character: one or more library assets, plus the description locked into the file. */
+export interface CreateCharacterInput {
+  name: string
+  /** Library asset ids to use as references. One is enough; order is the order refs are numbered. */
+  assetIds: string[]
+  description?: string
 }
 
 /** A fal frame's inputs resolved for building its request: media as data URIs + the prompt text. */
@@ -650,6 +679,27 @@ export interface InlineStudioApi {
     /** Pick a folder and write each frame's Output in order; null if cancelled. */
     exportFrames(): Promise<Result<ExportResult | null>>
   }
+  characters: {
+    /** Every saved character, newest first. An unreadable file is listed with `error` set. */
+    list(): Promise<Result<CharacterSummary[]>>
+    /**
+     * Compile library assets into a new character. Runs face detection and two embedding passes on
+     * the CPU, so it takes seconds rather than milliseconds.
+     */
+    create(input: CreateCharacterInput): Promise<Result<CharacterSummary>>
+    /** One character, with its reference images resolved to URLs the renderer can show. */
+    get(file: string): Promise<Result<CharacterDetail>>
+    rename(file: string, name: string): Promise<Result<CharacterSummary>>
+    /** Rewrite the locked description. Refs are untouched, so the payload is not recompiled. */
+    setDescription(file: string, description: string): Promise<Result<CharacterSummary>>
+    /** Add references, recompiling the payload and the identity centroids. */
+    addRefs(file: string, assetIds: string[]): Promise<Result<CharacterSummary>>
+    /** Drop one reference by index, recompiling. Removing the last one is refused. */
+    removeRef(file: string, index: number): Promise<Result<CharacterSummary>>
+    delete(file: string): Promise<Result<boolean>>
+    /** Save a generated take as a new character. */
+    createFromTake(takeId: string, name: string): Promise<Result<CharacterSummary>>
+  }
   moodboard: {
     /** The full board (items + connectors) for the open project. */
     /** One canvas's items + connectors (defaults to the Studio moodboard). */
@@ -770,6 +820,8 @@ export interface InlineStudioApi {
     onGenerationCancelled(callback: (e: GenerationCancelledEvent) => void): () => void
     onActivityChanged(callback: (e: ActivityChangedEvent) => void): () => void
     onModelsChanged(callback: (e: { registryVersion: string }) => void): () => void
+    /** Subscribe to "the character library changed" pushes. Returns an unsubscribe fn. */
+    onCharactersChanged(callback: () => void): () => void
     /** Subscribe to explicit model-download lifecycle pushes. Each returns an unsubscribe fn. */
     onModelDownloadProgress(callback: (e: ModelDownloadProgressEvent) => void): () => void
     onModelDownloadDone(callback: (e: ModelDownloadDoneEvent) => void): () => void

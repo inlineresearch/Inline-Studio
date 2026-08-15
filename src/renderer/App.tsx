@@ -5,6 +5,7 @@ import { subscribeToLibraryChanges } from './store/assetStore'
 import { subscribeGenerationEvents } from './store/generationStore'
 import { subscribeActivityEvents } from './store/activityStore'
 import { subscribeModelChanges } from './store/modelsTreeStore'
+import { subscribeCharacterChanges } from './store/characterStore'
 import { subscribeTrainingEvents } from './store/trainingStore'
 import { ProjectLauncher } from './views/ProjectLauncher/ProjectLauncher'
 import { Workspace } from './views/Workspace/Workspace'
@@ -35,6 +36,9 @@ export function App(): React.JSX.Element {
   useEffect(() => subscribeActivityEvents(), [])
   useEffect(() => subscribeTrainingEvents(), [])
   useEffect(() => subscribeModelChanges(), [])
+  // The character library is global rather than per-project, so it is subscribed here and never
+  // reset on project close.
+  useEffect(() => subscribeCharacterChanges(), [])
 
   // Hold the first paint until Core has answered, so a restored project does not flash the launcher.
   if (restoring) return <div className="h-screen w-screen bg-panel" />

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CoreParamField } from '@shared/coreNodes'
 import { useModelsTreeStore } from '../../store/modelsTreeStore'
 import { RefreshIcon } from '../../components/icons'
+import { basename } from './missingInputs'
 
 /** Re-scan the models folders so a file added since Core started reaches this picker. */
 function ModelRefreshButton(): React.JSX.Element {
@@ -65,10 +66,20 @@ export function CoreParamWidget({
     // Only when the *default* is empty, though. Core now resolves a concrete file for the model,
     // VAE and text-encoder pickers, and offering "Auto" beside it hides which file actually ran.
     const needsEmpty = !options.some((o) => o.value === '') && field.default === ''
-    const emptyLabel = field.optionsFrom === 'controlnet' ? 'None' : 'Auto'
-    // A node saved before Core resolved these still has "" stored, which would match no option and
-    // render blank. Fall back to the resolved default so an existing node shows its real file too.
-    const selected = value == null || value === '' ? field.default : value
+    const emptyLabel =
+      field.optionsFrom === 'controlnet'
+        ? 'None'
+        : field.optionsFrom === 'characters'
+          ? 'No character'
+          : 'Auto'
+    // Two ways a stored value matches no option: "" from before Core resolved these, and a legacy
+    // full path. Either way the browser silently renders the FIRST option, so the card claims a
+    // different checkpoint than the run will load.
+    const stored = value == null || value === '' ? field.default : value
+    const selected =
+      typeof stored === 'string' && !options.some((o) => o.value === stored)
+        ? basename(stored)
+        : stored
     return (
       <label className="flex flex-col gap-1">
         <span className={labelCls}>{field.label}</span>
@@ -81,7 +92,9 @@ export function CoreParamWidget({
             {needsEmpty && <option value="">{emptyLabel}</option>}
             {options.map((o) => (
               <option key={o.value} value={o.value}>
-                {o.label}
+                {/* The value has to stay the filename Core resolves by; only the label is
+                    friendly. */}
+                {field.optionsFrom === 'characters' ? o.label.replace(/\.char$/i, '') : o.label}
               </option>
             ))}
           </select>

@@ -42,7 +42,8 @@ things: [Python 3.11+](https://python.org) and [**uv**](https://github.com/astra
 installer uses to create the environment and resolve packages. `--install` stops with
 `uv not found` if it is missing.
 
-**Install uv first** (one line, no Python needed):
+<details>
+<summary><b>Install uv first</b> (one line, no Python needed)</summary>
 
 ```bash
 # macOS / Linux
@@ -56,6 +57,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 
 Or use whatever you already have: `brew install uv`, `pipx install uv`, `pip install uv`. Full
 options: [docs.astral.sh/uv/getting-started/installation](https://docs.astral.sh/uv/getting-started/installation/).
+
+</details>
 
 Then **`--install --extra all` is the single command that installs everything** - the engine, the local model runtime, the LoRA trainer, and the UI. On an NVIDIA machine it reads the GPU's compute capability and pulls the CUDA build of PyTorch that has kernels for it, RTX 50-series included.
 
@@ -220,12 +223,25 @@ The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` envir
 - Video editing on the canvas
 - Local generation, built in
 - Multi-reference composition
+- Consistent characters from a portable `.char` file
 - Train your own LoRAs locally
 - API Nodes for hosted models
 - Community extensions
 - Free & open source (GPL-3.0)
 
 [**Follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
+
+## Consistent characters
+
+Getting the same person across shots normally means training a LoRA per character, or re-wiring the same reference images into every node by hand. Instead, build a character once and pick it from a dropdown.
+
+Drop in a photo or two and Inline Studio compiles a **`.char`**: a portable file holding your references and an identity fingerprint. Pick it on a FLUX.2 node and generate. You describe the scene, the references carry the likeness. Nothing is trained and no adapter is installed, and every take comes back with a continuity score out of 100.
+
+![Two reference photos compiled into a portable character file, then the same person generated in an office, a cafe, a park, a street and at a lakeside](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/character_showcase.png)
+
+![How a character is encoded, applied and scored: YuNet detects faces, SFace and DINOv2 build the fingerprint, the references are packed onto the noise sequence, and each take is scored](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/char-flow.png)
+
+[**How characters work, in detail →**](https://inlinestudio.art/characters)
 
 ## LoRA training
 

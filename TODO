@@ -11,3 +11,6 @@ settings
 
 New models
 - Ltx 2.5
+
+Training: 
+- Snapshot export on checkpoint

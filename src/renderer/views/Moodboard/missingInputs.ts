@@ -17,6 +17,11 @@ export interface MissingInput {
   value: string
 }
 
+/** A legacy full-path pick reduced to the bare name the select serves, mirroring `resolve_picked`. */
+export function basename(value: string): string {
+  return value.split(/[\\/]/).pop() ?? value
+}
+
 /**
  * The picks this node makes that are not in the installed catalog.
  *
@@ -37,7 +42,7 @@ export function missingInputs(
     if (!options || options.length === 0) continue
     const value = params[field.key]
     if (typeof value !== 'string' || value.trim() === '') continue
-    if (options.some((o) => o.value === value)) continue
+    if (options.some((o) => o.value === value || o.value === basename(value))) continue
     out.push({ key: field.key, label: field.label, value })
   }
   return out

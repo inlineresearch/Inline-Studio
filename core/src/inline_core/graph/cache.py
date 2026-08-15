@@ -99,6 +99,9 @@ def asset_content_hashes(graph: Graph) -> dict[str, str]:
 
     hashes: dict[str, str] = {}
     for node in graph.nodes:
+        character = _character_hash(node)
+        if character is not None:
+            hashes[node.id] = character
         asset = node.params.get("asset")
         if not isinstance(asset, dict) or asset.get("ref") != "path":
             continue
@@ -106,6 +109,20 @@ def asset_content_hashes(graph: Graph) -> dict[str, str]:
         if isinstance(path, str) and os.path.isfile(path):
             hashes[node.id] = _file_hash(path)
     return hashes
+
+
+def _character_hash(node: Node) -> str | None:
+    """A picked character's byte hash. Editing a character in place leaves the filename it is
+    picked by unchanged, so without this the cache serves a take of the previous face."""
+    chosen = node.params.get("character")
+    if not isinstance(chosen, str) or not chosen.strip():
+        return None
+    try:
+        from ..characters import library
+    except ImportError:
+        return None
+    path = library.resolve(chosen)
+    return _file_hash(str(path)) if path is not None else None
 
 
 def _file_hash(path: str) -> str:

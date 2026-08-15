@@ -14,6 +14,7 @@ import { setFrameDragPayload, setMediaFileDragPayload } from '../../lib/dnd'
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
+  CharacterIcon,
   ChevronRightIcon,
   CloseIcon,
   EditIcon,
@@ -27,8 +28,9 @@ import {
 } from '../../components/icons'
 import { Waveform } from '../../components/Waveform'
 import { ModelsPanel } from '../Models/ModelsPanel'
+import { CharacterLibraryPanel } from '../Characters/CharacterLibraryPanel'
 
-type Tab = 'assets' | 'outputs' | 'timeline' | 'models'
+type Tab = 'assets' | 'outputs' | 'timeline' | 'characters' | 'models'
 type SortKey = 'updated' | 'name'
 
 const TABS: { key: Tab; label: string; Icon: (p: { className?: string }) => React.JSX.Element }[] =
@@ -36,6 +38,7 @@ const TABS: { key: Tab; label: string; Icon: (p: { className?: string }) => Reac
     { key: 'assets', label: 'Assets', Icon: ImageIcon },
     { key: 'outputs', label: 'Outputs', Icon: SparklesIcon },
     { key: 'timeline', label: 'Timeline', Icon: HistoryIcon },
+    { key: 'characters', label: 'Characters', Icon: CharacterIcon },
     { key: 'models', label: 'Models', Icon: ModelsIcon },
   ]
 
@@ -157,6 +160,7 @@ export function SideMenu(): React.JSX.Element {
         {tab === 'assets' && <LibraryPanel />}
         {tab === 'outputs' && <OutputsTab />}
         {tab === 'timeline' && <TimelineTab />}
+        {tab === 'characters' && <CharacterLibraryPanel />}
         {tab === 'models' && <ModelsPanel />}
       </div>
 

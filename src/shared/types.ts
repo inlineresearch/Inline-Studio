@@ -335,6 +335,41 @@ export interface CoreTakeRef {
   params?: Record<string, unknown>
   /** The prompt this take used (from the upstream prompt node), for display + restore. */
   prompt?: string
+  /** The character file applied to this take, when one was. */
+  characterId?: string
+  /** 0-100 identity match against that character's centroid. Absent means "not measured", which
+   * is a different fact from a low score, so it must never be defaulted to zero. */
+  continuityScore?: number
+}
+
+/** One saved character in `models/characters/`, as the library panel lists it. */
+export interface CharacterSummary {
+  /** The filename, which is also the value a node's Character dropdown stores. */
+  file: string
+  charId?: string
+  name: string
+  refs: number
+  createdAt?: number
+  modifiedAt?: number
+  description?: string
+  /** Non-blocking nudges toward a stronger character ("Add a profile view"). */
+  hints?: string[]
+  sizeBytes?: number
+  /** Set when the file could not be read. The row is still listed, so a corrupt file is visible. */
+  error?: string
+}
+
+/** A character opened for editing: the summary plus its reference images as URLs. */
+export interface CharacterDetail extends CharacterSummary {
+  /** One URL per reference, in the order the prompt will address them. */
+  refUrls: string[]
+  /** Whether a face was found, which decides how a take is scored against this character. */
+  faceBearing: boolean
+  /** Each reference's mean face agreement with the others, 0-100. */
+  refAgreement?: number[]
+  /** Indices of references that may not be the same person. Scoring matches the best-fitting
+   *  reference, so one wrong image would otherwise let a wrong-person take score high. */
+  flaggedRefs?: number[]
 }
 
 export interface MoodboardItem {

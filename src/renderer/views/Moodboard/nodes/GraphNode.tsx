@@ -16,6 +16,7 @@ import { resolveCoreInputThumbs } from './coreInputThumbs'
 import { CoreOutputPreview, CoreOutputThumb } from './CoreOutputPreview'
 import { NodeFrame } from './NodeFrame'
 import { ReferenceStrip } from './ReferenceStrip'
+import { scoreTone, scoreTitle } from '@/lib/continuity'
 import { NodeRunToolbar } from './NodeRunToolbar'
 import { missingInputs, missingInputsMessage } from '../missingInputs'
 import { useGraphMenu } from './useGraphMenu'
@@ -128,7 +129,13 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const busy = useGenerationStore((s) => s.busyByFrame[itemId] ?? false)
   const progress = useGenerationStore((s) => s.progressByFrame[itemId])
   const status = useGenerationStore((s) => s.statusByFrame[itemId])
-  const graphMenu = useGraphMenu(itemId, descriptor?.title ?? 'graph')
+  // Read before the early returns below, because hooks cannot be called conditionally.
+  const activeOutput = item?.data?.core?.output
+  const graphMenu = useGraphMenu(
+    itemId,
+    descriptor?.title ?? 'graph',
+    activeOutput?.kind === 'image' ? activeOutput.takeId : undefined,
+  )
 
   // Model requirements (per node type) drive the blinking "missing models" hint + its popup, and
   // surface an in-node download indicator. Refetched when the model registry version changes (a
@@ -270,6 +277,9 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // An extension-provided node carries its owning extension's id (`ext:<id>:<module>`) - surface it
   // as a chip so it's clear which extension a canvas node came from.
   const extName = isExtensionNode(descriptor.source) ? extensionOf(descriptor.source) : null
+
+  // The stored value is the `.char` filename; the badge shows the name without the suffix.
+  const character = String(core.params?.character ?? '').replace(/\.char$/i, '')
 
   // A reference list (FLUX.2 and friends): the prompt addresses these by position, "the jacket from
   // image 2", so the card numbers them in wiring order - the same order graph_build sends the engine.
@@ -434,6 +444,17 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
             {extName}
           </NodeBadge>
         )}
+        {/* Params live behind Adjust, but an applied character changes what the node generates,
+            so it has to be readable without opening the sidebar. */}
+        {character && (
+          <NodeBadge
+            tone="info"
+            accent="text-sky-300"
+            title={`Generating with the character ${character}`}
+          >
+            {character}
+          </NodeBadge>
+        )}
         {/* A pick the catalog does not have, e.g. the LoRA an imported graph was authored with.
             Distinct from `modelsMissing`, which is about a node type's own downloadable weights. */}
         {missing.length > 0 && (
@@ -559,6 +580,16 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                   }`}
                 >
                   <CoreOutputThumb filePath={o.filePath} kind={o.kind} />
+                  {/* Only when a character was applied and a score was actually measured: an
+                      unmeasurable take must not read as a zero-scoring one. */}
+                  {o.continuityScore !== undefined && (
+                    <span
+                      title={scoreTitle(o.continuityScore)}
+                      className={`pointer-events-none absolute left-0.5 top-0.5 rounded bg-black/85 px-1 text-[8px] leading-tight ${scoreTone(o.continuityScore)}`}
+                    >
+                      {Math.round(o.continuityScore)}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
