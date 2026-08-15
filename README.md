@@ -231,7 +231,7 @@ The friendly launcher (in `core/`) maps flags onto the engine's `INLINE_*` envir
 
 [**Follow our Animated Short Film with LTX 2.3 and GPT Image Generation tutorial →**](https://inlinestudio.art/projects/circuit-race)
 
-## Consistent characters
+## Consistent & portable characters without Lora Training
 
 Getting the same person across shots normally means training a LoRA per character, or re-wiring the same reference images into every node by hand. Instead, build a character once and pick it from a dropdown.
 
