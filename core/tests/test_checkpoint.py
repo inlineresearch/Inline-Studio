@@ -8,9 +8,14 @@ must agree with safetensors exactly.
 
 from __future__ import annotations
 
+import json
+import struct
+from pathlib import Path
+
 import pytest
 
 from inline_core.errors import ComponentError
+from inline_core.models import checkpoint
 from inline_core.models.checkpoint import CheckpointReader
 
 torch = pytest.importorskip("torch")
@@ -77,3 +82,62 @@ def test_a_non_checkpoint_file_is_a_clear_error(tmp_path) -> None:
 def test_a_missing_file_is_a_clear_error(tmp_path) -> None:
     with pytest.raises(ComponentError, match="Could not read checkpoint"):
         CheckpointReader(tmp_path / "absent.safetensors")
+
+
+# --- already-quantized checkpoints ---------------------------------------------------------------
+#
+# A ComfyUI-quantized text encoder loads into a stock Qwen3Model with its `comfy_quant` and
+# `weight_scale` keys dropped as unexpected, leaving packed tensors in layers sized for unpacked
+# ones. That surfaced as a matmul shape error deep inside torchao, after the pipeline had
+# already reported itself ready.
+
+
+def _write(path: Path, index: dict[str, object]) -> Path:
+    blob = json.dumps(index).encode()
+    path.write_bytes(struct.pack("<Q", len(blob)) + blob + b"\x00" * 64)
+    return path
+
+
+def _t(dtype: str, shape: list[int]) -> dict[str, object]:
+    return {"dtype": dtype, "shape": shape, "data_offsets": [0, 1]}
+
+
+def test_a_comfy_quantized_encoder_is_recognised(tmp_path: Path) -> None:
+    file = _write(
+        tmp_path / "qwen_3_8b_comfyquant.safetensors",
+        {
+            "model.layers.0.self_attn.k_proj.weight": _t("I8", [1024, 2048]),
+            "model.layers.0.self_attn.k_proj.weight_scale": _t("F32", [1024]),
+            "model.layers.0.self_attn.k_proj.comfy_quant": _t("I8", []),
+        },
+    )
+    assert checkpoint.prequantized_kind(file) == "prequantized"
+
+
+def test_an_fp8_checkpoint_is_recognised(tmp_path: Path) -> None:
+    file = _write(
+        tmp_path / "enc_fp8.safetensors",
+        {"model.layers.0.mlp.up_proj.weight": _t("F8_E4M3", [4096, 4096])},
+    )
+    assert checkpoint.prequantized_kind(file) == "fp8"
+
+
+def test_a_plain_checkpoint_is_not_flagged(tmp_path: Path) -> None:
+    """A false positive here refuses to quantize a model that needs it, so it must not fire on
+    ordinary weights or on the RMSNorm tensors every transformer carries."""
+    file = _write(
+        tmp_path / "qwen_3_8b.safetensors",
+        {
+            "model.layers.0.self_attn.k_proj.weight": _t("BF16", [1024, 4096]),
+            "model.layers.0.input_layernorm.weight": _t("BF16", [4096]),
+            "model.layers.0.self_attn.q_norm.scale": _t("BF16", [128]),
+        },
+    )
+    assert checkpoint.prequantized_kind(file) is None
+
+
+def test_an_unreadable_file_is_not_classified(tmp_path: Path) -> None:
+    junk = tmp_path / "junk.safetensors"
+    junk.write_bytes(b"\x00" * 32)
+    assert checkpoint.prequantized_kind(junk) is None
+    assert checkpoint.prequantized_kind(tmp_path / "missing.safetensors") is None

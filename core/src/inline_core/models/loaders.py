@@ -25,6 +25,7 @@ over it. Callers are the model-runner subpackages, which the server registers be
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -35,6 +36,9 @@ from typing import TYPE_CHECKING, Any
 from ..config import data_dir
 from ..device.policy import Quantization
 from ..errors import ComponentError
+from . import checkpoint
+
+logger = logging.getLogger("inline_core.loaders")
 
 if TYPE_CHECKING:
     from ..graph.loader_runners import LoraRef
@@ -663,14 +667,33 @@ def load_text_encoder(
         root = ensure_assets(arch)
         weights_dir = _staged_encoder_dir(arch, file)
         device_map = {"": device} if device else None
-        text_encoder = Qwen3Model.from_pretrained(
-            str(weights_dir),
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-            device_map=device_map,
-            local_files_only=True,
-            quantization_config=_quant_config(quant, framework="transformers"),
-        )
+        # A repack that already carries its own scales must not be quantized again, and transformers
+        # drops those scales as unexpected keys - leaving packed tensors in layers sized for
+        # unpacked ones, which surfaces as a matmul shape error rather than a load failure.
+        carried = checkpoint.prequantized_kind(file)
+        effective = Quantization.NONE if carried else quant
+        if carried:
+            logger.info(
+                "%s is a %s text encoder; loading it as-is rather than quantizing on top.",
+                Path(file).name, carried,
+            )
+        try:
+            text_encoder = Qwen3Model.from_pretrained(
+                str(weights_dir),
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+                device_map=device_map,
+                local_files_only=True,
+                quantization_config=_quant_config(effective, framework="transformers"),
+            )
+        except Exception as error:
+            if not carried:
+                raise
+            raise ComponentError(
+                f"{Path(file).name} is a {carried} text encoder, which this loader cannot read: "
+                "its scales are not part of the stock Qwen3 layout. Use the full-precision encoder "
+                "(qwen_3_8b.safetensors from Comfy-Org/flux2-klein-9B)."
+            ) from error
         tokenizer = AutoTokenizer.from_pretrained(str(root / "tokenizer"), local_files_only=True)
         return text_encoder, tokenizer
 

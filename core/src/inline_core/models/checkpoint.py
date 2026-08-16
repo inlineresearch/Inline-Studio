@@ -34,6 +34,38 @@ _DTYPE_NAMES = {
 }
 
 
+#: Markers a checkpoint carries when it was already quantized by someone else. ``comfy_quant`` is
+#: ComfyUI's own tag; ``weight_scale`` is the per-tensor scale every fp8/int8 repack ships beside
+#: the packed weights. Never match a bare ``.scale``: real models carry RMSNorm weights so named.
+_QUANT_MARKERS = ("comfy_quant", "weight_scale", "scale_weight", "weight_scale_2")
+_QUANT_DTYPES = frozenset({"I8", "U8"})
+
+
+def prequantized_kind(path: str | Path) -> str | None:
+    """What quantization a checkpoint already carries, or None if it is plain weights.
+
+    Loading one of these into a stock model silently drops the scales as unexpected keys, leaving
+    packed tensors in layers sized for unpacked ones - which surfaces as a shape mismatch deep in a
+    matmul rather than as a load error. Quantizing it a second time compounds that.
+    """
+    file = Path(path)
+    if not file.is_file() or file.suffix.lower() not in (".safetensors", ".sft"):
+        return None
+    try:
+        reader = CheckpointReader(file)
+        dtypes = reader.dtypes()
+    except Exception:  # noqa: BLE001 - unreadable is not classifiable
+        return None
+    if any(any(m in key for m in _QUANT_MARKERS) for key in dtypes):
+        return "prequantized"
+    weights = {d for key, d in dtypes.items() if key.endswith(".weight")}
+    if any(d.startswith("F8_") for d in weights):
+        return "fp8"
+    if weights & _QUANT_DTYPES:
+        return "int8"
+    return None
+
+
 class CheckpointReader:
     """Random access to one safetensors file, one tensor at a time."""
 
