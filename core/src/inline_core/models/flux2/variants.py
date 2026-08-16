@@ -25,6 +25,8 @@ __all__ = [
     "derive_transformer_config",
     "folder_config",
     "is_prequantized",
+    "quantization_of",
+    "single_file_blocker",
     "detect",
     "get",
     "text_encoder_kind",
@@ -270,24 +272,86 @@ def folder_config(path: str | Path) -> dict[str, object] | None:
     return {k: v for k, v in config.items() if not k.startswith("_")}
 
 
+#: Safetensors spells fp8 as ``F8_E4M3`` / ``F8_E5M2``. Never match on a ``.scale`` suffix alone:
+#: a plain FLUX.2 checkpoint carries 80 RMSNorm ``norm.query_norm.scale`` weights that are not
+#: quantization scales at all. Only a scale riding on a *fused qkv* is a repack artifact, and it is
+#: the one diffusers' converter chokes on.
+_FP8_PREFIX = "F8_"
+_INT_DTYPES = frozenset({"I8", "U8"})
+_QKV_SCALE_SUFFIXES = ("qkv.scale", "qkv.weight_scale", "qkv.scale_weight")
+
+
+def quantization_of(path: str | Path) -> str | None:
+    """The quantization a checkpoint already carries, or None if it is plain weights.
+
+    A folder declares it in ``config.json``. A single file does not, so it is sniffed from the
+    header: an fp8 dtype, or the per-tensor scale tensors every int8/fp8 repack ships alongside.
+    """
+    target = Path(path)
+    if target.is_dir():
+        try:
+            import json
+
+            config = json.loads((target / "config.json").read_text())
+        except (OSError, ValueError):
+            return None
+        if not isinstance(config, dict):
+            return None
+        declared = config.get("quantization_config")
+        if not isinstance(declared, dict):
+            return None
+        return str(declared.get("quant_method", "quantized"))
+
+    if not target.is_file() or target.suffix.lower() not in _WEIGHT_SUFFIXES:
+        return None
+    try:
+        from ..checkpoint import CheckpointReader
+
+        reader = CheckpointReader(target)
+        dtypes = reader.dtypes()
+    except Exception:  # noqa: BLE001 - unreadable means "not something we can classify"
+        return None
+    weights = {d for key, d in dtypes.items() if key.endswith(".weight")}
+    if any(d.startswith(_FP8_PREFIX) for d in weights):
+        return "fp8"
+    if weights & _INT_DTYPES:
+        return "int8"
+    if any(key.endswith(_QKV_SCALE_SUFFIXES) for key in dtypes):
+        return "quantized"
+    return None
+
+
+def single_file_blocker(path: str | Path) -> str | None:
+    """Why a failed single-file load probably failed, or None if this is not the known cause.
+
+    Diagnostic only, never a gate: nothing calls this to decide whether to attempt a load. The
+    converter maps a ``.scale`` key to a weight and chunks it into q/k/v, so a **per-tensor**
+    (0-dim) scale on a fused qkv dies deep inside diffusers without naming the file.
+    """
+    target = Path(path)
+    if not target.is_file() or target.suffix.lower() not in _WEIGHT_SUFFIXES:
+        return None
+    try:
+        from ..checkpoint import CheckpointReader
+
+        shapes = CheckpointReader(target).shapes()
+    except Exception:  # noqa: BLE001 - unreadable is not our call to make here
+        return None
+    scalar = [k for k, s in shapes.items() if k.endswith(_QKV_SCALE_SUFFIXES) and not s]
+    if not scalar:
+        return None
+    return f"it carries a single scale value on each of {len(scalar)} fused qkv tensors"
+
+
 def is_prequantized(path: str | Path) -> bool:
-    """Whether a checkpoint folder carries its own quantization (an NF4 dev build, say).
+    """Whether a checkpoint carries its own quantization (an NF4 dev folder, an fp8 single file).
 
     Such a checkpoint must not be quantized again: its on-disk size already is its resident size,
     and handing diffusers a second, different quantization config is a hard error. It also means the
     fit ladder's assumption - that on-disk size is bf16 and quantization can halve it - does not
     hold here, so the caller passes ``Quantization.NONE`` and loads the weights as they are.
     """
-    folder = Path(path)
-    if not folder.is_dir():
-        return False
-    try:
-        import json
-
-        config = json.loads((folder / "config.json").read_text())
-    except (OSError, ValueError):
-        return False
-    return isinstance(config, dict) and bool(config.get("quantization_config"))
+    return quantization_of(path) is not None
 
 
 def config_for(path: str | Path) -> dict[str, object] | None:

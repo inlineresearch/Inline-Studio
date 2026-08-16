@@ -15,6 +15,7 @@ lets a Z-Image, Krea 2 and FLUX.2 checkpoint share ``diffusion_models/`` safely.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -23,6 +24,8 @@ from ...config import models_dir
 from ..catalog import resolve_picked
 from ..requirements import ModelComponent
 from . import variants as V
+
+logger = logging.getLogger("inline_core.flux2")
 
 __all__ = [
     "DIFFUSION_FILE",
@@ -65,10 +68,13 @@ _EXTRAS: tuple[tuple[str, str, str, str, str], ...] = (
     ),
     (
         "diffusion_klein_9b",
-        "Klein 9B (int8, needs ~12 GB VRAM)",
+        "Klein 9B (18 GB download, quantized on load)",
         "diffusion_models",
-        "Sakujo/FLUX.2-Klein-9B-INT8-ConvRot",
-        "flux-2-klein-9b-int8-ConvRot-comfyui.safetensors",
+        # BFL's own repo, because no ungated mirror carries the 9B transformer: Comfy-Org's
+        # flux2-klein-9B holds only the encoders and the VAE. The fp8 build is deliberately not
+        # used here - diffusers' single-file converter cannot read it (see loaders.py).
+        "black-forest-labs/FLUX.2-klein-9B",
+        "flux-2-klein-9b.safetensors",
     ),
     (
         "text_encoder_qwen3_8b",
@@ -205,7 +211,36 @@ def _folder_encoder_width(folder: Path) -> int | None:
 
 def flux2_checkpoints() -> list[Path]:
     """Every FLUX.2 checkpoint installed, identified by content rather than by name."""
-    return [p for p in _weight_files("diffusion_models") if _identify(p) is not None]
+    found: list[Path] = []
+    skipped: list[str] = []
+    for path in _weight_files("diffusion_models"):
+        if _identify(path) is not None:
+            found.append(path)
+        else:
+            skipped.append(f"{path.name} ({skip_reason(path)})")
+    # A file that cannot be identified is left out of the dropdown, which from the UI is
+    # indistinguishable from it not being there at all. Say so once per scan.
+    if skipped and skipped != _LAST_SKIPPED:
+        _LAST_SKIPPED[:] = skipped
+        logger.info("Not offered as FLUX.2 checkpoints: %s", ", ".join(sorted(skipped)))
+    return found
+
+
+#: Last reported skip list, so a rescan on every catalog bump does not repeat itself in the log.
+_LAST_SKIPPED: list[str] = []
+
+
+def skip_reason(path: Path) -> str:
+    """Why a file in ``diffusion_models/`` is not offered, in the words a user can act on."""
+    blocked = V.single_file_blocker(path)
+    if blocked is not None:
+        return f"{blocked}, so diffusers cannot convert it"
+    carried = V.quantization_of(path)
+    if carried is not None:
+        return f"a {carried} repack whose tensor names we do not recognise"
+    if path.suffix.lower() == ".gguf":
+        return "unrecognised GGUF build"
+    return "not a FLUX.2 checkpoint, or a repack whose tensor names we do not recognise"
 
 
 def flux2_encoders() -> list[Path]:

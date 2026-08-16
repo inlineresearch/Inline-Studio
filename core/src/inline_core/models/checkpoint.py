@@ -64,6 +64,11 @@ class CheckpointReader:
         infer a checkpoint's architecture (layer counts, widths) before deciding how to load it."""
         return {key: list(entry.get("shape") or []) for key, entry in self._index.items()}
 
+    def dtypes(self) -> dict[str, str]:
+        """Every tensor's on-disk dtype name, header only. These are safetensors' own spellings
+        (``BF16``, ``F8_E4M3``, ...), not torch's, so a dtype we cannot load is still reportable."""
+        return {key: str(entry.get("dtype") or "") for key, entry in self._index.items()}
+
     def get_tensor(self, key: str, device: str | None = None) -> Any:
         """One tensor, read straight from its byte range into a fresh buffer."""
         import torch

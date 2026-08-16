@@ -127,3 +127,71 @@ def test_an_unreadable_file_is_simply_not_flux2(tmp_path: Path) -> None:
     junk.write_bytes(b"\x00" * 64)
     assert V.detect(junk) is None
     assert V.detect(tmp_path / "missing.safetensors") is None
+
+
+# --- prequantized single files --------------------------------------------------------------------
+#
+# diffusers' single-file converter admits `.scale` keys and then chunks them like a fused qkv
+# weight. A per-tensor scale is 0-dim, so the load dies inside diffusers with no mention of which
+# file caused it. Detecting the checkpoint up front is what turns that into a usable message.
+
+
+def _write_index(path: Path, index: dict[str, object]) -> Path:
+    blob = json.dumps(index).encode()
+    path.write_bytes(struct.pack("<Q", len(blob)) + blob + b"\x00" * 64)
+    return path
+
+
+def _tensor(dtype: str, shape: list[int]) -> dict[str, object]:
+    return {"dtype": dtype, "shape": shape, "data_offsets": [0, 1]}
+
+
+def test_fp8_and_int8_single_files_are_prequantized(tmp_path: Path) -> None:
+    fp8 = _write_index(
+        tmp_path / "fp8.safetensors",
+        {
+            "double_blocks.0.img_attn.qkv.weight": _tensor("F8_E4M3", [9216, 3072]),
+            "double_blocks.0.img_attn.qkv.scale": _tensor("F32", []),
+        },
+    )
+    int8 = _write_index(
+        tmp_path / "int8.safetensors",
+        {"double_blocks.0.img_mlp.0.weight": _tensor("I8", [12288, 3072])},
+    )
+    assert V.quantization_of(fp8) == "fp8"
+    assert V.quantization_of(int8) == "int8"
+    assert V.is_prequantized(fp8) and V.is_prequantized(int8)
+
+
+def test_a_scale_on_a_fused_qkv_is_a_repack_even_at_bf16(tmp_path: Path) -> None:
+    """The ConvRot-style repacks keep bf16 weights but add the scale that breaks the converter."""
+    repack = _write_index(
+        tmp_path / "convrot.safetensors",
+        {
+            "double_blocks.0.img_attn.qkv.weight": _tensor("BF16", [9216, 3072]),
+            "double_blocks.0.img_attn.qkv.scale": _tensor("F32", []),
+        },
+    )
+    assert V.quantization_of(repack) == "quantized"
+
+
+def test_rmsnorm_scales_do_not_make_a_plain_checkpoint_look_quantized(tmp_path: Path) -> None:
+    """Every plain FLUX.2 checkpoint carries 80 `norm.*.scale` weights. Matching on the `.scale`
+    suffix alone would refuse to load the one build that actually works."""
+    plain = _write_index(
+        tmp_path / "plain.safetensors",
+        {
+            "double_blocks.0.img_attn.qkv.weight": _tensor("BF16", [9216, 3072]),
+            "double_blocks.0.img_attn.norm.query_norm.scale": _tensor("BF16", [128]),
+            "double_blocks.0.img_attn.norm.key_norm.scale": _tensor("BF16", [128]),
+        },
+    )
+    assert V.quantization_of(plain) is None
+    assert not V.is_prequantized(plain)
+
+
+def test_a_non_checkpoint_is_not_classified(tmp_path: Path) -> None:
+    junk = tmp_path / "notamodel.safetensors"
+    junk.write_bytes(b"\x00" * 64)
+    assert V.quantization_of(junk) is None
+    assert V.quantization_of(tmp_path / "missing.safetensors") is None

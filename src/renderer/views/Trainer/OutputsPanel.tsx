@@ -159,7 +159,9 @@ function SnapshotRows({ run }: { run: TrainingRun }): React.JSX.Element | null {
             </span>
             <span className="text-[10px] text-zinc-500">
               {formatSize(snap.sizeBytes)}
-              {added[snap.step] ? ` · added as ${added[snap.step].split('/').pop()}` : ''}
+              {(added[snap.step] ?? snap.loraPath)
+                ? ` · added as ${(added[snap.step] ?? snap.loraPath ?? '').split('/').pop()}`
+                : ''}
             </span>
           </div>
           <button
@@ -168,11 +170,11 @@ function SnapshotRows({ run }: { run: TrainingRun }): React.JSX.Element | null {
                 if (path) setAdded((prev) => ({ ...prev, [snap.step]: path }))
               })
             }
-            disabled={!!added[snap.step]}
+            disabled={!!(added[snap.step] ?? snap.loraPath)}
             title="Copy into models/loras so a Load LoRA node can pick it"
             className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-panel disabled:opacity-40"
           >
-            {added[snap.step] ? 'Added' : 'Add to models'}
+            {(added[snap.step] ?? snap.loraPath) ? 'Added' : 'Add to models'}
           </button>
           <a
             href={`${window.location.origin}/download/snapshot/${run.id}/${snap.step}`}

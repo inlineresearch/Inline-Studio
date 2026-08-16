@@ -252,3 +252,78 @@ def test_exporting_the_same_step_twice_does_not_overwrite(
 def test_exporting_a_missing_step_is_refused(conn: sqlite3.Connection, tmp_path) -> None:
     with pytest.raises(ValueError):
         _training(conn, tmp_path).export_snapshot("run1", 999)
+
+
+def test_a_snapshot_is_exported_as_soon_as_it_is_written(
+    conn: sqlite3.Connection, tmp_path, monkeypatch
+) -> None:
+    """Waiting for the run to finish defeats the point: the reason to snapshot at step 400 is to
+    test it while step 800 is still training, and the picker cannot see the working dir."""
+    from inline_core import config
+
+    models = tmp_path / "models"
+    monkeypatch.setattr(config, "models_dir", lambda: models)
+    monkeypatch.setattr("inline_core.studio.training.models_dir", lambda: models)
+
+    events: list[tuple[str, dict]] = []
+
+    class _Events:
+        def broadcast(self, channel: str, payload: dict) -> None:
+            events.append((channel, payload))
+
+    from inline_core.studio.training import Training
+
+    training = Training(_Store(conn, tmp_path), _Events())
+    _snapshot_files(tmp_path, "run1", [400])
+    written = tmp_path / "training_runs" / "run1" / "snapshots" / "step-000400.safetensors"
+
+    training._on_snapshot("run1", {"path": str(written), "step": 400})
+
+    (channel, payload) = next(e for e in events if e[0] == "events:trainingSnapshot")
+    assert channel == "events:trainingSnapshot"
+    # The event names where it landed, so the UI can say "added" without a round trip.
+    assert payload["loraPath"].startswith("loras/")
+    assert (models / payload["loraPath"]).is_file()
+
+
+def test_a_failed_snapshot_export_never_stops_the_run(
+    conn: sqlite3.Connection, tmp_path, monkeypatch
+) -> None:
+    """Training is the expensive thing in flight; a copy that cannot land must not take it down."""
+    monkeypatch.setattr(
+        "inline_core.studio.training.models_dir",
+        lambda: (_ for _ in ()).throw(OSError("models dir is gone")),
+    )
+    events: list[dict] = []
+
+    class _Events:
+        def broadcast(self, _channel: str, payload: dict) -> None:
+            events.append(payload)
+
+    from inline_core.studio.training import Training
+
+    training = Training(_Store(conn, tmp_path), _Events())
+    _snapshot_files(tmp_path, "run1", [400])
+    written = tmp_path / "training_runs" / "run1" / "snapshots" / "step-000400.safetensors"
+
+    training._on_snapshot("run1", {"path": str(written), "step": 400})
+
+    assert events and "loraPath" not in events[-1]
+
+
+def test_an_already_exported_snapshot_is_not_offered_again(
+    conn: sqlite3.Connection, tmp_path, monkeypatch
+) -> None:
+    """Without this, reopening the panel adds a second copy under a `-2` name."""
+    from inline_core import config
+
+    models = tmp_path / "models"
+    monkeypatch.setattr(config, "models_dir", lambda: models)
+    monkeypatch.setattr("inline_core.studio.training.models_dir", lambda: models)
+
+    training = _training(conn, tmp_path)
+    _snapshot_files(tmp_path, "run1", [400])
+
+    assert "loraPath" not in training.snapshots("run1")[0]
+    training.export_snapshot("run1", 400)
+    assert training.snapshots("run1")[0]["loraPath"].startswith("loras/")

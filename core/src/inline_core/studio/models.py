@@ -185,7 +185,17 @@ class ModelDownloads:
             if getattr(getattr(error, "response", None), "status_code", None) not in (401, 403):
                 raise
             shutil.rmtree(staging, ignore_errors=True)
-            path = _fetch(False)
+            try:
+                path = _fetch(False)
+            except HfHubHTTPError as anonymous:
+                # Hugging Face reports a gated or missing repo identically, as 404 "Repository Not
+                # Found", which reads as a broken link rather than a licence the user must accept.
+                raise RuntimeError(
+                    f"Could not download {comp.filename} from {comp.repo}. If that repository is "
+                    f"gated, open https://huggingface.co/{comp.repo} , accept the licence, then "
+                    "sign in with `hf auth login` (or set HF_TOKEN) and try again. If it is not "
+                    "gated, the repository has moved or been removed."
+                ) from anonymous
 
         category_dir.mkdir(parents=True, exist_ok=True)
         destination = category_dir / comp.filename

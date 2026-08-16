@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import shutil
 import sys
@@ -34,6 +35,8 @@ from .activity import ActivityRun
 from .dataset_import import read_metadata
 
 _CAPTION_EXT = ".txt"
+
+logger = logging.getLogger("inline_core.training")
 
 
 def _preview_json(preview: Any) -> dict[str, Any]:
@@ -543,19 +546,25 @@ class Training:
         folder = self._run_dir(run_id) / "snapshots"
         if not folder.is_dir():
             return []
+        name = _safe(str((self._lookup(run_id) or {}).get("name") or run_id))
         out: list[dict[str, Any]] = []
         for file in sorted(folder.glob("step-*.safetensors")):
             digits = file.stem.removeprefix("step-")
+            step = int(digits) if digits.isdigit() else 0
             stat = file.stat()
-            out.append(
-                {
-                    "runId": run_id,
-                    "step": int(digits) if digits.isdigit() else 0,
-                    "path": self._relativize(str(file)),
-                    "sizeBytes": stat.st_size,
-                    "createdAt": int(stat.st_mtime * 1000),
-                }
-            )
+            row: dict[str, Any] = {
+                "runId": run_id,
+                "step": step,
+                "path": self._relativize(str(file)),
+                "sizeBytes": stat.st_size,
+                "createdAt": int(stat.st_mtime * 1000),
+            }
+            # Report the export if it is already there, or a reload offers "Add to models" on a
+            # snapshot that was auto-exported and makes a second copy under a -2 name.
+            exported = f"loras/{name}-step{step}.safetensors"
+            if (models_dir() / exported).is_file():
+                row["loraPath"] = exported
+            out.append(row)
         return out
 
     def export_snapshot(self, run_id: str, step: int) -> dict[str, Any]:
@@ -567,6 +576,10 @@ class Training:
         source = self._run_dir(run_id) / "snapshots" / f"step-{step:06d}.safetensors"
         if not source.is_file():
             raise ValueError(f"Run {run_id} has no snapshot at step {step}.")
+        return {"path": self._copy_to_loras(run_id, source, step)}
+
+    def _copy_to_loras(self, run_id: str, source: Path, step: int) -> str:
+        """Place one snapshot in ``models/loras/`` and make the picker aware of it."""
         run = self._lookup(run_id) or {}
         loras = models_dir() / "loras"
         loras.mkdir(parents=True, exist_ok=True)
@@ -576,7 +589,7 @@ class Training:
         # Same hook a finished run uses, so the new file bumps the registry and reaches the picker.
         if self._on_output is not None:
             self._on_output()
-        return {"path": rel}
+        return rel
 
     def cancel(self, run_id: str) -> None:
         proc = self._active.get(run_id)
@@ -642,16 +655,7 @@ class Training:
             elif kind == "checkpoint" and msg.get("path"):
                 self._persist(run_id, {"checkpointPath": msg["path"]})
             elif kind == "snapshot" and msg.get("path"):
-                # The trainer has emitted these all along; nothing listened, so a mid-run LoRA sat
-                # on disk with no way to reach it.
-                self._events.broadcast(
-                    "events:trainingSnapshot",
-                    {
-                        "runId": run_id,
-                        "step": int(msg.get("step", 0)),
-                        "path": self._relativize(msg["path"]),
-                    },
-                )
+                self._on_snapshot(run_id, msg)
             elif kind == "error" and msg.get("message"):
                 # A trainer-side failure: keep it in the run's log so the node shows why it died.
                 self._events.broadcast(
@@ -660,6 +664,31 @@ class Training:
             elif kind == "done":
                 saw_done = True
         return saw_done
+
+    def _on_snapshot(self, run_id: str, msg: dict[str, Any]) -> None:
+        """Place a mid-run snapshot where a picker can see it, then announce it.
+
+        Exported as it is written rather than when the run ends: the reason to snapshot at step 400
+        is to test it while step 800 is still training, and the project working dir is not scanned
+        by any model catalog.
+        """
+        step = int(msg.get("step", 0))
+        written = Path(msg["path"])
+        # A complete TrainingSnapshot, not a partial one: the panel renders size and time straight
+        # off the event, and a missing field shows as "NaN KB" until the next listing lands.
+        stat = written.stat() if written.is_file() else None
+        payload: dict[str, Any] = {
+            "runId": run_id,
+            "step": step,
+            "path": self._relativize(msg["path"]),
+            "sizeBytes": stat.st_size if stat else 0,
+            "createdAt": int(stat.st_mtime * 1000) if stat else 0,
+        }
+        try:
+            payload["loraPath"] = self._copy_to_loras(run_id, written, step)
+        except Exception as error:  # noqa: BLE001 - training is the expensive thing in flight
+            logger.warning("Could not export the snapshot at step %d: %s", step, error)
+        self._events.broadcast("events:trainingSnapshot", payload)
 
     def _on_progress(self, run_id: str, msg: dict[str, Any]) -> None:
         step = int(msg.get("step", 0))

@@ -532,6 +532,8 @@ export interface TrainingSnapshot {
   path: string
   sizeBytes: number
   createdAt: number
+  /** Where it was copied under `models/`, set when it was exported automatically on creation. */
+  loraPath?: string
 }
 
 /** Main → renderer: progress (0..1) of an explicit model download (the node's model popup). */

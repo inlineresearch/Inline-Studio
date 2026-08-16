@@ -1108,15 +1108,30 @@ def load_flux2_transformer(
         kwargs: dict[str, Any] = {}
         if _is_gguf(file):
             kwargs["quantization_config"] = _gguf_config(dtype)
-        model = Flux2Transformer2DModel.from_single_file(
-            file,
-            config=str(root),
-            torch_dtype=dtype,
-            low_cpu_mem_usage=True,
-            device=device,
-            local_files_only=True,
-            **kwargs,
-        )
+        try:
+            model = Flux2Transformer2DModel.from_single_file(
+                file,
+                config=str(root),
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+                device=device,
+                local_files_only=True,
+                **kwargs,
+            )
+        except Exception as error:
+            # Every checkpoint gets attempted - a user's own file is never refused on suspicion.
+            # Explain afterwards instead, because diffusers' converter fails deep inside itself
+            # without naming the file (see flux2/variants.single_file_blocker).
+            from .flux2 import variants as flux2_variants
+
+            blocked = flux2_variants.single_file_blocker(file)
+            if blocked is None:
+                raise
+            raise ComponentError(
+                f"{Path(file).name} did not load: {blocked}, and diffusers splits those as if they "
+                "were weights. A full-precision or .gguf build of the same model will work, and "
+                "Inline Studio quantizes on load to fit your card either way."
+            ) from error
         if _is_gguf(file):
             if loras:
                 raise ComponentError(

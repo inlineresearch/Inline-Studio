@@ -614,7 +614,8 @@ export interface InlineStudioApi {
     snapshots(runId: string): Promise<Result<TrainingSnapshot[]>>
     /**
      * Copy one snapshot into `models/loras/` so a Load LoRA node can select it. Snapshots live in
-     * the project's working dir, which no model picker scans.
+     * the project's working dir, which no model picker scans. Done automatically as each snapshot
+     * is written, so this is a retry for a run that predates that, or whose copy failed.
      */
     exportSnapshot(runId: string, step: number): Promise<Result<{ path: string }>>
   }
