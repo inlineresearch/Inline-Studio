@@ -41,7 +41,9 @@ class AppliedCharacter:
     def prompt_prefix(self, first_position: int) -> str:
         """Text naming the positions the character lands on, so ordinal prompting resolves."""
         if not self.refs:
-            return ""
+            # A LoRA carries the likeness, so the description is all the prompt needs.
+            detail = " ".join(self.description.split())
+            return f"{detail} " if detail else ""
         positions = [str(first_position + i) for i in range(len(self.refs))]
         if len(positions) == 1:
             which = f"Image {positions[0]} shows"
@@ -81,10 +83,15 @@ def char_apply(chosen: str) -> AppliedCharacter | None:
         doc = _recompile(doc, path)
         digest = library.content_hash(path)
 
-    refs = _extract(doc, digest, arch)
     description = _description(doc)
     lora = _extract_lora(doc, digest, arch)
-    return AppliedCharacter(doc.manifest.name or path.stem, refs, description, lora)
+    # A trained adapter wins unless the character says otherwise: the user asked for it explicitly,
+    # and loading both would apply the identity twice.
+    mode = doc.manifest.apply.get(arch) or ("lora" if lora else "reference")
+    refs = [] if mode == "lora" and lora else _extract(doc, digest, arch)
+    return AppliedCharacter(
+        doc.manifest.name or path.stem, refs, description, lora if mode == "lora" else None
+    )
 
 
 def _extract_lora(doc: cf.CharDoc, digest: str, arch: str) -> Path | None:

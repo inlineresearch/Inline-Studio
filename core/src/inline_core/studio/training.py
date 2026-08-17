@@ -83,6 +83,9 @@ class Training:
         self._active: dict[str, asyncio.subprocess.Process] = {}
         #: Waiting their turn, oldest first; refusing would error on a run the user forgot about.
         self._queue: list[str] = []
+        #: Called with (run_id, output_rel) when a run lands its LoRA, so a character build can
+        #: claim its own adapter without polling the run table.
+        self._done_listeners: list[Any] = []
         #: Whether each admitted run is a resume, kept because it is decided before the wait.
         self._resume_flags: dict[str, bool] = {}
         self._cancelled: set[str] = set()
@@ -273,6 +276,9 @@ class Training:
 
     def set_dataset_mode(self, dataset_id: str, mode: str) -> dict[str, Any]:
         return ts.set_dataset_mode(self._conn(), dataset_id, mode)
+
+    def add_done_listener(self, callback: Any) -> None:
+        self._done_listeners.append(callback)
 
     def list_runs(self) -> list[dict[str, Any]]:
         conn = self._conn()
@@ -776,6 +782,12 @@ class Training:
             self._events.broadcast(
                 "events:trainingDone", {"runId": run_id, "outputLoraPath": output_rel}
             )
+            for listener in self._done_listeners:
+                # A listener must never take the run down with it; the LoRA is already on disk.
+                try:
+                    listener(run_id, output_rel)
+                except Exception:
+                    logger.exception("Training done listener failed for %s", run_id)
             return
         # Non-zero exit with a checkpoint is resumable; otherwise it failed outright.
         run = self._lookup(run_id)

@@ -389,7 +389,9 @@ def create_app(
         activity.set_canceller("training", training_service.cancel)
         activity_registry = activity
         # Rescan on change, so a new character reaches the node's dropdown without a restart.
-        characters_service = Characters(studio_store, events, on_change=catalog.rescan)
+        characters_service = Characters(
+            studio_store, events, on_change=catalog.rescan, training=training_service
+        )
         core_generation.set_characters(characters_service)
 
         register_studio_handlers(

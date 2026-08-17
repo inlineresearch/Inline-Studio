@@ -211,6 +211,9 @@ class Flux2Runner(NodeRunner):
         if character is not None:
             refs.extend(character.refs)
             prompt = character.prefix + prompt
+            if character.lora is not None:
+                # Appended, so a user's own wired LoRAs still apply alongside the character's.
+                loras = (*loras, LoraRef(file=str(character.lora), strength=1.0))
 
         images = [rt.load_image(ref, _LABEL) for ref in refs]
         control_map = rt.load_image(control, _LABEL) if control_file else None
@@ -550,6 +553,8 @@ def _resolve_negative(params: dict[str, Any], variant: V.Flux2Variant) -> str | 
 class _Character:
     refs: list[Any]
     prefix: str
+    #: The trained adapter, when the character is applied that way instead of by reference.
+    lora: Any = None
 
 
 def _apply_character(params: dict[str, Any], wired: int) -> _Character | None:
@@ -564,10 +569,13 @@ def _apply_character(params: dict[str, Any], wired: int) -> _Character | None:
     from ...characters import apply as characters
 
     applied = characters.char_apply(chosen)
-    if applied is None or not applied.refs:
+    if applied is None or (not applied.refs and applied.lora is None):
         return None
-    logger.info("Applying character %s: %d reference(s)", applied.name, len(applied.refs))
-    return _Character(refs=list(applied.refs), prefix=applied.prompt_prefix(wired + 1))
+    how = "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)"
+    logger.info("Applying character %s by %s", applied.name, how)
+    return _Character(
+        refs=list(applied.refs), prefix=applied.prompt_prefix(wired + 1), lora=applied.lora
+    )
 
 
 def _resolve_controlnet(

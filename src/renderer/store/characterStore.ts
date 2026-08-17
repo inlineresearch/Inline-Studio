@@ -5,6 +5,12 @@
  */
 import { create } from 'zustand'
 import type { CharacterDetail, CharacterProgressEvent, CharacterSummary } from '@shared/types'
+import type { CharacterBuildState } from './characterBuildState'
+
+/** Which character the editor column is showing, and whether it is a new one. */
+export type CharacterPanelMode =
+  | { kind: 'create'; assetIds: string[] }
+  | { kind: 'edit'; file: string }
 import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
 
@@ -17,6 +23,10 @@ interface CharacterState {
   busy: boolean
   /** The running encode's latest phase, or null between encodes. */
   progress: CharacterProgressEvent | null
+  /** Live training state per architecture, keyed by arch so each tab shows its own build. */
+  builds: Record<string, CharacterBuildState>
+  /** The editor column beside the side panel, or null when it is closed. */
+  panel: CharacterPanelMode | null
   error: string | null
 
   load: () => Promise<void>
@@ -30,6 +40,16 @@ interface CharacterState {
   removeRef: (file: string, index: number) => Promise<void>
   remove: (file: string) => Promise<void>
   importFile: (file: File) => Promise<void>
+  rebuild: (file: string) => Promise<void>
+  cancelBuild: (arch: string) => Promise<void>
+  setApplyMode: (file: string, arch: string, mode: 'reference' | 'lora') => Promise<void>
+  openPanel: (mode: CharacterPanelMode) => void
+  closePanel: () => void
+  build: (
+    file: string,
+    arch: string,
+    options: { steps: number; autoCaption: boolean },
+  ) => Promise<boolean>
   reset: () => void
 }
 
@@ -46,6 +66,8 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
   loading: false,
   busy: false,
   progress: null,
+  builds: {},
+  panel: null,
   error: null,
 
   load: async () => {
@@ -104,6 +126,23 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
 
   closeEditor: () => set({ editing: null }),
 
+  setApplyMode: async (file, arch, mode) => {
+    await applyEdit(set, get, () => studio().characters.setApplyMode(file, arch, mode))
+  },
+
+  cancelBuild: async (arch) => {
+    const runId = get().builds[arch]?.runId
+    if (!runId) return
+    await studio().training.cancel(runId)
+  },
+
+  openPanel: (mode) => {
+    set({ panel: mode, error: null })
+    if (mode.kind === 'edit') void get().open(mode.file)
+  },
+
+  closePanel: () => set({ panel: null, editing: null }),
+
   rename: async (file, name) => {
     await applyEdit(set, get, () => studio().characters.rename(file, name))
   },
@@ -113,11 +152,16 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
   },
 
   addRefs: async (file, assetIds) => {
-    await applyEdit(set, get, () => studio().characters.addRefs(file, assetIds), true)
+    // No longer a recompile, so no busy state: the edit lands immediately.
+    await applyEdit(set, get, () => studio().characters.addRefs(file, assetIds))
   },
 
   removeRef: async (file, index) => {
-    await applyEdit(set, get, () => studio().characters.removeRef(file, index), true)
+    await applyEdit(set, get, () => studio().characters.removeRef(file, index))
+  },
+
+  rebuild: async (file) => {
+    await applyEdit(set, get, () => studio().characters.rebuild(file), true)
   },
 
   remove: async (file) => {
@@ -153,7 +197,61 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
     }
   },
 
-  reset: () => set({ characters: [], editing: null, error: null, busy: false, progress: null }),
+  build: async (file, arch, options) => {
+    set((s) => ({
+      error: null,
+      builds: {
+        ...s.builds,
+        [arch]: {
+          phase: options.autoCaption ? 'captioning' : 'preparing',
+          fraction: 0,
+          step: 0,
+          totalSteps: options.steps,
+        },
+      },
+    }))
+    try {
+      const res = await studio().characters.build(file, arch, options)
+      if (!res.ok) {
+        set((s) => ({
+          error: res.error,
+          builds: { ...s.builds, [arch]: { ...s.builds[arch], phase: 'failed', error: res.error } },
+        }))
+        return false
+      }
+      // The run id is what ties every later training event back to this architecture's tab.
+      set((s) => ({
+        builds: {
+          ...s.builds,
+          [arch]: {
+            ...s.builds[arch],
+            phase: 'queued',
+            runId: res.value.id,
+            totalSteps: res.value.totalSteps,
+          },
+        },
+      }))
+      return true
+    } catch (e) {
+      const error = ipcErrorMessage(e)
+      set((s) => ({
+        error,
+        builds: { ...s.builds, [arch]: { ...s.builds[arch], phase: 'failed', error } },
+      }))
+      return false
+    }
+  },
+
+  reset: () =>
+    set({
+      characters: [],
+      editing: null,
+      error: null,
+      busy: false,
+      progress: null,
+      builds: {},
+      panel: null,
+    }),
 }))
 
 type Setter = (
@@ -191,8 +289,40 @@ export function subscribeCharacterChanges(): () => void {
   const onProgress = studio().events.onCharacterProgress((e) => {
     useCharacterStore.setState({ progress: e.fraction >= 1 ? null : e })
   })
+  // Training owns every phase after the queue, so the build tabs read its events rather than poll.
+  const onTraining = studio().events.onTrainingProgress((e) => {
+    patchBuild(e.runId, (b) => ({
+      ...b,
+      phase: 'training',
+      fraction: e.fraction,
+      step: e.step,
+      totalSteps: e.totalSteps || b.totalSteps,
+      status: e.status,
+    }))
+  })
+  const onDone = studio().events.onTrainingDone((e) => {
+    patchBuild(e.runId, (b) => ({ ...b, phase: 'done', fraction: 1 }))
+    void useCharacterStore.getState().load()
+  })
+  const onError = studio().events.onTrainingError((e) => {
+    patchBuild(e.runId, (b) => ({ ...b, phase: 'failed', error: e.error }))
+  })
   return () => {
     onChanged()
     onProgress()
+    onTraining()
+    onDone()
+    onError()
   }
+}
+
+/** Route a training event to whichever architecture started that run, ignoring everyone else's. */
+function patchBuild(
+  runId: string,
+  update: (current: CharacterBuildState) => CharacterBuildState,
+): void {
+  const { builds } = useCharacterStore.getState()
+  const arch = Object.keys(builds).find((key) => builds[key]?.runId === runId)
+  if (!arch) return
+  useCharacterStore.setState({ builds: { ...builds, [arch]: update(builds[arch]) } })
 }

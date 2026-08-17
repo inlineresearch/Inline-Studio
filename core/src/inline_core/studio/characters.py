@@ -14,22 +14,49 @@ from typing import Any
 
 from ..characters import charfile as cf
 from ..characters import encode, library, scoring
+from ..config import models_dir
 
 logger = logging.getLogger("inline_core.studio.characters")
 
 CHANGED_EVENT = "events:charactersChanged"
 PROGRESS_EVENT = "events:characterProgress"
 
+#: The one config the gate proved, per architecture. Not a menu: a second "fast" tier measured no
+#: better, and the scope must stay "full" - narrowing it bound nothing on either arch.
+BUILD_STEPS = 600
+#: Every value here has a measured score behind it. 1200 peaked on faces (80.0 against 68.0 at
+#: 600); 2000 fell back to 72.9, so nothing above it is offered rather than guessed at.
+BUILD_STEP_CHOICES = (600, 1200, 2000)
+_BUILD_CONFIG: dict[str, dict[str, Any]] = {
+    "flux2": {"arch": "flux2", "baseMode": ""},
+    # Turbo plus adapter is the path for anyone holding only Turbo, and "auto" because Krea 2's
+    # base is 26GB: hardcoding "none" is what OOMed the first attempt.
+    "krea2": {"arch": "krea2", "baseMode": "turbo_adapter"},
+}
+_BUILD_COMMON: dict[str, Any] = {
+    "rank": 16, "alpha": 16, "resolution": 512, "batchSize": 1, "learningRate": 1e-4,
+    "saveEvery": 100000, "saveSnapshots": False, "captionDropout": 0.0, "flipAugment": False,
+    "offload": False, "baseQuant": "auto", "loraScope": "full", "trainingMode": "lora",
+    "clipSeconds": 0, "clipWindow": 0, "steps": BUILD_STEPS,
+}
+
 
 class Characters:
     """The `characters:*` channels, backed by ``models/characters/``."""
 
-    def __init__(self, store: Any, events: Any, on_change: Any = None) -> None:
+    def __init__(
+        self, store: Any, events: Any, on_change: Any = None, training: Any = None
+    ) -> None:
         self._store = store
         self._events = events
         # The catalog caches its scan, so a new character stays invisible to the node dropdown
         # until something rescans. Same hook the trained-LoRA path uses.
         self._on_change = on_change
+        self._training = training
+        #: run id -> (character file, arch, steps), so a finished run knows what it belongs to.
+        self._builds: dict[str, tuple[str, str, int]] = {}
+        if training is not None:
+            training.add_done_listener(self._on_training_done)
 
     # --- reads ----------------------------------------------------------------------------------
 
@@ -103,6 +130,7 @@ class Characters:
         return self._edit(file, apply)
 
     def add_refs(self, file: str, asset_ids: list[str]) -> dict[str, Any]:
+        """Add references immediately; rebuilding is explicit, so no edit waits on an encoder."""
         if not asset_ids:
             raise ValueError("Pick at least one image to add.")
         path = self._require(file)
@@ -110,17 +138,30 @@ class Characters:
         ref = self._store.project_ref()
         with self._store.bind(ref) as conn:
             paths = self._asset_paths(conn, ref.folder, asset_ids)
-        return self._recompile(path, self._ref_files(doc) + paths, doc)
+        encode.append_refs(doc, paths)
+        cf.write(path, doc)
+        self._changed()
+        return self._summary(path, doc)
 
     def remove_ref(self, file: str, index: int) -> dict[str, Any]:
         path = self._require(file)
         doc = cf.read(path)
-        refs = self._ref_files(doc)
-        if not 0 <= index < len(refs):
-            raise ValueError("That reference is not in this character.")
-        if len(refs) == 1:
-            raise ValueError("A character needs at least one reference image.")
-        return self._recompile(path, [p for i, p in enumerate(refs) if i != index], doc)
+        encode.drop_ref(doc, index)
+        cf.write(path, doc)
+        self._changed()
+        return self._summary(path, doc)
+
+    def set_apply_mode(self, file: str, arch: str, mode: str) -> dict[str, Any]:
+        """Choose how this character applies for one model: its references, or its adapter."""
+        if mode not in ("reference", "lora"):
+            raise ValueError("Mode must be 'reference' or 'lora'.")
+        return self._edit(file, lambda doc: doc.manifest.apply.__setitem__(arch, mode))
+
+    def rebuild(self, file: str) -> dict[str, Any]:
+        """Recompile scoring and the reference payload from whatever the references are now."""
+        path = self._require(file)
+        doc = cf.read(path)
+        return self._recompile(path, self._ref_files(doc), doc)
 
     def delete(self, file: str) -> bool:
         removed = library.delete(file)
@@ -241,7 +282,43 @@ class Characters:
             "description": self._description(doc),
             "hints": encode.hints_for(manifest),
             "sizeBytes": path.stat().st_size if path.is_file() else 0,
+            "builds": self._builds_for(manifest),
+            "needsRebuild": encode.needs_rebuild(manifest),
         }
+
+    def _base_ready(self, arch: str) -> bool:
+        """Whether the checkpoint this arch trains against is on disk, checked here rather than
+        twenty minutes into a run: the trainer only finds out after precaching."""
+        config = _BUILD_CONFIG.get(arch)
+        if config is None:
+            return False
+        try:
+            from ..config import models_dir as root
+            from ..training import models as training_models
+
+            return bool(training_models._base_file(root(), arch, str(config["baseMode"])))
+        except Exception:
+            return False
+
+    def _builds_for(self, manifest: cf.Manifest) -> list[dict[str, Any]]:
+        """What each architecture can apply today, so the UI never offers a build that is already
+        current or claims a stale adapter is ready."""
+        rows: list[dict[str, Any]] = []
+        for arch, label in (("flux2", "FLUX.2"), ("krea2", "Krea 2")):
+            key = encode.payload_key(arch, encode.PAYLOAD_LORA)
+            trained = encode.lora_payload(manifest, arch) is not None
+            valid = trained and cf.payload_valid(manifest, key, encode.LORA_PAYLOAD_VERSION)
+            rows.append({
+                "arch": arch,
+                "label": label,
+                # Only FLUX.2 has a reference channel; on Krea 2 the adapter is the only route.
+                "reference": arch == "flux2",
+                "lora": "ready" if valid else "stale" if trained else "none",
+                # What a render would actually use right now, resolved the same way apply does.
+                "mode": manifest.apply.get(arch) or ("lora" if valid else "reference"),
+                "baseReady": self._base_ready(arch),
+            })
+        return rows
 
     def _asset_paths(
         self, conn: sqlite3.Connection, folder: Path, asset_ids: list[str]
@@ -280,6 +357,97 @@ class Characters:
                 if entry.get("takeId") == take_id and entry.get("kind") == "image":
                     return folder / str(entry["filePath"])
         raise ValueError("That take is no longer available.")
+
+    # --- building a LoRA payload ----------------------------------------------------------------
+
+    async def build(
+        self, file: str, arch: str, options: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Train this character's adapter for ``arch``, returning the run it queued."""
+        if self._training is None:
+            raise RuntimeError("Training is not available on this install.")
+        config = _BUILD_CONFIG.get(arch)
+        if config is None:
+            raise ValueError(f"No character build is defined for {arch}.")
+        opts = options or {}
+        steps = int(opts.get("steps") or BUILD_STEPS)
+        if steps not in BUILD_STEP_CHOICES:
+            raise ValueError(f"Steps must be one of {', '.join(map(str, BUILD_STEP_CHOICES))}.")
+        path = self._require(file)
+        doc = cf.read(path)
+        description = self._description(doc).strip()
+        if not description:
+            raise ValueError(
+                "Add a description first. The adapter binds to it, so without one there is "
+                "nothing for a prompt to summon."
+            )
+        if not self._base_ready(arch):
+            raise ValueError(
+                f"The {arch} base checkpoint is not downloaded yet. Add it from a node's model "
+                "popup first, then train."
+            )
+
+        name = doc.manifest.name
+        report = self._progress(name)
+        report(0.1, "Preparing the training set…")
+        dataset = self._training.create_dataset({"name": f"{name} ({arch})"})
+        folder = self._dataset_dir(doc)
+        staged = self._training.stage_from_path(str(folder))
+        items = self._training.commit_staged(dataset["id"], staged)
+
+        if opts.get("autoCaption"):
+            # The captioner loads a model, so this is the one phase that runs before the queue and
+            # can take minutes on its own.
+            report(0.4, f"Captioning {len(items)} references…")
+            await self._training.auto_caption(dataset["id"], True, opts.get("captioner") or None)
+        else:
+            for item in items:
+                self._training.set_caption(item["id"], description)
+
+        report(1.0, "Queued")
+        run = self._training.start(dataset["id"], {**_BUILD_COMMON, **config, "steps": steps})
+        self._builds[str(run["id"])] = (path.name, arch, steps)
+        return run
+
+    def _dataset_dir(self, doc: cf.CharDoc) -> Path:
+        """The character's own refs written out, since the source assets may be long gone."""
+        import tempfile
+
+        folder = Path(tempfile.mkdtemp(prefix="char-build-"))
+        for index, ref in enumerate(doc.manifest.refs):
+            data = doc.members.get(str(ref.get("path") or ""))
+            if data:
+                (folder / f"{index:04d}.png").write_bytes(data)
+        return folder
+
+    def _on_training_done(self, run_id: str, output_rel: str) -> None:
+        """Claim a finished run's adapter as this character's payload for its arch."""
+        claim = self._builds.pop(str(run_id), None)
+        if claim is None:
+            return
+        file, arch, steps = claim
+        path = library.resolve(file)
+        if path is None:
+            logger.warning("Character %s went away before its %s adapter landed", file, arch)
+            return
+        adapter = models_dir() / output_rel
+        if not adapter.is_file():
+            logger.warning("Trained adapter missing for %s: %s", file, output_rel)
+            return
+        doc = cf.read(path)
+        encode.set_lora_payload(
+            doc.manifest,
+            doc.members,
+            adapter.read_bytes(),
+            arch=arch,
+            base=adapter.name,
+            rank=int(_BUILD_COMMON["rank"]),
+            steps=steps,
+            resolution=int(_BUILD_COMMON["resolution"]),
+        )
+        cf.write(path, doc)
+        logger.info("Wrote the %s adapter into %s", arch, path.name)
+        self._changed()
 
     def _progress(self, name: str) -> encode.Progress:
         """Stream an encode's phases; they arrive while the RPC call is still in flight."""

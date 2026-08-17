@@ -69,6 +69,7 @@ import { GraphNode } from './nodes/GraphNode'
 import { ResourceNode } from './nodes/ResourceNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
+import { CharacterPanel } from '../Characters/CharacterPanel'
 import { CanvasToolbar } from './CanvasToolbar'
 import { AddNodeMenu, type AddNodeKind } from './AddNodeMenu'
 import { FirstRunHints } from './GettingStarted/FirstRunHints'
@@ -1031,6 +1032,7 @@ function Board(): React.JSX.Element {
   return (
     <div className="relative flex h-full">
       <SideMenu />
+      <CharacterPanel />
 
       <div
         ref={wrapperRef}

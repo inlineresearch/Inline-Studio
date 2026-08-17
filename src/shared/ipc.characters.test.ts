@@ -26,6 +26,10 @@ describe('characters wire contract', () => {
     }
   })
 
+  it('declares the build channel', () => {
+    expect(IpcChannels.characters.build).toBe('characters:build')
+  })
+
   it('declares the library-changed event channel', () => {
     // `events.onCharactersChanged` is derived from this key, so the name is the contract.
     expect(IpcChannels.events.charactersChanged).toBe('events:charactersChanged')

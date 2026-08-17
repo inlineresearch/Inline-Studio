@@ -244,6 +244,9 @@ export const IpcChannels = {
     delete: 'characters:delete',
     /** Turn a generated take into a character, so a good render becomes reusable. */
     createFromTake: 'characters:createFromTake',
+    build: 'characters:build',
+    rebuild: 'characters:rebuild',
+    setApplyMode: 'characters:setApplyMode',
   },
   moodboard: {
     list: 'moodboard:list',
@@ -716,6 +719,20 @@ export interface InlineStudioApi {
     delete(file: string): Promise<Result<boolean>>
     /** Save a generated take as a new character. */
     createFromTake(takeId: string, name: string): Promise<Result<CharacterSummary>>
+    /** Choose whether one model applies this character by reference or by trained adapter. */
+    setApplyMode(
+      file: string,
+      arch: string,
+      mode: 'reference' | 'lora',
+    ): Promise<Result<CharacterSummary>>
+    /** Recompile scoring and the reference payload after the references changed. */
+    rebuild(file: string): Promise<Result<CharacterSummary>>
+    /** Train this character's adapter for one architecture. Returns the queued training run. */
+    build(
+      file: string,
+      arch: string,
+      options: { steps: number; autoCaption: boolean; captioner?: string },
+    ): Promise<Result<TrainingRun>>
   }
   moodboard: {
     /** The full board (items + connectors) for the open project. */

@@ -254,3 +254,80 @@ def test_creating_a_character_streams_its_encode_phases(
     assert fractions == sorted(fractions) and fractions[-1] == 1.0
     # The library-changed push still fires, so the list refreshes as well as the bar.
     assert any(channel == "events:charactersChanged" for channel, _ in seen)
+
+
+def test_a_build_is_refused_without_a_description(client: TestClient, project: dict) -> None:
+    """The adapter binds to the description, so building without one trains nothing summonable."""
+    asset = _upload_image(client, "ada.png", (120, 90, 60))
+    rpc(client, "characters:create", {"name": "Ada", "assetIds": [asset]})
+
+    refused = rpc(client, "characters:build", "Ada.char", "krea2")
+    assert refused["ok"] is False
+    assert "description" in refused["error"].lower(), refused
+
+
+def test_a_build_is_refused_for_an_unknown_architecture(client: TestClient, project: dict) -> None:
+    asset = _upload_image(client, "ada.png", (120, 90, 60))
+    rpc(client, "characters:create", {"name": "Ada", "assetIds": [asset], "description": "x"})
+
+    refused = rpc(client, "characters:build", "Ada.char", "stable-diffusion-1.5")
+    assert refused["ok"] is False
+
+
+def test_the_summary_says_what_each_model_can_apply(client: TestClient, project: dict) -> None:
+    """Krea 2 has no reference channel, so it must not claim a character applies untrained."""
+    asset = _upload_image(client, "ada.png", (120, 90, 60))
+    created = rpc(client, "characters:create", {"name": "Ada", "assetIds": [asset]})
+    builds = {row["arch"]: row for row in created["value"]["builds"]}
+
+    assert builds["flux2"]["reference"] is True
+    assert builds["krea2"]["reference"] is False
+    assert builds["flux2"]["lora"] == "none" and builds["krea2"]["lora"] == "none"
+
+
+def test_editing_references_is_instant_and_rebuilding_is_explicit(
+    client: TestClient, project: dict
+) -> None:
+    """Recompiling on every edit made removing one reference take seconds. Refs are truth and
+    scoring is cache, so an edit moves truth and leaves the cache openly stale."""
+    from inline_core.characters import charfile as cf
+    from inline_core.characters import library
+
+    first = _upload_image(client, "a.png", (10, 20, 30))
+    second = _upload_image(client, "b.png", (200, 40, 40))
+    created = rpc(client, "characters:create", {"name": "Ada", "assetIds": [first]})
+    assert created["value"]["needsRebuild"] is False
+
+    added = rpc(client, "characters:addRefs", "Ada.char", [second])
+    assert added["value"]["refs"] == 2
+    assert added["value"]["needsRebuild"] is True, "a changed reference set must ask for a rebuild"
+
+    path = library.resolve("Ada.char")
+    assert path is not None
+    # The new reference is really in the file, not merely promised by the summary.
+    assert len(cf.read(path).manifest.refs) == 2
+
+    rebuilt = rpc(client, "characters:rebuild", "Ada.char")
+    assert rebuilt["ok"] is True and rebuilt["value"]["needsRebuild"] is False
+
+    removed = rpc(client, "characters:removeRef", "Ada.char", 0)
+    assert removed["value"]["refs"] == 1 and removed["value"]["needsRebuild"] is True
+
+    last = rpc(client, "characters:removeRef", "Ada.char", 0)
+    assert last["ok"] is False and "at least one" in last["error"]
+
+
+def test_a_build_is_refused_when_the_base_checkpoint_is_missing(
+    client: TestClient, project: dict
+) -> None:
+    """The trainer only discovers a missing base after precaching, which is twenty minutes in."""
+    asset = _upload_image(client, "ada.png", (120, 90, 60))
+    created = rpc(
+        client, "characters:create", {"name": "Ada", "assetIds": [asset], "description": "x"}
+    )
+    # The fixture points the models root at an empty tmp dir, so no base is present.
+    assert all(row["baseReady"] is False for row in created["value"]["builds"])
+
+    refused = rpc(client, "characters:build", "Ada.char", "flux2", {"steps": 600})
+    assert refused["ok"] is False
+    assert "not downloaded" in refused["error"], refused

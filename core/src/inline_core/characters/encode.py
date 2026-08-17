@@ -212,6 +212,56 @@ def char_encode(
     return cf.CharDoc(manifest=manifest, members=members)
 
 
+def append_refs(doc: cf.CharDoc, paths: list[Path]) -> None:
+    """Add references without touching an encoder, so editing a character stays instant.
+
+    Scoring and payloads go stale rather than being recomputed here; the fingerprint check already
+    treats a changed reference set as invalid, and rebuilding is an explicit act."""
+    used = {str(ref.get("path") or "") for ref in doc.manifest.refs}
+    index = 0
+    for path in paths:
+        image = _open(path)
+        while (member := cf.member_name("refs", index, ".png")) in used:
+            index += 1
+        used.add(member)
+        data = _png_bytes(image)
+        doc.members[member] = data
+        doc.manifest.refs.append(
+            {
+                "path": member,
+                "sha256": cf.sha256_bytes(data),
+                "width": image.width,
+                "height": image.height,
+                "source_name": path.name,
+            }
+        )
+    doc.manifest.modified_at = int(time.time())
+
+
+def drop_ref(doc: cf.CharDoc, index: int) -> None:
+    """Remove one reference, leaving a gap in the member numbering rather than renaming the rest."""
+    if not 0 <= index < len(doc.manifest.refs):
+        raise ValueError("That reference is not in this character.")
+    if len(doc.manifest.refs) == 1:
+        raise ValueError("A character needs at least one reference image.")
+    removed = doc.manifest.refs.pop(index)
+    member = str(removed.get("path") or "")
+    doc.members.pop(member, None)
+    # Its face crop was derived from it, so it goes too rather than pointing at a missing ref.
+    for entry in [d for d in doc.manifest.derived if str(d.get("from") or "") == member]:
+        doc.members.pop(str(entry.get("path") or ""), None)
+        doc.manifest.derived.remove(entry)
+    doc.manifest.modified_at = int(time.time())
+
+
+def needs_rebuild(manifest: cf.Manifest) -> bool:
+    """Whether the reference set has moved on from what the payload and scoring were built from."""
+    entry = manifest.payloads.get(FLUX2_KLEIN_ARCH)
+    if not isinstance(entry, dict):
+        return bool(manifest.refs)
+    return str(entry.get("source_sha256") or "") != cf.refs_fingerprint(manifest, PAYLOAD_POLICY)
+
+
 def build_payload(manifest: cf.Manifest, members: dict[str, bytes], images: list[Any]) -> None:
     """(Re)compile the flux2-klein reference set. Public because ``apply`` rebuilds stale ones."""
     for stale in [m for m in members if m.startswith(f"payloads/{FLUX2_KLEIN_ARCH}/")]:

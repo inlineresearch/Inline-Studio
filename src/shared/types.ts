@@ -357,6 +357,10 @@ export interface CharacterSummary {
   /** Non-blocking nudges toward a stronger character ("Add a profile view"). */
   hints?: string[]
   sizeBytes?: number
+  /** What each architecture can apply today, driving the Build controls. */
+  builds?: CharacterBuild[]
+  /** The references moved on from what scoring and the payload were built from. */
+  needsRebuild?: boolean
   /** Set when the file could not be read. The row is still listed, so a corrupt file is visible. */
   error?: string
 }
@@ -490,6 +494,20 @@ export interface ActivityRun {
 
 /** Main → renderer: the live run list changed. Carries the whole list, so it replaces state. */
 /** One phase of a character encode, streamed while the create/edit RPC is still in flight. */
+/** What one architecture can apply for a character, and whether its adapter is worth trusting. */
+export interface CharacterBuild {
+  arch: string
+  label: string
+  /** The model has its own reference channel, so a character applies without any training. */
+  reference: boolean
+  /** `stale` means trained against references that have since changed, so it is the wrong face. */
+  lora: 'none' | 'stale' | 'ready'
+  /** What a render would use right now. */
+  mode: 'reference' | 'lora'
+  /** The checkpoint training needs is on disk. Training without it fails after precaching. */
+  baseReady: boolean
+}
+
 export interface CharacterProgressEvent {
   /** The character's name, which is all the client has to match on before a file exists. */
   name: string
