@@ -2,7 +2,22 @@ import { useState } from 'react'
 import type { CharacterBuild } from '@shared/types'
 import { BUILD_STEP_CHOICES, STEP_NOTES, formatEstimate } from '@shared/characterTraining'
 import { useCharacterStore } from '../../store/characterStore'
+import { checkModels } from '../../lib/checkModels'
 import { BuildStatus } from './BuildStatus'
+
+//: The checkpoint each architecture trains against, so a missing one can be offered by name.
+const BASE_MODELS: Record<string, { filename: string; category: string }[]> = {
+  flux2: [
+    { filename: 'flux-2-klein-base-4b.safetensors', category: 'diffusion_models' },
+    { filename: 'qwen_3_4b.safetensors', category: 'text_encoders' },
+    { filename: 'flux2-vae.safetensors', category: 'vae' },
+  ],
+  krea2: [
+    { filename: 'krea2_turbo_bf16.safetensors', category: 'diffusion_models' },
+    { filename: 'qwen3vl_4b_bf16.safetensors', category: 'text_encoders' },
+    { filename: 'qwen_image_vae_diffusers.safetensors', category: 'vae' },
+  ],
+}
 
 /** Which models this character applies to, and training the adapter for the ones that need one. */
 export function CharacterBuilds({
@@ -134,6 +149,15 @@ function LoraMode({
 
   const start = async (): Promise<void> => {
     setStarting(true)
+    // The base has to be here before a run is worth queueing, so offer it rather than just refusing.
+    if (!build.baseReady) {
+      await checkModels(
+        BASE_MODELS[build.arch] ?? [],
+        'Training this character needs a base model.',
+      )
+      setStarting(false)
+      return
+    }
     await startBuild(file, build.arch, { steps, autoCaption })
     setStarting(false)
   }

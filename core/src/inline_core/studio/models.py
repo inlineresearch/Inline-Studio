@@ -26,6 +26,20 @@ from ..models.requirements import RequirementsProvider, RequirementsRegistry
 logger = logging.getLogger("inline_core.studio.models")
 
 
+#: Node type reported by registry downloads, so the UI can tell them from a node's own popup.
+_REGISTRY = "registry"
+
+
+class _TargetOnly:
+    """A registry model has no requirements provider; the downloader only needs its folder."""
+
+    def __init__(self, target: Path) -> None:
+        self._target = target
+
+    def download_target(self, _component: Any) -> Path:
+        return self._target
+
+
 class ModelDownloads:
     """Answers "what's missing" and downloads components into the models dir on request.
 
@@ -80,6 +94,67 @@ class ModelDownloads:
         """Download one component (by id) or ``"all"`` missing ones, in a background thread."""
         loop = asyncio.get_running_loop()
         asyncio.create_task(asyncio.to_thread(self._run, node_type, component_id, loop))
+
+    # --- the published registry ------------------------------------------------------------
+
+    def registry(self, refresh: bool = False) -> dict[str, Any]:
+        """Every published model, and whether the list came from a reachable registry."""
+        from ..models import registry_index as ri
+
+        models, stale = ri.load(refresh=bool(refresh))
+        on_disk = ri.present_files()
+        return {
+            "entries": [
+                m.to_json() | {"present": m.filename.lower() in on_disk} for m in models
+            ],
+            "stale": stale,
+        }
+
+    def resolve_missing(self, wanted: list[str], refresh: bool = False) -> dict[str, Any]:
+        """Which of these filenames are absent, and what the registry offers for each."""
+        from ..models import registry_index as ri
+
+        missing, stale = ri.resolve(list(wanted or []), refresh=bool(refresh))
+        return {"missing": [m.to_json() for m in missing], "stale": stale}
+
+    def download_registry(self, model_id: str) -> None:
+        loop = asyncio.get_running_loop()
+        asyncio.create_task(asyncio.to_thread(self._run_registry, model_id, loop))
+
+    def _run_registry(self, model_id: str, loop: asyncio.AbstractEventLoop) -> None:
+        from ..config import models_dir
+        from ..models import registry_index as ri
+        from ..models.requirements import ModelComponent
+
+        models, _ = ri.load()
+        model = next((m for m in models if m.id == model_id), None)
+        if model is None:
+            self._emit(loop, "events:modelDownloadError",
+                       {"nodeType": _REGISTRY, "componentId": model_id,
+                        "error": f"{model_id} is not in the model registry."})
+            return
+        comp = ModelComponent(
+            id=model.id, label=model.label, category=model.category, present=False,
+            filename=model.filename, repo=model.repo,
+            repo_file="" if model.kind == "hf_folder" else model.path,
+            repo_folder=model.path if model.kind == "hf_folder" else "",
+        )
+        target = models_dir() / model.category
+        try:
+            self._download_component(
+                _TargetOnly(target), comp,
+                lambda frac, status: self._emit(
+                    loop, "events:modelDownloadProgress",
+                    {"nodeType": _REGISTRY, "componentId": model.id,
+                     "fraction": frac, "status": status},
+                ),
+            )
+            self._rescan()
+            self._emit(loop, "events:modelDownloadDone",
+                       {"nodeType": _REGISTRY, "componentId": model.id})
+        except Exception as error:  # noqa: BLE001 - surface as a UI event, never crash the loop
+            self._emit(loop, "events:modelDownloadError",
+                       {"nodeType": _REGISTRY, "componentId": model.id, "error": str(error)})
 
     def _run(self, node_type: str, component_id: str, loop: asyncio.AbstractEventLoop) -> None:
         provider = self._requirements.get(node_type)

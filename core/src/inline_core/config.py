@@ -48,6 +48,16 @@ def extensions_dir() -> Path:
     return Path(env).expanduser() if env else Path("extensions")
 
 
+def models_registry_url() -> str:
+    """Where the Models settings page fetches its list. `INLINE_MODEL_REGISTRY`, else the published
+    one; point it at models.dev.json to see unverified entries. Download coordinates only - what a
+    checkpoint *is* stays a content check."""
+    return os.environ.get(
+        "INLINE_MODEL_REGISTRY",
+        "https://raw.githubusercontent.com/inlineresearch/Inline-Registry/main/models.json",
+    )
+
+
 def registry_url() -> str:
     """Where the Available tab fetches its extension index. `INLINE_EXTENSION_REGISTRY`, else the
     public registry. Point it at a fork or a file:// path to test a registry change."""

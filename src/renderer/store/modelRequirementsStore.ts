@@ -32,6 +32,7 @@ interface ModelRequirementsState {
   /** Per node type → per component id → live download state. */
   downloads: Record<string, Record<string, ComponentDownload>>
   load: (nodeType: string) => Promise<void>
+  checkOnUse: (nodeType: string, reason: string) => Promise<number>
   open: (nodeType: string) => void
   close: () => void
   download: (nodeType: string, componentId: string) => Promise<void>
@@ -48,6 +49,15 @@ export const useModelRequirementsStore = create<ModelRequirementsState>((set, ge
   load: async (nodeType) => {
     const res = await studio().models.requirements(nodeType)
     if (res.ok) set((s) => ({ byType: { ...s.byType, [nodeType]: res.value } }))
+  },
+
+  /** Load, then offer the registry whatever this node is missing. Used where a node is chosen. */
+  checkOnUse: async (nodeType, reason) => {
+    await get().load(nodeType)
+    const reqs = get().byType[nodeType]
+    if (!reqs || reqs.allPresent) return 0
+    const { checkComponentModels } = await import('../lib/checkModels')
+    return checkComponentModels(reqs.components, reason)
   },
 
   open: (nodeType) => set({ openFor: nodeType }),

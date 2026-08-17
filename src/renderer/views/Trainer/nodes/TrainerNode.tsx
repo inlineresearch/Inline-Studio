@@ -116,6 +116,9 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
   // its generation node type, check its requirements, and blink a chip that opens the download popup.
   const arch = (item?.data.hyperparams as { arch?: string } | undefined)?.arch ?? 'z-image'
   const reqType = requirementType(arch, hp.baseMode)
+  useEffect(() => {
+    void useModelRequirementsStore.getState().checkOnUse(reqType, 'Training needs the base model.')
+  }, [reqType])
   const registryVersion = useCoreNodesStore((s) => s.registryVersion)
   const loadReqs = useModelRequirementsStore((s) => s.load)
   const openReqs = useModelRequirementsStore((s) => s.open)

@@ -70,6 +70,8 @@ import { ResourceNode } from './nodes/ResourceNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
 import { CharacterPanel } from '../Characters/CharacterPanel'
+import { MissingModelsDialog } from '../Models/MissingModelsDialog'
+import { checkGraphModels } from '../../lib/checkModels'
 import { CanvasToolbar } from './CanvasToolbar'
 import { AddNodeMenu, type AddNodeKind } from './AddNodeMenu'
 import { FirstRunHints } from './GettingStarted/FirstRunHints'
@@ -778,7 +780,10 @@ function Board(): React.JSX.Element {
   const onPickCore = (coreType: string): void => {
     const m = addMenu
     setAddMenu(null)
-    if (m) void addCoreNode(coreType, m.flowX, m.flowY)
+    if (!m) return
+    void addCoreNode(coreType, m.flowX, m.flowY).then(() =>
+      useModelRequirementsStore.getState().checkOnUse(coreType, 'This node needs models.'),
+    )
   }
 
   const onPickGen = (modelId: string): void => {
@@ -952,6 +957,8 @@ function Board(): React.JSX.Element {
       return
     }
     await buildGraphFromRecipe(recipe, drop)
+    // After placing, not before: the graph is worth having even when a weight file is missing.
+    void checkGraphModels(recipe, `${file.name} was added.`)
   }
 
   /** Read a recipe from the dropped image; if present, prompt Load-graph vs Load-as-asset, else run
@@ -1033,6 +1040,7 @@ function Board(): React.JSX.Element {
     <div className="relative flex h-full">
       <SideMenu />
       <CharacterPanel />
+      <MissingModelsDialog />
 
       <div
         ref={wrapperRef}

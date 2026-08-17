@@ -495,6 +495,35 @@ export interface ActivityRun {
 /** Main → renderer: the live run list changed. Carries the whole list, so it replaces state. */
 /** One phase of a character encode, streamed while the create/edit RPC is still in flight. */
 /** What one architecture can apply for a character, and whether its adapter is worth trusting. */
+/** One model in the published registry: where it comes from, and whether it is already here. */
+export interface RegistryModel {
+  id: string
+  label: string
+  filename: string
+  /** The `models/` subfolder it lands in. */
+  category: string
+  kind: 'hf_file' | 'hf_folder' | 'url'
+  repo: string
+  path: string
+  url: string
+  verified: boolean
+  optional: boolean
+  sizeBytes: number | null
+  updated: string
+  /** Entries sharing a group are the same model at a different precision. */
+  group: string
+  precision: string
+  present?: boolean
+}
+
+/** A weight file something asked for that is not on disk. */
+export interface MissingModel {
+  wanted: string
+  /** Where it belongs, relative to the models root. Shown even when nothing can be downloaded. */
+  path: string
+  matches: { model: RegistryModel; exact: boolean; present: boolean }[]
+}
+
 export interface CharacterBuild {
   arch: string
   label: string

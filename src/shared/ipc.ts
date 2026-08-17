@@ -15,6 +15,8 @@ import type {
   CharacterSummary,
   CharacterDetail,
   CharacterProgressEvent,
+  MissingModel,
+  RegistryModel,
   MoodboardItem,
   CanvasSurface,
   MoodboardConnector,
@@ -208,6 +210,12 @@ export const IpcChannels = {
     tree: 'models:tree',
     /** Re-read the models roots so files added or removed on disk reach the pickers. */
     rescan: 'models:rescan',
+    /** The published model list, for Settings and for offering a missing file. */
+    registry: 'models:registry',
+    /** Which of these filenames are absent, and what the registry offers for each. */
+    resolveMissing: 'models:resolveMissing',
+    /** Download one registry model by its id. */
+    downloadRegistry: 'models:downloadRegistry',
   },
   extensions: {
     /** Installed extensions + whether the machine has the tools to install more. */
@@ -667,6 +675,15 @@ export interface InlineStudioApi {
      * so a weight file dropped in by hand is invisible to the pickers until this runs.
      */
     rescan(): Promise<Result<{ registryVersion: string }>>
+    /** Every published model, and whether the list came from a reachable registry. */
+    registry(refresh?: boolean): Promise<Result<{ entries: RegistryModel[]; stale: boolean }>>
+    /** Absent files and what the registry offers. Items may name the folder they belong in. */
+    resolveMissing(
+      wanted: (string | { filename: string; category?: string })[],
+      refresh?: boolean,
+    ): Promise<Result<{ missing: MissingModel[]; stale: boolean }>>
+    /** Fetch a registry model. Progress arrives on the model-download events. */
+    downloadRegistry(modelId: string): Promise<Result<void>>
   }
   extensions: {
     /** Installed extensions + whether git/uv are available to install more. */
