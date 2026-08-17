@@ -16,7 +16,7 @@ import { resolveCoreInputThumbs } from './coreInputThumbs'
 import { CoreOutputPreview, CoreOutputThumb } from './CoreOutputPreview'
 import { NodeFrame } from './NodeFrame'
 import { ReferenceStrip } from './ReferenceStrip'
-import { scoreTone, scoreTitle } from '@/lib/continuity'
+import { scoreSuffix, scoreTone, scoreTitle } from '@/lib/continuity'
 import { NodeRunToolbar } from './NodeRunToolbar'
 import { missingInputs, missingInputsMessage } from '../missingInputs'
 import { useGraphMenu } from './useGraphMenu'
@@ -584,10 +584,11 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       unmeasurable take must not read as a zero-scoring one. */}
                   {o.continuityScore !== undefined && (
                     <span
-                      title={scoreTitle(o.continuityScore)}
+                      title={scoreTitle(o.continuityScore, o.continuityFaceOnly)}
                       className={`pointer-events-none absolute left-0.5 top-0.5 rounded bg-black/85 px-1 text-[8px] leading-tight ${scoreTone(o.continuityScore)}`}
                     >
                       {Math.round(o.continuityScore)}
+                      {scoreSuffix(o.continuityFaceOnly)}
                     </span>
                   )}
                 </button>

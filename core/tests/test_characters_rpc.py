@@ -197,3 +197,60 @@ def test_a_character_appears_in_the_flux2_node_dropdown(
         pytest.skip("FLUX.2 is not registered on this install")
     field = next(p for p in flux2["params"] if p["key"] == "character")
     assert "Ada.char" in [o["value"] for o in field["options"]]
+
+
+def test_a_character_written_before_the_current_encoders_rebuilds_on_open(
+    client: TestClient, project: dict, tmp_path: Path
+) -> None:
+    """Refs are truth and scoring is cache. Without this, a character written before the current
+    encoders keeps a centroid the version check correctly rejects and nothing ever restores, and
+    never gains the per-reference framings the full-body hint and the subject term both need."""
+    from inline_core.characters import charfile as cf
+    from inline_core.characters import library
+
+    asset = _upload_image(client, "ada.png", (120, 90, 60))
+    rpc(client, "characters:create", {"name": "Ada", "assetIds": [asset]})
+    path = library.resolve("Ada.char")
+    assert path is not None
+
+    aged = cf.read(path)
+    aged.manifest.scoring = {
+        **aged.manifest.scoring,
+        "refFramings": [],
+        "encoders": [{"id": "dinov2-base", "version": "0", "dim": 768}],
+    }
+    cf.write(path, aged)
+
+    rpc(client, "characters:get", "Ada.char")
+
+    rebuilt = cf.read(path)
+    assert not cf.centroid_valid(rebuilt.manifest, "dinov2-base", "0"), "stale version survived"
+    assert "refFramings" in rebuilt.manifest.scoring, "framings were not recomputed"
+
+
+def test_creating_a_character_streams_its_encode_phases(
+    client: TestClient, project: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phases arrive while the create call is still open, which is what makes them useful."""
+    from inline_core.server.rpc import EventBroadcaster
+
+    seen: list[tuple[str, object]] = []
+    original = EventBroadcaster.broadcast
+
+    def record(self: EventBroadcaster, channel: str, payload: object) -> None:
+        seen.append((channel, payload))
+        original(self, channel, payload)
+
+    monkeypatch.setattr(EventBroadcaster, "broadcast", record)
+
+    asset = _upload_image(client, "ada.png", (120, 90, 60))
+    created = rpc(client, "characters:create", {"name": "Ada", "assetIds": [asset]})
+    assert created["ok"] is True, created
+
+    phases = [p for channel, p in seen if channel == "events:characterProgress"]
+    assert phases, f"no progress was broadcast; saw {[c for c, _ in seen]}"
+    assert all(isinstance(p, dict) and p["name"] == "Ada" for p in phases)
+    fractions = [p["fraction"] for p in phases]  # type: ignore[index]
+    assert fractions == sorted(fractions) and fractions[-1] == 1.0
+    # The library-changed push still fires, so the list refreshes as well as the bar.
+    assert any(channel == "events:charactersChanged" for channel, _ in seen)

@@ -4,6 +4,7 @@ import { useCharacterStore } from '../../store/characterStore'
 import { getAssetDragIds } from '../../lib/dnd'
 import { CloseIcon, PlusIcon } from '../../components/icons'
 import { pickFilesViaInput } from '../../lib/importFiles'
+import { EncodeProgress } from './EncodeProgress'
 
 /**
  * One character open for editing: its name, its locked description, and its references.
@@ -70,8 +71,9 @@ export function CharacterEditor(): React.JSX.Element {
         <button type="button" onClick={closeEditor} className="text-xs text-muted hover:text-fg">
           ← Characters
         </button>
-        {busy && <span className="text-[10px] text-muted">Rebuilding…</span>}
       </div>
+
+      {busy && <EncodeProgress label="Rebuilding…" />}
 
       {error && <div className="px-2 py-1 text-[11px] text-red-400">{error}</div>}
 

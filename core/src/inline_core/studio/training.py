@@ -81,6 +81,10 @@ class Training:
         self._on_output = on_output
         # One run holds the GPU at a time; the process is kept so cancel can SIGTERM it.
         self._active: dict[str, asyncio.subprocess.Process] = {}
+        #: Waiting their turn, oldest first; refusing would error on a run the user forgot about.
+        self._queue: list[str] = []
+        #: Whether each admitted run is a resume, kept because it is decided before the wait.
+        self._resume_flags: dict[str, bool] = {}
         self._cancelled: set[str] = set()
 
     def _conn(self) -> Any:
@@ -283,6 +287,8 @@ class Training:
         starting while any run is training, one orphan disables training forever. Checked on the
         Trainer tab's own load, which is the first thing the UI does."""
         for run in ts.list_runs(conn):
+            if run["id"] in self._queue:
+                continue  # waiting its turn, not orphaned
             if run["status"] in ("training", "queued") and run["id"] not in self._active:
                 ts.update_run(
                     conn, run["id"],
@@ -474,23 +480,45 @@ class Training:
     # --- training run ---------------------------------------------------------------------------
 
     def start(self, dataset_id: str, hyperparams: dict[str, Any]) -> dict[str, Any]:
-        if self._active:
-            raise RuntimeError("A training run is already in progress; wait for it to finish.")
         dataset = ts.get_dataset(self._conn(), dataset_id)
         run = ts.create_run(self._conn(), dataset_id, dataset["name"], hyperparams)
         self._pin(run["id"], run["name"])
-        asyncio.create_task(self._run(run["id"], resume=False))
-        return run
+        self._admit(run["id"], resume=False)
+        return ts.get_run(self._conn(), run["id"])
 
     def resume(self, run_id: str) -> dict[str, Any]:
-        if self._active:
-            raise RuntimeError("A training run is already in progress; wait for it to finish.")
         run = ts.get_run(self._conn(), run_id)
         if run["status"] not in ("interrupted", "failed"):
             raise RuntimeError("Only an interrupted run can be resumed.")
         self._pin(run_id, run["name"])
-        asyncio.create_task(self._run(run_id, resume=True))
-        return ts.update_run(self._conn(), run_id, {"status": "queued", "error": None})
+        self._admit(run_id, resume=True)
+        return ts.get_run(self._conn(), run_id)
+
+    def queue_position(self, run_id: str) -> int:
+        """1 for next up, 0 when running or not waiting. What a caller shows while it waits."""
+        return self._queue.index(run_id) + 1 if run_id in self._queue else 0
+
+    def _admit(self, run_id: str, *, resume: bool) -> None:
+        """Run it now, or line it up behind whatever holds the GPU."""
+        self._resume_flags[run_id] = resume
+        if self._active or self._queue:
+            self._queue.append(run_id)
+            ts.update_run(self._conn(), run_id, {"status": "queued", "error": None})
+            return
+        ts.update_run(self._conn(), run_id, {"status": "queued", "error": None})
+        asyncio.create_task(self._run(run_id, resume=resume))
+
+    def _start_next(self) -> None:
+        """Hand the GPU to the next waiting run, if any."""
+        while self._queue:
+            run_id = self._queue.pop(0)
+            try:
+                if ts.get_run(self._conn(), run_id)["status"] != "queued":
+                    continue  # cancelled or otherwise moved on while it waited
+            except Exception:  # noqa: BLE001 - a vanished row is simply not startable
+                continue
+            asyncio.create_task(self._run(run_id, resume=self._resume_flags.get(run_id, False)))
+            return
 
     def _pin(self, run_id: str, name: str) -> None:
         ref = self._store.project_ref()
@@ -603,6 +631,8 @@ class Training:
         except Exception as error:  # noqa: BLE001 - surface prep failures as a run error
             self._persist(run_id, {"status": "failed", "error": str(error)})
             self._events.broadcast("events:trainingError", {"runId": run_id, "error": str(error)})
+            self._resume_flags.pop(run_id, None)
+            self._start_next()
             return
 
         self._persist(run_id, {"status": "training", "progressStatus": "starting"})
@@ -614,7 +644,9 @@ class Training:
         finally:
             await proc.wait()
             self._active.pop(run_id, None)
+            self._resume_flags.pop(run_id, None)
         self._finish(run_id, proc.returncode or 0, saw_done, output_rel)
+        self._start_next()
 
     async def _drain(self, run_id: str, proc: asyncio.subprocess.Process, output_rel: str) -> bool:
         """Read the trainer's JSON-line stdout, mirroring progress into the row + events."""

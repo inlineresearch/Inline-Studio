@@ -327,3 +327,38 @@ def test_an_already_exported_snapshot_is_not_offered_again(
     assert "loraPath" not in training.snapshots("run1")[0]
     training.export_snapshot("run1", 400)
     assert training.snapshots("run1")[0]["loraPath"].startswith("loras/")
+
+
+def test_a_second_run_queues_instead_of_being_refused(
+    conn: sqlite3.Connection, tmp_path, monkeypatch
+) -> None:
+    """Refusing would error on a run the user started an hour ago and forgot about."""
+    training = _training(conn, tmp_path)
+    monkeypatch.setattr(training, "_pin", lambda *_a: None)
+    monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close())
+    ds = training.create_dataset({"name": "d"})
+
+    first = training.start(ds["id"], {"arch": "flux2", "baseMode": "lora"})
+    training._active[first["id"]] = object()  # the GPU is now held
+    second = training.start(ds["id"], {"arch": "flux2", "baseMode": "lora"})
+
+    assert second["status"] == "queued"
+    assert training.queue_position(second["id"]) == 1
+    assert training.queue_position(first["id"]) == 0
+
+
+def test_a_waiting_run_is_not_mistaken_for_an_orphan(
+    conn: sqlite3.Connection, tmp_path, monkeypatch
+) -> None:
+    """`_reconcile_orphans` flips stale `queued` rows to interrupted; a queue would be eaten."""
+    training = _training(conn, tmp_path)
+    monkeypatch.setattr(training, "_pin", lambda *_a: None)
+    monkeypatch.setattr("asyncio.create_task", lambda coro: coro.close())
+    ds = training.create_dataset({"name": "d"})
+    first = training.start(ds["id"], {"arch": "flux2", "baseMode": "lora"})
+    training._active[first["id"]] = object()
+    second = training.start(ds["id"], {"arch": "flux2", "baseMode": "lora"})
+
+    training._reconcile_orphans(conn)
+
+    assert ts.get_run(conn, second["id"])["status"] == "queued"

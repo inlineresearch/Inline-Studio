@@ -18,6 +18,7 @@ from ..characters import encode, library, scoring
 logger = logging.getLogger("inline_core.studio.characters")
 
 CHANGED_EVENT = "events:charactersChanged"
+PROGRESS_EVENT = "events:characterProgress"
 
 
 class Characters:
@@ -40,6 +41,11 @@ class Characters:
     def get(self, file: str) -> dict[str, Any]:
         path = self._require(file)
         doc = cf.read(path)
+        if self._scoring_stale(doc.manifest):
+            # Refs are truth and scoring is cache, so an outdated character rebuilds itself.
+            logger.info("Rebuilding stale scoring for %s", path.name)
+            self._recompile(path, self._ref_files(doc), doc)
+            doc = cf.read(path)
         summary = self._summary(path, doc)
         summary["refUrls"] = [
             f"/character-ref/{path.name}/{index}" for index in range(len(doc.manifest.refs))
@@ -62,7 +68,9 @@ class Characters:
         ref = self._store.project_ref()
         with self._store.bind(ref) as conn:
             paths = self._asset_paths(conn, ref.folder, asset_ids)
-        doc = encode.char_encode(paths, name=name, description=description)
+        doc = encode.char_encode(
+            paths, name=name, description=description, on_progress=self._progress(name)
+        )
         path = library.save(doc)
         self._changed()
         return self._summary(path, doc)
@@ -72,7 +80,7 @@ class Characters:
         ref = self._store.project_ref()
         with self._store.bind(ref) as conn:
             path = self._take_path(conn, ref.folder, take_id)
-        doc = encode.char_encode([path], name=name)
+        doc = encode.char_encode([path], name=name, on_progress=self._progress(name))
         saved = library.save(doc)
         self._changed()
         return self._summary(saved, doc)
@@ -132,15 +140,27 @@ class Characters:
             centroids = scoring.load_centroids(
                 doc.members, doc.manifest.scoring.get("centroids") or {}
             )
+            # Similarity across two encoder builds is meaningless, so a stale term is dropped.
+            for encoder_id, version in scoring.encoder_versions_by_id().items():
+                if encoder_id in centroids and not cf.centroid_valid(
+                    doc.manifest, encoder_id, version
+                ):
+                    centroids.pop(encoder_id, None)
             if not centroids:
                 return None
             face_refs = scoring.load_embeds(
                 doc.members, str(doc.manifest.scoring.get("faceEmbeds") or "")
             )
+            subject_refs = scoring.load_embeds(
+                doc.members, str(doc.manifest.scoring.get("subjectEmbeds") or "")
+            )
+            framings = [float(f) for f in (doc.manifest.scoring.get("refFramings") or [])]
             from PIL import Image
 
             with Image.open(image_path) as handle:
-                return scoring.score(handle.convert("RGB"), centroids, face_refs)
+                return scoring.score(
+                    handle.convert("RGB"), centroids, face_refs, subject_refs, framings
+                )
         except Exception as error:  # noqa: BLE001 - scoring is never worth failing a render over
             logger.warning("Could not score %s against %s: %s", image_path, chosen, error)
             return None
@@ -162,6 +182,20 @@ class Characters:
         self._changed()
         return self._summary(path, doc)
 
+    def _scoring_stale(self, manifest: cf.Manifest) -> bool:
+        """Whether this character's scoring predates what the current encoders record.
+
+        Two ways to be stale: an encoder version has moved, so its centroid cannot be compared; or
+        the manifest lacks the per-reference framings the subject term needs to know whether it can
+        speak to a take at all.
+        """
+        for encoder_id, version in scoring.encoder_versions_by_id().items():
+            if manifest.scoring.get("centroids", {}).get(encoder_id) and not cf.centroid_valid(
+                manifest, encoder_id, version
+            ):
+                return True
+        return bool(manifest.refs) and not manifest.scoring.get("refFramings")
+
     def _recompile(self, path: Path, refs: list[Path], previous: cf.CharDoc) -> dict[str, Any]:
         """Rebuild from a new reference set, keeping char_id and filename so nothing unpicks."""
         doc = encode.char_encode(
@@ -170,6 +204,7 @@ class Characters:
             description=self._description(previous),
             char_id=previous.manifest.char_id,
             created_at=previous.manifest.created_at,
+            on_progress=self._progress(previous.manifest.name),
         )
         cf.write(path, doc)
         self._changed()
@@ -245,6 +280,16 @@ class Characters:
                 if entry.get("takeId") == take_id and entry.get("kind") == "image":
                     return folder / str(entry["filePath"])
         raise ValueError("That take is no longer available.")
+
+    def _progress(self, name: str) -> encode.Progress:
+        """Stream an encode's phases; they arrive while the RPC call is still in flight."""
+
+        def report(fraction: float, status: str) -> None:
+            self._events.broadcast(
+                PROGRESS_EVENT, {"name": name, "fraction": fraction, "status": status}
+            )
+
+        return report
 
     def _changed(self) -> None:
         if self._on_change is not None:

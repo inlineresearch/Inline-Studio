@@ -14,6 +14,7 @@ import type {
   AssetFolder,
   CharacterSummary,
   CharacterDetail,
+  CharacterProgressEvent,
   MoodboardItem,
   CanvasSurface,
   MoodboardConnector,
@@ -185,6 +186,11 @@ export const IpcChannels = {
     setApiKey: 'falSettings:setApiKey',
     clearApiKey: 'falSettings:clearApiKey',
   },
+  hfSettings: {
+    status: 'hfSettings:status',
+    setToken: 'hfSettings:setToken',
+    clearToken: 'hfSettings:clearToken',
+  },
   settings: {
     get: 'settings:get',
     setCoreUrl: 'settings:setCoreUrl',
@@ -317,6 +323,8 @@ export const IpcChannels = {
     modelsChanged: 'events:modelsChanged',
     /** Main → renderer: the character library changed (created, edited, deleted, imported). */
     charactersChanged: 'events:charactersChanged',
+    /** Main → renderer: an encode's phases, streamed while the create/edit call is still open. */
+    characterProgress: 'events:characterProgress',
     /** Main → renderer: explicit model-download lifecycle (the node's model popup). */
     modelDownloadProgress: 'events:modelDownloadProgress',
     modelDownloadDone: 'events:modelDownloadDone',
@@ -627,6 +635,14 @@ export interface InlineStudioApi {
     /** Forget the stored fal key. */
     clearApiKey(): Promise<Result<ApiKeyStatus>>
   }
+  hfSettings: {
+    /** Is a Hugging Face token saved? Needed for gated repos such as FLUX.2 Klein 9B. */
+    status(): Promise<Result<ApiKeyStatus>>
+    /** Store the token, published as `HF_TOKEN` so every download path picks it up. */
+    setToken(token: string): Promise<Result<ApiKeyStatus>>
+    /** Forget the stored token. */
+    clearToken(): Promise<Result<ApiKeyStatus>>
+  }
   settings: {
     get(): Promise<Result<AppSettings>>
     setCoreUrl(url: string): Promise<Result<AppSettings>>
@@ -823,6 +839,8 @@ export interface InlineStudioApi {
     onModelsChanged(callback: (e: { registryVersion: string }) => void): () => void
     /** Subscribe to "the character library changed" pushes. Returns an unsubscribe fn. */
     onCharactersChanged(callback: () => void): () => void
+    /** Subscribe to encode-progress pushes. Returns an unsubscribe fn. */
+    onCharacterProgress(callback: (e: CharacterProgressEvent) => void): () => void
     /** Subscribe to explicit model-download lifecycle pushes. Each returns an unsubscribe fn. */
     onModelDownloadProgress(callback: (e: ModelDownloadProgressEvent) => void): () => void
     onModelDownloadDone(callback: (e: ModelDownloadDoneEvent) => void): () => void

@@ -25,10 +25,18 @@ _CACHE_LIMIT_BYTES = 2 * 1024**3
 class AppliedCharacter:
     """What a runner needs: ordered reference handles, plus the prompt text that names them."""
 
-    def __init__(self, name: str, refs: list[AssetRef], description: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        refs: list[AssetRef],
+        description: str,
+        lora: Path | None = None,
+    ) -> None:
         self.name = name
         self.refs = refs
         self.description = description
+        #: A trained adapter, which for a model with no reference channel is the only route.
+        self.lora = lora
 
     def prompt_prefix(self, first_position: int) -> str:
         """Text naming the positions the character lands on, so ordinal prompting resolves."""
@@ -75,7 +83,31 @@ def char_apply(chosen: str) -> AppliedCharacter | None:
 
     refs = _extract(doc, digest, arch)
     description = _description(doc)
-    return AppliedCharacter(doc.manifest.name or path.stem, refs, description)
+    lora = _extract_lora(doc, digest, arch)
+    return AppliedCharacter(doc.manifest.name or path.stem, refs, description, lora)
+
+
+def _extract_lora(doc: cf.CharDoc, digest: str, arch: str) -> Path | None:
+    """The adapter for ``arch``, or None. A stale one is the wrong face, so it is ignored."""
+    entry = encode.lora_payload(doc.manifest, arch)
+    if not entry:
+        return None
+    key = encode.payload_key(arch, encode.PAYLOAD_LORA)
+    if not cf.payload_valid(doc.manifest, key, encode.LORA_PAYLOAD_VERSION):
+        logger.info("Ignoring a stale %s adapter for %s", arch, doc.manifest.name)
+        return None
+    files = [str(f.get("path")) for f in entry.get("files") or [] if f.get("path")]
+    if not files:
+        return None
+    root = _cache_root() / digest / key
+    target = root / Path(files[0]).name
+    if not target.is_file():
+        root.mkdir(parents=True, exist_ok=True)
+        data = doc.members.get(files[0])
+        if data is None:
+            return None
+        target.write_bytes(data)
+    return target
 
 
 def _description(doc: cf.CharDoc) -> str:

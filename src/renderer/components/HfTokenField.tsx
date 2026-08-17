@@ -1,19 +1,14 @@
 import { useEffect, useState } from 'react'
 import { InfoTip } from './InfoTip'
-import { useFalSettingsStore } from '../store/falSettingsStore'
+import { useHfSettingsStore } from '../store/hfSettingsStore'
 
-/**
- * The fal.ai API key control for the closed-model generation engine, laid out for the Settings
- * panel. A secret, so it's write-only: the key is never echoed back across the wire - once saved we
- * only show "Connected". Inline Core keeps it server-side in an owner-only (0600) file; "Clear"
- * deletes it. Bring your own key from https://fal.ai/dashboard/keys.
- */
-export function FalKeyField(): React.JSX.Element {
-  const configured = useFalSettingsStore((s) => s.configured)
-  const error = useFalSettingsStore((s) => s.error)
-  const load = useFalSettingsStore((s) => s.load)
-  const setApiKey = useFalSettingsStore((s) => s.setApiKey)
-  const clearApiKey = useFalSettingsStore((s) => s.clearApiKey)
+/** The Hugging Face token, write-only like the fal key; gated repos such as Klein 9B need it. */
+export function HfTokenField(): React.JSX.Element {
+  const configured = useHfSettingsStore((s) => s.configured)
+  const error = useHfSettingsStore((s) => s.error)
+  const load = useHfSettingsStore((s) => s.load)
+  const setToken = useHfSettingsStore((s) => s.setToken)
+  const clearToken = useHfSettingsStore((s) => s.clearToken)
   const [draft, setDraft] = useState('')
 
   useEffect(() => {
@@ -22,7 +17,7 @@ export function FalKeyField(): React.JSX.Element {
 
   const save = async (): Promise<void> => {
     if (!draft.trim()) return
-    const ok = await setApiKey(draft.trim())
+    const ok = await setToken(draft.trim())
     if (ok) setDraft('')
   }
 
@@ -30,10 +25,11 @@ export function FalKeyField(): React.JSX.Element {
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-1.5">
-          <span className="text-xs font-medium text-zinc-200">fal.ai API key</span>
-          <InfoTip label="the fal.ai API key">
-            Bring your own key to run the canvas generation nodes. Get one from
-            fal.ai/dashboard/keys. Stored on the machine running the engine, in a file only your
+          <span className="text-xs font-medium text-zinc-200">Hugging Face token</span>
+          <InfoTip label="the Hugging Face token">
+            Only needed for models behind a licence, such as FLUX.2 Klein 9B. Accept the licence on
+            the model&rsquo;s page first, then paste a token from huggingface.co/settings/tokens -
+            read access is enough. Stored on the machine running the engine, in a file only your
             user account can read, and never sent back to the browser.
           </InfoTip>
         </span>
@@ -53,7 +49,7 @@ export function FalKeyField(): React.JSX.Element {
           if (e.key === 'Enter') void save()
         }}
         spellCheck={false}
-        placeholder={configured ? '•••••••• saved' : 'Paste fal.ai API key'}
+        placeholder={configured ? '•••••••• saved' : 'Paste Hugging Face token'}
         className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-accent"
       />
 
@@ -67,7 +63,7 @@ export function FalKeyField(): React.JSX.Element {
         </button>
         {configured && (
           <button
-            onClick={() => void clearApiKey()}
+            onClick={() => void clearToken()}
             className="rounded-md border border-border px-3 py-1.5 text-xs text-zinc-400 hover:bg-surface"
           >
             Clear

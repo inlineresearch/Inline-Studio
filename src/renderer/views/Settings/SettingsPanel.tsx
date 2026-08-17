@@ -1,4 +1,5 @@
 import { FalKeyField } from '../../components/FalKeyField'
+import { HfTokenField } from '../../components/HfTokenField'
 import { CloseIcon, SettingsIcon } from '../../components/icons'
 import { useCanvasPrefsStore, type EdgeStyle } from '../../store/canvasPrefsStore'
 import { useExtensionsStore } from '../../store/extensionsStore'
@@ -28,6 +29,9 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         <section className="rounded-lg border border-border bg-panel/40 p-3">
           <FalKeyField />
+        </section>
+        <section className="rounded-lg border border-border bg-panel/40 p-3">
+          <HfTokenField />
         </section>
         <section className="rounded-lg border border-border bg-panel/40 p-3">
           <ConnectionStyleField />

@@ -30,4 +30,9 @@ describe('characters wire contract', () => {
     // `events.onCharactersChanged` is derived from this key, so the name is the contract.
     expect(IpcChannels.events.charactersChanged).toBe('events:charactersChanged')
   })
+
+  it('declares the encode-progress event channel', () => {
+    // Built at runtime, so a rename would not fail typecheck; it would just stop delivering.
+    expect(IpcChannels.events.characterProgress).toBe('events:characterProgress')
+  })
 })

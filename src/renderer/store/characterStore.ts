@@ -4,7 +4,7 @@
  * editor, and whether an encode is in flight (it runs two embedding passes, so it is not instant).
  */
 import { create } from 'zustand'
-import type { CharacterDetail, CharacterSummary } from '@shared/types'
+import type { CharacterDetail, CharacterProgressEvent, CharacterSummary } from '@shared/types'
 import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
 
@@ -15,6 +15,8 @@ interface CharacterState {
   loading: boolean
   /** An encode is running. Creating and editing both recompile, so both set this. */
   busy: boolean
+  /** The running encode's latest phase, or null between encodes. */
+  progress: CharacterProgressEvent | null
   error: string | null
 
   load: () => Promise<void>
@@ -43,6 +45,7 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
   editing: null,
   loading: false,
   busy: false,
+  progress: null,
   error: null,
 
   load: async () => {
@@ -57,33 +60,33 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
   },
 
   create: async (name, assetIds, description) => {
-    set({ busy: true, error: null })
+    set({ busy: true, error: null, progress: null })
     try {
       const res = await studio().characters.create({ name, assetIds, description })
       if (!res.ok) {
-        set({ busy: false, error: res.error })
+        set({ busy: false, progress: null, error: res.error })
         return false
       }
-      set((s) => ({ characters: merged(s.characters, res.value), busy: false }))
+      set((s) => ({ characters: merged(s.characters, res.value), busy: false, progress: null }))
       return true
     } catch (e) {
-      set({ busy: false, error: ipcErrorMessage(e) })
+      set({ busy: false, progress: null, error: ipcErrorMessage(e) })
       return false
     }
   },
 
   createFromTake: async (takeId, name) => {
-    set({ busy: true, error: null })
+    set({ busy: true, error: null, progress: null })
     try {
       const res = await studio().characters.createFromTake(takeId, name)
       if (!res.ok) {
-        set({ busy: false, error: res.error })
+        set({ busy: false, progress: null, error: res.error })
         return false
       }
-      set((s) => ({ characters: merged(s.characters, res.value), busy: false }))
+      set((s) => ({ characters: merged(s.characters, res.value), busy: false, progress: null }))
       return true
     } catch (e) {
-      set({ busy: false, error: ipcErrorMessage(e) })
+      set({ busy: false, progress: null, error: ipcErrorMessage(e) })
       return false
     }
   },
@@ -132,7 +135,7 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
   },
 
   importFile: async (file) => {
-    set({ busy: true, error: null })
+    set({ busy: true, error: null, progress: null })
     try {
       // /upload routes through the asset importer, which drops unknown extensions, so a .char
       // needs its own endpoint.
@@ -141,15 +144,16 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
         body: file,
       })
       const result = (await response.json()) as { ok: boolean; error?: string }
-      if (!result.ok) return set({ busy: false, error: result.error ?? 'Import failed' })
-      set({ busy: false })
+      if (!result.ok)
+        return set({ busy: false, progress: null, error: result.error ?? 'Import failed' })
+      set({ busy: false, progress: null })
       await get().load()
     } catch (e) {
-      set({ busy: false, error: ipcErrorMessage(e) })
+      set({ busy: false, progress: null, error: ipcErrorMessage(e) })
     }
   },
 
-  reset: () => set({ characters: [], editing: null, error: null, busy: false }),
+  reset: () => set({ characters: [], editing: null, error: null, busy: false, progress: null }),
 }))
 
 type Setter = (
@@ -166,12 +170,12 @@ async function applyEdit(
   set({ error: null, ...(recompiles ? { busy: true } : {}) })
   try {
     const res = await call()
-    if (!res.ok) return set({ busy: false, error: res.error })
-    set((s) => ({ characters: merged(s.characters, res.value), busy: false }))
+    if (!res.ok) return set({ busy: false, progress: null, error: res.error })
+    set((s) => ({ characters: merged(s.characters, res.value), busy: false, progress: null }))
     // Adding or removing a reference changes refUrls, so the editor has to be refetched.
     if (get().editing?.file === res.value.file) await get().open(res.value.file)
   } catch (e) {
-    set({ busy: false, error: ipcErrorMessage(e) })
+    set({ busy: false, progress: null, error: ipcErrorMessage(e) })
   }
 }
 
@@ -180,7 +184,15 @@ async function applyEdit(
  * load, so the injected backend client is set first.
  */
 export function subscribeCharacterChanges(): () => void {
-  return studio().events.onCharactersChanged(() => {
+  const onChanged = studio().events.onCharactersChanged(() => {
     void useCharacterStore.getState().load()
   })
+  // Cleared on the last phase, since progress arrives while the call is still open.
+  const onProgress = studio().events.onCharacterProgress((e) => {
+    useCharacterStore.setState({ progress: e.fraction >= 1 ? null : e })
+  })
+  return () => {
+    onChanged()
+    onProgress()
+  }
 }

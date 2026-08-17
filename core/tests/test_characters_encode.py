@@ -241,3 +241,70 @@ def test_char_encode_rejects_an_empty_or_missing_reference(tmp_path: Path) -> No
         encode.char_encode([], name="Ada")
     with pytest.raises(ValueError, match="not found"):
         encode.char_encode([tmp_path / "nope.png"], name="Ada")
+
+
+# --- payload kinds --------------------------------------------------------------------------------
+
+
+def test_a_reference_payload_keeps_the_bare_arch_key() -> None:
+    """Every .char written before there was a second kind must stay valid without a format bump."""
+    assert encode.payload_key("flux2-klein") == "flux2-klein"
+    assert encode.payload_key("flux2-klein", encode.PAYLOAD_REF) == "flux2-klein"
+
+
+def test_a_lora_payload_sits_beside_it_rather_than_replacing_it() -> None:
+    assert encode.payload_key("flux2-klein", encode.PAYLOAD_LORA) == "flux2-klein-lora"
+    assert encode.payload_key("krea2", encode.PAYLOAD_LORA) == "krea2-lora"
+
+
+def test_a_stored_adapter_records_the_base_it_was_trained_against(tmp_path: Path) -> None:
+    """A 4B adapter on a 9B degrades silently rather than raising, so the base has to travel."""
+    doc = encode.char_encode([_image(tmp_path / "r.png", (768, 1024), (180, 150, 140))], name="Ada")
+    key = encode.set_lora_payload(
+        doc.manifest, doc.members, b"adapter-bytes",
+        base="flux-2-klein-base-4b.safetensors", rank=16, steps=200, resolution=512,
+    )
+
+    entry = doc.manifest.payloads[key]
+    assert entry["type"] == encode.PAYLOAD_LORA
+    assert entry["base"] == "flux-2-klein-base-4b.safetensors"
+    assert entry["training"] == {"rank": 16, "steps": 200, "resolution": 512}
+    assert doc.members[f"payloads/{key}/adapter.safetensors"] == b"adapter-bytes"
+    # The reference payload is untouched: compiling for one model never edits another.
+    assert doc.manifest.payloads[encode.FLUX2_KLEIN_ARCH]["type"] == encode.PAYLOAD_REF
+
+
+def test_editing_the_references_invalidates_a_stored_adapter(tmp_path: Path) -> None:
+    """An adapter trained on an old reference set is the wrong face, not a staler one."""
+    doc = encode.char_encode([_image(tmp_path / "r.png", (768, 1024), (180, 150, 140))], name="Ada")
+    key = encode.set_lora_payload(
+        doc.manifest, doc.members, b"adapter-bytes",
+        base="flux-2-klein-base-4b.safetensors", rank=16, steps=200, resolution=512,
+    )
+    assert cf.payload_valid(doc.manifest, key, encode.LORA_PAYLOAD_VERSION)
+
+    doc.manifest.refs.append({**doc.manifest.refs[0], "sha256": "0" * 64})
+
+    assert not cf.payload_valid(doc.manifest, key, encode.LORA_PAYLOAD_VERSION)
+
+
+def test_an_encode_reports_its_phases_in_order(tmp_path: Path) -> None:
+    """Phases must arrive, advance and finish at 1.0; a silent encode looks like a hang."""
+    seen: list[tuple[float, str]] = []
+    encode.char_encode(
+        [
+            _image(tmp_path / "a.png", (768, 1024), (180, 150, 140)),
+            _image(tmp_path / "b.png", (768, 1024), (170, 140, 130)),
+        ],
+        name="Ada",
+        on_progress=lambda fraction, status: seen.append((fraction, status)),
+    )
+
+    fractions = [f for f, _ in seen]
+    assert fractions == sorted(fractions), f"progress went backwards: {fractions}"
+    assert fractions[-1] == 1.0, "the encode never reported completion"
+    assert all(0.0 <= f <= 1.0 for f in fractions)
+    # Every phase names what it is doing; a blank status is what the bar exists to avoid.
+    assert all(status.strip() for _, status in seen)
+    # Per-reference phases, so a slow multi-ref encode still moves.
+    assert sum("Finding faces" in status for _, status in seen) == 2

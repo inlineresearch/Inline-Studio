@@ -5,6 +5,7 @@ import { useCharacterStore } from '../../store/characterStore'
 import { getAssetDragIds } from '../../lib/dnd'
 import { CloseIcon, DownloadIcon, PlusIcon } from '../../components/icons'
 import { CharacterEditor } from './CharacterEditor'
+import { EncodeProgress } from './EncodeProgress'
 
 /**
  * Left panel: every saved character, plus creating one by dropping images.
@@ -87,7 +88,7 @@ export function CharacterLibraryPanel(): React.JSX.Element {
       </div>
 
       {error && <div className="px-2 py-1 text-[11px] text-red-400">{error}</div>}
-      {busy && <div className="px-2 py-1 text-[11px] text-muted">Building character…</div>}
+      {busy && <EncodeProgress label="Building character…" />}
 
       {draft && (
         <NewCharacterForm

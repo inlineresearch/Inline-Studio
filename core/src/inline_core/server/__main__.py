@@ -79,6 +79,8 @@ def main() -> None:
         studio_config.workspace_dir(),
         default_core_url=studio_config.DEFAULT_CORE_URL,
     )
+    # Before any download: huggingface_hub reads the token only from the environment.
+    store.apply_hf_token()
     # Reopen whatever was open before the restart, so a browser tab left open across it keeps
     # working instead of failing every call with "No project is open."
     store.restore_last_project()

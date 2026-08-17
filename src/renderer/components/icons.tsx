@@ -109,6 +109,34 @@ export function FolderIcon({ className }: { className?: string }): React.JSX.Ele
 }
 
 /** `settings` - a gear. */
+/** Outlined "i", carrying a setting's explanation so the panel stays a list of controls. */
+export function InfoIcon({
+  className,
+  title,
+}: {
+  className?: string
+  title?: string
+}): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className ?? 'h-[1em] w-[1em]'}
+      // Titled: it is the setting's explanation, so it must reach a screen reader too.
+      role={title ? 'img' : undefined}
+      aria-hidden={title ? undefined : true}
+    >
+      {title ? <title>{title}</title> : null}
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4M12 8h.01" />
+    </svg>
+  )
+}
+
 export function SettingsIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>

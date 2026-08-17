@@ -365,6 +365,10 @@ def register_studio_handlers(
     reg("falSettings:status", store.fal_status)
     reg("falSettings:setApiKey", store.set_fal_key)
     reg("falSettings:clearApiKey", store.clear_fal_key)
+
+    reg("hfSettings:status", store.hf_status)
+    reg("hfSettings:setToken", store.set_hf_key)
+    reg("hfSettings:clearToken", store.clear_hf_key)
     # --- timeline (director/trim/export via ffmpeg) + folder export -----------------------------
     if timeline is not None:
         from .timeline.render import export_frames

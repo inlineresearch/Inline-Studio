@@ -340,6 +340,8 @@ export interface CoreTakeRef {
   /** 0-100 identity match against that character's centroid. Absent means "not measured", which
    * is a different fact from a low score, so it must never be defaulted to zero. */
   continuityScore?: number
+  /** The score is the face term alone: the references cannot speak to this take's framing. */
+  continuityFaceOnly?: boolean
 }
 
 /** One saved character in `models/characters/`, as the library panel lists it. */
@@ -487,6 +489,15 @@ export interface ActivityRun {
 }
 
 /** Main → renderer: the live run list changed. Carries the whole list, so it replaces state. */
+/** One phase of a character encode, streamed while the create/edit RPC is still in flight. */
+export interface CharacterProgressEvent {
+  /** The character's name, which is all the client has to match on before a file exists. */
+  name: string
+  /** 0 to 1. */
+  fraction: number
+  status: string
+}
+
 export interface ActivityChangedEvent {
   runs: ActivityRun[]
 }

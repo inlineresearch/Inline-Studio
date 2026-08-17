@@ -1,5 +1,5 @@
 import { AudioGlyph, XIcon } from './NodeBadge'
-import { scoreTitle, scoreTone } from '@/lib/continuity'
+import { scoreSuffix, scoreTitle, scoreTone } from '@/lib/continuity'
 
 /** One selectable media thumbnail in the strip. */
 export interface StripItem {
@@ -14,6 +14,8 @@ export interface StripItem {
   /** 0-100 identity match, when a character was applied. Absent means "not measured", which is a
    *  different fact from a low score, so it must never be shown as zero. */
   score?: number
+  /** The score covers the face alone, because the references cannot judge this take's framing. */
+  faceOnly?: boolean
 }
 
 /**
@@ -94,10 +96,11 @@ export function ThumbStrip({
           )}
           {it.score !== undefined && (
             <span
-              title={scoreTitle(it.score)}
+              title={scoreTitle(it.score, it.faceOnly)}
               className={`pointer-events-none absolute left-0.5 top-0.5 rounded bg-black/85 px-1 text-[7px] leading-tight ${scoreTone(it.score)}`}
             >
               {Math.round(it.score)}
+              {scoreSuffix(it.faceOnly)}
             </span>
           )}
           {onRemove && (

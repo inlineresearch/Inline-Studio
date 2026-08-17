@@ -224,7 +224,12 @@ class CoreGeneration:
         if result is None:
             # Measured nothing. Record the character anyway so the UI can say which one was used.
             return {"characterId": chosen}
-        return {"characterId": chosen, "continuityScore": result["score"]}
+        return {
+            "characterId": chosen,
+            "continuityScore": result["score"],
+            # False when the number is the face alone, so a dropped term is never hidden.
+            "continuityFaceOnly": not result.get("subjectCounted", True),
+        }
 
     def _save_take(self, item_id: str, take: Any, ref: Any) -> None:
         """Copy a take's bytes into the project's takes/ dir and set its Core node's output. Image
