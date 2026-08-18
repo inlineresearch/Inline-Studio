@@ -53,6 +53,13 @@ def _register_builtins(
     requirements.register("controlSpace", ControlSpaceProvider())
     registered.append("controlSpace")
     try:
+        from ..models.character import register_character_nodes
+
+        register_character_nodes(registry)
+        registered.append("character")
+    except ImportError:
+        pass
+    try:
         from ..models.zimage.provider import ZImageProvider
         from ..models.zimage.runner import register_zimage
 

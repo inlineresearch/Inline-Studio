@@ -57,11 +57,16 @@ import { GenNode } from './nodes/GenNode'
 import { PromptNode } from './nodes/PromptNode'
 import { GenerateSettingsPanel } from './GenerateSettingsPanel'
 import { CoreSettingsPanel } from './CoreSettingsPanel'
+import { TrainingSettingsMount } from '../Trainer/TrainingSettingsMount'
 import { ModelInfoPanel } from './ModelInfoPanel'
 import { ModelRequirementsModal } from './nodes/ModelRequirementsModal'
 import { PreviewNode } from './nodes/PreviewNode'
 import { LayerNode } from './nodes/LayerNode'
 import { DirectorNode } from './nodes/DirectorNode'
+import { TrainDatasetNode } from '../Trainer/nodes/TrainDatasetNode'
+import { CaptionNode } from '../Trainer/nodes/CaptionNode'
+import { TrainerNode } from '../Trainer/nodes/TrainerNode'
+import { LossGraphNode } from '../Trainer/nodes/LossGraphNode'
 import { TrimNode } from './nodes/TrimNode'
 import { LoaderNode } from './nodes/LoaderNode'
 import { ControlSpaceNode } from './nodes/ControlSpaceNode'
@@ -69,7 +74,6 @@ import { GraphNode } from './nodes/GraphNode'
 import { ResourceNode } from './nodes/ResourceNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
-import { CharacterPanel } from '../Characters/CharacterPanel'
 import { MissingModelsDialog } from '../Models/MissingModelsDialog'
 import { checkGraphModels } from '../../lib/checkModels'
 import { CanvasToolbar } from './CanvasToolbar'
@@ -120,6 +124,9 @@ function writeViewport(id: string, v: { x: number; y: number; zoom: number }): v
   }
 }
 
+/** Item types the Training category adds; they map straight through to their own components. */
+const TRAINING_TYPES = new Set(['train/dataset', 'train/caption', 'train/lora', 'train/loss'])
+
 const nodeTypes: NodeTypes = {
   image: ImageNode,
   video: VideoNode,
@@ -135,6 +142,10 @@ const nodeTypes: NodeTypes = {
   controlSpace: ControlSpaceNode,
   core: GraphNode,
   resource: ResourceNode,
+  'train/dataset': TrainDatasetNode,
+  'train/caption': CaptionNode,
+  'train/lora': TrainerNode,
+  'train/loss': LossGraphNode,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -304,6 +315,8 @@ function Board(): React.JSX.Element {
   const addLoaderAssets = useMoodboardStore((s) => s.addLoaderAssets)
   const addPrompt = useMoodboardStore((s) => s.addPrompt)
   const addCoreNode = useMoodboardStore((s) => s.addCoreNode)
+  const addTrainingNode = useMoodboardStore((s) => s.addTrainingNode)
+  const addResource = useMoodboardStore((s) => s.addResource)
   const addGenNode = useMoodboardStore((s) => s.addGenNode)
   const duplicateItems = useMoodboardStore((s) => s.duplicateItems)
   const undo = useMoodboardStore((s) => s.undo)
@@ -325,7 +338,8 @@ function Board(): React.JSX.Element {
   const setCanvasSelection = useUiStore((s) => s.setCanvasSelection)
   const setCanvasCenter = useUiStore((s) => s.setCanvasCenter)
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const { screenToFlowPosition, getNodes, getViewport, setViewport, fitView } = useReactFlow()
+  const { screenToFlowPosition, getNodes, getViewport, setViewport, fitView, setCenter } =
+    useReactFlow()
   const projectId = useProjectStore((s) => s.current?.id ?? null)
   // Restore the canvas pan/zoom where the user left it, once per project open (after its board
   // loads); a project with no saved view falls back to fit-all.
@@ -377,6 +391,15 @@ function Board(): React.JSX.Element {
     if (saved) void setViewport(saved)
     else void fitView({ maxZoom: 1 })
   }, [projectId, items.length, setViewport, fitView])
+
+  // A chain dropped clear of existing work can land off-screen, and `onlyRenderVisibleElements`
+  // means it is not even in the DOM: without this the click reads as having done nothing.
+  const reveal = useUiStore((s) => s.reveal)
+  useEffect(() => {
+    if (!reveal) return
+    void setCenter(reveal.x, reveal.y, { zoom: 0.75, duration: 400 })
+    useUiStore.getState().clearReveal()
+  }, [reveal, setCenter])
 
   const assetsById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets])
 
@@ -774,6 +797,15 @@ function Board(): React.JSX.Element {
       case 'controlSpace':
         void addControlSpace(m.flowX, m.flowY)
         break
+      case 'train/dataset':
+      case 'train/caption':
+      case 'train/lora':
+      case 'train/loss':
+        void addTrainingNode(kind, m.flowX, m.flowY)
+        break
+      case 'resource':
+        void addResource(m.flowX, m.flowY)
+        break
     }
   }
 
@@ -1039,7 +1071,6 @@ function Board(): React.JSX.Element {
   return (
     <div className="relative flex h-full">
       <SideMenu />
-      <CharacterPanel />
       <MissingModelsDialog />
 
       <div
@@ -1174,6 +1205,7 @@ function Board(): React.JSX.Element {
 
         <GenerateSettingsPanel />
         <CoreSettingsPanel />
+        <TrainingSettingsMount />
         <ModelInfoPanel />
         <ModelRequirementsModal />
 
@@ -1350,6 +1382,11 @@ function itemToNode(
   }
   if (item.type === 'text') {
     return { ...common, type: 'text', data: { text: item.data.text ?? FALLBACK_TEXT } }
+  }
+  // Training nodes read everything from the board context by id, like the Core node does. Without
+  // this they fall through to the asset branch below and render as a blank image.
+  if (TRAINING_TYPES.has(item.type)) {
+    return { ...common, type: item.type, data: { itemId: item.id } }
   }
   const asset = item.assetId ? assetsById.get(item.assetId) : undefined
   // Images render from their downscaled thumbnail when available (full-res only in the

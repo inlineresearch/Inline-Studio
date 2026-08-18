@@ -138,6 +138,7 @@ class ModelDownloads:
             filename=model.filename, repo=model.repo,
             repo_file="" if model.kind == "hf_folder" else model.path,
             repo_folder=model.path if model.kind == "hf_folder" else "",
+            repo_files=model.files,
         )
         target = models_dir() / model.category
         try:
@@ -231,19 +232,20 @@ class ModelDownloads:
         on_progress(0.0, f"Downloading {comp.label}…")
         tqdm_class = _progress_tqdm(on_progress, comp.label)
         folder = getattr(comp, "repo_folder", "")
+        wanted = tuple(getattr(comp, "repo_files", ()) or ())
 
         def _fetch(token: bool | None) -> str:
-            if folder:
+            if folder or wanted:
                 # A component that is a directory - a sharded encoder, a tokenizer, a diffusers
                 # checkpoint. Same staging and resume behaviour; only the fetch differs.
                 root = snapshot_download(
                     comp.repo,
-                    allow_patterns=f"{folder}/*",
+                    allow_patterns=list(wanted) if wanted else f"{folder}/*",
                     local_dir=str(staging),
                     token=token,
                     tqdm_class=tqdm_class,
                 )
-                return str(Path(root) / folder)
+                return str(Path(root) / folder) if folder else str(root)
             return hf_hub_download(
                 comp.repo,
                 comp.repo_file,

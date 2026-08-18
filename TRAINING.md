@@ -6,13 +6,14 @@ the canvas, see [LoRA training in the README](README.md#lora-training).
 
 Inline Studio trains LoRAs for **Z-Image**, **Krea 2**, **FLUX.2**, **MiniMax H3** and **LTX-2.5**
 on your own GPU, with no cloud step and nothing uploaded. Training is cheaper than generating: a
-16GB card trains all three image models at 512px, and a LoRA trained at 512 applies at any
-generation resolution. The two video models are the exception, and LTX-2.5 wants a 48GB card.
+16GB card trains all three image models at 512px, and MiniMax H3 as well if it has 64GB of system
+RAM behind it. A LoRA trained at 512 applies at any generation resolution. LTX-2.5 is the one
+exception and wants a 48GB card.
 
 **Contents:** [The graph](#the-graph) · [Datasets and outputs](#datasets-and-outputs) ·
 [Stop and resume](#stop-and-resume) · [Trigger words](#trigger-words) ·
-[Architecture and base model modes](#architecture-and-base-model-modes) · [Install](#install) ·
-[Training on clips](#training-on-clips) · [Control LoRAs](#control-loras) ·
+[Architecture and base model modes](#architecture-and-base-model-modes) ·
+[Training on clips](#training-on-clips) · [Install](#install) · [Control LoRAs](#control-loras) ·
 [**Benchmark results**](#benchmark-results) ·
 [Dataset and adapter options](#dataset-and-adapter-options) · [Base precision](#base-precision)
 
@@ -60,7 +61,7 @@ The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FL
 - **FL2VA** is the only base, and it is undistilled, so there is no adapter and nothing to drift. Put `minimax_h3_fl2va_bf16.safetensors` in `models/diffusion_models/`, train on stills, then wire the LoRA into any of the four H3 nodes. **It has to be the bf16 file.** The smaller `pruned` and `pruned_fp8_scaled` builds generate but cannot train: they ship no timestep path for the modulation basis to be derived from, and they would save nothing anyway, because the base trains at 4-bit whichever file it starts from. The trainer says so rather than failing part way in. It loads on the Reference to Video node too, which uses a different checkpoint file: the two partitions are the same architecture.
 - **Stills or short clips.** Drop images and it learns appearance: look, style, character, lighting. Drop video and it learns motion too. Sound is never learned either way, because the audio rows are empty. See [Training on clips](#training-on-clips).
 - **The base is 4-bit, always.** H3 is 40GB after the AdaLN factorisation and 11.7GB after quantisation, so full precision is refused rather than offered and then failing. There is no base-precision control for H3 for the same reason.
-- **A 24GB card is comfortable and a 16GB card works, slowly.** The run encodes latents and captions in two passes that never overlap, because H3's fp32 video VAE and its 32B conditioner cannot be resident together. On a card that holds the conditioner it peaks at 20.6GB; on one that does not, the conditioner runs on the CPU and the peak drops to 12.7GB while a step goes from 0.6s to 16s. Either way there is about seven minutes of startup, and 64GB of system RAM for the smaller card. See [Benchmark results](#benchmark-results) for the split. The download is about 124GB before any of that.
+- **A 24GB card is comfortable and a 16GB card works, slowly.** The run encodes latents and captions in two passes that never overlap, because H3's fp32 video VAE and its 32B conditioner cannot be resident together. On a card that holds the conditioner it peaks at 20.6GB; on one that does not, the conditioner runs on the CPU and the peak drops to 12.7GB while a step goes from 0.6s to 16s. Either way there is about seven minutes of startup, and 64GB of system RAM for the smaller card. See [Benchmark results](#benchmark-results) for the split. The download is about 139GB before any of that.
 
 **Z-Image** is distilled either way:
 
@@ -187,24 +188,11 @@ well as its own `0001.ref.mp4`, so a downloaded set can be trained on directly.
 > guessing: LTX needs Ampere or newer for the same reason generation does (see the runbook below),
 > and a 42GB bf16 base does not fit a 15GB card in any case.
 
-### LTX-2.5 generation, measured on an L40S (44.4 GiB)
-
-A 2 second clip at 960x576, distilled, same clip each time. The **cached** column is the one a
-sequence actually pays, for every shot after the first.
-
-|                          | cold render | cached render | peak VRAM |
-| ------------------------ | ----------- | ------------- | --------- |
-| Streaming weights        | 944.8s      | 844.3s        | 7.71 GiB  |
-| Transformer resident     | 538.7s      | 534.2s        | 21.90 GiB |
-| + shared weight registry | **465.4s**  | **229.2s**    | 32.19 GiB |
-
-Three fixes got from the first row to the third, and each needed the one before it. The full
-write-up is in [docs/ltx-2-5.md](docs/ltx-2-5.md#performance-measured). The remaining cost is the
-prompt encoder, reloaded on every render.
+### Training VRAM by model
 
 12 steps at rank 16, batch 1, gradient checkpointing on. The number is `torch.cuda.max_memory_allocated`, so leave headroom for the CUDA context and allocator slack.
 
-| Model      | Base mode       | Res  | Base precision | L40S (46GB)   | T4 (15GB)     |
+| Model      | Base mode       | Res  | Base precision | L40S (48GB)   | T4 (16GB)     |
 | ---------- | --------------- | ---- | -------------- | ------------- | ------------- |
 | Z-Image    | De-Turbo        | 512  | bf16           | 13.1GB        | 13.4GB        |
 | Z-Image    | De-Turbo        | 1024 | bf16           | 14.9GB        | out of memory |
@@ -242,7 +230,7 @@ On a card too small for the conditioner it never goes there at all, so the peak 
 
 **The bill arrives as time instead.** The conditioner runs on the CPU, and bitsandbytes only quantises on the move to CUDA, so it runs unquantised:
 
-|                         | L40S (46GB) | L4 (24GB) | T4 (16GB, 64GB RAM) |
+|                         | L40S (48GB) | L4 (24GB) | T4 (16GB, 64GB RAM) |
 | ----------------------- | ----------- | --------- | ------------------- |
 | Peak VRAM, 512px        | 20.6GB      | 20.55GB   | 12.7GB              |
 | Seconds per step, 512px | 0.63        | 1.81      | 16.2                |
@@ -259,11 +247,11 @@ A training adapter is free: it is fused into the base before training starts, so
 
 **LTX-2.5 is the opposite case: the base is nearly the whole bill, and it barely fits.** The 22B dev
 transformer lands at 38.0GB allocated before a step runs, and training peaks at 42.0GB allocated
-against 43.4GB reserved on a 46GB card. That leaves under 3GB of headroom, so a 48GB card is the
+against 43.4GB reserved on an L40S. That leaves under 3GB of headroom, so a 48GB card is the
 floor rather than a comfort. There is no 4-bit rung to fall back on: the loader refuses to quantise
 this architecture, and the trainer now says so instead of dropping the setting silently.
 
-|                            | L40S (46GB) |
+|                            | L40S (48GB) |
 | -------------------------- | ----------- |
 | Peak VRAM, 512px           | 42.0GB      |
 | Seconds per step, 512px    | 0.67        |
@@ -306,6 +294,22 @@ FLUX.2 is quicker than either. On an L40S, klein Base 4B trains at about 0.3s a 
 
 System RAM matters as well. Checkpoints are read tensor by tensor rather than mapped whole, so Krea 2 trains in about 3GB of host RAM. Without that, Linux refuses to map a file larger than physical RAM when there is no swap, and a 26GB checkpoint cannot be opened on a 16GB machine at all.
 
+### LTX-2.5 generation, measured on an L40S
+
+Generation rather than training, kept here because it is the same card and the same clip. A 2 second
+clip at 960x576, distilled. The **cached** column is the one a sequence actually pays, for every shot
+after the first.
+
+|                          | cold render | cached render | peak VRAM |
+| ------------------------ | ----------- | ------------- | --------- |
+| Streaming weights        | 944.8s      | 844.3s        | 7.71 GiB  |
+| Transformer resident     | 538.7s      | 534.2s        | 21.90 GiB |
+| + shared weight registry | **465.4s**  | **229.2s**    | 32.19 GiB |
+
+Three fixes got from the first row to the third, and each needed the one before it. The full
+write-up is in [docs/ltx-2-5.md](docs/ltx-2-5.md#performance-measured). The remaining cost is the
+prompt encoder, reloaded on every render.
+
 ## Dataset and adapter options
 
 Three settings shape what the adapter learns rather than what it costs:
@@ -322,7 +326,7 @@ Krea 2's base is 26GB at bf16, which is what makes it expensive to fine-tune. Th
 - **Full precision (bf16)** forces the unquantized base.
 - **4-bit (NF4)** forces the quantized base.
 
-The setting appears for Krea 2 and FLUX.2, but it only pays off on Krea 2. Z-Image has no 4-bit path and does not need one: it trains in about 15 GB at 1024, so bf16 already fits the cards people have. FLUX.2 has the path and gains nothing from it, because klein 4B is smaller than its own text encoder and the peak sits in the caching pass either way, so Auto leaves it at bf16. See [Benchmark results](#benchmark-results).
+The setting appears for Krea 2 and FLUX.2, but it only pays off on Krea 2. Z-Image has no 4-bit path and does not need one: it trains in about 15GB at 1024, so bf16 already fits the cards people have. FLUX.2 has the path and gains nothing from it, because klein 4B is smaller than its own text encoder and the peak sits in the caching pass either way, so Auto leaves it at bf16. See [Benchmark results](#benchmark-results).
 
 To keep the peak down, the VAE and text encoder are loaded first, used to cache latents and captions, then freed before the transformer loads, so the two never stack. Which half then owns the peak depends on the model: for Z-Image and Krea 2 it is the transformer, for FLUX.2 klein it is the caching pass. If you do hit an out-of-memory error, lower the training resolution before changing anything else.
 
@@ -333,22 +337,3 @@ reference: [Krea 2](https://inlinestudio.art/lora-training/krea-2) ·
 [Z-Image](https://inlinestudio.art/lora-training/z-image) ·
 [FLUX.2](https://inlinestudio.art/lora-training/flux-2). Back to the
 [README](README.md), or the [full guide on the site](https://inlinestudio.art/lora-training).
-
-### Runbook: measuring LTX-2.5
-
-Two boxes, because they answer different questions: a **Tesla T4 (16GB, Turing)** and a **48GB
-A6000, L40S or A40**. Record for each run the resolved plan the engine logs, peak **allocated and
-reserved** VRAM (`nvidia-smi` shows only reserved, so a leaked reference and allocator cache look
-identical from outside), host RAM high-water, and wall clock per stage.
-
-1. **Generation, fast mode.** 5 seconds at 1920x1088 and again at 960x544, distilled transformer.
-   Confirm the MP4 has audio in it.
-2. **Generation, quality mode.** The dev transformer plus the distilled LoRA, same two shapes.
-3. **Training, Clip LoRA.** Rank 16, 512px, batch 1, gradient checkpointing on, the shortest
-   grid-legal clip. Peak VRAM and seconds per step.
-
-**On the T4, answer the numerics question before the speed one.** Turing has no bf16 acceleration
-and no fp8, and LTX is written for bf16 throughout. An fp16 cast of a bf16-trained 22B transformer
-is a numerics change rather than a placement one, and it fails by producing black or NaN frames
-rather than by raising. So render one short clip and look at it first. If it is broken, the honest
-result is that LTX-2.5 needs Ampere or newer, and that is what the table should say.

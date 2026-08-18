@@ -22,6 +22,10 @@ export type PortKind =
   | 'conditioning'
   | 'latent'
   | 'control'
+  | 'character'
+  | 'payload'
+  | 'payload[]'
+  | 'dataset'
 
 export interface CorePort {
   id: string
@@ -162,6 +166,7 @@ export function producesFrame(descriptor: NodeDescriptor): boolean {
 export function portsSatisfy(source: PortKind, target: PortKind): boolean {
   if (source === target) return true
   if (source === 'image' && target === 'image[]') return true
+  if (source === 'payload' && target === 'payload[]') return true
   // A control input accepts any image output (a raw image, a preprocessed control map, or a
   // Control Space render); the control map is just an image.
   return source === 'image' && target === 'control'
@@ -181,6 +186,10 @@ const PORT_COLORS: Record<PortKind, string> = {
   conditioning: '#c084fc',
   latent: '#60a5fa',
   control: '#f9a8d4',
+  character: '#f0abfc',
+  payload: '#93c5fd',
+  'payload[]': '#93c5fd',
+  dataset: '#fbbf24',
 }
 
 /** A stable color per port kind, for Comfy-style colored sockets and edges. */

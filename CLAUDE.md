@@ -27,10 +27,10 @@ plus closed models via fal.ai.
 >
 > **Hugging Face org: [`inlineresearch`](https://huggingface.co/inlineresearch)** - published models and datasets trained with the app.
 >
-> | Hugging Face repo                                                                                   | What it is                                                   |
-> | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-> | [`inlineresearch/skin-lora-krea-2-raw`](https://huggingface.co/inlineresearch/skin-lora-krea-2-raw) | Skin-texture LoRA for Krea 2 RAW, trained in the Trainer tab |
-> | [`inlineresearch/krea2-skin-lora`](https://huggingface.co/datasets/inlineresearch/krea2-skin-lora)  | The 26 image + caption pairs that LoRA trained on            |
+> | Hugging Face repo                                                                                   | What it is                                              |
+> | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+> | [`inlineresearch/skin-lora-krea-2-raw`](https://huggingface.co/inlineresearch/skin-lora-krea-2-raw) | Skin-texture LoRA for Krea 2 RAW, trained on the canvas |
+> | [`inlineresearch/krea2-skin-lora`](https://huggingface.co/datasets/inlineresearch/krea2-skin-lora)  | The 26 image + caption pairs that LoRA trained on       |
 >
 > Website: [inlinestudio.art](https://inlinestudio.art).
 

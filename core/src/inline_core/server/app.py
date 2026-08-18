@@ -167,14 +167,17 @@ def create_app(
     events = events or EventBroadcaster()
     # Host/GPU telemetry for the Trainer tab; only meaningful with the SPA (studio) backend wired.
     stats = SystemStats(events) if studio_store is not None else None
-    # Assigned further down with the studio wiring; the lifespan closure reads it at startup.
+    # Assigned further down with the studio wiring; the lifespan closure reads them at startup.
     activity_registry: Any = None
+    training_bridge: Any = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # noqa: ANN202
         manager.bind_loop(asyncio.get_running_loop())
         if activity_registry is not None:
             activity_registry.bind_loop(asyncio.get_running_loop())
+        if training_bridge is not None:
+            training_bridge.bind_loop(asyncio.get_running_loop())
         catalog.ensure_dirs()
         catalog.scan()
         if stats is not None:
@@ -388,11 +391,40 @@ def create_app(
         activity.set_canceller("fal", fal_generation.cancel_run)
         activity.set_canceller("training", training_service.cancel)
         activity_registry = activity
-        # Rescan on change, so a new character reaches the node's dropdown without a restart.
-        characters_service = Characters(
-            studio_store, events, on_change=catalog.rescan, training=training_service
+        # Training as graph nodes, so one Run walks dataset -> caption -> train in order.
+        from ..models.training import register_training_nodes
+
+        def bind_training_node(item_id: str, run_id: str) -> None:
+            """Persist the run on its node and tell the canvas, so Resume survives a reload."""
+            from ..studio import moodboard as studio_moodboard
+
+            try:
+                item = studio_moodboard.get_item(studio_store.conn(), item_id)
+            except ValueError:
+                return  # the node was deleted while its run was starting
+            studio_moodboard.update_item(
+                studio_store.conn(), item_id, {"data": {**item["data"], "runId": run_id}}
+            )
+            events.broadcast("events:trainingNodeBound", {"itemId": item_id, "runId": run_id})
+
+        training_bridge = register_training_nodes(
+            registry, training_service, on_bound=bind_training_node
         )
+        # Rescan on change, so a new character reaches the node's dropdown without a restart.
+        characters_service = Characters(studio_store, events, on_change=catalog.rescan)
         core_generation.set_characters(characters_service)
+
+        def character_saved(_file: str) -> None:
+            """Same refresh the library list does: rescan, then tell the canvas to reload."""
+            catalog.rescan()
+            events.broadcast("events:charactersChanged", {})
+
+        try:
+            from ..models.character import set_save_listener
+
+            set_save_listener(character_saved)
+        except ImportError:
+            pass
 
         register_studio_handlers(
             rpc,

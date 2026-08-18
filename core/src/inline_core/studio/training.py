@@ -291,7 +291,7 @@ class Training:
         A run row stays `training` if its process died without the orchestrator seeing the exit (a
         killed subprocess, a server restart). Nothing would ever clear it, and since the UI blocks
         starting while any run is training, one orphan disables training forever. Checked on the
-        Trainer tab's own load, which is the first thing the UI does."""
+        training panel's own load, which is the first thing the UI does."""
         for run in ts.list_runs(conn):
             if run["id"] in self._queue:
                 continue  # waiting its turn, not orphaned

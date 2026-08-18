@@ -4,10 +4,15 @@ import { useAssetStore } from '../../store/assetStore'
 import { useCharacterStore } from '../../store/characterStore'
 import { getAssetDragIds } from '../../lib/dnd'
 import { CloseIcon, DownloadIcon, EditIcon, PlusIcon } from '../../components/icons'
+import { buildCharacterEditChain, buildCharacterStarter } from '../../lib/starterGraph'
+import { useUiStore } from '../../store/uiStore'
 
-/** Every saved character, plus creating one by dropping images; the work happens in the dialog. */
+/** Where a chain lands: what the user is looking at. */
+const centre = (): { x: number; y: number } => useUiStore.getState().canvasCenter
+
+/** Every saved character, plus the two ways to make one: the drop-in form, or the canvas chain. */
 export function CharacterLibraryPanel(): React.JSX.Element {
-  const { characters, loading, error, load, remove, openPanel, importFile } = useCharacterStore()
+  const { characters, loading, error, load, remove, importFile } = useCharacterStore()
   const [dragOver, setDragOver] = useState(false)
 
   useEffect(() => {
@@ -31,7 +36,7 @@ export function CharacterLibraryPanel(): React.JSX.Element {
 
     // Assets dragged from the library become a new character's references.
     const assetIds = getAssetDragIds(e.dataTransfer)
-    if (assetIds.length > 0) return openPanel({ kind: 'create', assetIds })
+    if (assetIds.length > 0) return void buildCharacterStarter(centre(), assetIds)
 
     const files = Array.from(e.dataTransfer.files ?? [])
     const chars = files.filter((f) => f.name.toLowerCase().endsWith('.char'))
@@ -43,7 +48,10 @@ export function CharacterLibraryPanel(): React.JSX.Element {
       // ordinary assets the user can find, re-use and delete.
       await useAssetStore.getState().importFiles(images)
       const added = useAssetStore.getState().assets.slice(0, images.length)
-      openPanel({ kind: 'create', assetIds: added.map((a) => a.id) })
+      await buildCharacterStarter(
+        centre(),
+        added.map((a) => a.id),
+      )
     }
   }
 
@@ -60,8 +68,8 @@ export function CharacterLibraryPanel(): React.JSX.Element {
         <span className="text-xs font-medium text-muted">Characters</span>
         <button
           type="button"
-          title="Create a character"
-          onClick={() => openPanel({ kind: 'create', assetIds: [] })}
+          title="Build a character on the canvas"
+          onClick={() => void buildCharacterStarter(centre())}
           className="flex h-6 w-6 items-center justify-center rounded text-muted hover:bg-surface hover:text-fg"
         >
           <PlusIcon className="h-4 w-4" />
@@ -75,7 +83,7 @@ export function CharacterLibraryPanel(): React.JSX.Element {
           <CharacterCard
             key={character.file}
             character={character}
-            onOpen={() => openPanel({ kind: 'edit', file: character.file })}
+            onOpen={() => void buildCharacterEditChain(character.file, centre())}
             onDelete={() => void remove(character.file)}
           />
         ))}

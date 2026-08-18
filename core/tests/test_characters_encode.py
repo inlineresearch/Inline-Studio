@@ -308,3 +308,50 @@ def test_an_encode_reports_its_phases_in_order(tmp_path: Path) -> None:
     assert all(status.strip() for _, status in seen)
     # Per-reference phases, so a slow multi-ref encode still moves.
     assert sum("Finding faces" in status for _, status in seen) == 2
+
+
+def test_one_character_holds_a_payload_per_model(tmp_path: Path) -> None:
+    """Building for a second model must not disturb the first: identity is compiled once and each
+    model gets its own payload, which is what makes adding a model cheap."""
+    doc = encode.char_encode([_image(tmp_path / "r.png", (768, 1024), (180, 150, 140))], name="Ada")
+    manifest, members = doc.manifest, doc.members
+
+    # A reference set for a second architecture, alongside FLUX.2's.
+    encode.build_payload(manifest, members, [encode._open(tmp_path / "r.png")], arch="minimax-h3")
+    encode.set_lora_payload(
+        manifest, members, b"adapter", arch="krea2",
+        base="krea2_turbo_bf16.safetensors", rank=16, steps=600, resolution=512,
+    )
+
+    assert set(manifest.payloads) == {encode.FLUX2_KLEIN_ARCH, "minimax-h3", "krea2-lora"}
+    assert encode.needs_rebuild(manifest) is False, "nothing was edited, so nothing is stale"
+    # Each payload keeps its own files rather than sharing FLUX.2's.
+    assert any(m.startswith("payloads/minimax-h3/") for m in members)
+
+
+def test_a_changed_reference_stales_every_payload(tmp_path: Path) -> None:
+    """The fingerprint is shared, so editing references invalidates every model at once - which is
+    what stops a stale adapter rendering the wrong face on one model but not another."""
+    doc = encode.char_encode([_image(tmp_path / "r.png", (768, 1024), (180, 150, 140))], name="Ada")
+    encode.set_lora_payload(
+        doc.manifest, doc.members, b"adapter", arch="krea2",
+        base="krea2_turbo_bf16.safetensors", rank=16, steps=600, resolution=512,
+    )
+    assert encode.stale_payloads(doc.manifest) == []
+
+    doc.manifest.refs.append({**doc.manifest.refs[0], "sha256": "0" * 64})
+
+    assert sorted(encode.stale_payloads(doc.manifest)) == ["flux2-klein", "krea2-lora"]
+    assert encode.needs_rebuild(doc.manifest) is True
+
+
+def test_a_payload_is_judged_against_the_policy_it_was_built_with(tmp_path: Path) -> None:
+    """Two models normalise references differently, so a fingerprint only means something beside
+    the policy that produced it. Judging against the current default would call it stale forever."""
+    doc = encode.char_encode([_image(tmp_path / "r.png", (768, 1024), (180, 150, 140))], name="Ada")
+    entry = doc.manifest.payloads[encode.FLUX2_KLEIN_ARCH]
+    entry["policy"] = {"max_pixels": 512 * 512, "multiple_of": 32}
+
+    assert encode.payload_stale(doc.manifest, encode.FLUX2_KLEIN_ARCH) is True, (
+        "a payload built under another policy no longer matches this reference set"
+    )

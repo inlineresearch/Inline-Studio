@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS project (
@@ -238,6 +238,42 @@ def _run_data_migrations(conn: sqlite3.Connection, from_version: int) -> None:
               AND NOT EXISTS (SELECT 1 FROM frame_inputs si WHERE si.frame_id = frames.id);
             """
         )
+    # v19 -> v20: the Trainer canvas merged into the Studio one.
+    if from_version < 20:
+        _migrate_merge_canvases(conn)
+
+
+_TRAINING_TYPE_RENAMES = {
+    "trainDataset": "train/dataset",
+    "caption": "train/caption",
+    "trainer": "train/lora",
+    "lossGraph": "train/loss",
+}
+
+
+def _migrate_merge_canvases(conn: sqlite3.Connection) -> None:
+    """Move the trainer surface onto the studio one, clear of what is already there.
+
+    Both canvases start at the origin, so migrating in place would drop the training graph on top
+    of the generation graph. The offset is computed once, before any row moves.
+    """
+    for old, new in _TRAINING_TYPE_RENAMES.items():
+        conn.execute("UPDATE moodboard_items SET type=? WHERE type=?", (new, old))
+    # Indexed, not keyed: a bare connection has no Row factory.
+    right = conn.execute(
+        "SELECT MAX(x + width) FROM moodboard_items WHERE surface='studio'"
+    ).fetchone()
+    left = conn.execute(
+        "SELECT MIN(x) FROM moodboard_items WHERE surface='trainer'"
+    ).fetchone()
+    if left is not None and left[0] is not None:
+        edge = (right[0] if right and right[0] is not None else 0.0) + 240.0
+        conn.execute(
+            "UPDATE moodboard_items SET x = x + ? WHERE surface='trainer'",
+            (edge - float(left[0]),),
+        )
+    for table in ("moodboard_items", "moodboard_connectors"):
+        conn.execute(f"UPDATE {table} SET surface='studio' WHERE surface='trainer'")
 
 
 def _migrate_columns(conn: sqlite3.Connection) -> None:

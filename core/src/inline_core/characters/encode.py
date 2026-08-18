@@ -38,6 +38,17 @@ def payload_key(arch: str, kind: str = PAYLOAD_REF) -> str:
 #: Done here so the pixels the pipeline sees are the pixels we hashed, once per character.
 PAYLOAD_POLICY: dict[str, Any] = {"max_pixels": 1024 * 1024, "multiple_of": 16}
 
+#: What each model accepts as a reference. A video model has its own frame grid, so the policy
+#: cannot stay one constant - and it rides in the payload entry, because the fingerprint is taken
+#: against the policy the payload was built with, not against whatever is current.
+REFERENCE_POLICIES: dict[str, dict[str, Any]] = {
+    FLUX2_KLEIN_ARCH: PAYLOAD_POLICY,
+}
+
+
+def reference_policy(arch: str) -> dict[str, Any]:
+    return REFERENCE_POLICIES.get(arch, PAYLOAD_POLICY)
+
 #: Enough pixels for SFace without carrying a full reference into the file.
 FACE_CROP_SIZE = 512
 
@@ -60,7 +71,7 @@ def _png_bytes(image: Any) -> bytes:
 
 
 def normalise_reference(image: Any, policy: dict[str, Any] | None = None) -> Any:
-    """A reference resized into FLUX.2's budget, on the grid, preserving aspect."""
+    """A reference resized into a model's budget, on its grid, preserving aspect."""
     rules = policy or PAYLOAD_POLICY
     max_pixels = int(rules["max_pixels"])
     grid = int(rules["multiple_of"])
@@ -254,30 +265,53 @@ def drop_ref(doc: cf.CharDoc, index: int) -> None:
     doc.manifest.modified_at = int(time.time())
 
 
-def needs_rebuild(manifest: cf.Manifest) -> bool:
-    """Whether the reference set has moved on from what the payload and scoring were built from."""
-    entry = manifest.payloads.get(FLUX2_KLEIN_ARCH)
+def payload_stale(manifest: cf.Manifest, key: str) -> bool:
+    """Whether one payload was built from references that have since changed.
+
+    Checked against the policy stored *in that payload*, because two models normalise references
+    differently and a fingerprint only means anything beside the policy that produced it.
+    """
+    entry = manifest.payloads.get(key)
     if not isinstance(entry, dict):
+        return True
+    policy = entry.get("policy") if isinstance(entry.get("policy"), dict) else PAYLOAD_POLICY
+    return str(entry.get("source_sha256") or "") != cf.refs_fingerprint(manifest, policy)
+
+
+def stale_payloads(manifest: cf.Manifest) -> list[str]:
+    """Every compiled payload that no longer matches the references, newest format first."""
+    return [key for key in manifest.payloads if payload_stale(manifest, key)]
+
+
+def needs_rebuild(manifest: cf.Manifest) -> bool:
+    """Whether anything compiled from the references is out of date."""
+    if not manifest.payloads:
         return bool(manifest.refs)
-    return str(entry.get("source_sha256") or "") != cf.refs_fingerprint(manifest, PAYLOAD_POLICY)
+    return bool(stale_payloads(manifest))
 
 
-def build_payload(manifest: cf.Manifest, members: dict[str, bytes], images: list[Any]) -> None:
-    """(Re)compile the flux2-klein reference set. Public because ``apply`` rebuilds stale ones."""
-    for stale in [m for m in members if m.startswith(f"payloads/{FLUX2_KLEIN_ARCH}/")]:
+def build_payload(
+    manifest: cf.Manifest,
+    members: dict[str, bytes],
+    images: list[Any],
+    arch: str = FLUX2_KLEIN_ARCH,
+) -> None:
+    """(Re)compile one model's reference set. Public because ``apply`` rebuilds stale ones."""
+    policy = reference_policy(arch)
+    for stale in [m for m in members if m.startswith(f"payloads/{arch}/")]:
         members.pop(stale, None)
     files: list[dict[str, Any]] = []
     for index, image in enumerate(images):
-        member = f"payloads/{FLUX2_KLEIN_ARCH}/ref_{index:03d}.png"
-        data = _png_bytes(normalise_reference(image))
+        member = f"payloads/{arch}/ref_{index:03d}.png"
+        data = _png_bytes(normalise_reference(image, policy))
         members[member] = data
         files.append({"path": member, "sha256": cf.sha256_bytes(data)})
-    manifest.payloads[FLUX2_KLEIN_ARCH] = {
+    manifest.payloads[arch] = {
         "payload_version": 1,
         "type": PAYLOAD_REF,
         "encoder": {"id": PAYLOAD_ENCODER_ID, "version": PAYLOAD_ENCODER_VERSION},
-        "source_sha256": cf.refs_fingerprint(manifest, PAYLOAD_POLICY),
-        "policy": dict(PAYLOAD_POLICY),
+        "source_sha256": cf.refs_fingerprint(manifest, policy),
+        "policy": dict(policy),
         "files": files,
     }
 

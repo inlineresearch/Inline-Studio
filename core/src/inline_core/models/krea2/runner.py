@@ -66,6 +66,8 @@ def _descriptor(variant: str) -> NodeDescriptor:
             Port("lora", "LoRA", PortKind.LORA, required=False),
             Port("image", "Image (img2img)", PortKind.IMAGE, required=False),
             Port("control_image", "Depth control", PortKind.CONTROL, required=False),
+            # Krea 2 has no reference channel, so a character applies only as its trained adapter.
+            Port("character", "Character", PortKind.CHARACTER, required=False),
         ),
         outputs=(Port("image", "Image", PortKind.IMAGE),),
         params=(
@@ -81,10 +83,6 @@ def _descriptor(variant: str) -> NodeDescriptor:
             ParamField(
                 "strength", "Denoise strength", Widget.NUMBER, 0.6, min=0.0, max=1.0, step=0.05,
                 advanced=True,
-            ),
-            # Krea 2 has no reference channel, so a character applies only as its trained adapter.
-            ParamField(
-                "character", "Character", Widget.SELECT, "", options_from="characters",
             ),
             # Depth control: wire a depth map into Control and pick the depth control-LoRA.
             # Empty = plain generation. Strength dials the block LoRA; the depth structure always
@@ -168,7 +166,7 @@ class Krea2Runner(NodeRunner):
         vae_ref = rt.component_ref(inputs, "vae", "vae", self._label)
         te_ref = rt.component_ref(inputs, "text_encoder", "text_encoder", self._label)
         loras = rt.lora_stack(inputs, self._label)
-        character = _apply_character(params)
+        character = _apply_character(inputs)
         if character is not None:
             prompt = character.prefix + prompt
             # Appended, so a user's own wired LoRAs still apply alongside the character's.
@@ -392,11 +390,16 @@ class _Character:
     prefix: str
 
 
-def _apply_character(params: dict[str, Any]) -> _Character | None:
-    """A picked character's adapter and prompt text, or None when none is picked or trained."""
-    chosen = str(params.get("character") or "").strip()
-    if not chosen:
+def _apply_character(inputs: dict[str, Any]) -> _Character | None:
+    """A wired character's adapter and prompt text, or None when none is wired or trained."""
+    wired = (inputs.get("character") or [None])[0]
+    if wired is None:
         return None
+    chosen = str(getattr(wired, "file", "") or "")
+    if not chosen:
+        raise ValueError(
+            "That character has not been saved yet. Wire it through Write .char first."
+        )
     from ...characters import apply as characters
 
     applied = characters.char_apply(chosen, _CHARACTER_ARCH)

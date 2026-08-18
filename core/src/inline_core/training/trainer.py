@@ -94,8 +94,27 @@ def _resume_step(ckpt_dir: Path) -> int:
     return 0
 
 
+def _provenance(manifest: dict[str, Any], arch: archs.TrainingArch, alpha: int) -> dict[str, str]:
+    """What this adapter was trained against, as safetensors metadata (strings only)."""
+    hp = manifest.get("hyperparams") or {}
+    return {
+        "inline_arch": str(arch.key),
+        "inline_base": str(models.base_name(manifest["modelsDir"], arch.key, manifest["baseMode"])),
+        "inline_rank": str(hp.get("rank", "")),
+        "inline_alpha": str(alpha),
+        "inline_steps": str(hp.get("steps", "")),
+        "inline_resolution": str(hp.get("resolution", "")),
+        "inline_scope": str(hp.get("loraScope", "")),
+    }
+
+
 def _save_lora(
-    transformer: Any, output_path: str, *, alpha: int, arch: archs.TrainingArch
+    transformer: Any,
+    output_path: str,
+    *,
+    alpha: int,
+    arch: archs.TrainingArch,
+    provenance: dict[str, str] | None = None,
 ) -> None:
     """Write the finished adapter as safetensors, in the keys other tools read.
 
@@ -119,7 +138,9 @@ def _save_lora(
     if arch.export_keys is not None:
         state = arch.export_keys(state)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    save_file(state, output_path)
+    # An adapter that cannot say which base it trained on loads onto the wrong one and degrades
+    # silently rather than raising, so the answer travels in the file.
+    save_file(state, output_path, metadata=provenance or None)
 
 
 def _save_snapshot(
@@ -369,5 +390,6 @@ def train(manifest: dict[str, Any]) -> str | None:
             manifest["outputPath"],
             alpha=lora_alpha,
             arch=arch,
+            provenance=_provenance(manifest, arch, lora_alpha),
         )
     return manifest["outputPath"]

@@ -273,7 +273,9 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // first file in its catalog, which is the one the engine auto-picks anyway.
   const fileField = descriptor.params.find((p) => p.key === 'file')
   const fileFallback = fileField?.default || fileField?.options?.[0]?.value
-  const fileLabel = String(fileParam || fileFallback || 'Not installed')
+  // Only a node that picks a weights file has one to name; a character node has no `file` param,
+  // and calling that "Not installed" reads as broken rather than as nothing to show.
+  const fileLabel = fileField ? String(fileParam || fileFallback || 'Not installed') : ''
   // An extension-provided node carries its owning extension's id (`ext:<id>:<module>`) - surface it
   // as a chip so it's clear which extension a canvas node came from.
   const extName = isExtensionNode(descriptor.source) ? extensionOf(descriptor.source) : null
@@ -396,12 +398,16 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                   </select>
                 )
               })
-            ) : (
+            ) : fileLabel ? (
               <span
                 className="min-w-0 flex-1 truncate px-1 font-mono text-[10px] text-zinc-400"
                 title={fileLabel}
               >
                 {fileLabel}
+              </span>
+            ) : (
+              <span className="min-w-0 flex-1 truncate px-1 text-[10px] text-zinc-500">
+                {descriptor.title}
               </span>
             )}
             {otherParams.length > 0 && (

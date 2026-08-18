@@ -11,6 +11,7 @@ import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
 import { useFrameStore } from './frameStore'
 import { useMoodboardStore } from './moodboardStore'
+import { useModelRequirementsStore } from './modelRequirementsStore'
 
 interface GenerationState {
   /** Per-frame "currently generating" flag. */
@@ -272,6 +273,18 @@ export const useGenerationStore = create<GenerationState>((set) => ({
  * Subscribe once for the whole app (see App.tsx). This used to live inside MoodboardPanel, which
  * unmounts on a tab switch - so switching to the Trainer mid-render dropped every progress event.
  */
+/** True when the error was a missing-model one and the popup took over from it. */
+function openMissingModels(itemId: string, error: string): boolean {
+  if (!/models missing/i.test(error)) return false
+  const item = useMoodboardStore.getState().items.find((i) => i.id === itemId)
+  const nodeType = item?.type === 'core' ? item.data.core?.type : undefined
+  if (!nodeType) return false
+  void useModelRequirementsStore
+    .getState()
+    .checkOnUse(nodeType, 'This node needs models before it can generate.')
+  return true
+}
+
 export function subscribeGenerationEvents(): () => void {
   const gen = useGenerationStore.getState()
   // Finish any generations still running when the app last closed; their events arrive below.
@@ -296,6 +309,9 @@ export function subscribeGenerationEvents(): () => void {
     }),
     studio().events.onGenerationError((e) => {
       gen.finishRun(e.frameId ?? e.targetFrameId)
+      // A missing weight file is a thing to fix, not a sentence to read: open the popup that can
+      // fetch it rather than restating the filenames as an error.
+      if (openMissingModels(e.frameId ?? e.targetFrameId, e.error)) return
       gen.setError(e.error)
     }),
     studio().events.onGenerationCancelled((e) => {

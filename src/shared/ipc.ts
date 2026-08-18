@@ -13,12 +13,10 @@ import type {
   Asset,
   AssetFolder,
   CharacterSummary,
-  CharacterDetail,
   CharacterProgressEvent,
   MissingModel,
   RegistryModel,
   MoodboardItem,
-  CanvasSurface,
   MoodboardConnector,
   MoodboardSnapshot,
   MoodboardItemData,
@@ -58,6 +56,7 @@ import type {
   TrainingSampleEvent,
   TrainingSnapshot,
   TrainingDoneEvent,
+  TrainingNodeBoundEvent,
   TrainingErrorEvent,
   SystemStatsEvent,
   CoreStatus,
@@ -239,22 +238,9 @@ export const IpcChannels = {
   characters: {
     /** Every saved character in `models/characters/`, newest first. */
     list: 'characters:list',
-    /** Compile reference images (library asset ids) into a new `.char`. */
-    create: 'characters:create',
-    /** One character with its reference thumbnails resolved. */
-    get: 'characters:get',
-    rename: 'characters:rename',
-    /** Rewrite the locked description. Refs are untouched, so payloads survive. */
-    setDescription: 'characters:setDescription',
-    /** Add reference images, which recompiles the payload and the centroids. */
-    addRefs: 'characters:addRefs',
-    removeRef: 'characters:removeRef',
     delete: 'characters:delete',
     /** Turn a generated take into a character, so a good render becomes reusable. */
     createFromTake: 'characters:createFromTake',
-    build: 'characters:build',
-    rebuild: 'characters:rebuild',
-    setApplyMode: 'characters:setApplyMode',
   },
   moodboard: {
     list: 'moodboard:list',
@@ -348,6 +334,7 @@ export const IpcChannels = {
     trainingLog: 'events:trainingLog',
     captionProgress: 'events:captionProgress',
     trainingDone: 'events:trainingDone',
+    trainingNodeBound: 'events:trainingNodeBound',
     trainingError: 'events:trainingError',
     /** Main → renderer: periodic host + GPU telemetry for the Trainer tab. */
     systemStats: 'events:systemStats',
@@ -385,14 +372,6 @@ export interface CreateTrainingDatasetInput {
   name: string
   /** Optional trigger token injected into every caption. */
   triggerWord?: string
-}
-
-/** A new character: one or more library assets, plus the description locked into the file. */
-export interface CreateCharacterInput {
-  name: string
-  /** Library asset ids to use as references. One is enough; order is the order refs are numbered. */
-  assetIds: string[]
-  description?: string
 }
 
 /** A fal frame's inputs resolved for building its request: media as data URIs + the prompt text. */
@@ -719,42 +698,14 @@ export interface InlineStudioApi {
   characters: {
     /** Every saved character, newest first. An unreadable file is listed with `error` set. */
     list(): Promise<Result<CharacterSummary[]>>
-    /**
-     * Compile library assets into a new character. Runs face detection and two embedding passes on
-     * the CPU, so it takes seconds rather than milliseconds.
-     */
-    create(input: CreateCharacterInput): Promise<Result<CharacterSummary>>
-    /** One character, with its reference images resolved to URLs the renderer can show. */
-    get(file: string): Promise<Result<CharacterDetail>>
-    rename(file: string, name: string): Promise<Result<CharacterSummary>>
-    /** Rewrite the locked description. Refs are untouched, so the payload is not recompiled. */
-    setDescription(file: string, description: string): Promise<Result<CharacterSummary>>
-    /** Add references, recompiling the payload and the identity centroids. */
-    addRefs(file: string, assetIds: string[]): Promise<Result<CharacterSummary>>
-    /** Drop one reference by index, recompiling. Removing the last one is refused. */
-    removeRef(file: string, index: number): Promise<Result<CharacterSummary>>
     delete(file: string): Promise<Result<boolean>>
-    /** Save a generated take as a new character. */
+    /** Save a generated take as a new character. Creating, editing and building one otherwise
+     * happen on the canvas, through the character nodes. */
     createFromTake(takeId: string, name: string): Promise<Result<CharacterSummary>>
-    /** Choose whether one model applies this character by reference or by trained adapter. */
-    setApplyMode(
-      file: string,
-      arch: string,
-      mode: 'reference' | 'lora',
-    ): Promise<Result<CharacterSummary>>
-    /** Recompile scoring and the reference payload after the references changed. */
-    rebuild(file: string): Promise<Result<CharacterSummary>>
-    /** Train this character's adapter for one architecture. Returns the queued training run. */
-    build(
-      file: string,
-      arch: string,
-      options: { steps: number; autoCaption: boolean; captioner?: string },
-    ): Promise<Result<TrainingRun>>
   }
   moodboard: {
-    /** The full board (items + connectors) for the open project. */
-    /** One canvas's items + connectors (defaults to the Studio moodboard). */
-    list(surface?: CanvasSurface): Promise<Result<MoodboardSnapshot>>
+    /** The board's items + connectors. */
+    list(): Promise<Result<MoodboardSnapshot>>
     /** Place an existing library asset on the board at (x, y). */
     addAsset(assetId: string, x: number, y: number): Promise<Result<MoodboardItem>>
     /** Add a new editable text item at (x, y). */
@@ -782,16 +733,16 @@ export interface InlineStudioApi {
     /** Add a text-prompt node (feeds a Generate node's prompt input) at (x, y). */
     addPrompt(x: number, y: number): Promise<Result<MoodboardItem>>
     addCoreNode(coreType: string, x: number, y: number): Promise<Result<MoodboardItem>>
-    /** Trainer-canvas: pick a training dataset and feed it downstream. */
+    /** Pick a training dataset and feed it downstream. */
     addTrainDataset(x: number, y: number): Promise<Result<MoodboardItem>>
-    /** Trainer-canvas: auto-caption a dataset's images. */
+    /** Auto-caption a dataset's images. */
     addCaption(x: number, y: number): Promise<Result<MoodboardItem>>
-    /** Trainer-canvas: run a LoRA training job (run/stop/resume). */
+    /** Run a LoRA training job (run/stop/resume). */
     addTrainer(x: number, y: number): Promise<Result<MoodboardItem>>
-    /** Trainer-canvas: plot a run's loss curve. */
+    /** Plot a run's loss curve. */
     addLossGraph(x: number, y: number): Promise<Result<MoodboardItem>>
-    /** Utility: read-only host telemetry node. Lives on whichever canvas adds it. */
-    addResource(x: number, y: number, surface?: CanvasSurface): Promise<Result<MoodboardItem>>
+    /** Utility: read-only host telemetry node. */
+    addResource(x: number, y: number): Promise<Result<MoodboardItem>>
     updateItem(id: string, patch: MoodboardItemPatch): Promise<Result<MoodboardItem>>
     deleteItem(id: string): Promise<Result<void>>
     /** Remove one render from a Core node's output history and unlink its file. */
@@ -807,13 +758,8 @@ export interface InlineStudioApi {
     deleteConnector(id: string): Promise<Result<void>>
     /** Set a connector's per-input audio volume (0..1) - director L1 inputs. */
     setConnectorVolume(id: string, volume: number): Promise<Result<void>>
-    /** Replace ONE surface's board (used by canvas undo/redo); scoped so a Studio undo can't wipe
-     * the Trainer canvas. */
-    replaceBoard(
-      items: MoodboardItem[],
-      connectors: MoodboardConnector[],
-      surface?: CanvasSurface,
-    ): Promise<Result<void>>
+    /** Replace the board (used by canvas undo/redo). */
+    replaceBoard(items: MoodboardItem[], connectors: MoodboardConnector[]): Promise<Result<void>>
   }
   timeline: {
     /** The derived timeline (video + L2 audio + volumes) for a director node. */
@@ -888,8 +834,10 @@ export interface InlineStudioApi {
     /** Auto-caption progress for a dataset. */
     onCaptionProgress(callback: (e: CaptionProgressEvent) => void): () => void
     onTrainingDone(callback: (e: TrainingDoneEvent) => void): () => void
+    /** A Train LoRA node bound to the run its graph just started. */
+    onTrainingNodeBound(callback: (e: TrainingNodeBoundEvent) => void): () => void
     onTrainingError(callback: (e: TrainingErrorEvent) => void): () => void
-    /** Subscribe to periodic host + GPU telemetry (Trainer tab). Returns an unsubscribe fn. */
+    /** Subscribe to periodic host + GPU telemetry. Returns an unsubscribe fn. */
     onSystemStats(callback: (e: SystemStatsEvent) => void): () => void
     onExtensionInstallProgress(callback: (e: InstallProgressEvent) => void): () => void
     onExtensionInstallDone(callback: (e: InstallSuccess) => void): () => void

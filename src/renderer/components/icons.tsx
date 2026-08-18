@@ -236,7 +236,7 @@ export function ChevronDownIcon({ className }: { className?: string }): React.JS
   )
 }
 
-/** `model_training` - the LoRA Trainer tab. */
+/** `model_training` - LoRA training. */
 export function TrainIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -290,7 +290,7 @@ export function ModelsIcon({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-/** `movie` - video material. Distinct from `TrainIcon`, which is the Trainer tab's own glyph. */
+/** `movie` - video material. Distinct from `TrainIcon`, which is the training glyph. */
 export function MovieIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>

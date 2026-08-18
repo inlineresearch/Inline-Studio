@@ -17,6 +17,7 @@ import { useMenuPlacement } from './useMenuPlacement'
 import { addableCoreNodes, type NodeDescriptor } from '@shared/coreNodes'
 import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
+import { CaptionGlyph, ChartIcon, CpuIcon, LayersIcon, WandIcon } from './nodes/NodeBadge'
 
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
 export type AddNodeKind =
@@ -27,12 +28,18 @@ export type AddNodeKind =
   | 'trim'
   | 'prompt'
   | 'controlSpace'
+  | 'train/dataset'
+  | 'train/caption'
+  | 'train/lora'
+  | 'train/loss'
+  | 'resource'
 
 type Tab = 'core' | 'api'
 
 /** The category Core uses for its `load/*` nodes; Load Assets joins them under one header. */
 const LOADERS = 'Loaders'
 const CANVAS = 'Canvas'
+const TRAINING = 'Training'
 
 /**
  * Section order in the Core tab. Core serves its categories in registration order, which puts
@@ -56,6 +63,13 @@ const ENTRIES: Entry[] = [
   { kind: 'trim', label: 'Edit Video/Audio', icon: <ScissorsIcon />, category: CANVAS },
   { kind: 'prompt', label: 'Prompt', icon: <PromptIcon />, category: CANVAS },
   { kind: 'controlSpace', label: 'Control Space', icon: <PoseIcon />, category: CANVAS },
+  // Training sorts last because it is not in CORE_ORDER, which is where it belongs: reached for
+  // far less often than generating.
+  { kind: 'train/dataset', label: 'Load Dataset', icon: <LayersIcon />, category: TRAINING },
+  { kind: 'train/caption', label: 'Caption', icon: <CaptionGlyph />, category: TRAINING },
+  { kind: 'train/lora', label: 'Train LoRA', icon: <WandIcon />, category: TRAINING },
+  { kind: 'train/loss', label: 'Graph', icon: <ChartIcon />, category: TRAINING },
+  { kind: 'resource', label: 'Resources', icon: <CpuIcon />, category: TRAINING },
 ]
 
 export function AddNodeMenu({

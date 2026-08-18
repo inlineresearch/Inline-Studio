@@ -8,6 +8,7 @@
  */
 import { useGenerationStore } from '../store/generationStore'
 import { useMoodboardStore } from '../store/moodboardStore'
+import { useUiStore } from '../store/uiStore'
 import {
   PROMPT_SOURCE_HANDLE,
   PROMPT_TARGET_HANDLE,
@@ -57,4 +58,95 @@ export async function buildStarterGraph(recipe: StarterRecipe, centre: Point): P
 
   await store.connect(prompt.id, gen.id, PROMPT_SOURCE_HANDLE, PROMPT_TARGET_HANDLE)
   return [prompt.id, gen.id]
+}
+
+/**
+ * A y where a chain spanning `left`..`right` lands on nothing. Starter chains are dropped at the
+ * viewport centre, which on a canvas that already has work on it is squarely on top of it.
+ */
+function clearRow(centre: Point, left: number, right: number, height: number): number {
+  const items = useMoodboardStore.getState().items
+  let y = centre.y
+  // One pass per collision: each push clears the item it hit, and the list is finite.
+  for (let i = 0; i < items.length; i += 1) {
+    const hit = items.find(
+      (it) => it.x < right && it.x + it.width > left && it.y < y + height && it.y + it.height > y,
+    )
+    if (!hit) break
+    y = hit.y + hit.height + 60
+  }
+  return y
+}
+
+/**
+ * The character chain, pre-wired: Load Assets -> Encode Character -> Compile References -> Write.
+ * Wired for a reference model; a Krea 2 style character swaps the middle node for Train LoRA +
+ * Attach Adapter, which is why the payload step is its own node rather than folded into Encode.
+ */
+export async function buildCharacterStarter(
+  centre: Point,
+  assetIds: string[] = [],
+): Promise<string[]> {
+  const store = useMoodboardStore.getState()
+  const y = clearRow(centre, centre.x - 700, centre.x + 700, 340)
+  const images = await store.addLoader(centre.x - 700, y)
+  if (images && assetIds.length > 0) await store.addLoaderAssets(images.id, assetIds)
+  const encode = images && (await store.addCoreNode('character/encode', centre.x - 340, y))
+  const refs = encode && (await store.addCoreNode('character/references', centre.x + 20, y))
+  const write = refs && (await store.addCoreNode('character/write', centre.x + 380, y))
+  if (!images || !encode || !refs || !write) {
+    useGenerationStore
+      .getState()
+      .setError('Could not add the character nodes. Is Inline Core running?')
+    return []
+  }
+  await store.connect(images.id, encode.id, 'image', 'images')
+  await store.connect(encode.id, refs.id, 'character', 'character')
+  await store.connect(encode.id, write.id, 'character', 'character')
+  await store.connect(refs.id, write.id, 'payload', 'payloads')
+  useUiStore.getState().revealAt(centre.x, y + 170)
+  return [images.id, encode.id, refs.id, write.id]
+}
+
+/** Load Character -> Edit Character -> Write .char, for changing one that is already saved. */
+export async function buildCharacterEditChain(file: string, centre: Point): Promise<string[]> {
+  const store = useMoodboardStore.getState()
+  const y = clearRow(centre, centre.x - 560, centre.x + 560, 340)
+  const load = await store.addCoreNode('character/load', centre.x - 560, y)
+  const edit = load && (await store.addCoreNode('character/edit', centre.x - 180, y))
+  const write = edit && (await store.addCoreNode('character/write', centre.x + 200, y))
+  if (!load || !edit || !write) {
+    useGenerationStore
+      .getState()
+      .setError('Could not add the character nodes. Is Inline Core running?')
+    return []
+  }
+  await store.updateItem(
+    load.id,
+    { data: { ...load.data, core: { type: 'character/load', params: { file } } } },
+    false,
+  )
+  await store.connect(load.id, edit.id, 'character', 'character')
+  await store.connect(edit.id, write.id, 'character', 'character')
+  useUiStore.getState().revealAt(centre.x - 180, y + 170)
+  return [load.id, edit.id, write.id]
+}
+
+/** The training chain, pre-wired: Load Dataset -> Train LoRA -> Graph. Returns [] if any add failed. */
+export async function buildTrainingStarter(centre: Point): Promise<string[]> {
+  const store = useMoodboardStore.getState()
+  const y = clearRow(centre, centre.x - 620, centre.x + 580, 340)
+  const dataset = await store.addTrainingNode('train/dataset', centre.x - 620, y)
+  const trainer = dataset && (await store.addTrainingNode('train/lora', centre.x - 240, y))
+  const graph = trainer && (await store.addTrainingNode('train/loss', centre.x + 260, y))
+  if (!dataset || !trainer || !graph) {
+    useGenerationStore
+      .getState()
+      .setError('Could not add the training nodes. Is Inline Core running?')
+    return []
+  }
+  await store.connect(dataset.id, trainer.id, 'out', 'dataset')
+  await store.connect(trainer.id, graph.id, 'out', 'run')
+  useUiStore.getState().revealAt(centre.x - 20, y + 170)
+  return [dataset.id, trainer.id, graph.id]
 }

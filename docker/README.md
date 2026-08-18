@@ -8,7 +8,7 @@ Free and open source, GPL-3.0. [inlinestudio.art](https://inlinestudio.art) ·
 [GitHub](https://github.com/inlineresearch/Inline-Studio) ·
 [Discord](https://discord.gg/cSUS88VdY9)
 
-No GPU of your own? [Deploy it on RunPod in one click](https://console.runpod.io/deploy?template=c0qkyaypuv&ref=hs2l4qhc).
+No GPU of your own? [Deploy it on RunPod in one click](https://console.runpod.io/hub/template/c0qkyaypuv).
 
 ## Quick start
 

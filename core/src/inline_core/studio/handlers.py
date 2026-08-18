@@ -214,9 +214,7 @@ def register_studio_handlers(
     reg("frames:deleteTake", delete_take)
 
     # --- moodboard ------------------------------------------------------------------------------
-    # `surface` defaults to the Studio moodboard so existing callers are unchanged; the Trainer tab
-    # passes "trainer" to get its own isolated canvas out of the same tables.
-    reg("moodboard:list", lambda surface=mb.STUDIO_SURFACE: mb.list_board(conn(), surface))
+    reg("moodboard:list", lambda: mb.list_board(conn()))
     reg("moodboard:addAsset", lambda aid, x, y: mb.add_asset(conn(), aid, x, y))
     reg("moodboard:addText", lambda x, y: mb.add_text(conn(), x, y))
     reg("moodboard:addFrameFromAsset", lambda aid, x, y: mb.add_frame_from_asset(conn(), aid, x, y))
@@ -258,19 +256,13 @@ def register_studio_handlers(
     reg("moodboard:setConnectorVolume", lambda cid, vol: mb.set_connector_volume(conn(), cid, vol))
     reg(
         "moodboard:replaceBoard",
-        lambda items, connectors, surface=mb.STUDIO_SURFACE: mb.replace_board(
-            conn(), items, connectors, surface
-        ),
+        lambda items, connectors: mb.replace_board(conn(), items, connectors),
     )
-    # Trainer-canvas nodes (plus the shared read-only resource node, which either canvas can host).
     reg("moodboard:addTrainDataset", lambda x, y: mb.add_train_dataset(conn(), x, y))
     reg("moodboard:addCaption", lambda x, y: mb.add_caption(conn(), x, y))
     reg("moodboard:addTrainer", lambda x, y: mb.add_trainer(conn(), x, y))
     reg("moodboard:addLossGraph", lambda x, y: mb.add_loss_graph(conn(), x, y))
-    reg(
-        "moodboard:addResource",
-        lambda x, y, surface=mb.STUDIO_SURFACE: mb.add_resource(conn(), x, y, surface),
-    )
+    reg("moodboard:addResource", lambda x, y: mb.add_resource(conn(), x, y))
 
     # --- generation -----------------------------------------------------------------------------
     if generation is not None:
@@ -306,7 +298,9 @@ def register_studio_handlers(
     # --- activity -------------------------------------------------------------------------------
     if activity is not None:
         reg("activity:list", activity.snapshot)
-        reg("activity:history", lambda limit=50: activity.history(limit))
+        # An omitted optional arrives as null, not as a missing arg, so the default has to be
+        # applied here or it never applies at all.
+        reg("activity:history", lambda limit=None: activity.history(int(limit or 50)))
         reg("activity:cancel", activity.cancel)
         reg("activity:clearHistory", activity.clear_history)
     else:
@@ -315,26 +309,15 @@ def register_studio_handlers(
         reg("activity:cancel", not_wired("Run activity"))
         reg("activity:clearHistory", not_wired("Run activity"))
 
-    # --- Saved characters (the .char library + its editor) ---------------------------------------
+    # --- Saved characters (the .char library) -----------------------------------------------------
+    # Browsing only: creating, editing and building are the character nodes' job, on the canvas.
     if characters is not None:
         reg("characters:list", lambda: characters.list())
-        reg("characters:create", lambda inp: characters.create(inp))
-        reg("characters:get", lambda file: characters.get(file))
-        reg("characters:rename", lambda file, name: characters.rename(file, name))
-        reg("characters:setDescription", lambda file, d: characters.set_description(file, d))
-        reg("characters:addRefs", lambda file, aids: characters.add_refs(file, aids))
-        reg("characters:removeRef", lambda file, index: characters.remove_ref(file, index))
         reg("characters:delete", lambda file: characters.delete(file))
         reg("characters:createFromTake",
             lambda tid, name: characters.create_from_take(tid, name))
-        reg("characters:rebuild", lambda file: characters.rebuild(file))
-        reg("characters:setApplyMode",
-            lambda file, arch, mode: characters.set_apply_mode(file, arch, mode))
-        reg("characters:build",
-            lambda file, arch, options=None: characters.build(file, arch, options))
     else:
-        for ch in ("list", "create", "get", "rename", "setDescription", "addRefs", "removeRef",
-                   "delete", "createFromTake", "build", "rebuild", "setApplyMode"):
+        for ch in ("list", "delete", "createFromTake"):
             reg(f"characters:{ch}", not_wired("Characters"))
 
     # --- LoRA training (dataset CRUD + the training run subprocess) ------------------------------

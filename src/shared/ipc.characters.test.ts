@@ -2,22 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { IpcChannels } from './ipc'
 
 describe('characters wire contract', () => {
-  it('declares every character RPC channel', () => {
-    expect(Object.keys(IpcChannels.characters)).toEqual(
-      expect.arrayContaining([
-        'list',
-        'create',
-        'get',
-        'rename',
-        'setDescription',
-        'addRefs',
-        'removeRef',
-        'delete',
-        'createFromTake',
-      ]),
-    )
-  })
-
   it('keeps every channel value namespaced by its group', () => {
     // The web client builds `studio().characters.<key>` generically from these entries, so a
     // mismatched value silently produces a method that calls the wrong handler.
@@ -26,8 +10,9 @@ describe('characters wire contract', () => {
     }
   })
 
-  it('declares the build channel', () => {
-    expect(IpcChannels.characters.build).toBe('characters:build')
+  it('offers browsing only, since the nodes own creating and editing', () => {
+    // Two paths to edit a character would drift; the canvas chain is the one that exists.
+    expect(Object.keys(IpcChannels.characters).sort()).toEqual(['createFromTake', 'delete', 'list'])
   })
 
   it('declares the library-changed event channel', () => {

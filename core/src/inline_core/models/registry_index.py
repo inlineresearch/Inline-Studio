@@ -41,6 +41,8 @@ class RegistryModel:
     updated: str
     group: str = ""
     precision: str = ""
+    #: Exact repo files for a folder component whose files sit beside ones it must not pull.
+    files: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -48,7 +50,7 @@ class RegistryModel:
             "category": self.category, "kind": self.kind, "repo": self.repo, "path": self.path,
             "url": self.url, "verified": self.verified, "optional": self.optional,
             "sizeBytes": self.size_bytes, "updated": self.updated,
-            "group": self.group, "precision": self.precision,
+            "group": self.group, "precision": self.precision, "files": list(self.files),
         }
 
 
@@ -91,6 +93,7 @@ def _parse(raw: Any) -> list[RegistryModel]:
                 updated=str(item.get("updated") or ""),
                 group=str(item.get("group") or group_of(filename)[0]),
                 precision=str(item.get("precision") or group_of(filename)[1]),
+                files=tuple(str(f) for f in (source.get("files") or [])),
             )
         )
     return models
@@ -132,8 +135,11 @@ def load(*, refresh: bool = False) -> tuple[list[RegistryModel], bool]:
     return models, False
 
 
-def _source(model: RegistryModel) -> dict[str, str]:
-    return {"kind": model.kind, "repo": model.repo, "path": model.path, "url": model.url}
+def _source(model: RegistryModel) -> dict[str, Any]:
+    return {
+        "kind": model.kind, "repo": model.repo, "path": model.path, "url": model.url,
+        "files": list(model.files),
+    }
 
 
 def present_files() -> set[str]:

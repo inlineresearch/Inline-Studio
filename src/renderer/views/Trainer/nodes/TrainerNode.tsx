@@ -10,9 +10,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { TrainingRun } from '@shared/types'
 import { useTrainingStore } from '../../../store/trainingStore'
+import { useGenerationStore } from '../../../store/generationStore'
 import { copyText } from '../../../lib/clipboard'
 import { CopyIcon } from '../../../components/icons'
-import { useTrainerBoardStore } from '../../../store/trainerBoardStore'
 import { useCoreNodesStore } from '../../../store/coreNodesStore'
 import { activeDownload, useModelRequirementsStore } from '../../../store/modelRequirementsStore'
 import { NodeFrame } from '../../Moodboard/nodes/NodeFrame'
@@ -25,6 +25,7 @@ import {
 } from '../../Moodboard/nodes/NodeBadge'
 import { NodeRunToolbar } from '../../Moodboard/nodes/NodeRunToolbar'
 import { DATASET_HANDLE, RUN_HANDLE, wiredDatasetId } from './handles'
+import { useBoardActions } from '../../Moodboard/nodes/boardActions'
 
 /** The training arch + base maps to the generation node type whose weights it trains on, so the
  * Trainer node can reuse that node's requirements check + download flow. */
@@ -60,16 +61,12 @@ function controlFor(run: TrainingRun | null): Control {
 }
 
 export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
-  const item = useTrainerBoardStore((s) => s.items.find((i) => i.id === id))
-  const items = useTrainerBoardStore((s) => s.items)
-  const connectors = useTrainerBoardStore((s) => s.connectors)
-  const patchData = useTrainerBoardStore((s) => s.patchData)
-  const toggleSettings = useTrainerBoardStore((s) => s.toggleSettings)
-  const settingsItemId = useTrainerBoardStore((s) => s.settingsItemId)
+  const { items, connectors, toggleSettings, settingsItemId } = useBoardActions()
+  const item = items.find((i) => i.id === id)
 
+  const runWorkflow = useGenerationStore((s) => s.runWorkflow)
   const runs = useTrainingStore((s) => s.runs)
   const loadRuns = useTrainingStore((s) => s.loadRuns)
-  const start = useTrainingStore((s) => s.start)
   const cancel = useTrainingStore((s) => s.cancel)
   const resume = useTrainingStore((s) => s.resume)
   const datasets = useTrainingStore((s) => s.datasets)
@@ -83,8 +80,10 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
   const progress = useTrainingStore((s) => (runId ? s.progressByRun[runId] : undefined))
   const logs = useTrainingStore((s) => (runId ? s.logsByRun[runId] : undefined)) ?? []
 
+  // Datasets too: the node can carry its own dataset id with no Load Dataset node on the canvas.
   useEffect(() => {
     void loadRuns()
+    void useTrainingStore.getState().loadDatasets()
   }, [loadRuns])
 
   // Follow the tail, but only while the user is already at the bottom - otherwise scrolling back
@@ -136,11 +135,12 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
 
   const onControl = async (): Promise<void> => {
     if (control === 'stop' && runId) return void cancel(runId)
+    // Resume picks up one checkpoint, so it goes straight to the service; re-running the graph
+    // would recaption and start over, which is not what Resume means.
     if (control === 'resume' && runId) return void resume(runId)
     if (!datasetId) return
-    const created = await start(datasetId, hp)
-    // Persist the run so this node rebinds to it after a reload (and can offer Resume).
-    if (created) void patchData(id, { runId: created.id })
+    // Everything upstream runs first, in order. The node learns its run id from `trainingNodeBound`.
+    await runWorkflow(id)
   }
 
   const busy = control === 'stop'

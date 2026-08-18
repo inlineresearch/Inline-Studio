@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Node } from '@xyflow/react'
 
-import { buildStarterGraph } from '../../../lib/starterGraph'
+import { buildStarterGraph, buildTrainingStarter } from '../../../lib/starterGraph'
 import { recipeFor } from '../../../lib/starterRecipes'
 import type { StarterKey } from '../../../lib/vramAdvice'
 import { useFalSettingsStore } from '../../../store/falSettingsStore'
@@ -56,7 +56,7 @@ export function useStarterGraph({ setNodes, fitView, centre }: Options): {
     if (!held) return
     if (!byType[held.coreType]?.allPresent) return
     deferred.current = null
-    useOnboardingStore.getState().armHints({ itemId: held.itemId, surface: 'studio' })
+    useOnboardingStore.getState().armHints({ itemId: held.itemId })
   }, [byType])
 
   const onPick = useCallback(
@@ -65,9 +65,10 @@ export function useStarterGraph({ setNodes, fitView, centre }: Options): {
       const recipe = recipeFor(key)
       if (!recipe) return
 
-      // Training lives on its own canvas, which seeds its own graph when empty.
+      // The training card builds its own chain: it has no model node to hang a prompt off.
       if (!recipe.coreType && !recipe.falModelId) {
-        useUiStore.getState().setActiveTab('trainer')
+        setBuilding(true)
+        void buildTrainingStarter(centre()).finally(() => setBuilding(false))
         return
       }
 
@@ -81,7 +82,7 @@ export function useStarterGraph({ setNodes, fitView, centre }: Options): {
           if (!coreType) {
             // Hosted models have nothing to download. The key is the only thing that can be
             // missing, and Settings is where it goes, so open that instead of a model popup.
-            useOnboardingStore.getState().armHints({ itemId: genId, surface: 'studio' })
+            useOnboardingStore.getState().armHints({ itemId: genId })
             if (!useFalSettingsStore.getState().configured) {
               useUiStore.getState().setSettingsOpen(true)
             }
@@ -89,7 +90,7 @@ export function useStarterGraph({ setNodes, fitView, centre }: Options): {
           }
           const ready = useModelRequirementsStore.getState().byType[coreType]?.allPresent
           if (ready) {
-            useOnboardingStore.getState().armHints({ itemId: genId, surface: 'studio' })
+            useOnboardingStore.getState().armHints({ itemId: genId })
           } else {
             // The graph is the durable artifact, so it is built either way; the download popup
             // opens on top and the hints wait behind it.

@@ -180,3 +180,51 @@ def test_v18_project_gains_the_motion_lora_columns(tmp_path) -> None:
     assert item[0] is None
     assert item[1] == "a caption", "the existing row survived the migration"
     conn.close()
+
+
+def test_v19_trainer_canvas_merges_clear_of_the_studio_graph(tmp_path) -> None:
+    """The two canvases both start at the origin, so a merge in place would stack the training graph
+    on the generation graph. Types are namespaced in the same pass."""
+    import sqlite3
+
+    from inline_core.studio.schema import apply_schema
+
+    conn = sqlite3.connect(tmp_path / "v19.db")
+    conn.execute("PRAGMA user_version = 19")
+    conn.executescript(
+        """
+        CREATE TABLE moodboard_items (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, surface TEXT NOT NULL DEFAULT 'studio',
+          type TEXT NOT NULL DEFAULT 'asset', asset_id TEXT, data TEXT,
+          x REAL NOT NULL, y REAL NOT NULL, width REAL NOT NULL, height REAL NOT NULL);
+        CREATE TABLE moodboard_connectors (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, surface TEXT NOT NULL DEFAULT 'studio',
+          from_item_id TEXT NOT NULL, to_item_id TEXT NOT NULL);
+        """
+    )
+    conn.execute(
+        "INSERT INTO moodboard_items (id, project_id, surface, type, x, y, width, height)"
+        " VALUES ('g1','p1','studio','core',100,0,400,300)"
+    )
+    conn.execute(
+        "INSERT INTO moodboard_items (id, project_id, surface, type, x, y, width, height)"
+        " VALUES ('t1','p1','trainer','trainer',60,150,420,340)"
+    )
+    conn.execute(
+        "INSERT INTO moodboard_connectors (id, project_id, surface, from_item_id, to_item_id)"
+        " VALUES ('c1','p1','trainer','t1','t1')"
+    )
+    conn.commit()
+
+    apply_schema(conn)
+
+    moved = conn.execute("SELECT surface, type, x, y FROM moodboard_items WHERE id='t1'").fetchone()
+    kept = conn.execute("SELECT surface, x FROM moodboard_items WHERE id='g1'").fetchone()
+    edge = conn.execute("SELECT surface FROM moodboard_connectors WHERE id='c1'").fetchone()
+    assert moved[0] == "studio"
+    assert moved[1] == "train/lora", "the type is namespaced, not left generic"
+    assert moved[2] >= kept[1] + 400, "the training graph lands right of the generation graph"
+    assert moved[3] == 150, "y is untouched"
+    assert kept[0] == "studio" and kept[1] == 100, "studio rows do not move"
+    assert edge[0] == "studio"
+    conn.close()

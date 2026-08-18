@@ -31,6 +31,9 @@ class ModelComponent:
     # directory: a sharded text encoder, a tokenizer, a diffusers-format checkpoint. Mutually
     # exclusive with ``repo_file``; when set, ``filename`` is the folder name it lands under.
     repo_folder: str = ""
+    # Exact repo files to fetch instead of a whole subfolder, for a component whose files sit at
+    # the repo root beside ones it must not pull (DINOv2 ships safetensors AND a .bin twin).
+    repo_files: tuple[str, ...] = ()
     # A suggested (not required) component - e.g. the opt-in ControlNet. It never counts toward
     # "models missing" or "Download all"; the UI offers it as a separate suggestion.
     optional: bool = False

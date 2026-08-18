@@ -8,14 +8,14 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { PairTile } from '../PairTile'
 import { useAssetStore } from '../../../store/assetStore'
 import { useTrainingStore } from '../../../store/trainingStore'
-import { useTrainerBoardStore } from '../../../store/trainerBoardStore'
 import { NodeFrame } from '../../Moodboard/nodes/NodeFrame'
 import { LayersIcon, NodeBadge, NodeBadgeRow } from '../../Moodboard/nodes/NodeBadge'
 import { DATASET_HANDLE } from './handles'
+import { useBoardActions } from '../../Moodboard/nodes/boardActions'
 
 export function TrainDatasetNode({ id, selected }: NodeProps): React.JSX.Element {
-  const item = useTrainerBoardStore((s) => s.items.find((i) => i.id === id))
-  const patchData = useTrainerBoardStore((s) => s.patchData)
+  const { items: board, patchData } = useBoardActions()
+  const item = board.find((i) => i.id === id)
   const datasets = useTrainingStore((s) => s.datasets)
   const loadDatasets = useTrainingStore((s) => s.loadDatasets)
   const loadItems = useTrainingStore((s) => s.loadItems)

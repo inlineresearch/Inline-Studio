@@ -6,24 +6,20 @@
 import { useEffect } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useTrainingStore } from '../../../store/trainingStore'
-import { useTrainerBoardStore } from '../../../store/trainerBoardStore'
 import { NodeFrame } from '../../Moodboard/nodes/NodeFrame'
 import { AdjustIcon, CaptionGlyph, NodeBadge, NodeBadgeRow } from '../../Moodboard/nodes/NodeBadge'
 import { NodeRunToolbar } from '../../Moodboard/nodes/NodeRunToolbar'
 import { DATASET_HANDLE, wiredDatasetId } from './handles'
+import { useBoardActions } from '../../Moodboard/nodes/boardActions'
 
 export function CaptionNode({ id, selected }: NodeProps): React.JSX.Element {
-  const item = useTrainerBoardStore((s) => s.items.find((i) => i.id === id))
-  const items = useTrainerBoardStore((s) => s.items)
-  const connectors = useTrainerBoardStore((s) => s.connectors)
-  const patchData = useTrainerBoardStore((s) => s.patchData)
+  const { items, connectors, patchData, toggleSettings, settingsItemId } = useBoardActions()
+  const item = items.find((i) => i.id === id)
   const datasets = useTrainingStore((s) => s.datasets)
   const loadDatasets = useTrainingStore((s) => s.loadDatasets)
   const loadItems = useTrainingStore((s) => s.loadItems)
   const autoCaption = useTrainingStore((s) => s.autoCaption)
   const captioning = useTrainingStore((s) => s.captioning)
-  const toggleSettings = useTrainerBoardStore((s) => s.toggleSettings)
-  const settingsItemId = useTrainerBoardStore((s) => s.settingsItemId)
 
   useEffect(() => {
     void loadDatasets()
