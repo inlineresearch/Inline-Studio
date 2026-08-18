@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.73-blue?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.74-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -512,6 +512,10 @@ Only for **local** generation. The built-in Inline Core engine renders on the GP
 ### Can I train a LoRA locally?
 
 Yes, that is what the [Trainer tab](#lora-training) is for, and it runs entirely on your own GPU with no cloud step. It trains LoRAs for Z-Image, Krea 2, FLUX.2, MiniMax H3 and LTX-2.5. Training is cheaper than generating: FLUX.2 klein Base trains at 512px in about 8.6GB, Z-Image in about 13GB, and Krea 2 with a 4-bit base in about 12GB, so a 16GB card handles all three. See [Benchmark results](TRAINING.md#benchmark-results) for the measured table.
+
+### The UI is a blank page on Windows, what is wrong?
+
+Open the browser's developer console. If it refuses the app's script with a MIME type of `text/plain`, you are on a build older than v1.2.74. A clean Windows install maps `.js` to `text/plain` in the registry, Python's `mimetypes` honours that over its own table, and browsers will not run a module script served under it. Update to v1.2.74 or newer and Core sets the type itself rather than asking Windows. Nothing to change on your machine.
 
 ### What models can I run?
 

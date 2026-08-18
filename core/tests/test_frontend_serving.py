@@ -4,13 +4,15 @@ the /v1 API still winning. No torch/models needed."""
 from __future__ import annotations
 
 import builtins
+import mimetypes
 import sys
 import types
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
-from inline_core.server.app import create_app
+from inline_core.server.app import _WEB_MIME_TYPES, create_app
 from inline_core.server.frontend import resolve_frontend_root
 
 
@@ -109,3 +111,29 @@ def test_no_mount_when_frontend_root_is_none(tmp_path):
     with TestClient(app) as client:
         assert client.get("/v1/health").status_code == 200
         assert client.get("/").status_code == 404  # API only, no SPA
+
+
+@pytest.fixture
+def hostile_host_mime_table():
+    mimetypes.init()  # rebind the module globals the way first use does, then poison them
+    for ext, _ in _WEB_MIME_TYPES:
+        mimetypes.add_type("text/plain", ext)
+    try:
+        yield
+    finally:
+        mimetypes.init()
+
+
+def test_serves_js_as_javascript_when_the_host_table_is_wrong(tmp_path, hostile_host_mime_table):
+    root = _spa(tmp_path)
+    app = create_app(frontend_root=str(root))
+    with TestClient(app) as client:
+        asset = client.get("/assets/index-abc123.js")
+    # text/plain here blocks the ES module outright and the app renders a blank page.
+    assert asset.headers["content-type"].split(";")[0] == "text/javascript"
+
+
+def test_create_app_pins_every_web_mime_type(tmp_path, hostile_host_mime_table):
+    create_app(frontend_root=str(_spa(tmp_path)))
+    for ext, mime in _WEB_MIME_TYPES:
+        assert mimetypes.guess_type(f"asset{ext}")[0] == mime
