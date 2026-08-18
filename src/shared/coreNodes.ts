@@ -51,6 +51,8 @@ export interface CoreParamField {
   /** A dynamic catalog Core fills from what is installed (checkpoints, loras, vae, ...). */
   optionsFrom?: string
   advanced?: boolean
+  /** Show on the node face as well as in Adjust. Unset means "selects only", the loader default. */
+  onFace?: boolean
 }
 
 export interface NodeDescriptor {

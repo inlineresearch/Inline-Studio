@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NodeResizer, type NodeProps } from '@xyflow/react'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { ChevronDownIcon, XIcon } from './NodeBadge'
+import { useAutoCommit } from '../../../lib/useAutoCommit'
 
 interface LayerNodeData extends Record<string, unknown> {
   name: string
@@ -39,10 +40,14 @@ export function LayerNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const [draft, setDraft] = useState(name)
   const [pickerOpen, setPickerOpen] = useState(false)
 
-  const commitName = (): void => {
-    setEditing(false)
+  const saveName = (): void => {
     const next = draft.trim() || 'Layer'
     if (next !== name) void updateItem(id, { data: { name: next, color: rawColor } })
+  }
+  const { schedule, flush } = useAutoCommit(saveName)
+  const commitName = (): void => {
+    setEditing(false)
+    flush()
   }
 
   const pickColor = (c: string): void => {
@@ -77,7 +82,10 @@ export function LayerNode({ id, data, selected }: NodeProps): React.JSX.Element 
             <input
               autoFocus
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value)
+                schedule()
+              }}
               onBlur={commitName}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') commitName()

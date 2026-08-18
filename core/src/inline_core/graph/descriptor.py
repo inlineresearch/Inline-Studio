@@ -41,6 +41,9 @@ class ParamField:
     # A dynamic catalog Core fills from what is installed (checkpoints, loras, vae, ...).
     options_from: str | None = None
     advanced: bool = False
+    #: Show this on the node face as well as in Adjust. Defaults to selects only, which is what a
+    #: loader has always done; set it for a field worth seeing without opening the sidebar.
+    on_face: bool | None = None
 
 
 @dataclass(frozen=True)

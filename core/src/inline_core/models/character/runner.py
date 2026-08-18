@@ -54,7 +54,7 @@ ENCODE = NodeDescriptor(
     type="character/encode",
     title="Encode Character",
     category="Character",
-    icon="user",
+    icon="sparkles",
     output_kind=None,
     inputs=(
         Port("images", "References", PortKind.IMAGE_LIST, required=True),
@@ -71,7 +71,7 @@ COMPILE_REFS = NodeDescriptor(
     type="character/references",
     title="Compile References",
     category="Character",
-    icon="layers",
+    icon="sparkles",
     output_kind=None,
     inputs=(Port("character", "Character", PortKind.CHARACTER, required=True),),
     outputs=(Port("payload", "Payload", PortKind.PAYLOAD),),
@@ -88,7 +88,7 @@ LOAD = NodeDescriptor(
     type="character/load",
     title="Load Character",
     category="Character",
-    icon="user",
+    icon="sparkles",
     output_kind=None,
     inputs=(),
     outputs=(Port("character", "Character", PortKind.CHARACTER),),
@@ -99,7 +99,7 @@ DATASET = NodeDescriptor(
     type="character/dataset",
     title="Character to Dataset",
     category="Character",
-    icon="layers",
+    icon="sparkles",
     output_kind=None,
     inputs=(Port("character", "Character", PortKind.CHARACTER, required=True),),
     outputs=(
@@ -113,7 +113,7 @@ ATTACH = NodeDescriptor(
     type="character/adapter",
     title="Attach Adapter",
     category="Character",
-    icon="box",
+    icon="sparkles",
     output_kind=None,
     inputs=(
         Port("character", "Character", PortKind.CHARACTER, required=True),
@@ -132,7 +132,7 @@ EDIT = NodeDescriptor(
     type="character/edit",
     title="Edit Character",
     category="Character",
-    icon="user",
+    icon="sparkles",
     output_kind=None,
     inputs=(
         Port("character", "Character", PortKind.CHARACTER, required=True),
@@ -151,7 +151,7 @@ WRITE = NodeDescriptor(
     type="character/write",
     title="Write .char",
     category="Character",
-    icon="save",
+    icon="sparkles",
     output_kind=None,
     inputs=(
         Port("character", "Character", PortKind.CHARACTER, required=True),
@@ -159,6 +159,8 @@ WRITE = NodeDescriptor(
     ),
     outputs=(Port("character", "Character", PortKind.CHARACTER),),
     params=(
+        # On the node face: where the character lands is worth seeing without opening Adjust.
+        ParamField("filename", "Save as (name only)", Widget.TEXT, "", on_face=True),
         # Only bites when a model has both, which is the one case the file cannot decide alone.
         ParamField(
             "apply", "When a model has both", Widget.SELECT, "auto",
@@ -309,11 +311,21 @@ class WriteCharacterRunner(NodeRunner):
             if isinstance(payload, Payload):
                 payload.apply(doc)
         _apply_mode(doc, str(node.params.get("apply") or "auto"))
-        path = library.save(doc, identity.file or None)
+        # A typed name wins over the file it was loaded from: that is what Save as means.
+        path = library.save(doc, _target_name(node.params.get("filename")) or identity.file or None)
         logger.info("Wrote %s with %d payload(s)", path.name, len(doc.manifest.payloads))
         for listener in _on_saved:
             listener(path.name)
         return NodeResult(outputs={"character": Identity(doc=cf.read(path), file=path.name)})
+
+
+def _target_name(raw: Any) -> str | None:
+    """The filename to write, inside models/characters. A path is reduced to its last part: a
+    character written anywhere else is one the pickers cannot offer."""
+    name = str(raw or "").strip().replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not name:
+        return None
+    return name if name.lower().endswith(".char") else f"{name}.char"
 
 
 def _apply_mode(doc: cf.CharDoc, mode: str) -> None:

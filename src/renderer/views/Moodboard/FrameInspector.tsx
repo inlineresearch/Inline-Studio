@@ -7,6 +7,7 @@ import { useFrameStore } from '../../store/frameStore'
 import { useAssetStore } from '../../store/assetStore'
 import { getAssetDragIds } from '../../lib/dnd'
 import { Waveform } from '../../components/Waveform'
+import { useAutoCommit } from '../../lib/useAutoCommit'
 
 const INPUT_DND = 'application/x-inlinestudio-frame-input'
 
@@ -36,17 +37,18 @@ export function FrameInspector(): React.JSX.Element | null {
     setDraftName(frame?.name ?? '')
   }, [frame?.name])
 
+  // Above the early return, as hooks must be: the name is committed as it is typed, not on blur.
+  const { schedule, flush } = useAutoCommit(() => {
+    const next = draftName.trim()
+    if (frame && next && next !== frame.name) void rename(frame.id, next)
+  })
+
   if (!frameId || !frame) return null
 
   const inputAssets = inputs
     .map((i) => assets.find((a) => a.id === i.assetId))
     .filter((a): a is Asset => !!a)
   const orderedIds = inputAssets.map((a) => a.id)
-
-  const commitName = (): void => {
-    const next = draftName.trim()
-    if (next && next !== frame.name) void rename(frame.id, next)
-  }
 
   const onReorderDrop =
     (targetId: string) =>
@@ -71,8 +73,11 @@ export function FrameInspector(): React.JSX.Element | null {
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <input
           value={draftName}
-          onChange={(e) => setDraftName(e.target.value)}
-          onBlur={commitName}
+          onChange={(e) => {
+            setDraftName(e.target.value)
+            schedule()
+          }}
+          onBlur={flush}
           onKeyDown={(e) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
           }}

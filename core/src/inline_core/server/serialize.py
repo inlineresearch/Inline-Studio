@@ -58,6 +58,8 @@ def param_json(
         out["options"] = options
     if field.advanced:
         out["advanced"] = True
+    if field.on_face is not None:
+        out["onFace"] = field.on_face
     return out
 
 

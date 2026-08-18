@@ -91,6 +91,9 @@ export function NodeFrame({
         }}
       />
       <div
+        // `h-full` resolves against the wrapper's height, which is `auto` on a node that hugs its
+        // content - so the floor has to be here, or the card stays shorter than its own dots.
+        style={{ minHeight }}
         className={`h-full w-full rounded-md ${overflowVisible ? 'overflow-visible' : 'overflow-hidden'} ${box} ${ring} ${padded ? 'p-1' : ''}`}
       >
         {children}

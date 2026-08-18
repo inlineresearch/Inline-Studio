@@ -15,6 +15,7 @@ import { matchControlAspect } from '../../../lib/matchControlAspect'
 import { resolveCoreInputThumbs } from './coreInputThumbs'
 import { CoreOutputPreview, CoreOutputThumb } from './CoreOutputPreview'
 import { NodeFrame } from './NodeFrame'
+import { HANDLE_BASE, HANDLE_GAP, compactNodeMinHeight } from './nodeSize'
 import { ReferenceStrip } from './ReferenceStrip'
 import { scoreSuffix, scoreTone, scoreTitle } from '@/lib/continuity'
 import { NodeRunToolbar } from './NodeRunToolbar'
@@ -28,6 +29,7 @@ import {
   ImageGlyph,
   NodeBadge,
   NodeBadgeRow,
+  SparkleIcon,
   SquareIcon,
   TypeIcon,
   WandIcon,
@@ -41,9 +43,6 @@ interface GraphNodeData extends Record<string, unknown> {
 // Handles are packed against an edge rather than spread down the whole side: content/signal ports
 // stack from the top, model-family ports (model/vae/text-encoder) stack from the bottom - so model
 // wiring reads as one band along the bottom and the image flow runs across the top.
-const HANDLE_BASE = 18 // px from the packed edge to the first dot
-const HANDLE_GAP = 22 // px between stacked dots
-
 function topStyle(index: number): React.CSSProperties {
   return { top: HANDLE_BASE + index * HANDLE_GAP }
 }
@@ -93,6 +92,8 @@ function coreGlyph(icon: string): React.JSX.Element {
       return <TypeIcon />
     case 'image':
       return <ImageGlyph />
+    case 'sparkles':
+      return <SparkleIcon />
     default:
       return <SquareIcon />
   }
@@ -263,10 +264,13 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         (c.data as { targetHandle?: string }).targetHandle === 'control_image',
     )
 
-  // A loader/plumbing node (no media output) renders compact - no preview, no Run (it loads with
-  // whatever downstream node runs). Generation nodes get the full preview card + the graph Run
-  // control floated on the output node.
+  // A node with no media output renders compact: no preview card, since there is nothing to show.
   const isLoader = descriptor.outputKind == null
+  // Run belongs on whatever ends the graph. A media node always ends one; a node with no media
+  // output ends it only when nothing downstream consumes it, which is what separates Write .char
+  // (the end of a character graph) from a loader feeding the node that will run it.
+  const feedsSomething = connectors.some((c) => c.fromItemId === itemId)
+  const showRun = !isLoader || !feedsSomething
   const fileParam = core?.params?.file
   // Name the weights rather than saying "Auto": the point of the label is to tell you what will
   // load. A generation node's provider resolves this; a plain loader has none, so fall back to the
@@ -319,12 +323,29 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
     </>
   )
 
+  const runToolbar = showRun ? (
+    <NodeRunToolbar
+      isTarget={isRunTarget}
+      busy={busy}
+      onRun={() => void runWorkflow(itemId)}
+      onStop={() => void cancel(itemId)}
+      disabled={download !== null}
+      disabledReason="Downloading model…"
+      menuItems={graphMenu.items}
+      menuNote={graphMenu.note}
+    />
+  ) : null
+
   if (isLoader) {
     // A loader's whole job is picking a file, so its SELECT dropdown(s) live directly on the node
     // face (not behind Adjust) - the one exception to "params off the node face", which exists to
     // keep *generation* one-click. Any non-select params (rare for a loader) stay behind Adjust.
-    const selectParams = descriptor.params.filter((p) => p.widget === 'select')
-    const otherParams = descriptor.params.filter((p) => p.widget !== 'select')
+    // A select has always sat on the face; anything else opts in with `onFace`. Adjust still
+    // lists every param, so the face is a shortcut to the ones worth seeing, never the only way in.
+    const onFace = (field: (typeof descriptor.params)[number]): boolean =>
+      field.onFace ?? field.widget === 'select'
+    const faceParams = descriptor.params.filter(onFace)
+    const otherParams = descriptor.params.filter((p) => !onFace(p))
     const setParam = (key: string, value: string): void => {
       void updateItem(itemId, {
         data: { ...item.data, core: { ...core, params: { ...core.params, [key]: value } } },
@@ -332,6 +353,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
     }
     return (
       <>
+        {runToolbar}
         <NodeBadgeRow dragNodeId={id}>
           <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>
           {extName && (
@@ -360,15 +382,28 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           id={id}
           selected={!!selected}
           minWidth={188}
-          minHeight={44}
+          minHeight={compactNodeMinHeight(descriptor)}
           padded={false}
           subtleSelect
           running={busy}
           invalid={missing.length > 0}
         >
           <div className="flex h-full w-full flex-col gap-1 px-2 py-1.5">
-            {selectParams.length > 0 ? (
-              selectParams.map((field) => {
+            {faceParams.length > 0 ? (
+              faceParams.map((field) => {
+                if (field.widget !== 'select') {
+                  return (
+                    <input
+                      key={field.key}
+                      type="text"
+                      value={String(core.params?.[field.key] ?? '')}
+                      placeholder={field.label}
+                      title={field.label}
+                      onChange={(e) => setParam(field.key, e.target.value)}
+                      className="nodrag w-full min-w-0 rounded border border-border bg-panel px-1.5 py-1 text-[10px] text-zinc-200 outline-none focus:border-accent"
+                    />
+                  )
+                }
                 const opts = field.options ?? []
                 const hasAuto = opts.some((o) => o.value === '')
                 // A node saved before Core resolved these still stores "", which matches no option
@@ -432,16 +467,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   return (
     <>
       {/* The graph's single Run control, floated above this output node while the graph is selected. */}
-      <NodeRunToolbar
-        isTarget={isRunTarget}
-        busy={busy}
-        onRun={() => void runWorkflow(itemId)}
-        onStop={() => void cancel(itemId)}
-        disabled={download !== null}
-        disabledReason="Downloading model…"
-        menuItems={graphMenu.items}
-        menuNote={graphMenu.note}
-      />
+      {runToolbar}
       {/* Floating title badge - matches the fal Generate node. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>

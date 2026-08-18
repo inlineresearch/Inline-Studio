@@ -355,6 +355,16 @@ export function WandIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
+/** Sparkles - the character nodes (`icon:"sparkles"`). */
+export function SparkleIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="M11 3 12.9 8.1 18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9Z" />
+      <path d="M18 15l.7 1.8L20.5 17.5l-1.8.7L18 20l-.7-1.8L15.5 17.5l1.8-.7Z" />
+    </Icon>
+  )
+}
+
 /** Box - a loader-style node (`icon:"box"`). */
 export function BoxIcon({ className }: { className?: string }): React.JSX.Element {
   return (

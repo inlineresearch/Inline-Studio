@@ -6,32 +6,30 @@ import { OutputThumb, type OutputTile } from '../Library/OutputThumb'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
 import {
   ChevronLeftIcon,
-  CharacterIcon,
   ChevronRightIcon,
   DatasetIcon,
   ImageIcon,
-  LoraOutputIcon,
   ModelsIcon,
   SparklesIcon,
 } from '../../components/icons'
 import { ModelsPanel } from '../Models/ModelsPanel'
-import { CharacterLibraryPanel } from '../Characters/CharacterLibraryPanel'
 import { DatasetsPanel } from '../Trainer/DatasetsPanel'
-import { OutputsPanel } from '../Trainer/OutputsPanel'
 
-type Tab = 'assets' | 'outputs' | 'characters' | 'models' | 'datasets' | 'loras'
+type Tab = 'assets' | 'outputs' | 'models' | 'datasets'
 
 const TABS: { key: Tab; label: string; Icon: (p: { className?: string }) => React.JSX.Element }[] =
   [
     { key: 'assets', label: 'Assets', Icon: ImageIcon },
     { key: 'outputs', label: 'Outputs', Icon: SparklesIcon },
-    { key: 'characters', label: 'Characters', Icon: CharacterIcon },
     { key: 'models', label: 'Models', Icon: ModelsIcon },
     { key: 'datasets', label: 'Datasets', Icon: DatasetIcon },
-    { key: 'loras', label: 'LoRAs', Icon: LoraOutputIcon },
   ]
 
-/** Collapsible left rail for the canvas; node creation lives in the floating toolbar instead. */
+/** Collapsible left rail for the canvas; node creation lives in the floating toolbar instead.
+ *
+ * No Characters or LoRAs tab: a trained character is written to `models_dir()/characters` and a
+ * trained LoRA to `models_dir()/loras`, so the Models panel already lists both. Two rails onto the
+ * same folder is two places to keep in step. */
 const MIN_PANEL_WIDTH = 200
 const MAX_PANEL_WIDTH = 600
 
@@ -142,10 +140,8 @@ export function SideMenu(): React.JSX.Element {
         {/* Assets reuses the full library panel - drag a tile onto the canvas to create a frame. */}
         {tab === 'assets' && <LibraryPanel />}
         {tab === 'outputs' && <OutputsTab />}
-        {tab === 'characters' && <CharacterLibraryPanel />}
         {tab === 'models' && <ModelsPanel />}
         {tab === 'datasets' && <DatasetsPanel />}
-        {tab === 'loras' && <OutputsPanel />}
       </div>
 
       {/* Drag separator on the right edge to resize the panel. */}

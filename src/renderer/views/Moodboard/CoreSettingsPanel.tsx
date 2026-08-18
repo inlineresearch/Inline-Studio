@@ -4,6 +4,7 @@ import { useMoodboardStore } from '../../store/moodboardStore'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
 import { useSettingsDraft } from '../../lib/useSettingsDraft'
 import { CoreParamWidget } from './CoreParamWidget'
+import { wiredParams } from './wiredParams'
 import { SettingsHeader } from './SettingsHeader'
 
 /**
@@ -20,6 +21,15 @@ export function CoreSettingsPanel(): React.JSX.Element | null {
   const core = item?.type === 'core' ? item.data.core : undefined
   const descriptor = useCoreNodesStore((s) =>
     core ? s.descriptors.find((d) => d.type === core.type) : undefined,
+  )
+
+  // A param that is also an input port is overridden by whatever is wired to it, so the panel has
+  // to show the value the run will use rather than the one that was typed and will be ignored.
+  const items = useMoodboardStore((s) => s.items)
+  const connectors = useMoodboardStore((s) => s.connectors)
+  const wired = useMemo(
+    () => wiredParams(itemId ?? '', descriptor, items, connectors),
+    [itemId, descriptor, items, connectors],
   )
 
   const defaults = useMemo(
@@ -74,6 +84,7 @@ export function CoreSettingsPanel(): React.JSX.Element | null {
               key={field.key}
               field={field}
               value={local[field.key]}
+              wired={wired.get(field.key)}
               onChange={(v) => change(field.key, v)}
               onCommit={(v) => change(field.key, v)}
             />

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAutoCommit } from '../../../lib/useAutoCommit'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import { NodeFrame } from './NodeFrame'
@@ -25,9 +26,10 @@ export function PromptNode({ id, selected }: NodeProps): React.JSX.Element {
   }
 
   const commit = (): void => {
-    if (!item) return
+    if (!item || text === stored) return
     void updateItem(id, { data: { ...item.data, promptText: text } })
   }
+  const { schedule, flush } = useAutoCommit(commit)
 
   return (
     <>
@@ -48,8 +50,11 @@ export function PromptNode({ id, selected }: NodeProps): React.JSX.Element {
       >
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          onBlur={commit}
+          onChange={(e) => {
+            setText(e.target.value)
+            schedule()
+          }}
+          onBlur={flush}
           spellCheck={false}
           placeholder="Describe what to generate…"
           className="nodrag h-full w-full resize-none bg-transparent p-2.5 text-xs leading-snug text-zinc-100 outline-none placeholder:text-zinc-600"

@@ -427,3 +427,37 @@ def test_a_dataset_needs_the_character_to_have_a_description(
 
     with pytest.raises(ValueError, match="description"):
         CharacterDatasetRunner().run(_node({}), {"character": [identity]}, _ctx())  # type: ignore[arg-type]
+
+
+def test_save_as_names_the_file_and_beats_the_one_it_was_loaded_from(
+    tmp_path: Path, encoders: None
+) -> None:
+    """Save as is how a character is forked deliberately, so it has to win over the loaded name."""
+    from inline_core.models.character.runner import LoadCharacterRunner
+
+    identity = EncodeCharacterRunner().run(
+        _node({"name": "Ada"}), {"images": [_image(tmp_path / "a.png")]}, _ctx()  # type: ignore[arg-type]
+    ).outputs["character"]
+    WriteCharacterRunner().run(
+        _node({}), {"character": [identity], "payloads": []}, _ctx()  # type: ignore[arg-type]
+    )
+    loaded = LoadCharacterRunner().run(
+        _node({"file": "Ada.char"}), {}, _ctx()  # type: ignore[arg-type]
+    ).outputs["character"]
+
+    WriteCharacterRunner().run(
+        _node({"filename": "Ada v2"}), {"character": [loaded], "payloads": []}, _ctx()  # type: ignore[arg-type]
+    )
+    names = sorted(p.name for p in library.root().glob("*.char"))
+    assert names == ["Ada v2.char", "Ada.char"], "the original survives, the copy is named"
+
+
+def test_save_as_keeps_the_character_inside_the_library(tmp_path: Path, encoders: None) -> None:
+    """Written anywhere else it is a character no picker can offer, so a path is reduced to a name."""
+    from inline_core.models.character.runner import _target_name
+
+    assert _target_name("  Ada  ") == "Ada.char"
+    assert _target_name("Ada.char") == "Ada.char"
+    assert _target_name("/etc/passwd") == "passwd.char"
+    assert _target_name("../../escape.char") == "escape.char"
+    assert _target_name("") is None

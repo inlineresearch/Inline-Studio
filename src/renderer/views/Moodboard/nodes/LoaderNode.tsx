@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { portKindColor } from '@shared/coreNodes'
 import type { FrameInput } from '@shared/types'
 import { useAssetStore } from '../../../store/assetStore'
 import { useMoodboardStore } from '../../../store/moodboardStore'
@@ -245,7 +246,9 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
         id="out"
         position={Position.Right}
         title="Output"
-        className="group !h-3 !w-3 !border-2 !border-surface !bg-indigo-400"
+        // Coloured by what it emits, so it matches the image sockets it wires into.
+        style={{ background: portKindColor('image') }}
+        className="group !h-3 !w-3 !border-2 !border-surface"
       >
         <span className="pointer-events-none absolute left-full top-1/2 ml-1.5 hidden -translate-y-1/2 items-center whitespace-nowrap rounded-md border border-border bg-panel/95 px-1.5 py-0.5 text-[10px] font-medium text-zinc-200 shadow-sm backdrop-blur group-hover:flex">
           Output
