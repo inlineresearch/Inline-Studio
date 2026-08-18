@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import mimetypes
 import os
 import re
 import tempfile
@@ -112,6 +113,27 @@ def _version(registry: Registry, catalog: ModelCatalog) -> str:
     return f"r_{hashlib.sha256(payload.encode()).hexdigest()[:8]}"
 
 
+# The SPA's content types, pinned rather than asked of the host - see _pin_web_mime_types.
+_WEB_MIME_TYPES = (
+    (".js", "text/javascript"),
+    (".mjs", "text/javascript"),
+    (".css", "text/css"),
+    (".json", "application/json"),
+    (".map", "application/json"),
+    (".svg", "image/svg+xml"),
+    (".wasm", "application/wasm"),
+    (".woff2", "font/woff2"),
+)
+
+
+def _pin_web_mime_types() -> None:
+    """A clean Windows install sets HKCR\\.js = text/plain and Python lets that registry value
+    override its own table, so the SPA's ES modules ship as text/plain and no browser executes
+    them - a blank page. add_type runs after the registry read, so these win."""
+    for ext, mime in _WEB_MIME_TYPES:
+        mimetypes.add_type(mime, ext)
+
+
 def create_app(
     registry: Registry | None = None,
     cache: NodeCache | None = None,
@@ -128,6 +150,7 @@ def create_app(
 ) -> FastAPI:
     _setup_app_logging()
     _quiet_access_log()
+    _pin_web_mime_types()
     registry = registry or build_default_registry()
     cache = cache or InMemoryCache()
     policy = policy or MemoryPolicy()
