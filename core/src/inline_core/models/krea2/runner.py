@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -80,6 +81,10 @@ def _descriptor(variant: str) -> NodeDescriptor:
             ParamField(
                 "strength", "Denoise strength", Widget.NUMBER, 0.6, min=0.0, max=1.0, step=0.05,
                 advanced=True,
+            ),
+            # Krea 2 has no reference channel, so a character applies only as its trained adapter.
+            ParamField(
+                "character", "Character", Widget.SELECT, "", options_from="characters",
             ),
             # Depth control: wire a depth map into Control and pick the depth control-LoRA.
             # Empty = plain generation. Strength dials the block LoRA; the depth structure always
@@ -163,6 +168,11 @@ class Krea2Runner(NodeRunner):
         vae_ref = rt.component_ref(inputs, "vae", "vae", self._label)
         te_ref = rt.component_ref(inputs, "text_encoder", "text_encoder", self._label)
         loras = rt.lora_stack(inputs, self._label)
+        character = _apply_character(params)
+        if character is not None:
+            prompt = character.prefix + prompt
+            # Appended, so a user's own wired LoRAs still apply alongside the character's.
+            loras = (*loras, LoraRef(file=str(character.lora), strength=1.0))
         wired = {ref.kind for ref in (model_ref, vae_ref, te_ref) if ref is not None}
 
         missing = [
@@ -370,6 +380,31 @@ def _require(path: Any, what: str) -> str:
 
 
 # --- pipeline build -----------------------------------------------------------------------------
+
+
+#: The arch a Krea 2 adapter is stored under, matching the training config.
+_CHARACTER_ARCH = "krea2"
+
+
+@dataclass(frozen=True)
+class _Character:
+    lora: Any
+    prefix: str
+
+
+def _apply_character(params: dict[str, Any]) -> _Character | None:
+    """A picked character's adapter and prompt text, or None when none is picked or trained."""
+    chosen = str(params.get("character") or "").strip()
+    if not chosen:
+        return None
+    from ...characters import apply as characters
+
+    applied = characters.char_apply(chosen, _CHARACTER_ARCH)
+    if applied is None or applied.lora is None:
+        logger.info("Character %s has no Krea 2 adapter yet; generating without it.", chosen)
+        return None
+    logger.info("Applying character %s by adapter", applied.name)
+    return _Character(lora=applied.lora, prefix=applied.prompt_prefix(1))
 
 
 def _load_pipeline(

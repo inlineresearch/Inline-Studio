@@ -75,3 +75,35 @@ def test_the_chosen_mode_survives_a_round_trip(tmp_path: Path) -> None:
     cf.write(path, doc)
 
     assert cf.read(path).manifest.apply == {"krea2": "lora"}
+
+
+def test_krea2_applies_a_character_only_as_its_adapter(tmp_path: Path) -> None:
+    """Krea 2 has no reference channel, so references cannot apply there at all. Before this, its
+    runner never called char_apply and a trained Krea 2 adapter had nothing that loaded it."""
+    from inline_core.characters import apply as ax
+    from inline_core.characters import charfile as cf
+    from inline_core.characters import encode, library
+
+    doc = encode.char_encode([_image(tmp_path / "ref.png")], name="Ada", description="green jacket")
+    path = library.save(doc)
+
+    # No Krea 2 adapter yet: nothing to apply, and no references are offered in its place.
+    untrained = ax.char_apply("Ada.char", "krea2")
+    assert untrained is not None
+    assert untrained.lora is None and not untrained.refs
+
+    doc = cf.read(path)
+    encode.set_lora_payload(
+        doc.manifest, doc.members, b"adapter-bytes", arch="krea2",
+        base="krea2_turbo_bf16.safetensors", rank=16, steps=600, resolution=512,
+    )
+    cf.write(path, doc)
+
+    trained = ax.char_apply("Ada.char", "krea2")
+    assert trained is not None
+    assert trained.lora is not None, "the Krea 2 adapter must reach the runner"
+    assert not trained.refs
+    assert "green jacket" in trained.prompt_prefix(1)
+
+    # The Flux payload is untouched by any of this: the two archs are keyed separately.
+    assert ax.char_apply("Ada.char").lora is None

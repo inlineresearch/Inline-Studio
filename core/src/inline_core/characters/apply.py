@@ -63,9 +63,12 @@ def _cache_root() -> Path:
     return data_dir() / "characters"
 
 
-def char_apply(chosen: str) -> AppliedCharacter | None:
-    """References and prompt text for a pick, or None when none. An unreadable pick raises rather
-    than silently generating the wrong person."""
+def char_apply(chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH) -> AppliedCharacter | None:
+    """How a character applies on ``arch``, or None when none is picked. An unreadable pick raises
+    rather than silently generating the wrong person.
+
+    ``arch`` matters because a model without a reference channel can only take the adapter, and its
+    payloads are keyed separately."""
     name = str(chosen or "").strip()
     if not name:
         return None
@@ -77,9 +80,9 @@ def char_apply(chosen: str) -> AppliedCharacter | None:
 
     doc = cf.read(path)
     digest = library.content_hash(path)
-    arch = encode.FLUX2_KLEIN_ARCH
+    references = arch == encode.FLUX2_KLEIN_ARCH
 
-    if not cf.payload_valid(doc.manifest, arch, encode.PAYLOAD_ENCODER_VERSION):
+    if references and not cf.payload_valid(doc.manifest, arch, encode.PAYLOAD_ENCODER_VERSION):
         doc = _recompile(doc, path)
         digest = library.content_hash(path)
 
@@ -88,7 +91,10 @@ def char_apply(chosen: str) -> AppliedCharacter | None:
     # A trained adapter wins unless the character says otherwise: the user asked for it explicitly,
     # and loading both would apply the identity twice.
     mode = doc.manifest.apply.get(arch) or ("lora" if lora else "reference")
-    refs = [] if mode == "lora" and lora else _extract(doc, digest, arch)
+    # No reference channel on this arch, so the adapter is the only way it can apply at all.
+    if not references:
+        mode = "lora"
+    refs = [] if mode == "lora" else _extract(doc, digest, arch)
     return AppliedCharacter(
         doc.manifest.name or path.stem, refs, description, lora if mode == "lora" else None
     )
