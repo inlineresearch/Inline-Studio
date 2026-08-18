@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { modelFilenames } from './modelRefs'
+import { coreNodeTypes, modelFilenames } from './modelRefs'
 
 describe('model references in an exported graph', () => {
   it('finds the filenames a real exported node carries', () => {
@@ -53,5 +53,38 @@ describe('model references in an exported graph', () => {
 
   it('finds nothing in a graph with no weights', () => {
     expect(modelFilenames({ items: [{ data: { text: 'hello' } }] })).toEqual([])
+  })
+})
+
+describe('coreNodeTypes', () => {
+  it('finds every Core node type in an exported graph, deduped', () => {
+    const graph = {
+      graph: {
+        items: [
+          { type: 'core', data: { core: { type: 'black-forest-labs/flux-2', params: {} } } },
+          { type: 'core', data: { core: { type: 'load/vae', params: {} } } },
+          { type: 'prompt', data: { promptText: 'x' } },
+          { type: 'core', data: { core: { type: 'load/vae', params: {} } } },
+        ],
+      },
+    }
+    expect(coreNodeTypes(graph).sort()).toEqual(['black-forest-labs/flux-2', 'load/vae'])
+  })
+
+  it('is the only thing that can speak for a graph left on auto', () => {
+    // Every loader on auto: the graph names no weight anywhere, so the filename sweep is empty and
+    // a workflow needing several GB would report needing nothing.
+    const graph = {
+      graph: {
+        items: [{ type: 'core', data: { core: { type: 'load/diffusion-model', params: {} } } }],
+      },
+    }
+    expect(modelFilenames(graph)).toEqual([])
+    expect(coreNodeTypes(graph)).toEqual(['load/diffusion-model'])
+  })
+
+  it('ignores anything that is not a core node', () => {
+    expect(coreNodeTypes({ items: [{ type: 'loader', data: { assetIds: ['a'] } }] })).toEqual([])
+    expect(coreNodeTypes(null)).toEqual([])
   })
 })

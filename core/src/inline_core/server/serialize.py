@@ -92,6 +92,29 @@ def descriptor_json(
     return out
 
 
+def resolved_params(
+    descriptor: NodeDescriptor,
+    catalog: ModelCatalog | None = None,
+    requirements: Any = None,
+) -> dict[str, Any]:
+    """Every param's effective value: what a run uses where the item stores nothing.
+
+    Read back off the served descriptor rather than recomputed, so this cannot drift from what the
+    node face shows: its `default` already folds in the node's own resolution, and its options are
+    already narrowed to the files this node can load. An empty pick means "engine auto-picks",
+    which is the first option.
+    """
+    out: dict[str, Any] = {}
+    for field in descriptor_json(descriptor, catalog, requirements)["params"]:
+        value = field.get("default")
+        if value in (None, ""):
+            options = field.get("options") or []
+            value = options[0]["value"] if options else None
+        if value not in (None, ""):
+            out[str(field["key"])] = value
+    return out
+
+
 def take_json(take: Take) -> dict[str, Any]:
     return {
         "id": take.id,

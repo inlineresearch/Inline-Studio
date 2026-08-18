@@ -432,7 +432,7 @@ def test_a_dataset_needs_the_character_to_have_a_description(
 def test_save_as_names_the_file_and_beats_the_one_it_was_loaded_from(
     tmp_path: Path, encoders: None
 ) -> None:
-    """Save as is how a character is forked deliberately, so it has to win over the loaded name."""
+    """Save as is how a character is forked on purpose, so it wins over the loaded name."""
     from inline_core.models.character.runner import LoadCharacterRunner
 
     identity = EncodeCharacterRunner().run(
@@ -453,7 +453,7 @@ def test_save_as_names_the_file_and_beats_the_one_it_was_loaded_from(
 
 
 def test_save_as_keeps_the_character_inside_the_library(tmp_path: Path, encoders: None) -> None:
-    """Written anywhere else it is a character no picker can offer, so a path is reduced to a name."""
+    """Written elsewhere it is a character no picker can offer, so a path becomes a name."""
     from inline_core.models.character.runner import _target_name
 
     assert _target_name("  Ada  ") == "Ada.char"

@@ -9,12 +9,51 @@ import type { MoodboardConnector, MoodboardItem } from '@shared/types'
 import type { Recipe, RecipeConnector, RecipeItem } from '../../lib/pngRecipe'
 import { copyText } from '../../lib/clipboard'
 import { useMoodboardStore } from '../../store/moodboardStore'
+import { useCoreNodesStore } from '../../store/coreNodesStore'
 import { expandToGraphs, toEdges } from './graphSelection'
 
 /** Node types `buildGraphFromRecipe` can recreate. Anything else exports but will not re-import.
  * `asset` and a rendered `frame` come back as empty Load Assets nodes: the wiring rebuilds, the
  * media does not, because asset ids mean nothing in another project. */
-const REBUILDABLE = new Set(['core', 'prompt', 'controlSpace', 'loader', 'frame', 'asset'])
+const REBUILDABLE = new Set([
+  'core',
+  'prompt',
+  'controlSpace',
+  'loader',
+  'frame',
+  'asset',
+  'train/dataset',
+  'train/caption',
+  'train/lora',
+  'train/loss',
+  'resource',
+])
+
+/**
+ * The params a run would actually use, not only the ones the user touched.
+ *
+ * A select left alone stores nothing: the node face shows the file the engine resolved, and the
+ * run uses it, but the item's params stay empty. Exported as-is, a graph naming no weight anywhere
+ * cannot be rebuilt on another machine and reports needing no models at all. Core serves each
+ * field's `default` already resolved to the file it would load, so that is what gets recorded.
+ */
+function effectiveParams(core: {
+  type?: string
+  params?: Record<string, unknown>
+}): Record<string, unknown> {
+  const stored = { ...(core.params ?? {}) }
+  const descriptor = useCoreNodesStore.getState().descriptors.find((d) => d.type === core.type)
+  if (!descriptor) return stored
+  for (const field of descriptor.params) {
+    const value = stored[field.key]
+    if (value !== undefined && value !== null && value !== '') continue
+    const resolved = field.default !== '' ? field.default : field.options?.[0]?.value
+    if (resolved !== undefined && resolved !== null && resolved !== '') {
+      stored[field.key] = resolved
+    }
+  }
+  return stored
+}
 
 /** Item fields the recipe keeps, per type. Mirrors `studio/recipe.py::_clean_data`. */
 function cleanData(item: MoodboardItem): Record<string, unknown> {
@@ -23,10 +62,20 @@ function cleanData(item: MoodboardItem): Record<string, unknown> {
     case 'core': {
       // A recipe says how to make the image, so the node's take history is deliberately dropped.
       const core = (data.core ?? {}) as { type?: string; params?: Record<string, unknown> }
-      return { core: { type: core.type, params: core.params ?? {} } }
+      return { core: { type: core.type, params: effectiveParams(core) } }
     }
     case 'prompt':
       return { promptText: data.promptText ?? '' }
+    // Training nodes keep their settings, never their bindings: a dataset and a run are rows in
+    // this project's database, so they name nothing in the project the recipe lands in.
+    case 'train/lora':
+      return { hyperparams: data.hyperparams ?? {} }
+    case 'train/caption':
+      return { overwrite: data.overwrite ?? false, captioner: data.captioner ?? '' }
+    case 'train/dataset':
+    case 'train/loss':
+    case 'resource':
+      return {}
     case 'controlSpace':
       return { controlAssetId: data.controlAssetId, controlScene: data.controlScene }
     case 'loader':

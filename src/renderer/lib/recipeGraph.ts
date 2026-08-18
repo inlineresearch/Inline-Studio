@@ -81,6 +81,19 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
       if (created?.frameId && fal.params) {
         await useGenerationStore.getState().setParams(created.frameId, fal.params)
       }
+    } else if (
+      it.type === 'train/dataset' ||
+      it.type === 'train/caption' ||
+      it.type === 'train/lora' ||
+      it.type === 'train/loss'
+    ) {
+      created = await store.addTrainingNode(it.type, x, y)
+      // Settings travel; the dataset and run they were bound to do not.
+      if (created && Object.keys(data).length) {
+        await store.updateItem(created.id, { data: { ...created.data, ...data } }, false)
+      }
+    } else if (it.type === 'resource') {
+      created = await store.addResource(x, y)
     } else if (it.type === 'asset' || it.type === 'frame') {
       // Media does not travel between projects, but the wiring should. An empty Load Assets node
       // stands in, so the user drops their own clip onto it and the graph is whole again.

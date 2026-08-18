@@ -98,3 +98,143 @@ def test_read_recipe_png_tolerates_a_missing_or_bad_file(tmp_path) -> None:
     bad.write_bytes(b"not a png")
     assert read_recipe_png(bad) is None
     assert read_recipe_png(Path(bad)) is None
+
+
+def test_recipe_records_what_a_node_resolves_to(tmp_path) -> None:
+    """A picker left alone stores nothing, so a recipe built from the item alone names no weight
+    and cannot rebuild the same image anywhere else."""
+    import sqlite3
+
+    from inline_core.studio import moodboard as mb
+    from inline_core.studio import recipe as studio_recipe
+    from inline_core.studio.schema import apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+    conn.execute("INSERT INTO project (id, name, created_at, updated_at) VALUES ('p','P',0,0)")
+    node = mb.add_core_node(conn, "load/diffusion-model", 0, 0)
+
+    studio_recipe.set_param_resolver(lambda _t: {"file": "flux-2-klein-9b.safetensors"})
+    try:
+        built = studio_recipe.build_recipe(conn, node["id"])
+    finally:
+        studio_recipe.set_param_resolver(None)
+
+    params = built["graph"]["items"][0]["data"]["core"]["params"]
+    assert params["file"] == "flux-2-klein-9b.safetensors"
+
+
+def test_a_picked_file_beats_what_the_node_would_resolve(tmp_path) -> None:
+    import sqlite3
+
+    from inline_core.studio import moodboard as mb
+    from inline_core.studio import recipe as studio_recipe
+    from inline_core.studio.schema import apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+    conn.execute("INSERT INTO project (id, name, created_at, updated_at) VALUES ('p','P',0,0)")
+    node = mb.add_core_node(conn, "load/diffusion-model", 0, 0)
+    mb.update_item(
+        conn,
+        node["id"],
+        {
+            "data": {
+                "core": {"type": "load/diffusion-model", "params": {"file": "picked.safetensors"}}
+            }
+        },
+    )
+
+    studio_recipe.set_param_resolver(lambda _t: {"file": "auto.safetensors"})
+    try:
+        built = studio_recipe.build_recipe(conn, node["id"])
+    finally:
+        studio_recipe.set_param_resolver(None)
+
+    params = built["graph"]["items"][0]["data"]["core"]["params"]
+    assert params["file"] == "picked.safetensors"
+
+
+def test_a_recipe_survives_a_resolver_that_raises(tmp_path) -> None:
+    """Recipe data is metadata on a finished render; it must never fail the render."""
+    import sqlite3
+
+    from inline_core.studio import moodboard as mb
+    from inline_core.studio import recipe as studio_recipe
+    from inline_core.studio.schema import apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+    conn.execute("INSERT INTO project (id, name, created_at, updated_at) VALUES ('p','P',0,0)")
+    node = mb.add_core_node(conn, "load/diffusion-model", 0, 0)
+
+    def boom(_t: str) -> dict:
+        raise RuntimeError("registry is gone")
+
+    studio_recipe.set_param_resolver(boom)
+    try:
+        built = studio_recipe.build_recipe(conn, node["id"])
+    finally:
+        studio_recipe.set_param_resolver(None)
+
+    assert built["graph"]["items"][0]["data"]["core"]["params"] == {}
+
+
+def test_resolved_params_agree_with_what_the_node_serves(tmp_path, monkeypatch) -> None:
+    """The recipe and the node face must name the same file. Reading it back off the served
+    descriptor is what keeps them from drifting: an empty pick means the first option."""
+    from inline_core.graph.descriptor import NodeDescriptor, ParamField, Widget
+    from inline_core.models.catalog import ModelCatalog
+    from inline_core.server.serialize import descriptor_json, resolved_params
+
+    monkeypatch.setenv("INLINE_MODELS_DIR", str(tmp_path))
+    catalog = ModelCatalog(tmp_path)
+    catalog.ensure_dirs()
+    (tmp_path / "diffusion_models" / "a.safetensors").write_bytes(b"x")
+    (tmp_path / "diffusion_models" / "b.safetensors").write_bytes(b"x")
+    catalog.rescan()
+
+    descriptor = NodeDescriptor(
+        type="load/diffusion-model",
+        title="Load Diffusion Model",
+        category="Loaders",
+        params=(
+            ParamField("file", "File", Widget.SELECT, "", options_from="diffusion_models"),
+            ParamField("steps", "Steps", Widget.NUMBER, 8),
+        ),
+    )
+
+    params = resolved_params(descriptor, catalog)
+    served = {f["key"]: f for f in descriptor_json(descriptor, catalog)["params"]}
+
+    assert params["file"] == served["file"]["options"][0]["value"]
+    assert params["steps"] == 8, "a plain default is recorded too, not only file picks"
+
+
+def test_a_training_node_keeps_its_settings_but_not_its_bindings() -> None:
+    """Hyperparams describe the run and travel. A dataset id and a run id are rows in this
+    project's database, so they name nothing in the project a recipe lands in."""
+    from inline_core.studio.recipe import _clean_data
+
+    trainer = _clean_data(
+        {
+            "type": "train/lora",
+            "data": {
+                "hyperparams": {"arch": "krea2", "rank": 32, "steps": 1200},
+                "datasetId": "d-local",
+                "runId": "r-local",
+            },
+        }
+    )
+    assert trainer == {"hyperparams": {"arch": "krea2", "rank": 32, "steps": 1200}}
+
+    caption = _clean_data(
+        {"type": "train/caption", "data": {"overwrite": True, "datasetId": "d-local"}}
+    )
+    assert caption == {"overwrite": True, "captioner": ""}
+
+    assert _clean_data({"type": "train/dataset", "data": {"datasetId": "d-local"}}) == {}
+    assert _clean_data({"type": "train/loss", "data": {"runId": "r-local"}}) == {}

@@ -10,6 +10,7 @@ small and never nests another node's take history (which itself carries recipes)
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from typing import Any
 
@@ -17,7 +18,38 @@ from . import frames as fr
 from . import moodboard as mb
 from .graph_build import _upstream_closure
 
+logger = logging.getLogger("inline_core.recipe")
+
 RECIPE_VERSION = 1
+
+#: node type -> the values a run would use where the item stores none. Set once by the server,
+#: which is where the registry and the requirements providers are both in scope.
+_param_fallbacks: Any = None
+
+
+def set_param_resolver(resolve: Any) -> None:
+    """Teach recipes what a node resolves to. Without it they record only what the user typed."""
+    global _param_fallbacks
+    _param_fallbacks = resolve
+
+
+def _effective_params(core: dict[str, Any]) -> dict[str, Any]:
+    """The params a run would actually use.
+
+    A picker left alone stores nothing: the node shows the file the engine resolved and the run
+    loads it, but the item's params stay empty. Recorded as-is, a recipe naming no weight cannot
+    rebuild the same image on another machine, and reports needing no models at all.
+    """
+    stored = core.get("params") or {}
+    node_type = str(core.get("type") or "")
+    out: dict[str, Any] = {}
+    if _param_fallbacks is not None and node_type:
+        try:
+            out.update(_param_fallbacks(node_type))
+        except Exception:  # noqa: BLE001 - a recipe is metadata; never fail a render over it
+            logger.warning("Could not resolve params for %s", node_type)
+    out.update({k: v for k, v in stored.items() if v not in (None, "")})
+    return out
 
 
 def _item_data(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, Any]:
@@ -37,9 +69,20 @@ def _clean_data(item: dict[str, Any]) -> dict[str, Any]:
     data = item.get("data") or {}
     if kind == "core":
         core = data.get("core") or {}
-        return {"core": {"type": core.get("type"), "params": core.get("params") or {}}}
+        return {"core": {"type": core.get("type"), "params": _effective_params(core)}}
     if kind == "prompt":
         return {"promptText": data.get("promptText") or ""}
+    # Training nodes keep their settings, never their bindings: a dataset and a run are rows in
+    # this project's database, so they name nothing in the project the recipe lands in.
+    if kind == "train/lora":
+        return {"hyperparams": data.get("hyperparams") or {}}
+    if kind == "train/caption":
+        return {
+            "overwrite": bool(data.get("overwrite") or False),
+            "captioner": data.get("captioner") or "",
+        }
+    if kind in ("train/dataset", "train/loss", "resource"):
+        return {}
     if kind == "controlSpace":
         out: dict[str, Any] = {}
         if data.get("controlAssetId"):

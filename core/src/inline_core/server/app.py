@@ -30,12 +30,20 @@ from ..graph.schema import SCHEMA_VERSION, parse_graph
 from ..models.catalog import ModelCatalog
 from ..models.requirements import RequirementsRegistry
 from ..runtime.file_store import FileTakeStore
+from ..studio import recipe as studio_recipe
 from ..studio.system_stats import SystemStats
 from .assets import AssetStore
 from .manager import RunConflict, RunManager
 from .rpc import EventBroadcaster, RpcRouter
 from .run_store import RunStore
-from .serialize import descriptor_json, event_json, run_json, run_summary_json, take_json
+from .serialize import (
+    descriptor_json,
+    event_json,
+    resolved_params,
+    run_json,
+    run_summary_json,
+    take_json,
+)
 
 # GET /v1/runs/<id> (the client's run-status poll) - but not /events or nested paths.
 _RUN_POLL_PATH = re.compile(r"^/v1/runs/[^/]+$")
@@ -413,6 +421,14 @@ def create_app(
         # Rescan on change, so a new character reaches the node's dropdown without a restart.
         characters_service = Characters(studio_store, events, on_change=catalog.rescan)
         core_generation.set_characters(characters_service)
+
+        def node_param_fallbacks(node_type: str) -> dict[str, Any]:
+            """What a node's params resolve to when the item stores none, for the PNG recipe."""
+            if not registry.has(node_type):
+                return {}
+            return resolved_params(registry.get(node_type), catalog, reqs)
+
+        studio_recipe.set_param_resolver(node_param_fallbacks)
 
         def character_saved(_file: str) -> None:
             """Same refresh the library list does: rescan, then tell the canvas to reload."""

@@ -182,8 +182,8 @@ def test_tree_still_hides_an_unknown_folder_with_no_weights(tmp_path: Path) -> N
 
 
 def test_tree_lists_saved_characters(tmp_path: Path) -> None:
-    """The panel and the node dropdowns answer the same question, so they have to agree on what
-    counts. A `.char` is not a weight, and listing only weights hid every character the user saved."""
+    """The panel and the dropdowns answer the same question, so they must agree on what counts.
+    A `.char` is not a weight, and listing only weights hid every character the user saved."""
     catalog = ModelCatalog(tmp_path)
     catalog.ensure_dirs()
     (tmp_path / "characters" / "Ada.char").write_bytes(b"PK\x03\x04")
