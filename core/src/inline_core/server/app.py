@@ -39,6 +39,7 @@ from .run_store import RunStore
 from .serialize import (
     descriptor_json,
     event_json,
+    param_kind,
     resolved_params,
     run_json,
     run_summary_json,
@@ -418,6 +419,12 @@ def create_app(
         training_bridge = register_training_nodes(
             registry, training_service, on_bound=bind_training_node
         )
+        try:
+            from ..models.character import set_training_bridge
+
+            set_training_bridge(training_bridge)
+        except ImportError:
+            pass
         # Rescan on change, so a new character reaches the node's dropdown without a restart.
         characters_service = Characters(studio_store, events, on_change=catalog.rescan)
         core_generation.set_characters(characters_service)
@@ -429,6 +436,25 @@ def create_app(
             return resolved_params(registry.get(node_type), catalog, reqs)
 
         studio_recipe.set_param_resolver(node_param_fallbacks)
+
+        def node_required_models(node_type: str) -> list[tuple[str, str]]:
+            """What a node needs on disk but never names in a param, for the recipe's model list."""
+            provider = reqs.get(node_type)
+            if provider is None:
+                return []
+            return [
+                (c.filename, c.category) for c in provider.components() if not c.optional
+            ]
+
+        studio_recipe.set_model_resolver(node_required_models)
+
+        def node_param_kinds(node_type: str) -> dict[str, str]:
+            """What each of a node's params is, so an exported graph says rather than implies."""
+            if not registry.has(node_type):
+                return {}
+            return {p.key: param_kind(p) for p in registry.get(node_type).params}
+
+        studio_recipe.set_kind_resolver(node_param_kinds)
 
         def character_saved(_file: str) -> None:
             """Same refresh the library list does: rescan, then tell the canvas to reload."""

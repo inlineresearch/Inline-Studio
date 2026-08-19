@@ -17,6 +17,7 @@ from typing import Any
 
 from ...errors import ComponentError
 from ...graph.descriptor import NodeDescriptor, ParamField, Port, Widget
+from ...graph.loader_runners import LoraRef
 from ...graph.runners import NodeResult, NodeRunner
 from ...graph.schema import Node, PortKind
 from ...runtime.context import ExecutionContext
@@ -100,7 +101,10 @@ TRAIN_LORA = NodeDescriptor(
     output_kind=None,
     hidden=True,
     inputs=(Port("dataset", "Dataset", PortKind.DATASET, required=True),),
-    outputs=(Port("lora", "LoRA", PortKind.LORA),),
+    outputs=(
+        Port("lora", "LoRA", PortKind.LORA),
+        Port("metrics", "Graph", PortKind.METRICS),
+    ),
     # Hyperparams arrive as one blob: they are edited in the node's own Adjust sidebar, which knows
     # which fields a given architecture offers, not by the generic param renderer.
     params=(),
@@ -193,7 +197,11 @@ class TrainLoraRunner(NodeRunner):
         path = str(state.get("outputLoraPath") or "")
         if not path:
             raise ComponentError("Training finished without writing an adapter.")
-        return NodeResult(outputs={"lora": path})
+        # A stack of LoraRef, not a bare path: that is what every `lora` input reads, so the adapter
+        # this node just trained wires straight into Attach Adapter or a generation node.
+        return NodeResult(
+            outputs={"lora": (LoraRef(file=path, strength=1.0),), "metrics": run_id}
+        )
 
     def _await_run(self, node: Node, ctx: ExecutionContext, run_id: str) -> dict[str, Any]:
         """Poll until terminal, mirroring steps into the graph's progress stream."""

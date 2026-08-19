@@ -34,6 +34,8 @@ class PortKind(str, Enum):
     PAYLOAD_LIST = "payload[]"
     # A training dataset, by id. Like a character it outlives the run; unlike one it is a DB row.
     DATASET = "dataset"
+    # A training run's live step/loss series, by run id: what the loss curve plots while it trains.
+    METRICS = "metrics"
 
 
 def port_satisfies(source: PortKind, target: PortKind) -> bool:

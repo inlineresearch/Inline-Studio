@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { isModelPort, portKindColor, type CorePort } from '@shared/coreNodes'
+import { type NodeProps } from '@xyflow/react'
+import { isModelPort } from '@shared/coreNodes'
 import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { useCoreNodesStore } from '../../../store/coreNodesStore'
 import { useGenerationStore } from '../../../store/generationStore'
@@ -15,11 +15,12 @@ import { matchControlAspect } from '../../../lib/matchControlAspect'
 import { resolveCoreInputThumbs } from './coreInputThumbs'
 import { CoreOutputPreview, CoreOutputThumb } from './CoreOutputPreview'
 import { NodeFrame } from './NodeFrame'
-import { HANDLE_BASE, HANDLE_GAP, compactNodeMinHeight } from './nodeSize'
+import { bottomStyle, compactNodeMinHeight, topStyle } from './nodeSize'
+import { PortHandle } from './PortHandle'
 import { ReferenceStrip } from './ReferenceStrip'
 import { scoreSuffix, scoreTone, scoreTitle } from '@/lib/continuity'
 import { NodeRunToolbar } from './NodeRunToolbar'
-import { missingInputs, missingInputsMessage } from '../missingInputs'
+import { missingInputs, missingInputsMessage, optionsWithPick } from '../missingInputs'
 import { useGraphMenu } from './useGraphMenu'
 import {
   AdjustIcon,
@@ -43,44 +44,7 @@ interface GraphNodeData extends Record<string, unknown> {
 // Handles are packed against an edge rather than spread down the whole side: content/signal ports
 // stack from the top, model-family ports (model/vae/text-encoder) stack from the bottom - so model
 // wiring reads as one band along the bottom and the image flow runs across the top.
-function topStyle(index: number): React.CSSProperties {
-  return { top: HANDLE_BASE + index * HANDLE_GAP }
-}
-
-function bottomStyle(index: number): React.CSSProperties {
-  return { top: 'auto', bottom: HANDLE_BASE + index * HANDLE_GAP }
-}
-
 /** One colored port dot with a hover chip naming the port - input (left) or output (right). */
-function PortHandle({
-  port,
-  side,
-  style,
-}: {
-  port: CorePort
-  side: 'input' | 'output'
-  style: React.CSSProperties
-}): React.JSX.Element {
-  const input = side === 'input'
-  return (
-    <Handle
-      type={input ? 'target' : 'source'}
-      id={port.id}
-      position={input ? Position.Left : Position.Right}
-      style={{ ...style, background: portKindColor(port.kind) }}
-      className="group !h-3 !w-3 !border-2 !border-surface"
-    >
-      <span
-        className={`pointer-events-none absolute top-1/2 z-50 hidden -translate-y-1/2 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-zinc-100 shadow group-hover:block ${
-          input ? 'right-full mr-2' : 'left-full ml-2'
-        }`}
-      >
-        {port.label} <span className="text-zinc-400">· {port.kind}</span>
-      </span>
-    </Handle>
-  )
-}
-
 /** Map a Core descriptor's `icon` string to a node-family glyph (falls back to the square). */
 function coreGlyph(icon: string): React.JSX.Element {
   switch (icon) {
@@ -309,16 +273,44 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const handles = (
     <>
       {inContent.map((port, i) => (
-        <PortHandle key={port.id} port={port} side="input" style={topStyle(i)} />
+        <PortHandle
+          key={port.id}
+          id={port.id}
+          label={port.label}
+          kind={port.kind}
+          side="input"
+          style={topStyle(i)}
+        />
       ))}
       {inModel.map((port, i) => (
-        <PortHandle key={port.id} port={port} side="input" style={bottomStyle(i)} />
+        <PortHandle
+          key={port.id}
+          id={port.id}
+          label={port.label}
+          kind={port.kind}
+          side="input"
+          style={bottomStyle(i)}
+        />
       ))}
       {outContent.map((port, i) => (
-        <PortHandle key={port.id} port={port} side="output" style={topStyle(i)} />
+        <PortHandle
+          key={port.id}
+          id={port.id}
+          label={port.label}
+          kind={port.kind}
+          side="output"
+          style={topStyle(i)}
+        />
       ))}
       {outModel.map((port, i) => (
-        <PortHandle key={port.id} port={port} side="output" style={bottomStyle(i)} />
+        <PortHandle
+          key={port.id}
+          id={port.id}
+          label={port.label}
+          kind={port.kind}
+          side="output"
+          style={bottomStyle(i)}
+        />
       ))}
     </>
   )
@@ -413,6 +405,9 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                 // blank select. Display only - the stored value stays empty until the user picks.
                 const fallback = field.default || opts[0]?.value || ''
                 const selected = stored == null || stored === '' ? fallback : stored
+                // A pick the catalog lacks stays in the list, or the select renders blank and the
+                // name the graph arrived with is gone.
+                const shown = optionsWithPick(opts, String(selected))
                 return (
                   <select
                     key={field.key}
@@ -425,7 +420,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                     {!hasAuto && !field.default && (
                       <option value="">{`Select ${field.label}`}</option>
                     )}
-                    {opts.map((o) => (
+                    {shown.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>

@@ -13,6 +13,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+from ..errors import ComponentError
 from . import weights
 
 logger = logging.getLogger("inline_core.characters")
@@ -58,17 +59,52 @@ _DETECT_SIZE = 640
 
 _models: dict[str, Any] = {}
 
+#: Which annotator file backs each encoder, empty meaning the one `weights` ships with. Runs are
+#: serialised on one worker, so a per-run selection needs no more than a module-level choice.
+_chosen: dict[str, str] = {}
+
+
+def use_encoders(
+    face_detector: str = "", face_embedder: str = "", subject_embedder: str = ""
+) -> None:
+    """Choose the annotator files the encoders load. Empty keeps the shipped default."""
+    _chosen.update(
+        {"yunet": face_detector.strip(), "sface": face_embedder.strip(),
+         "dinov2": subject_embedder.strip()}
+    )
+
+
+def chosen(kind: str, default: str) -> str:
+    """The picked filename for an encoder, or the shipped one."""
+    return _chosen.get(kind) or default
+
+
+def _encoder_path(kind: str, default: str) -> Path:
+    """Where an encoder loads from, and a clear error when a picked file is not there.
+
+    `weights.ensure()` fetches the defaults; a file the user picked instead is theirs to provide,
+    so it is reported rather than silently replaced by the default.
+    """
+    name = chosen(kind, default)
+    path = weights.annotators_root() / name
+    if name == default:
+        weights.ensure()
+        return path
+    if not path.exists():
+        raise ComponentError(f"{name} is not in models/annotators.")
+    return path
+
 
 def _yunet(width: int, height: int) -> Any:
     import cv2
 
-    detector = _models.get("yunet")
+    # Keyed by the file, so switching the pick loads the new one instead of serving the old.
+    key = f"yunet:{chosen('yunet', weights.YUNET_FILE)}"
+    detector = _models.get(key)
     if detector is None:
-        weights.ensure()
-        detector = cv2.FaceDetectorYN.create(
-            str(weights.yunet_path()), "", (width, height), FACE_CONFIDENCE
-        )
-        _models["yunet"] = detector
+        path = _encoder_path("yunet", weights.YUNET_FILE)
+        detector = cv2.FaceDetectorYN.create(str(path), "", (width, height), FACE_CONFIDENCE)
+        _models[key] = detector
     detector.setInputSize((width, height))
     return detector
 
@@ -76,27 +112,27 @@ def _yunet(width: int, height: int) -> Any:
 def _sface() -> Any:
     import cv2
 
-    model = _models.get("sface")
+    key = f"sface:{chosen('sface', weights.SFACE_FILE)}"
+    model = _models.get(key)
     if model is None:
-        weights.ensure()
-        model = cv2.FaceRecognizerSF.create(str(weights.sface_path()), "")
-        _models["sface"] = model
+        model = cv2.FaceRecognizerSF.create(str(_encoder_path("sface", weights.SFACE_FILE)), "")
+        _models[key] = model
     return model
 
 
 def _dinov2() -> tuple[Any, Any]:
-    pair = _models.get("dinov2")
+    key = f"dinov2:{chosen('dinov2', weights.DINOV2_DIR)}"
+    pair = _models.get(key)
     if pair is None:
         import torch
         from transformers import AutoImageProcessor, AutoModel
 
-        weights.ensure()
-        root = str(weights.dinov2_path())
+        root = str(_encoder_path("dinov2", weights.DINOV2_DIR))
         processor = AutoImageProcessor.from_pretrained(root, local_files_only=True)
         model = AutoModel.from_pretrained(root, local_files_only=True, dtype=torch.float32)
         model.eval()
         pair = (processor, model)
-        _models["dinov2"] = pair
+        _models[key] = pair
     return pair
 
 
@@ -378,11 +414,23 @@ def load_embeds(members: dict[str, bytes], path: str) -> list[list[float]]:
 
 
 def encoder_versions() -> list[dict[str, Any]]:
-    """What the manifest records, so a centroid is never compared across encoder builds."""
+    """What the manifest records, so a centroid is never compared across encoder builds.
+
+    A picked file folds into the version: the constants track the shipped builds, so on their own
+    they would call centroids from someone else's encoder current, and cosine similarity across two
+    encoders is a number with no meaning.
+    """
     return [
-        {"id": SFACE_ID, "version": weights.SFACE_VERSION, "dim": 128},
-        {"id": DINOV2_ID, "version": weights.DINOV2_VERSION, "dim": 768},
+        {"id": SFACE_ID, "version": _version(weights.SFACE_VERSION, "sface", weights.SFACE_FILE),
+         "dim": 128},
+        {"id": DINOV2_ID, "version": _version(weights.DINOV2_VERSION, "dinov2", weights.DINOV2_DIR),
+         "dim": 768},
     ]
+
+
+def _version(base: str, kind: str, default: str) -> str:
+    name = chosen(kind, default)
+    return base if name == default else f"{base}:{name}"
 
 
 def encoder_versions_by_id() -> dict[str, str]:

@@ -215,6 +215,8 @@ export const IpcChannels = {
     resolveMissing: 'models:resolveMissing',
     /** Download one registry model by its id. */
     downloadRegistry: 'models:downloadRegistry',
+    cancelRegistryDownload: 'models:cancelRegistryDownload',
+    downloadQueue: 'models:downloadQueue',
   },
   extensions: {
     /** Installed extensions + whether the machine has the tools to install more. */
@@ -663,6 +665,10 @@ export interface InlineStudioApi {
     ): Promise<Result<{ missing: MissingModel[]; stale: boolean }>>
     /** Fetch a registry model. Progress arrives on the model-download events. */
     downloadRegistry(modelId: string): Promise<Result<void>>
+    /** Drop a queued download, or stop the running one at its next chunk. */
+    cancelRegistryDownload(modelId: string): Promise<Result<void>>
+    /** What is downloading and what is waiting, so a reopened popup shows the same thing. */
+    downloadQueue(): Promise<Result<{ active: string | null; queued: string[] }>>
   }
   extensions: {
     /** Installed extensions + whether git/uv are available to install more. */

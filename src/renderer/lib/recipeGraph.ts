@@ -12,7 +12,7 @@ import type { MoodboardItem } from '@shared/types'
 import { useMoodboardStore } from '../store/moodboardStore'
 import { useGenerationStore } from '../store/generationStore'
 import { useAssetStore } from '../store/assetStore'
-import type { Recipe } from './pngRecipe'
+import { paramValues, type Recipe } from './pngRecipe'
 
 interface Point {
   x: number
@@ -42,13 +42,16 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
     let created: MoodboardItem | null = null
 
     if (it.type === 'core') {
-      const core = data.core as { type?: string; params?: Record<string, unknown> } | undefined
+      const core = data.core as { type?: string; params?: unknown } | undefined
       if (!core?.type) continue
       created = await store.addCoreNode(core.type, x, y)
       if (created) {
+        // Rebuilt as plain values whichever shape the file used; the board stores values, and the
+        // types are the descriptor's to say.
+        const params = paramValues(core.params)
         await store.updateItem(
           created.id,
-          { data: { ...created.data, core: { type: core.type, params: core.params ?? {} } } },
+          { data: { ...created.data, core: { type: core.type, params } } },
           false,
         )
       }

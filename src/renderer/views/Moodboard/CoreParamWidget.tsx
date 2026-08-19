@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { CoreParamField } from '@shared/coreNodes'
 import { useModelsTreeStore } from '../../store/modelsTreeStore'
 import { RefreshIcon } from '../../components/icons'
-import { basename } from './missingInputs'
+import { basename, optionsWithPick } from './missingInputs'
 import { useAutoCommit } from '../../lib/useAutoCommit'
 import type { WiredParam } from './wiredParams'
 
@@ -102,6 +102,9 @@ export function CoreParamWidget({
       typeof stored === 'string' && !options.some((o) => o.value === stored)
         ? basename(stored)
         : stored
+    // A pick the catalog lacks stays listed, or the select renders blank and the name the graph
+    // arrived with is lost - which is the one thing needed to go and fetch the right file.
+    const shown = optionsWithPick(options, String(selected ?? ''))
     return (
       <label className="flex flex-col gap-1">
         <span className={labelCls}>{field.label}</span>
@@ -112,7 +115,7 @@ export function CoreParamWidget({
             className={`${inputCls} min-w-0 flex-1`}
           >
             {needsEmpty && <option value="">{emptyLabel}</option>}
-            {options.map((o) => (
+            {shown.map((o) => (
               <option key={o.value} value={o.value}>
                 {/* The value has to stay the filename Core resolves by; only the label is
                     friendly. */}

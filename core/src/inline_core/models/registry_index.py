@@ -155,6 +155,33 @@ def _source(model: RegistryModel) -> dict[str, Any]:
     }
 
 
+def coordinates(names: list[str]) -> dict[str, dict[str, str]]:
+    """Where each named file comes from: its models/ folder and a direct download URL.
+
+    An exported graph carries these so it stays fetchable on a machine whose registry is older, or
+    whose node defaults have since moved. Unknown names are simply absent.
+    """
+    models, _ = load()
+    by_name = {m.filename.lower(): m for m in models}
+    out: dict[str, dict[str, str]] = {}
+    for name in names:
+        model = by_name.get(str(name).lower())
+        if model is None:
+            continue
+        out[name] = {"directory": model.category, "url": download_url(model)}
+    return out
+
+
+def download_url(model: RegistryModel) -> str:
+    """A direct link to the file, or the repo when the entry is a folder of several."""
+    if model.url:
+        return model.url
+    if not model.repo:
+        return ""
+    base = f"https://huggingface.co/{model.repo}"
+    return f"{base}/resolve/main/{model.path}" if model.path else f"{base}/tree/main"
+
+
 def present_files() -> set[str]:
     """Every weight filename already on disk, lowercased, across every models root."""
     found: set[str] = set()

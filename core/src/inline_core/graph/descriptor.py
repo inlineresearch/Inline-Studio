@@ -44,6 +44,10 @@ class ParamField:
     #: Show this on the node face as well as in Adjust. Defaults to selects only, which is what a
     #: loader has always done; set it for a field worth seeing without opening the sidebar.
     on_face: bool | None = None
+    #: What this param *is*, for an exported graph: string, text, number, boolean, enum, seed,
+    #: model, character, file. Derived from the widget when unset; set it where the widget cannot
+    #: say, such as a name that becomes a file on disk.
+    kind: str | None = None
 
 
 @dataclass(frozen=True)

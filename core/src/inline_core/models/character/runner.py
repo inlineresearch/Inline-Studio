@@ -15,13 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from ...characters import charfile as cf
-from ...characters import encode, library
+from ...characters import encode, library, scoring, weights
 from ...graph.descriptor import NodeDescriptor, Option, ParamField, Port, Widget
 from ...graph.runners import NodeResult, NodeRunner
 from ...graph.schema import Node, PortKind
 from ...runtime.context import ExecutionContext
 from ...runtime.progress import Phase
-from ...takes import AssetRef
 from ..pipeline_runtime import progress_event
 
 logger = logging.getLogger("inline_core.character")
@@ -64,6 +63,20 @@ ENCODE = NodeDescriptor(
     params=(
         ParamField("name", "Name", Widget.TEXT, ""),
         ParamField("description", "Description", Widget.TEXTAREA, ""),
+        # The encoders are pickable, not just visible: a node that silently uses a file the user
+        # cannot see or change is the reason none of them showed up as missing.
+        ParamField(
+            "face_detector", "Face detector", Widget.SELECT, weights.YUNET_FILE,
+            options_from="annotators",
+        ),
+        ParamField(
+            "face_embedder", "Face embedder", Widget.SELECT, weights.SFACE_FILE,
+            options_from="annotators",
+        ),
+        ParamField(
+            "subject_embedder", "Subject embedder", Widget.SELECT, weights.DINOV2_DIR,
+            options_from="annotators",
+        ),
     ),
 )
 
@@ -102,10 +115,9 @@ DATASET = NodeDescriptor(
     icon="sparkles",
     output_kind=None,
     inputs=(Port("character", "Character", PortKind.CHARACTER, required=True),),
-    outputs=(
-        Port("images", "References", PortKind.IMAGE_LIST),
-        Port("captions", "Captions", PortKind.TEXT),
-    ),
+    # A dataset handle, not loose images: training runs from durable dataset rows, which is what
+    # gives it a queue, a resumable checkpoint, and captions the user can edit.
+    outputs=(Port("dataset", "Dataset", PortKind.DATASET),),
     params=(),
 )
 
@@ -144,6 +156,20 @@ EDIT = NodeDescriptor(
         ParamField("name", "Rename to", Widget.TEXT, ""),
         ParamField("description", "Description", Widget.TEXTAREA, ""),
         ParamField("drop", "Remove references", Widget.TEXT, ""),
+        # The encoders are pickable, not just visible: a node that silently uses a file the user
+        # cannot see or change is the reason none of them showed up as missing.
+        ParamField(
+            "face_detector", "Face detector", Widget.SELECT, weights.YUNET_FILE,
+            options_from="annotators",
+        ),
+        ParamField(
+            "face_embedder", "Face embedder", Widget.SELECT, weights.SFACE_FILE,
+            options_from="annotators",
+        ),
+        ParamField(
+            "subject_embedder", "Subject embedder", Widget.SELECT, weights.DINOV2_DIR,
+            options_from="annotators",
+        ),
     ),
 )
 
@@ -160,7 +186,7 @@ WRITE = NodeDescriptor(
     outputs=(Port("character", "Character", PortKind.CHARACTER),),
     params=(
         # On the node face: where the character lands is worth seeing without opening Adjust.
-        ParamField("filename", "Save as (name only)", Widget.TEXT, "", on_face=True),
+        ParamField("filename", "Save as (name only)", Widget.TEXT, "", on_face=True, kind="file"),
         # Only bites when a model has both, which is the one case the file cannot decide alone.
         ParamField(
             "apply", "When a model has both", Widget.SELECT, "auto",
@@ -184,11 +210,24 @@ def set_save_listener(callback: Any) -> None:
     _on_saved.append(callback)
 
 
+#: The bridge Character to Dataset writes its rows through, set once the server has one.
+_dataset_runner: Any = None
+
+
+def set_training_bridge(bridge: Any) -> None:
+    """Give Character to Dataset a way to write rows. Registration happens before the training
+    service exists, so it is handed over afterwards rather than passed in."""
+    if _dataset_runner is not None:
+        _dataset_runner._bridge = bridge
+
+
 def register_character_nodes(registry: Any) -> None:
     """Register the character graph nodes. Called best-effort by server.bootstrap."""
     registry.register(ENCODE, EncodeCharacterRunner())
     registry.register(LOAD, LoadCharacterRunner())
-    registry.register(DATASET, CharacterDatasetRunner())
+    global _dataset_runner
+    _dataset_runner = CharacterDatasetRunner()
+    registry.register(DATASET, _dataset_runner)
     registry.register(EDIT, EditCharacterRunner())
     registry.register(COMPILE_REFS, CompileReferencesRunner())
     registry.register(ATTACH, AttachAdapterRunner())
@@ -218,6 +257,7 @@ class EncodeCharacterRunner(NodeRunner):
         # A wired description wins over the typed one, so a Prompt node can drive it.
         description = str(_first(inputs.get("description")) or node.params.get("description") or "")
 
+        _use_encoders(node)
         paths = [_image_path(ref) for ref in refs]
 
         def report(fraction: float, status: str) -> None:
@@ -239,6 +279,7 @@ class EditCharacterRunner(NodeRunner):
         identity = _first(inputs.get("character"))
         if not isinstance(identity, Identity):
             raise ValueError("Edit Character needs a character.")
+        _use_encoders(node)
         # Copied, because the upstream node's output is cached and every other reader shares it.
         doc = copy.deepcopy(identity.doc)
 
@@ -261,6 +302,15 @@ class EditCharacterRunner(NodeRunner):
             len(_positions(node.params.get("drop"))),
         )
         return NodeResult(outputs={"character": Identity(doc=doc, file=identity.file)})
+
+
+def _use_encoders(node: Node) -> None:
+    """Point scoring at this node's picked encoders before anything loads one."""
+    scoring.use_encoders(
+        face_detector=str(node.params.get("face_detector") or ""),
+        face_embedder=str(node.params.get("face_embedder") or ""),
+        subject_embedder=str(node.params.get("subject_embedder") or ""),
+    )
 
 
 def _positions(raw: Any) -> list[int]:
@@ -380,11 +430,15 @@ class LoadCharacterRunner(NodeRunner):
 
 
 class CharacterDatasetRunner(NodeRunner):
-    """The character's references and description as a training set.
+    """The character's references and description as a training dataset, ready for Train LoRA.
 
     Read from the `.char` rather than the asset library, because refs are truth and the library
-    copies they came from may have been deleted or edited since.
+    copies they came from may have been deleted or edited since. Written as real dataset rows so
+    the ordinary training path applies: one queue, a resumable checkpoint, editable captions.
     """
+
+    def __init__(self, bridge: Any = None) -> None:
+        self._bridge = bridge
 
     def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
         identity = _first(inputs.get("character"))
@@ -398,9 +452,34 @@ class CharacterDatasetRunner(NodeRunner):
             raise ValueError(
                 "Give the character a description first: the adapter binds to it."
             )
+        if self._bridge is None:
+            raise ValueError("Character to Dataset needs the training service.")
+
+        name = f"{doc.manifest.name} (character)"
         folder = _materialise(doc)
-        images = [AssetRef(ref=str(p), path=str(p)) for p in folder]
-        return NodeResult(outputs={"images": images, "captions": description})
+        training = self._bridge.training
+
+        def build() -> Any:
+            # Reuse the character's own dataset rather than adding one per run, so re-running the
+            # graph re-captions the same rows instead of leaving a trail of near-identical sets.
+            existing = next(
+                (d for d in training.list_datasets() if d["name"] == name), None
+            )
+            dataset = existing or training.create_dataset({"name": name})
+            staged = training.stage_from_path(str(folder[0].parent)) if folder else []
+            items = training.commit_staged(dataset["id"], staged)
+            # The description is the caption: it is what the adapter binds to, and what a prompt
+            # later says to summon this character.
+            for item in items:
+                training.set_caption(item["id"], description)
+            return dataset
+
+        dataset = self._bridge.call(build)
+        from ..training.runner import Dataset
+
+        return NodeResult(
+            outputs={"dataset": Dataset(id=str(dataset["id"]), name=str(dataset["name"]))}
+        )
 
 
 class AttachAdapterRunner(NodeRunner):
@@ -416,11 +495,14 @@ class AttachAdapterRunner(NodeRunner):
             raise ValueError("Attach Adapter needs a character.")
         lora = _first(inputs.get("lora"))
         stack = lora if isinstance(lora, tuple) else (lora,)
-        ref = next((r for r in stack if getattr(r, "file", None)), None)
-        if ref is None:
+        # A ref off a Load LoRA node or a Train LoRA output, or the bare path an older graph cached.
+        file = next(
+            (getattr(r, "file", None) or r for r in stack if getattr(r, "file", None) or r), None
+        )
+        if not isinstance(file, (str, Path)):
             raise ValueError("Attach Adapter needs a trained LoRA.")
 
-        path = Path(str(ref.file))
+        path = Path(str(file))
         meta = _adapter_metadata(path)
         arch = str(node.params.get("arch") or meta.get("inline_arch") or "").strip()
         if not arch:

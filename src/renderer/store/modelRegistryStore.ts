@@ -30,6 +30,9 @@ interface ModelRegistryState {
   check: (wanted: ModelRequest[], reason: string) => Promise<number>
   dismiss: () => void
   download: (modelId: string) => Promise<void>
+  /** Queue every missing file that the registry can actually supply. */
+  downloadAll: () => Promise<void>
+  cancel: (modelId: string) => Promise<void>
 }
 
 export const useModelRegistryStore = create<ModelRegistryState>((set) => ({
@@ -75,6 +78,26 @@ export const useModelRegistryStore = create<ModelRegistryState>((set) => ({
     try {
       const res = await studio().models.downloadRegistry(modelId)
       if (!res.ok) set({ error: res.error })
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+    }
+  },
+
+  downloadAll: async () => {
+    // Only what the registry can supply: a file with no match has nowhere to be fetched from, and
+    // queueing it would leave a row that never moves.
+    const { missing, download } = useModelRegistryStore.getState()
+    for (const row of missing ?? []) {
+      const first = row.matches[0]
+      if (first) await download(first.model.id)
+    }
+  },
+
+  cancel: async (modelId) => {
+    // Cleared here rather than on the event: a queued one has no run to report anything.
+    set((s) => ({ downloading: without(s.downloading, modelId) }))
+    try {
+      await studio().models.cancelRegistryDownload(modelId)
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
     }

@@ -15,6 +15,16 @@ export const HANDLE_GAP = 22
 /** The dot is `!h-3` (12px) and React Flow centres it on its offset, so it reaches this far. */
 export const HALF_DOT = 6
 
+/** Dots stack from the top edge, so a node's ports read in a fixed order however tall it grows. */
+export function topStyle(index: number): { top: number } {
+  return { top: HANDLE_BASE + index * HANDLE_GAP }
+}
+
+/** Model-family ports pack from the bottom, so engine wiring reads as one band along it. */
+export function bottomStyle(index: number): { top: 'auto'; bottom: number } {
+  return { top: 'auto', bottom: HANDLE_BASE + index * HANDLE_GAP }
+}
+
 /** How far a stack of `count` dots reaches from the edge it is packed against. */
 export function stackExtent(count: number): number {
   return count > 0 ? HANDLE_BASE + (count - 1) * HANDLE_GAP + HALF_DOT : 0

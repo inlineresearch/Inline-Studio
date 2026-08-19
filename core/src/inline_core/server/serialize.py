@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..graph.descriptor import NodeDescriptor, ParamField, Port
+from ..graph.descriptor import NodeDescriptor, ParamField, Port, Widget
 from ..models.catalog import ModelCatalog
 from ..runtime.progress import (
     CancelledEvent,
@@ -60,7 +60,23 @@ def param_json(
         out["advanced"] = True
     if field.on_face is not None:
         out["onFace"] = field.on_face
+    out["kind"] = param_kind(field)
     return out
+
+
+def param_kind(field: ParamField) -> str:
+    """What a param is, for an exported graph. Declared when the widget cannot say."""
+    if field.kind:
+        return field.kind
+    if field.options_from:
+        return "character" if field.options_from == "characters" else "model"
+    return {
+        Widget.SEED: "seed",
+        Widget.SELECT: "enum",
+        Widget.TEXTAREA: "text",
+        Widget.NUMBER: "number",
+        Widget.BOOLEAN: "boolean",
+    }.get(field.widget, "string")
 
 
 def descriptor_json(

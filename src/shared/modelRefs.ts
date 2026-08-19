@@ -42,3 +42,16 @@ export function coreNodeTypes(value: unknown, found = new Set<string>()): string
   }
   return [...found]
 }
+
+/**
+ * A direct link to a registry entry's file, or its repo when the entry is a folder of several.
+ *
+ * Shared so an exported graph and Core's own recipe carry the same URL: a reader offered two
+ * different links for one filename cannot tell which is right.
+ */
+export function downloadUrl(model: { repo?: string; path?: string; url?: string }): string {
+  if (model.url) return model.url
+  if (!model.repo) return ''
+  const base = `https://huggingface.co/${model.repo}`
+  return model.path ? `${base}/resolve/main/${model.path}` : `${base}/tree/main`
+}

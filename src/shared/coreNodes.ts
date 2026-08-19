@@ -26,6 +26,7 @@ export type PortKind =
   | 'payload'
   | 'payload[]'
   | 'dataset'
+  | 'metrics'
 
 export interface CorePort {
   id: string
@@ -53,6 +54,8 @@ export interface CoreParamField {
   advanced?: boolean
   /** Show on the node face as well as in Adjust. Unset means "selects only", the loader default. */
   onFace?: boolean
+  /** What this param is, for an exported graph. Served by Core so a reader never guesses. */
+  kind?: 'string' | 'text' | 'number' | 'boolean' | 'enum' | 'seed' | 'model' | 'character' | 'file'
 }
 
 export interface NodeDescriptor {
@@ -191,7 +194,8 @@ const PORT_COLORS: Record<PortKind, string> = {
   character: '#f0abfc',
   payload: '#93c5fd',
   'payload[]': '#93c5fd',
-  dataset: '#fbbf24',
+  dataset: '#38bdf8',
+  metrics: '#a3e635',
 }
 
 /** A stable color per port kind, for Comfy-style colored sockets and edges. */

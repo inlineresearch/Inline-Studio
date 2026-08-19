@@ -7,7 +7,9 @@
  * still offer Resume. Hyperparameters live in the Adjust sidebar, never on the node face.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
+import { PortHandle } from '../../Moodboard/nodes/PortHandle'
+import { topStyle } from '../../Moodboard/nodes/nodeSize'
 import type { TrainingRun } from '@shared/types'
 import { useTrainingStore } from '../../../store/trainingStore'
 import { useGenerationStore } from '../../../store/generationStore'
@@ -24,7 +26,7 @@ import {
   WandIcon,
 } from '../../Moodboard/nodes/NodeBadge'
 import { NodeRunToolbar } from '../../Moodboard/nodes/NodeRunToolbar'
-import { DATASET_HANDLE, RUN_HANDLE, wiredDatasetId } from './handles'
+import { DATASET_HANDLE, LORA_HANDLE, METRICS_HANDLE, wiredDatasetId } from './handles'
 import { useBoardActions } from '../../Moodboard/nodes/boardActions'
 
 /** The training arch + base maps to the generation node type whose weights it trains on, so the
@@ -261,19 +263,21 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
           </div>
         </div>
       </NodeFrame>
-      <Handle
-        type="target"
-        position={Position.Left}
+      <PortHandle
         id={DATASET_HANDLE}
-        className="group !h-3 !w-3 !border-2 !border-surface !bg-sky-400"
-        title="Dataset"
+        label="Dataset"
+        kind="dataset"
+        side="input"
+        style={topStyle(0)}
       />
-      <Handle
-        type="source"
-        position={Position.Right}
-        id={RUN_HANDLE}
-        className="group !h-3 !w-3 !border-2 !border-surface !bg-violet-400"
-        title="Run"
+      {/* The adapter it produces, so a character can file it as its payload for this model. */}
+      <PortHandle id={LORA_HANDLE} label="LoRA" kind="lora" side="output" style={topStyle(0)} />
+      <PortHandle
+        id={METRICS_HANDLE}
+        label="Graph"
+        kind="metrics"
+        side="output"
+        style={topStyle(1)}
       />
     </>
   )

@@ -20,7 +20,8 @@ from .graph_build import _upstream_closure
 
 logger = logging.getLogger("inline_core.recipe")
 
-RECIPE_VERSION = 1
+#: 2 typed every param and moved each node's models beside it; 1 was a flat param map.
+RECIPE_VERSION = 2
 
 #: node type -> the values a run would use where the item stores none. Set once by the server,
 #: which is where the registry and the requirements providers are both in scope.
@@ -31,6 +32,102 @@ def set_param_resolver(resolve: Any) -> None:
     """Teach recipes what a node resolves to. Without it they record only what the user typed."""
     global _param_fallbacks
     _param_fallbacks = resolve
+
+
+#: node type -> the models it needs but never names in a param. Set alongside the resolver above.
+_node_models: Any = None
+
+
+def set_model_resolver(resolve: Any) -> None:
+    """Teach recipes what a node needs on disk beyond its own params."""
+    global _node_models
+    _node_models = resolve
+
+
+#: node type -> {param key: kind}, so an exported param says what it is. Set by the server.
+_param_kinds: Any = None
+
+
+def set_kind_resolver(resolve: Any) -> None:
+    """Teach recipes what each of a node's params is."""
+    global _param_kinds
+    _param_kinds = resolve
+
+
+def _typed_params(
+    node_type: str, params: dict[str, Any]
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Each param as {type, value}, plus the download coordinates for the ones naming a model.
+
+    Two things a bare value cannot say: what it is, and where it comes from. Without the first a
+    reader guesses from the param's name; without the second an export is only fetchable on a
+    machine whose registry still carries the same entry.
+    """
+    kinds: dict[str, str] = {}
+    if _param_kinds is not None and node_type:
+        try:
+            kinds = _param_kinds(node_type)
+        except Exception:  # noqa: BLE001 - a recipe is metadata; never fail a render over it
+            logger.warning("Could not resolve param kinds for %s", node_type)
+
+    typed = {k: {"type": kinds.get(k, "string"), "value": v} for k, v in params.items()}
+
+    # What the params name, plus what the node needs without naming it: LTX-2.5's duration head is
+    # required and appears in no param, so only the node's own declaration can carry it.
+    wanted: dict[str, str] = {}
+    for key, value in params.items():
+        if kinds.get(key) in ("model", "character") and str(value):
+            wanted.setdefault(str(value), "")
+    # A node's declared requirements name its *default* build, so a node set to klein-9b would
+    # otherwise export klein-4b beside it. Whatever a param already named speaks for its folder.
+    covered = _folders_of(list(wanted))
+    for filename, category in _declared(node_type):
+        if category in covered:
+            continue
+        wanted[filename] = category
+    return typed, _coordinates(wanted)
+
+
+def _folders_of(names: list[str]) -> set[str]:
+    if not names:
+        return set()
+    from ..models import registry_index as ri
+
+    try:
+        return {v.get("directory", "") for v in ri.coordinates(names).values()}
+    except Exception:  # noqa: BLE001 - an unreachable registry must not fail a render
+        return set()
+
+
+def _declared(node_type: str) -> list[tuple[str, str]]:
+    if _node_models is None or not node_type:
+        return []
+    try:
+        return list(_node_models(node_type))
+    except Exception:  # noqa: BLE001 - a recipe is metadata; never fail a render over it
+        logger.warning("Could not resolve required models for %s", node_type)
+        return []
+
+
+def _coordinates(wanted: dict[str, str]) -> list[dict[str, str]]:
+    """Each model as {directory, name, url}. The node's own category wins: the registry may not
+    carry the file at all, and the folder it belongs in is still known."""
+    if not wanted:
+        return []
+    from ..models import registry_index as ri
+
+    try:
+        found = ri.coordinates(list(wanted))
+    except Exception:  # noqa: BLE001 - an unreachable registry must not fail a render
+        found = {}
+    return [
+        {
+            "directory": category or found.get(name, {}).get("directory", ""),
+            "name": name,
+            "url": found.get(name, {}).get("url", ""),
+        }
+        for name, category in wanted.items()
+    ]
 
 
 def _effective_params(core: dict[str, Any]) -> dict[str, Any]:
@@ -69,7 +166,13 @@ def _clean_data(item: dict[str, Any]) -> dict[str, Any]:
     data = item.get("data") or {}
     if kind == "core":
         core = data.get("core") or {}
-        return {"core": {"type": core.get("type"), "params": _effective_params(core)}}
+        node_type = str(core.get("type") or "")
+        params = _effective_params(core)
+        typed, models = _typed_params(node_type, params)
+        entry: dict[str, Any] = {"type": node_type, "params": typed}
+        if models:
+            entry["models"] = models
+        return {"core": entry}
     if kind == "prompt":
         return {"promptText": data.get("promptText") or ""}
     # Training nodes keep their settings, never their bindings: a dataset and a run are rows in

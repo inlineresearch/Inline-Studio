@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from inline_core.errors import ComponentError
+from inline_core.graph.loader_runners import LoraRef
 from inline_core.graph.schema import Node, PortKind, port_satisfies
 from inline_core.models.training.runner import (
     CAPTION,
@@ -189,7 +190,11 @@ def test_train_lora_blocks_until_the_run_finishes_and_returns_the_adapter() -> N
         node, {"dataset": [Dataset(id="d1", name="Maya")]}, ctx
     )
     assert service.started == [("d1", {"rank": 8})]
-    assert out.outputs["lora"] == "loras/maya.safetensors"
+    # A LoraRef stack, the shape every `lora` input reads - so Attach Adapter and the generation
+    # nodes take the adapter straight off the wire instead of being handed a string they ignore.
+    assert out.outputs["lora"] == (LoraRef(file="loras/maya.safetensors", strength=1.0),)
+    # The loss curve is wired, not looked up: the run id rides its own port.
+    assert out.outputs["metrics"] == "run-1"
     # Steps reach the graph's own stream, which is what makes one Run legible while training.
     assert [e.step for e in emitter.events] == [1, 2, 3]
 

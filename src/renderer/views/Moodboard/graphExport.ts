@@ -6,7 +6,18 @@
  * with no importer of its own. Entirely client-side: the board is already in the store.
  */
 import type { MoodboardConnector, MoodboardItem } from '@shared/types'
-import type { Recipe, RecipeConnector, RecipeItem } from '../../lib/pngRecipe'
+import { RECIPE_VERSION } from '../../lib/pngRecipe'
+import type {
+  Recipe,
+  RecipeConnector,
+  RecipeItem,
+  RecipeModel,
+  RecipeParam,
+  RecipeParamType,
+} from '../../lib/pngRecipe'
+import { downloadUrl } from '@shared/modelRefs'
+import { useModelRequirementsStore } from '../../store/modelRequirementsStore'
+import { useModelRegistryStore } from '../../store/modelRegistryStore'
 import { copyText } from '../../lib/clipboard'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
@@ -42,7 +53,8 @@ function effectiveParams(core: {
   params?: Record<string, unknown>
 }): Record<string, unknown> {
   const stored = { ...(core.params ?? {}) }
-  const descriptor = useCoreNodesStore.getState().descriptors.find((d) => d.type === core.type)
+  const type = String(core.type ?? '')
+  const descriptor = useCoreNodesStore.getState().descriptors.find((d) => d.type === type)
   if (!descriptor) return stored
   for (const field of descriptor.params) {
     const value = stored[field.key]
@@ -62,7 +74,7 @@ function cleanData(item: MoodboardItem): Record<string, unknown> {
     case 'core': {
       // A recipe says how to make the image, so the node's take history is deliberately dropped.
       const core = (data.core ?? {}) as { type?: string; params?: Record<string, unknown> }
-      return { core: { type: core.type, params: effectiveParams(core) } }
+      return { core: coreEntry(core) }
     }
     case 'prompt':
       return { promptText: data.promptText ?? '' }
@@ -113,8 +125,74 @@ export function unsupportedTypes(itemId: string): string[] {
   return [...new Set(items.map((i) => i.type).filter((t) => !REBUILDABLE.has(t)))]
 }
 
-export function graphRecipe(itemId: string): Recipe {
+/**
+ * A node's core entry: its type, each param as {type, value}, and where its models come from.
+ *
+ * The kind travels with the value because a bare filename forces a reader to guess the folder from
+ * the param's name, and the coordinates travel because an export is otherwise only fetchable on a
+ * machine whose registry still carries the same entry.
+ */
+function coreEntry(core: { type?: string; params?: Record<string, unknown> }): {
+  type: string
+  params: Record<string, RecipeParam>
+  models?: RecipeModel[]
+} {
+  const type = String(core.type ?? '')
+  const descriptor = useCoreNodesStore.getState().descriptors.find((d) => d.type === type)
+  const kinds = new Map((descriptor?.params ?? []).map((p) => [p.key, p.kind ?? 'string']))
+  const params = effectiveParams(core)
+  const typed: Record<string, RecipeParam> = {}
+  const wanted = new Map<string, string>()
+  for (const [key, value] of Object.entries(params)) {
+    const type = (kinds.get(key) ?? 'string') as RecipeParamType
+    typed[key] = { type, value }
+    if ((type === 'model' || type === 'character') && String(value)) {
+      wanted.set(String(value), '')
+    }
+  }
+  const registry = useModelRegistryStore.getState().entries
+  // Which folders the params already spoke for. A node's declared requirements name its *default*
+  // build, so a node set to klein-9b would otherwise export klein-4b beside it.
+  const covered = new Set(
+    [...wanted.keys()].map(
+      (name) => registry.find((e) => e.filename.toLowerCase() === name.toLowerCase())?.category,
+    ),
+  )
+  // What the node needs without naming it, which no param can carry.
+  for (const component of useModelRequirementsStore.getState().byType[type]?.components ?? []) {
+    if (component.optional || covered.has(component.category)) continue
+    wanted.set(component.localPath.split('/').pop() ?? component.localPath, component.category)
+  }
+  const models = [...wanted].map(([name, directory]) => {
+    const entry = registry.find((e) => e.filename.toLowerCase() === name.toLowerCase())
+    // The node's own category wins: the registry may not carry the file, and the folder it
+    // belongs in is still known.
+    return {
+      directory: directory || entry?.category || '',
+      name,
+      url: entry ? downloadUrl(entry) : '',
+    }
+  })
+  return models.length ? { type, params: typed, models } : { type, params: typed }
+}
+
+export async function graphRecipe(itemId: string): Promise<Recipe> {
   const { items, connectors } = graphSlice(itemId)
+  // Loaded rather than assumed: a node scrolled out of view was never mounted, so its
+  // requirements would be absent and its models would silently not be exported.
+  const types = [
+    ...new Set(
+      items
+        .map((i) => (i.data as { core?: { type?: string } }).core?.type)
+        .filter((v): v is string => !!v),
+    ),
+  ]
+  await Promise.all([
+    ...types.map((type) => useModelRequirementsStore.getState().load(type)),
+    useModelRegistryStore.getState().entries.length
+      ? Promise.resolve()
+      : useModelRegistryStore.getState().load(),
+  ])
   const target = items.find((i) => i.id === itemId)
   const core = (
     (target?.data ?? {}) as { core?: { type?: string; params?: Record<string, unknown> } }
@@ -137,7 +215,7 @@ export function graphRecipe(itemId: string): Recipe {
     data: (c.data ?? {}) as Record<string, unknown>,
   }))
   return {
-    version: 1,
+    version: RECIPE_VERSION,
     app: 'inline-studio',
     target: itemId,
     coreType: core?.type,
@@ -147,16 +225,16 @@ export function graphRecipe(itemId: string): Recipe {
   }
 }
 
-export function graphJson(itemId: string): string {
-  return JSON.stringify(graphRecipe(itemId), null, 2)
+export async function graphJson(itemId: string): Promise<string> {
+  return JSON.stringify(await graphRecipe(itemId), null, 2)
 }
 
 export async function copyGraphJson(itemId: string): Promise<boolean> {
-  return copyText(graphJson(itemId))
+  return copyText(await graphJson(itemId))
 }
 
-export function exportGraphJson(itemId: string, name = 'graph'): void {
-  const blob = new Blob([graphJson(itemId)], { type: 'application/json' })
+export async function exportGraphJson(itemId: string, name = 'graph'): Promise<void> {
+  const blob = new Blob([await graphJson(itemId)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url

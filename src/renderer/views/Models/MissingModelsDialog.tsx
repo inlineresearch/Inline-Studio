@@ -58,7 +58,9 @@ export function MissingModelsDialog(): React.JSX.Element | null {
               <tr className="text-[10px] uppercase tracking-wide text-muted">
                 <th className="py-1 pr-2 font-normal">File</th>
                 <th className="w-32 py-1 pr-2 font-normal">Type</th>
-                <th className="w-28 py-1 font-normal">Download</th>
+                <th className="w-28 py-1 font-normal">
+                  <DownloadAll missing={missing} />
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -70,6 +72,38 @@ export function MissingModelsDialog(): React.JSX.Element | null {
         </div>
       </div>
     </Modal>
+  )
+}
+
+/** Queues every row the registry can supply; the rest have nowhere to be fetched from. */
+function DownloadAll({ missing }: { missing: MissingModel[] }): React.JSX.Element {
+  const downloadAll = useModelRegistryStore((s) => s.downloadAll)
+  const downloading = useModelRegistryStore((s) => s.downloading)
+  const cancel = useModelRegistryStore((s) => s.cancel)
+
+  const fetchable = missing.filter((m) => preferredMatch(m) && !preferredMatch(m)?.present)
+  const active = fetchable.filter((m) => downloading[preferredMatch(m)!.model.id])
+  if (fetchable.length === 0) return <span className="font-normal">Download</span>
+  if (active.length > 0) {
+    return (
+      <button
+        type="button"
+        onClick={() => active.forEach((m) => void cancel(preferredMatch(m)!.model.id))}
+        className="rounded px-1.5 py-0.5 text-[10px] font-normal text-muted hover:bg-black/30 hover:text-zinc-200"
+      >
+        Cancel all
+      </button>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => void downloadAll()}
+      title={`Download all ${fetchable.length}, one at a time`}
+      className="rounded bg-emerald-600 px-2 py-0.5 text-[10px] font-normal text-white hover:bg-emerald-500"
+    >
+      Download all
+    </button>
   )
 }
 
@@ -117,11 +151,29 @@ function DownloadCell({
   present: boolean
 }): React.JSX.Element {
   const download = useModelRegistryStore((s) => s.download)
+  const cancel = useModelRegistryStore((s) => s.cancel)
   const progress = useModelRegistryStore((s) => s.downloading[model.id])
 
   if (present) return <span className="text-[10px] text-emerald-400">Installed</span>
-  if (progress)
-    return <span className="text-[10px] text-muted">{Math.round(progress.fraction * 100)}%</span>
+  if (progress) {
+    // A queued row has no progress to show, so it says where it is in line instead.
+    const waiting = progress.status.startsWith('Queued')
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] text-muted">
+          {waiting ? progress.status : `${Math.round(progress.fraction * 100)}%`}
+        </span>
+        <button
+          type="button"
+          onClick={() => void cancel(model.id)}
+          title={waiting ? 'Remove from the queue' : 'Stop this download'}
+          className="rounded px-1.5 py-0.5 text-[10px] text-muted hover:bg-black/30 hover:text-zinc-200"
+        >
+          Cancel
+        </button>
+      </div>
+    )
+  }
   return (
     <button
       type="button"

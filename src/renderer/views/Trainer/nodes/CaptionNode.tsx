@@ -4,7 +4,9 @@
  * runs the captioner, and passes the dataset through so a Trainer can chain off it.
  */
 import { useEffect } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
+import { PortHandle } from '../../Moodboard/nodes/PortHandle'
+import { topStyle } from '../../Moodboard/nodes/nodeSize'
 import { useTrainingStore } from '../../../store/trainingStore'
 import { NodeFrame } from '../../Moodboard/nodes/NodeFrame'
 import { AdjustIcon, CaptionGlyph, NodeBadge, NodeBadgeRow } from '../../Moodboard/nodes/NodeBadge'
@@ -128,19 +130,19 @@ export function CaptionNode({ id, selected }: NodeProps): React.JSX.Element {
           </div>
         </div>
       </NodeFrame>
-      <Handle
-        type="target"
-        position={Position.Left}
+      <PortHandle
         id={DATASET_HANDLE}
-        className="group !h-3 !w-3 !border-2 !border-surface !bg-sky-400"
-        title="Dataset"
+        label="Dataset"
+        kind="dataset"
+        side="input"
+        style={topStyle(0)}
       />
-      <Handle
-        type="source"
-        position={Position.Right}
+      <PortHandle
         id={DATASET_HANDLE}
-        className="group !h-3 !w-3 !border-2 !border-surface !bg-sky-400"
-        title="Dataset"
+        label="Dataset"
+        kind="dataset"
+        side="output"
+        style={topStyle(0)}
       />
     </>
   )

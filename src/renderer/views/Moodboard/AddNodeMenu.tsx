@@ -96,6 +96,7 @@ export function AddNodeMenu({
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('core')
+  const [query, setQuery] = useState('')
   const place = useMenuPlacement<HTMLDivElement>(x, y, above)
 
   // Only high-level model nodes are offered; samplers/inputs are hidden plumbing.
@@ -114,6 +115,35 @@ export function AddNodeMenu({
   // Fal models, grouped by owner (OpenAI, ByteDance, …).
   const falGroups = onPickGen ? groupByOwner(listNodeDefs()) : []
 
+  // Searching crosses the tabs: knowing whether a node is a Core one or a hosted one is exactly
+  // what someone reaching for the search box does not know yet.
+  const needle = query.trim().toLowerCase()
+  const hits = needle
+    ? [
+        ...entryRows(
+          ENTRIES.filter((e) => e.label.toLowerCase().includes(needle)),
+          onPick,
+        ),
+        ...coreRows(
+          all.filter(
+            (n) => n.title.toLowerCase().includes(needle) || n.type.toLowerCase().includes(needle),
+          ),
+          onPickCore,
+        ),
+        ...listNodeDefs()
+          .filter(
+            (d) =>
+              onPickGen &&
+              (d.title.toLowerCase().includes(needle) || d.id.toLowerCase().includes(needle)),
+          )
+          .map((d) => (
+            <Row key={d.id} icon={<SparklesIcon />} accent onClick={() => onPickGen?.(d.id)}>
+              {d.title}
+            </Row>
+          )),
+      ]
+    : []
+
   return (
     <>
       <div className="absolute inset-0 z-20" onClick={onClose} />
@@ -124,19 +154,35 @@ export function AddNodeMenu({
         }`}
         style={place.style}
       >
-        <div className="flex border-b border-border">
-          <TabButton active={tab === 'core'} onClick={() => setTab('core')}>
-            Core
-          </TabButton>
-          <TabButton active={tab === 'api'} onClick={() => setTab('api')}>
-            API
-          </TabButton>
-        </div>
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search nodes…"
+          className="nodrag border-b border-border bg-transparent px-2.5 py-2 text-xs text-zinc-100 outline-none placeholder:text-zinc-600"
+        />
+
+        {!needle && (
+          <div className="flex border-b border-border">
+            <TabButton active={tab === 'core'} onClick={() => setTab('core')}>
+              Core
+            </TabButton>
+            <TabButton active={tab === 'api'} onClick={() => setTab('api')}>
+              API
+            </TabButton>
+          </div>
+        )}
 
         {/* One scroll area for the active tab, not per-section. `nowheel` keeps React Flow from
             swallowing the wheel and zooming the canvas instead of scrolling this list. */}
         <div className="nowheel overflow-y-auto" style={{ maxHeight: place.maxHeight }}>
-          {tab === 'core' ? (
+          {needle ? (
+            hits.length > 0 ? (
+              <Group label={`${hits.length} result${hits.length === 1 ? '' : 's'}`}>{hits}</Group>
+            ) : (
+              <div className="px-2.5 py-3 text-[11px] text-zinc-500">No node matches that.</div>
+            )
+          ) : tab === 'core' ? (
             <>
               {sections.map(([category, rows]) => (
                 <Group key={category} label={category}>

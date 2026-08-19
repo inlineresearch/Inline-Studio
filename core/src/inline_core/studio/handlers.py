@@ -127,10 +127,14 @@ def register_studio_handlers(
         reg("models:resolveMissing",
             lambda wanted, refresh=False: model_downloads.resolve_missing(wanted, refresh))
         reg("models:downloadRegistry", lambda mid: model_downloads.download_registry(mid))
+        reg("models:cancelRegistryDownload", lambda mid: model_downloads.cancel_registry(mid))
+        reg("models:downloadQueue", lambda: model_downloads.download_queue())
     else:
         reg("models:requirements", lambda _node_type: {"components": [], "allPresent": True})
         reg("models:download", not_wired("Model downloads"))
         reg("models:registry", lambda _refresh=False: {"entries": [], "stale": True})
+        reg("models:cancelRegistryDownload", not_wired("Model downloads"))
+        reg("models:downloadQueue", lambda: {"active": None, "queued": []})
         reg("models:resolveMissing",
             lambda _wanted, _refresh=False: {"missing": [], "stale": True})
         reg("models:downloadRegistry", not_wired("Model downloads"))

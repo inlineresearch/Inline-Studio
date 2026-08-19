@@ -122,7 +122,7 @@ def test_recipe_records_what_a_node_resolves_to(tmp_path) -> None:
         studio_recipe.set_param_resolver(None)
 
     params = built["graph"]["items"][0]["data"]["core"]["params"]
-    assert params["file"] == "flux-2-klein-9b.safetensors"
+    assert params["file"]["value"] == "flux-2-klein-9b.safetensors"
 
 
 def test_a_picked_file_beats_what_the_node_would_resolve(tmp_path) -> None:
@@ -154,7 +154,7 @@ def test_a_picked_file_beats_what_the_node_would_resolve(tmp_path) -> None:
         studio_recipe.set_param_resolver(None)
 
     params = built["graph"]["items"][0]["data"]["core"]["params"]
-    assert params["file"] == "picked.safetensors"
+    assert params["file"]["value"] == "picked.safetensors"
 
 
 def test_a_recipe_survives_a_resolver_that_raises(tmp_path) -> None:
@@ -238,3 +238,114 @@ def test_a_training_node_keeps_its_settings_but_not_its_bindings() -> None:
 
     assert _clean_data({"type": "train/dataset", "data": {"datasetId": "d-local"}}) == {}
     assert _clean_data({"type": "train/loss", "data": {"runId": "r-local"}}) == {}
+
+
+def test_the_recipe_lists_models_no_param_names() -> None:
+    """A character node picks no file, so its encoders are in no param; LTX-2.5's duration head is
+    the same. An exported graph listed none of them while refusing to run without them."""
+    import sqlite3
+
+    from inline_core.studio import moodboard as mb
+    from inline_core.studio import recipe as studio_recipe
+    from inline_core.studio.schema import apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+    conn.execute("INSERT INTO project (id, name, created_at, updated_at) VALUES ('p','P',0,0)")
+    node = mb.add_core_node(conn, "character/encode", 0, 0)
+
+    studio_recipe.set_model_resolver(
+        lambda _t: [("face_detection_yunet_2023mar.onnx", "annotators")]
+    )
+    try:
+        built = studio_recipe.build_recipe(conn, node["id"])
+    finally:
+        studio_recipe.set_model_resolver(None)
+
+    # On the node that needs it, not in a list beside the graph: everything a reader needs is
+    # reachable from the node it belongs to.
+    models = built["graph"]["items"][0]["data"]["core"]["models"]
+    assert [m["name"] for m in models] == ["face_detection_yunet_2023mar.onnx"]
+    assert models[0]["directory"] == "annotators"
+    assert "models" not in built, "the graph-wide list is gone"
+
+
+def test_the_model_list_also_carries_the_weights_a_param_picks() -> None:
+    """One list is the whole answer, rather than half of it hidden in params."""
+    import sqlite3
+
+    from inline_core.studio import moodboard as mb
+    from inline_core.studio import recipe as studio_recipe
+    from inline_core.studio.schema import apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+    conn.execute("INSERT INTO project (id, name, created_at, updated_at) VALUES ('p','P',0,0)")
+    node = mb.add_core_node(conn, "load/vae", 0, 0)
+    mb.update_item(
+        conn,
+        node["id"],
+        {"data": {"core": {"type": "load/vae", "params": {"file": "flux2-vae.safetensors"}}}},
+    )
+
+    studio_recipe.set_kind_resolver(lambda _t: {"file": "model"})
+    try:
+        built = studio_recipe.build_recipe(conn, node["id"])
+    finally:
+        studio_recipe.set_kind_resolver(None)
+
+    core = built["graph"]["items"][0]["data"]["core"]
+    assert core["params"]["file"] == {"type": "model", "value": "flux2-vae.safetensors"}
+    assert [m["name"] for m in core["models"]] == ["flux2-vae.safetensors"]
+
+
+def test_a_param_says_what_it_is_rather_than_leaving_it_to_be_guessed() -> None:
+    """A bare value forces a reader to guess from the param's name, which is how a control-LoRA
+    ends up filed under loras. The kind travels with the value instead."""
+    import sqlite3
+
+    from inline_core.studio import moodboard as mb
+    from inline_core.studio import recipe as studio_recipe
+    from inline_core.studio.schema import apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+    conn.execute("INSERT INTO project (id, name, created_at, updated_at) VALUES ('p','P',0,0)")
+    node = mb.add_core_node(conn, "character/encode", 0, 0)
+    mb.update_item(
+        conn,
+        node["id"],
+        {
+            "data": {
+                "core": {
+                    "type": "character/encode",
+                    "params": {"name": "Ada", "subject_embedder": "dinov2-base"},
+                }
+            }
+        },
+    )
+
+    studio_recipe.set_kind_resolver(
+        lambda _t: {"name": "string", "subject_embedder": "model"}
+    )
+    try:
+        built = studio_recipe.build_recipe(conn, node["id"])
+    finally:
+        studio_recipe.set_kind_resolver(None)
+
+    params = built["graph"]["items"][0]["data"]["core"]["params"]
+    assert params["name"] == {"type": "string", "value": "Ada"}
+    assert params["subject_embedder"] == {"type": "model", "value": "dinov2-base"}
+    # Only the model-kinded one earns a coordinates entry.
+    assert [m["name"] for m in built["graph"]["items"][0]["data"]["core"]["models"]] == [
+        "dinov2-base"
+    ]
+
+
+def test_the_version_says_which_shape_a_reader_is_holding() -> None:
+    from inline_core.studio.recipe import RECIPE_VERSION
+
+    assert RECIPE_VERSION == 2

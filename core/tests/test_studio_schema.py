@@ -228,3 +228,42 @@ def test_v19_trainer_canvas_merges_clear_of_the_studio_graph(tmp_path) -> None:
     assert kept[0] == "studio" and kept[1] == 100, "studio rows do not move"
     assert edge[0] == "studio"
     conn.close()
+
+
+def test_v20_the_loss_curve_edge_follows_its_port_rename(tmp_path) -> None:
+    """React Flow anchors an edge by handle id, so a wire naming a port the node no longer has
+    stops drawing altogether rather than drawing in the wrong place."""
+    import json
+    import sqlite3
+
+    from inline_core.studio.schema import apply_schema
+
+    conn = sqlite3.connect(tmp_path / "v20.db")
+    conn.execute("PRAGMA user_version = 20")
+    conn.executescript(
+        """
+        CREATE TABLE moodboard_connectors (
+          id TEXT PRIMARY KEY, project_id TEXT NOT NULL, surface TEXT NOT NULL DEFAULT 'studio',
+          from_item_id TEXT NOT NULL, to_item_id TEXT NOT NULL, label TEXT, data TEXT);
+        """
+    )
+    for cid, data in (
+        ("c1", {"sourceHandle": "run", "targetHandle": "run"}),
+        ("c2", {"sourceHandle": "dataset", "targetHandle": "dataset"}),
+        ("c3", None),
+    ):
+        conn.execute(
+            "INSERT INTO moodboard_connectors (id, project_id, from_item_id, to_item_id, data)"
+            " VALUES (?,?,?,?,?)",
+            (cid, "p1", "a", "b", json.dumps(data) if data else None),
+        )
+    conn.commit()
+
+    apply_schema(conn)
+
+    rows = dict(conn.execute("SELECT id, data FROM moodboard_connectors").fetchall())
+    assert json.loads(rows["c1"]) == {"sourceHandle": "metrics", "targetHandle": "metrics"}
+    assert json.loads(rows["c2"])["sourceHandle"] == "dataset", "other ports are untouched"
+    assert rows["c3"] is None, "an edge with no handles survives"
+    conn.close()
+

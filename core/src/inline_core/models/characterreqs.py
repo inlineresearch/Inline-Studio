@@ -60,8 +60,9 @@ def encoder_components() -> list[ModelComponent]:
             weights.DINOV2_DIR,
             weights.DINOV2_REPO,
             (weights.dinov2_path() / "model.safetensors").is_file(),
-            # Named files, not the folder: DINOv2 ships a .bin twin beside the safetensors.
-            repo_folder=weights.DINOV2_DIR,
+            # Named files rather than the whole repo: DINOv2 ships a .bin twin beside the
+            # safetensors. They sit at the repo root, so no `repo_folder` - naming one made the
+            # fetch look for a subfolder that is never created.
             repo_files=weights.DINOV2_FILES,
         ),
     ]

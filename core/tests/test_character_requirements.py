@@ -35,13 +35,18 @@ def test_presence_follows_the_files(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 def test_dinov2_fetches_named_files_not_the_whole_folder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """It ships a .bin twin beside the safetensors; pulling the folder doubles the download."""
+    """It ships a .bin twin beside the safetensors; pulling the folder doubles the download.
+
+    Those files sit at the repo root, so naming a `repo_folder` as well made the fetch look for a
+    subfolder nothing had written: "No such file or directory: .../dinov2-base.part/dinov2-base".
+    """
     monkeypatch.setenv("INLINE_MODELS_DIR", str(tmp_path))
     dinov2 = next(c for c in CharacterEncoderProvider().components() if c.id == "dinov2")
 
-    assert dinov2.is_folder
     assert "model.safetensors" in dinov2.repo_files
     assert not any(f.endswith(".bin") for f in dinov2.repo_files)
+    assert not dinov2.repo_folder, "the files are at the repo root, not under a folder"
+    assert dinov2.filename == "dinov2-base", "the folder they land in is still named"
 
 
 def test_every_encoding_node_answers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -66,3 +71,61 @@ def test_every_encoding_node_answers(tmp_path: Path, monkeypatch: pytest.MonkeyP
         assert provider is not None, f"{node_type} declares no requirements"
         # Constructing them must not raise: an exception here reads to the UI as "needs nothing".
         assert len(provider.components()) == 3
+
+
+def test_the_encoders_are_pickable_not_just_visible(tmp_path: Path) -> None:
+    """A node that silently uses a file the user cannot see or change is why none of these ever
+    showed as missing. Each is a dropdown over models/annotators, defaulting to the shipped one."""
+    from inline_core.characters import weights
+    from inline_core.models.character.runner import EDIT, ENCODE
+
+    for descriptor in (ENCODE, EDIT):
+        params = {p.key: p for p in descriptor.params}
+        for key, default in (
+            ("face_detector", weights.YUNET_FILE),
+            ("face_embedder", weights.SFACE_FILE),
+            ("subject_embedder", weights.DINOV2_DIR),
+        ):
+            assert key in params, f"{descriptor.type} hides {key}"
+            assert params[key].options_from == "annotators"
+            assert params[key].default == default
+
+
+def test_a_swapped_encoder_invalidates_the_centroids_it_did_not_produce() -> None:
+    """Cosine similarity across two encoders means nothing. The version constants track the
+    shipped builds, so a picked file must fold into the identity or a stale centroid reads as
+    current."""
+    from inline_core.characters import charfile as cf
+    from inline_core.characters import scoring
+
+    try:
+        scoring.use_encoders()
+        shipped = scoring.encoder_versions_by_id()[scoring.DINOV2_ID]
+        manifest = cf.Manifest(
+            char_id="c", name="Ada", created_at=0, modified_at=0,
+            scoring={"encoders": [{"id": scoring.DINOV2_ID, "version": shipped, "dim": 768}]},
+        )
+        assert cf.centroid_valid(manifest, scoring.DINOV2_ID, shipped)
+
+        scoring.use_encoders(subject_embedder="dinov2-large")
+        swapped = scoring.encoder_versions_by_id()[scoring.DINOV2_ID]
+        assert swapped != shipped
+        assert not cf.centroid_valid(manifest, scoring.DINOV2_ID, swapped)
+    finally:
+        scoring.use_encoders()
+
+
+def test_a_picked_encoder_that_is_absent_is_reported_not_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Falling back to the shipped file encodes against a different model than the node names."""
+    from inline_core.characters import scoring
+    from inline_core.errors import ComponentError
+
+    monkeypatch.setenv("INLINE_MODELS_DIR", str(tmp_path))
+    try:
+        scoring.use_encoders(face_detector="not_here.onnx")
+        with pytest.raises(ComponentError, match="not_here.onnx"):
+            scoring._encoder_path("yunet", "face_detection_yunet_2023mar.onnx")
+    finally:
+        scoring.use_encoders()

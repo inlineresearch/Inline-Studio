@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,10 @@ class _TargetOnly:
         return self._target
 
 
+class DownloadCancelled(Exception):
+    """Raised out of the progress callback, the only per-chunk seam a download has."""
+
+
 class ModelDownloads:
     """Answers "what's missing" and downloads components into the models dir on request.
 
@@ -59,6 +64,14 @@ class ModelDownloads:
         self._on_change = on_change  # rescan the model catalog after a download lands
         self._policy = policy  # device policy, for the memory fit estimate (optional)
         self._requirements = requirements if requirements is not None else RequirementsRegistry()
+        # One download at a time: several at once share the same link and each finishes later than
+        # if they had waited, while the queue is what makes "download all" answerable.
+        self._queue: list[str] = []
+        self._active: str | None = None
+        self._cancelled: set[str] = set()
+        self._lock = threading.Lock()
+        # Held so a download in flight is not garbage collected out from under itself.
+        self._tasks: set[asyncio.Task[Any]] = set()
 
     # --- requirements (the popup's data) --------------------------------------------------------
 
@@ -118,10 +131,80 @@ class ModelDownloads:
         return {"missing": [m.to_json() for m in missing], "stale": stale}
 
     def download_registry(self, model_id: str) -> None:
+        """Queue a download. Starts now when nothing else is running, otherwise waits its turn."""
         loop = asyncio.get_running_loop()
-        asyncio.create_task(asyncio.to_thread(self._run_registry, model_id, loop))
+        with self._lock:
+            self._cancelled.discard(model_id)
+            if model_id == self._active or model_id in self._queue:
+                return
+            self._queue.append(model_id)
+            if self._active is not None:
+                self._emit(loop, "events:modelDownloadProgress",
+                           {"nodeType": _REGISTRY, "componentId": model_id,
+                            "fraction": 0.0, "status": self._queued_status(model_id)})
+                return
+        self._start_next(loop)
+
+    def cancel_registry(self, model_id: str) -> None:
+        """Drop a queued download, or stop the running one at its next chunk."""
+        with self._lock:
+            self._cancelled.add(model_id)
+            queued = model_id in self._queue
+            if queued:
+                self._queue.remove(model_id)
+        if queued:
+            self._events.broadcast(
+                "events:modelDownloadError",
+                {"nodeType": _REGISTRY, "componentId": model_id, "error": "Cancelled."},
+            )
+
+    def download_queue(self) -> dict[str, Any]:
+        """What is downloading and what is waiting, so a reopened popup shows the same thing."""
+        with self._lock:
+            return {"active": self._active, "queued": list(self._queue)}
+
+    def _queued_status(self, model_id: str) -> str:
+        place = self._queue.index(model_id) + 1 if model_id in self._queue else 0
+        return f"Queued ({place})" if place > 1 else "Queued"
+
+    def _start_next(self, loop: asyncio.AbstractEventLoop) -> None:
+        with self._lock:
+            if self._active is not None or not self._queue:
+                return
+            self._active = self._queue.pop(0)
+            model_id = self._active
+            waiting = list(self._queue)
+        # Re-place the rest, so "Queued (3)" counts down as the ones ahead finish.
+        for index, other in enumerate(waiting):
+            self._emit(loop, "events:modelDownloadProgress",
+                       {"nodeType": _REGISTRY, "componentId": other, "fraction": 0.0,
+                        "status": "Queued" if index == 0 else f"Queued ({index + 1})"})
+        # Scheduled onto the loop rather than started here: the tail of one download runs on a
+        # worker thread, where create_task has no loop to attach to and the queue stopped advancing.
+        loop.call_soon_threadsafe(self._spawn_registry, model_id, loop)
+
+    def _spawn_registry(self, model_id: str, loop: asyncio.AbstractEventLoop) -> None:
+        task = asyncio.ensure_future(asyncio.to_thread(self._run_registry, model_id, loop))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._log_task_error)
+
+    @staticmethod
+    def _log_task_error(task: asyncio.Task[Any]) -> None:
+        """A download that dies takes the queue with it, so its error is logged, never swallowed."""
+        if not task.cancelled() and task.exception() is not None:
+            logger.exception("Registry download failed", exc_info=task.exception())
 
     def _run_registry(self, model_id: str, loop: asyncio.AbstractEventLoop) -> None:
+        try:
+            self._run_registry_inner(model_id, loop)
+        finally:
+            with self._lock:
+                self._active = None
+                self._cancelled.discard(model_id)
+            self._start_next(loop)
+
+    def _run_registry_inner(self, model_id: str, loop: asyncio.AbstractEventLoop) -> None:
         from ..config import models_dir
         from ..models import registry_index as ri
         from ..models.requirements import ModelComponent
@@ -144,15 +227,16 @@ class ModelDownloads:
         try:
             self._download_component(
                 _TargetOnly(target), comp,
-                lambda frac, status: self._emit(
-                    loop, "events:modelDownloadProgress",
-                    {"nodeType": _REGISTRY, "componentId": model.id,
-                     "fraction": frac, "status": status},
-                ),
+                lambda frac, status: self._registry_progress(loop, model.id, frac, status),
             )
             self._rescan()
             self._emit(loop, "events:modelDownloadDone",
                        {"nodeType": _REGISTRY, "componentId": model.id})
+        except DownloadCancelled:
+            # The staged `.part` stays: it is what lets a restarted download resume rather than
+            # begin again, and nothing reads it until a download completes.
+            self._emit(loop, "events:modelDownloadError",
+                       {"nodeType": _REGISTRY, "componentId": model.id, "error": "Cancelled."})
         except Exception as error:  # noqa: BLE001 - surface as a UI event, never crash the loop
             self._emit(loop, "events:modelDownloadError",
                        {"nodeType": _REGISTRY, "componentId": model.id, "error": str(error)})
@@ -211,6 +295,17 @@ class ModelDownloads:
         except Exception:  # noqa: BLE001 - a provider is extension code; never break the popup
             return []
 
+    def _registry_progress(
+        self, loop: asyncio.AbstractEventLoop, model_id: str, fraction: float, status: str
+    ) -> None:
+        """Forward progress, and stop the download if it was cancelled since the last chunk."""
+        with self._lock:
+            if model_id in self._cancelled:
+                raise DownloadCancelled(model_id)
+        self._emit(loop, "events:modelDownloadProgress",
+                   {"nodeType": _REGISTRY, "componentId": model_id,
+                    "fraction": fraction, "status": status})
+
     def _download_component(
         self,
         provider: RequirementsProvider,
@@ -235,17 +330,29 @@ class ModelDownloads:
         wanted = tuple(getattr(comp, "repo_files", ()) or ())
 
         def _fetch(token: bool | None) -> str:
-            if folder or wanted:
-                # A component that is a directory - a sharded encoder, a tokenizer, a diffusers
-                # checkpoint. Same staging and resume behaviour; only the fetch differs.
+            # A component that is a directory - a sharded encoder, a tokenizer, a diffusers
+            # checkpoint. Same staging and resume behaviour; only the fetch differs. Named files
+            # and a named subfolder are separate cases: mixing them fetched the files to the
+            # staging root and then looked for them under a subfolder nothing had written.
+            if wanted:
+                return str(
+                    snapshot_download(
+                        comp.repo,
+                        allow_patterns=list(wanted),
+                        local_dir=str(staging),
+                        token=token,
+                        tqdm_class=tqdm_class,
+                    )
+                )
+            if folder:
                 root = snapshot_download(
                     comp.repo,
-                    allow_patterns=list(wanted) if wanted else f"{folder}/*",
+                    allow_patterns=f"{folder}/*",
                     local_dir=str(staging),
                     token=token,
                     tqdm_class=tqdm_class,
                 )
-                return str(Path(root) / folder) if folder else str(root)
+                return str(Path(root) / folder)
             return hf_hub_download(
                 comp.repo,
                 comp.repo_file,

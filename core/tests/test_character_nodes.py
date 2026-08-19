@@ -134,20 +134,47 @@ def test_load_reads_a_saved_character(tmp_path: Path, encoders: None) -> None:
 
 
 def test_dataset_reads_refs_from_the_char_not_the_library(tmp_path: Path, encoders: None) -> None:
-    """Refs are truth; the library copies they came from may since have been deleted or edited."""
+    """Refs are truth; the library copies they came from may since have been deleted or edited.
+
+    It writes real dataset rows rather than loose images, because that is what Train LoRA runs
+    from: the queue, the resumable checkpoint and the editable captions all hang off the rows.
+    """
     from inline_core.models.character.runner import CharacterDatasetRunner
+    from inline_core.models.training.runner import Dataset, TrainingBridge
 
     source = _image(tmp_path / "a.png")
     doc = encode.char_encode([source], name="Ada", description="green jacket")
     identity = Identity(doc=doc)
     source.unlink()  # the library copy is gone; the character must still yield a dataset
 
-    out = CharacterDatasetRunner().run(
+    staged: dict[str, object] = {}
+
+    class _Training:
+        def list_datasets(self) -> list[dict[str, object]]:
+            return []
+
+        def create_dataset(self, inp: dict[str, object]) -> dict[str, object]:
+            staged["name"] = inp["name"]
+            return {"id": "d1", "name": inp["name"]}
+
+        def stage_from_path(self, path: str) -> list[dict[str, object]]:
+            staged["folder"] = path
+            return [{"assetId": "a1"}]
+
+        def commit_staged(self, _did: str, rows: list[dict[str, object]]) -> list[dict[str, str]]:
+            return [{"id": f"i{n}"} for n, _ in enumerate(rows)]
+
+        def set_caption(self, item_id: str, caption: str) -> None:
+            staged.setdefault("captions", []).append((item_id, caption))  # type: ignore[union-attr]
+
+    out = CharacterDatasetRunner(TrainingBridge(_Training())).run(
         _node({}), {"character": [identity]}, _ctx(),  # type: ignore[arg-type]
     ).outputs
-    assert len(out["images"]) == 1
-    assert Path(out["images"][0].path).is_file()
-    assert out["captions"] == "green jacket"
+
+    assert out["dataset"] == Dataset(id="d1", name="Ada (character)")
+    # Staged from the character's own refs, written out, not from the library path that is gone.
+    assert Path(str(staged["folder"])).is_dir()
+    assert staged["captions"] == [("i0", "green jacket")]
 
 
 def test_attach_adapter_takes_its_base_from_the_adapter(tmp_path: Path, encoders: None) -> None:
@@ -180,6 +207,34 @@ def test_attach_adapter_takes_its_base_from_the_adapter(tmp_path: Path, encoders
     entry = saved.manifest.payloads["krea2-lora"]
     assert entry["base"] == "krea2_turbo_bf16.safetensors", "the base came from the file"
     assert entry["training"] == {"rank": 16, "steps": 600, "resolution": 512}
+
+
+def test_attach_adapter_files_what_train_lora_hands_it(tmp_path: Path, encoders: None) -> None:
+    """The wire from Train LoRA is the whole point of the node, and it used to raise: the trainer
+    emitted a bare path while every `lora` input reads a LoraRef stack."""
+    import torch
+    from safetensors.torch import save_file
+
+    from inline_core.graph.loader_runners import LoraRef
+    from inline_core.models.character.runner import AttachAdapterRunner
+
+    adapter = tmp_path / "trained.safetensors"
+    save_file(
+        {"w": torch.zeros(2, 2)},
+        str(adapter),
+        metadata={"inline_arch": "flux2-klein", "inline_base": "flux2_base.safetensors",
+                  "inline_rank": "32", "inline_steps": "1200", "inline_resolution": "1024"},
+    )
+    identity = Identity(doc=encode.char_encode([_image(tmp_path / "a.png")], name="Ada"))
+
+    # The stack the trainer now emits, and the bare path an older cached run left behind.
+    for wired in ((LoraRef(file=str(adapter), strength=1.0),), str(adapter)):
+        payload = AttachAdapterRunner().run(
+            _node({}),
+            {"character": [identity], "lora": [wired]},
+            _ctx(),  # type: ignore[arg-type]
+        ).outputs["payload"]
+        assert payload.arch == "flux2-klein", "the settings came off the wired adapter"
 
 
 def test_an_adapter_without_provenance_needs_its_model(tmp_path: Path, encoders: None) -> None:
@@ -461,3 +516,4 @@ def test_save_as_keeps_the_character_inside_the_library(tmp_path: Path, encoders
     assert _target_name("/etc/passwd") == "passwd.char"
     assert _target_name("../../escape.char") == "escape.char"
     assert _target_name("") is None
+

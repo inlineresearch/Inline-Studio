@@ -423,14 +423,21 @@ function Board(): React.JSX.Element {
     () => new Map(coreDescriptors.map((d) => [d.type, d])),
     [coreDescriptors],
   )
+  // A training node is its own descriptor type rather than a generic `core` item, so reading only
+  // `data.core` left its wires uncoloured - the dots said dataset/LoRA/metrics and the links did not.
   const coreTypeById = useMemo(
     () =>
       new Map(
         items
-          .filter((i) => i.type === 'core' && i.data.core)
-          .map((i) => [i.id, (i.data.core as { type: string }).type]),
+          .map((i): [string, string] | null => {
+            if (i.type === 'core' && i.data.core) {
+              return [i.id, (i.data.core as { type: string }).type]
+            }
+            return descriptorsByType.has(i.type) ? [i.id, i.type] : null
+          })
+          .filter((entry): entry is [string, string] => entry !== null),
       ),
-    [items],
+    [items, descriptorsByType],
   )
 
   useEffect(() => {
