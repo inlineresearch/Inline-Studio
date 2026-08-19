@@ -116,3 +116,48 @@ def test_an_unreachable_registry_serves_the_cache_rather_than_nothing(tmp_path: 
     models, stale = ri.load(refresh=True)
     assert stale is True
     assert [m.id for m in models] == ["a"], "cached entries survive the outage"
+
+
+def test_a_model_published_after_the_cache_was_written_is_still_offered(tmp_path: Path) -> None:
+    """The cache was kept forever, so a model published after an install read as "not in the
+    registry" and could never be downloaded. Saying that is a claim about the published index,
+    so it is worth one refetch before making it."""
+    _index(tmp_path, [_entry("a", "z_image_bf16.safetensors")])
+    assert ri.load()[0], "primes the cache"
+
+    # The encoder lands in the registry after that cache was written.
+    _index(
+        tmp_path,
+        [_entry("a", "z_image_bf16.safetensors"), _entry("b", "face_recognition_sface.onnx")],
+    )
+
+    missing, _ = ri.resolve(["face_recognition_sface.onnx"])
+    assert [m.model.id for m in missing[0].matches] == ["b"]
+
+
+def test_a_stale_cache_is_refetched_once_it_ages_out(tmp_path: Path) -> None:
+    import os
+
+    _index(tmp_path, [_entry("a", "z_image_bf16.safetensors")])
+    assert ri.load()[0], "primes the cache"
+
+    _index(tmp_path, [_entry("a", "z_image_bf16.safetensors"), _entry("c", "later.safetensors")])
+    assert len(ri.load()[0]) == 1, "a fresh cache is trusted"
+
+    cache = ri._cache_path()
+    old = os.stat(cache).st_mtime - (ri.CACHE_TTL_SECONDS + 60)
+    os.utime(cache, (old, old))
+    assert len(ri.load()[0]) == 2, "an aged cache refetches"
+
+
+def test_an_outage_does_not_turn_a_miss_into_an_endless_retry(tmp_path: Path) -> None:
+    """The refetch is best-effort: unreachable means serve what we have and say it is stale."""
+    import os
+
+    _index(tmp_path, [_entry("a", "z_image_bf16.safetensors")])
+    assert ri.load()[0], "primes the cache"
+    os.environ["INLINE_MODEL_REGISTRY"] = (tmp_path / "gone.json").as_uri()
+
+    missing, stale = ri.resolve(["nothing_here.safetensors"])
+    assert missing[0].matches == []
+    assert stale is True

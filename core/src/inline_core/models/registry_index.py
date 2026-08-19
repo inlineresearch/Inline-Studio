@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -111,10 +112,22 @@ def _fetch() -> tuple[list[RegistryModel], str | None]:
     return _parse(raw), None
 
 
+#: How long a cached index is trusted. Without this the first fetch was kept forever, so a model
+#: published after an install was never offered - it read as "not in the registry" instead.
+CACHE_TTL_SECONDS = 6 * 60 * 60
+
+
+def _cache_fresh(cache: Path) -> bool:
+    try:
+        return (time.time() - cache.stat().st_mtime) < CACHE_TTL_SECONDS
+    except OSError:
+        return False
+
+
 def load(*, refresh: bool = False) -> tuple[list[RegistryModel], bool]:
     """The index and whether it is stale. An unreachable registry serves the cache, not nothing."""
     cache = _cache_path()
-    if not refresh and cache.is_file():
+    if not refresh and cache.is_file() and _cache_fresh(cache):
         try:
             return _parse(json.loads(cache.read_text(encoding="utf-8"))), False
         except (OSError, json.JSONDecodeError):
@@ -251,4 +264,11 @@ def resolve(
         if not category and found:
             category = found[0].model.category
         missing.append(Missing(wanted=name, category=category, matches=found))
+
+    # "Not available" is a claim about the published registry, so it is worth one refetch before
+    # making it: a model published since the cache was written is otherwise invisible forever.
+    if not refresh and not stale and any(not m.matches for m in missing):
+        fresh, stale = load(refresh=True)
+        if len(fresh) != len(models):
+            return resolve(wanted, refresh=True)
     return missing, stale

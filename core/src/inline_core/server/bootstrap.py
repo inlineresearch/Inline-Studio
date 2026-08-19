@@ -51,6 +51,10 @@ def _register_builtins(
     from ..models.controlspace import ControlSpaceProvider
 
     requirements.register("controlSpace", ControlSpaceProvider())
+    from ..models.characterreqs import ENCODER_NODES, CharacterEncoderProvider
+
+    for node_type in ENCODER_NODES:
+        requirements.register(node_type, CharacterEncoderProvider())
     registered.append("controlSpace")
     try:
         from ..models.character import register_character_nodes
