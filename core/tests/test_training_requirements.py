@@ -48,6 +48,30 @@ def test_every_trainable_arch_names_its_transformer(arch: str, expected: str) ->
     assert ("diffusion_models", expected) in _files(arch)
 
 
+def test_turbo_mode_asks_for_its_de_distillation_adapter() -> None:
+    """No generation node ever loads one, so no popup offered it and a Turbo run died at the point
+    of no return with a repo name and nothing to click."""
+    for arch, expected in (
+        ("krea2", "krea2_turbo_training_adapter_v1.safetensors"),
+        ("z-image", "zimage_turbo_training_adapter_v2.safetensors"),
+    ):
+        assert ("loras", expected) in _files(arch, "turbo_adapter")
+        assert not [f for c, f in _files(arch, "raw") if c == "loras"], "only Turbo needs one"
+
+
+def test_the_adapter_name_matches_what_the_trainer_looks_for() -> None:
+    """`_base_file` picks it out of models/loras/ by name, so the two have to agree."""
+    for arch in ("krea2", "z-image"):
+        name = next(f for c, f in _files(arch, "turbo_adapter") if c == "loras").lower()
+        assert "adapter" in name
+        assert ("krea" in name) is (arch == "krea2")
+
+
+def test_flux2_is_never_offered_an_adapter() -> None:
+    """FLUX.2 has none; the trainer says to use a Base checkpoint and raises if asked."""
+    assert not [f for c, f in _files("flux2", "turbo_adapter") if c == "loras"]
+
+
 def test_an_unset_architecture_asks_for_nothing() -> None:
     """A node whose settings have not been opened must not publish a checkpoint nobody chose."""
     assert TrainingBaseProvider().components({}) == []

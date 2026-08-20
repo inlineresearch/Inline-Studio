@@ -5,29 +5,19 @@
 import { useMemo } from 'react'
 import type { RunMenuItem } from './NodeRunToolbar'
 import { copyGraphJson, duplicateGraph, exportGraphJson, unsupportedTypes } from '../graphExport'
-import { useCharacterStore } from '../../../store/characterStore'
 
 export function useGraphMenu(
   itemId: string,
   name: string,
-  /** The node's active image take, when it has one. Only an image can become a character. */
-  takeId?: string,
 ): { items: RunMenuItem[]; note: string | undefined } {
   return useMemo(() => {
+    // No "Save as character": one take is a single reference with no description, which is the
+    // shape that trains a face nobody can summon. A character is built by the Character nodes.
     const items: RunMenuItem[] = [
       { label: 'Copy graph JSON', onClick: () => void copyGraphJson(itemId) },
       { label: 'Export JSON…', onClick: () => exportGraphJson(itemId, name) },
       { label: 'Duplicate graph', onClick: () => void duplicateGraph(itemId) },
     ]
-    if (takeId) {
-      items.push({
-        label: 'Save as character…',
-        onClick: () => {
-          const chosen = window.prompt('Name this character')?.trim()
-          if (chosen) void useCharacterStore.getState().createFromTake(takeId, chosen)
-        },
-      })
-    }
     // The importer rebuilds core/prompt/controlSpace/loader/frame only, so say so up front rather
     // than letting a re-import silently drop nodes.
     const unsupported = unsupportedTypes(itemId)
@@ -36,5 +26,5 @@ export function useGraphMenu(
         ? `Re-importing skips: ${unsupported.join(', ')}. Duplicate keeps everything.`
         : undefined
     return { items, note }
-  }, [itemId, name, takeId])
+  }, [itemId, name])
 }

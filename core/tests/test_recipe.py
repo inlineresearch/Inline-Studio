@@ -349,3 +349,58 @@ def test_the_version_says_which_shape_a_reader_is_holding() -> None:
     from inline_core.studio.recipe import RECIPE_VERSION
 
     assert RECIPE_VERSION == 2
+
+
+def test_a_wired_model_param_is_not_exported_as_a_needed_model(tmp_path) -> None:
+    """`model`/`vae`/`text_encoder` are params and input ports at once. Wired, the loader wins at
+    run time, so exporting the typed value listed the wrong checkpoint beside the right one."""
+    from inline_core.studio import recipe as studio_recipe
+
+    store = _store(tmp_path)
+    conn = store.conn()
+    gen = mb.add_core_node(conn, "krea/krea-2-turbo", 400, 200)
+    mb.update_item(conn, gen["id"], {"data": {"core": {
+        "type": "krea/krea-2-turbo",
+        "params": {"model": "models/diffusion_models/krea2_turbo_bf16.safetensors"},
+    }}})
+    loader = mb.add_core_node(conn, "load/diffusion-model", 80, 200)
+    mb.update_item(conn, loader["id"], {"data": {"core": {
+        "type": "load/diffusion-model", "params": {"file": "krea2_raw_bf16.safetensors"},
+    }}})
+    mb.create_connector(conn, loader["id"], gen["id"], "model", "model")
+
+    studio_recipe.set_kind_resolver(lambda t: {"model": "model", "file": "model"})
+    try:
+        built = studio_recipe.build_recipe(conn, gen["id"])
+    finally:
+        studio_recipe.set_kind_resolver(None)
+
+    by_id = {i["id"]: i for i in built["graph"]["items"]}
+    assert by_id[gen["id"]]["data"]["core"].get("models", []) == [], "the wire drives it"
+    assert [m["name"] for m in by_id[loader["id"]]["data"]["core"]["models"]] == [
+        "krea2_raw_bf16.safetensors"
+    ], "the loader names the file the run will load"
+
+
+def test_a_path_shaped_pick_exports_under_its_bare_name(tmp_path) -> None:
+    """A legacy full-path pick matched no registry row, so the same file landed twice: once right
+    and once with an empty directory and no download link."""
+    from inline_core.studio import recipe as studio_recipe
+
+    store = _store(tmp_path)
+    conn = store.conn()
+    gen = mb.add_core_node(conn, "krea/krea-2-turbo", 400, 200)
+    mb.update_item(conn, gen["id"], {"data": {"core": {
+        "type": "krea/krea-2-turbo",
+        "params": {"model": "models/diffusion_models/krea2_turbo_bf16.safetensors"},
+    }}})
+
+    studio_recipe.set_kind_resolver(lambda t: {"model": "model"})
+    try:
+        built = studio_recipe.build_recipe(conn, gen["id"])
+    finally:
+        studio_recipe.set_kind_resolver(None)
+
+    names = [m["name"] for m in built["graph"]["items"][0]["data"]["core"]["models"]]
+    assert names == ["krea2_turbo_bf16.safetensors"]
+

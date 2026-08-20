@@ -98,13 +98,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const failed = useGenerationStore((s) => s.failedNode === itemId)
   const progress = useGenerationStore((s) => s.progressByFrame[itemId])
   const status = useGenerationStore((s) => s.statusByFrame[itemId])
-  // Read before the early returns below, because hooks cannot be called conditionally.
-  const activeOutput = item?.data?.core?.output
-  const graphMenu = useGraphMenu(
-    itemId,
-    descriptor?.title ?? 'graph',
-    activeOutput?.kind === 'image' ? activeOutput.takeId : undefined,
-  )
+  const graphMenu = useGraphMenu(itemId, descriptor?.title ?? 'graph')
 
   // Model requirements (per node type) drive the blinking "missing models" hint + its popup, and
   // surface an in-node download indicator. Refetched when the model registry version changes (a

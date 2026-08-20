@@ -33,11 +33,11 @@ def base_components(arch: str, base_mode: str) -> list[ModelComponent]:
 
         # RAW is the fine-tuning build; Turbo only when the run adds the de-distillation adapter.
         variant = "turbo" if base_mode == "turbo_adapter" else "raw"
-        return _required(reqs.krea2_requirements(variant))
+        return _required(reqs.krea2_requirements(variant)) + _adapter(arch, base_mode)
     if arch == "z-image":
         from .zimage import requirements as reqs
 
-        return _required(reqs.zimage_requirements())
+        return _required(reqs.zimage_requirements()) + _adapter(arch, base_mode)
     if arch == "flux2":
         from .flux2 import requirements as reqs
 
@@ -62,6 +62,39 @@ def base_components(arch: str, base_mode: str) -> list[ModelComponent]:
 def _required(components: list[ModelComponent]) -> list[ModelComponent]:
     """Suggested extras belong to generation, not to a training run's pre-flight."""
     return [c for c in components if not c.optional]
+
+
+#: The de-distillation adapter each arch needs to train against its Turbo build without drift.
+#: A generation node never loads one, so no model popup offered it and the run failed at the point
+#: of no return with a repo name and nothing to click.
+_TURBO_ADAPTERS: dict[str, tuple[str, str]] = {
+    "krea2": ("ostris/krea2_turbo_training_adapter", "krea2_turbo_training_adapter_v1.safetensors"),
+    "z-image": (
+        "ostris/zimage_turbo_training_adapter",
+        "zimage_turbo_training_adapter_v2.safetensors",
+    ),
+}
+
+
+def _adapter(arch: str, base_mode: str) -> list[ModelComponent]:
+    """The training adapter, required only in Turbo mode. Empty for every other base."""
+    if base_mode != "turbo_adapter":
+        return []
+    entry = _TURBO_ADAPTERS.get(arch)
+    if entry is None:
+        return []
+    repo, filename = entry
+    return [
+        ModelComponent(
+            id="training_adapter",
+            label="Turbo training adapter (de-distillation)",
+            category="loras",
+            present=(models_dir() / "loras" / filename).is_file(),
+            filename=filename,
+            repo=repo,
+            repo_file=filename,
+        )
+    ]
 
 
 class TrainingBaseProvider:

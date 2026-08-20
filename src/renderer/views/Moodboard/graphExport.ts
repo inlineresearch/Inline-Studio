@@ -23,6 +23,8 @@ import { copyText } from '../../lib/clipboard'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
 import { expandToGraphs, toEdges } from './graphSelection'
+import { wiredParams } from './wiredParams'
+import { basename } from './missingInputs'
 
 /** Node types `buildGraphFromRecipe` can recreate. Anything else exports but will not re-import.
  * `asset` and a rendered `frame` come back as empty Load Assets nodes: the wiring rebuilds, the
@@ -75,7 +77,7 @@ function cleanData(item: MoodboardItem): Record<string, unknown> {
     case 'core': {
       // A recipe says how to make the image, so the node's take history is deliberately dropped.
       const core = (data.core ?? {}) as { type?: string; params?: Record<string, unknown> }
-      return { core: coreEntry(core) }
+      return { core: coreEntry(item.id, core) }
     }
     case 'prompt':
       return { promptText: data.promptText ?? '' }
@@ -133,7 +135,10 @@ export function unsupportedTypes(itemId: string): string[] {
  * the param's name, and the coordinates travel because an export is otherwise only fetchable on a
  * machine whose registry still carries the same entry.
  */
-function coreEntry(core: { type?: string; params?: Record<string, unknown> }): {
+function coreEntry(
+  itemId: string,
+  core: { type?: string; params?: Record<string, unknown> },
+): {
   type: string
   params: Record<string, RecipeParam>
   models?: RecipeModel[]
@@ -142,13 +147,23 @@ function coreEntry(core: { type?: string; params?: Record<string, unknown> }): {
   const descriptor = useCoreNodesStore.getState().descriptors.find((d) => d.type === type)
   const kinds = new Map((descriptor?.params ?? []).map((p) => [p.key, p.kind ?? 'string']))
   const params = effectiveParams(core)
+  // A wired `model`/`vae`/`text_encoder` is ignored at run time, and the loader driving it exports
+  // its own file. Counting the overridden param too listed the wrong checkpoint beside the right
+  // one: a node wired to a RAW loader still named the Turbo build it had been set to by hand.
+  const wired = wiredParams(
+    itemId,
+    descriptor,
+    useMoodboardStore.getState().items,
+    useMoodboardStore.getState().connectors,
+  )
   const typed: Record<string, RecipeParam> = {}
   const wanted = new Map<string, string>()
   for (const [key, value] of Object.entries(params)) {
     const type = (kinds.get(key) ?? 'string') as RecipeParamType
     typed[key] = { type, value }
-    if ((type === 'model' || type === 'character') && String(value)) {
-      wanted.set(String(value), '')
+    const overridden = wired.has(key) && !wired.get(key)?.fallsBack
+    if ((type === 'model' || type === 'character') && String(value) && !overridden) {
+      wanted.set(basename(String(value)), '')
     }
   }
   const registry = useModelRegistryStore.getState().entries

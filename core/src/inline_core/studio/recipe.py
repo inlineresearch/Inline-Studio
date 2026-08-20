@@ -55,7 +55,7 @@ def set_kind_resolver(resolve: Any) -> None:
 
 
 def _typed_params(
-    node_type: str, params: dict[str, Any]
+    node_type: str, params: dict[str, Any], wired: frozenset[str] = frozenset()
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     """Each param as {type, value}, plus the download coordinates for the ones naming a model.
 
@@ -76,8 +76,10 @@ def _typed_params(
     # required and appears in no param, so only the node's own declaration can carry it.
     wanted: dict[str, str] = {}
     for key, value in params.items():
-        if kinds.get(key) in ("model", "character") and str(value):
-            wanted.setdefault(str(value), "")
+        # A wired `model`/`vae`/`text_encoder` is ignored at run time and the loader driving it
+        # names its own file, so counting this one too listed the wrong checkpoint beside the right.
+        if kinds.get(key) in ("model", "character") and str(value) and key not in wired:
+            wanted.setdefault(str(value).replace("\\", "/").rsplit("/", 1)[-1], "")
     # A node's declared requirements name its *default* build, so a node set to klein-9b would
     # otherwise export klein-4b beside it. Whatever a param already named speaks for its folder.
     covered = _folders_of(list(wanted))
@@ -149,7 +151,9 @@ def _effective_params(core: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _item_data(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, Any]:
+def _item_data(
+    conn: sqlite3.Connection, item: dict[str, Any], wired: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """The rebuild-relevant data for a recipe item. A fal gen node is a `frame` whose model + params
     live in the frames table, so it's looked up; everything else trims its own `data`."""
     if item["type"] == "frame" and item.get("frameId"):
@@ -157,10 +161,20 @@ def _item_data(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, Any]
         if frame.get("provider") == "fal" and frame.get("modelId"):
             return {"fal": {"modelId": frame["modelId"], "params": frame.get("params") or {}}}
         return {}  # a rendered-frame image source - rebuilt structurally (media doesn't transfer)
-    return _clean_data(item)
+    return _clean_data(item, wired)
 
 
-def _clean_data(item: dict[str, Any]) -> dict[str, Any]:
+def _wired_handles(item_id: str, connectors: list[dict[str, Any]]) -> frozenset[str]:
+    """Input ports of ``item_id`` that a wire drives, so a param sharing the name is not exported
+    as a model the graph needs: the loader on the other end already names the file."""
+    return frozenset(
+        handle
+        for c in connectors
+        if c["toItemId"] == item_id and (handle := (c.get("data") or {}).get("targetHandle"))
+    )
+
+
+def _clean_data(item: dict[str, Any], wired: frozenset[str] = frozenset()) -> dict[str, Any]:
     """The rebuild-relevant subset of an item's data - never the take history (`core.outputs`)."""
     kind = item["type"]
     data = item.get("data") or {}
@@ -168,7 +182,7 @@ def _clean_data(item: dict[str, Any]) -> dict[str, Any]:
         core = data.get("core") or {}
         node_type = str(core.get("type") or "")
         params = _effective_params(core)
-        typed, models = _typed_params(node_type, params)
+        typed, models = _typed_params(node_type, params, wired)
         entry: dict[str, Any] = {"type": node_type, "params": typed}
         if models:
             entry["models"] = models
@@ -228,7 +242,7 @@ def build_recipe(conn: sqlite3.Connection, target_item_id: str) -> dict[str, Any
         {
             "id": item["id"],
             "type": item["type"],
-            "data": _item_data(conn, item),
+            "data": _item_data(conn, item, _wired_handles(node_id, connectors)),
             "x": item["x"],
             "y": item["y"],
             "width": item["width"],
