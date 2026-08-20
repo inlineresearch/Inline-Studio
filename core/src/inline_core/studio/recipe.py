@@ -81,7 +81,7 @@ def _typed_params(
     # A node's declared requirements name its *default* build, so a node set to klein-9b would
     # otherwise export klein-4b beside it. Whatever a param already named speaks for its folder.
     covered = _folders_of(list(wanted))
-    for filename, category in _declared(node_type):
+    for filename, category in _declared(node_type, params):
         if category in covered:
             continue
         wanted[filename] = category
@@ -99,11 +99,11 @@ def _folders_of(names: list[str]) -> set[str]:
         return set()
 
 
-def _declared(node_type: str) -> list[tuple[str, str]]:
+def _declared(node_type: str, params: dict[str, Any] | None = None) -> list[tuple[str, str]]:
     if _node_models is None or not node_type:
         return []
     try:
-        return list(_node_models(node_type))
+        return list(_node_models(node_type, params or {}))
     except Exception:  # noqa: BLE001 - a recipe is metadata; never fail a render over it
         logger.warning("Could not resolve required models for %s", node_type)
         return []
@@ -178,7 +178,14 @@ def _clean_data(item: dict[str, Any]) -> dict[str, Any]:
     # Training nodes keep their settings, never their bindings: a dataset and a run are rows in
     # this project's database, so they name nothing in the project the recipe lands in.
     if kind == "train/lora":
-        return {"hyperparams": data.get("hyperparams") or {}}
+        hyperparams = data.get("hyperparams") or {}
+        # The base checkpoint follows the architecture, and no param on the node names the file, so
+        # without this a published training graph asked the reader to work out a 26 GB download.
+        models = _coordinates(dict(_declared(kind, {"hyperparams": hyperparams})))
+        out: dict[str, Any] = {"hyperparams": hyperparams}
+        if models:
+            out["models"] = models
+        return out
     if kind == "train/caption":
         return {
             "overwrite": bool(data.get("overwrite") or False),

@@ -210,8 +210,9 @@ def test_attach_adapter_takes_its_base_from_the_adapter(tmp_path: Path, encoders
 
 
 def test_attach_adapter_files_what_train_lora_hands_it(tmp_path: Path, encoders: None) -> None:
-    """The wire from Train LoRA is the whole point of the node, and it used to raise: the trainer
-    emitted a bare path while every `lora` input reads a LoraRef stack."""
+    """The wire from Train LoRA is the whole point of the node, and it raised twice: the trainer
+    emitted a bare path where every `lora` input reads a LoraRef stack, and then emitted one
+    relative to the models root, which opened under the server's CWD and was not there."""
     import torch
     from safetensors.torch import save_file
 
@@ -227,7 +228,8 @@ def test_attach_adapter_files_what_train_lora_hands_it(tmp_path: Path, encoders:
     )
     identity = Identity(doc=encode.char_encode([_image(tmp_path / "a.png")], name="Ada"))
 
-    # The stack the trainer now emits, and the bare path an older cached run left behind.
+    # The stack the trainer now emits, and the bare path an older cached run left behind. Both
+    # absolute: a relative one reads as missing metadata rather than as a missing file.
     for wired in ((LoraRef(file=str(adapter), strength=1.0),), str(adapter)):
         payload = AttachAdapterRunner().run(
             _node({}),
@@ -235,6 +237,46 @@ def test_attach_adapter_files_what_train_lora_hands_it(tmp_path: Path, encoders:
             _ctx(),  # type: ignore[arg-type]
         ).outputs["payload"]
         assert payload.arch == "flux2-klein", "the settings came off the wired adapter"
+
+
+def test_the_adapter_strength_rides_in_the_file(tmp_path: Path, encoders: None) -> None:
+    """An overfit adapter is only usable turned down, and the character wire carries no controls:
+    a generation node fused every character at 1.0 with nowhere to say otherwise."""
+    import torch
+    from safetensors.torch import save_file
+
+    from inline_core.characters import apply as characters
+    from inline_core.graph.loader_runners import LoraRef
+    from inline_core.models.character.runner import AttachAdapterRunner, WriteCharacterRunner
+
+    adapter = tmp_path / "soft.safetensors"
+    save_file(
+        {"w": torch.zeros(2, 2)},
+        str(adapter),
+        metadata={"inline_arch": "krea2", "inline_base": "krea2_raw_bf16.safetensors"},
+    )
+    identity = Identity(doc=encode.char_encode([_image(tmp_path / "a.png")], name="Soft"))
+
+    payload = AttachAdapterRunner().run(
+        _node({"strength": 0.5}),
+        {"character": [identity], "lora": [(LoraRef(file=str(adapter), strength=1.0),)]},
+        _ctx(),  # type: ignore[arg-type]
+    ).outputs["payload"]
+    WriteCharacterRunner().run(
+        _node({}), {"character": [identity], "payloads": [payload]}, _ctx(),  # type: ignore[arg-type]
+    )
+
+    saved = cf.read(library.resolve("Soft.char"))
+    assert saved.manifest.payloads["krea2-lora"]["strength"] == 0.5
+    # And it reaches the runner, which is the half that was hardcoded.
+    assert characters.char_apply("Soft.char", "krea2").lora_strength == 0.5
+
+
+def test_a_character_filed_before_strength_existed_still_fuses_at_one(
+    tmp_path: Path, encoders: None
+) -> None:
+    doc = encode.char_encode([_image(tmp_path / "a.png")], name="Old")
+    assert encode.lora_strength(doc.manifest, "krea2") == 1.0
 
 
 def test_an_adapter_without_provenance_needs_its_model(tmp_path: Path, encoders: None) -> None:
@@ -253,6 +295,24 @@ def test_an_adapter_without_provenance_needs_its_model(tmp_path: Path, encoders:
         AttachAdapterRunner().run(
             _node({}),
             {"character": [identity], "lora": [(LoraRef(file=str(adapter), strength=1.0),)]},
+            _ctx(),  # type: ignore[arg-type]
+        )
+
+
+def test_a_relative_adapter_path_is_named_as_missing(tmp_path: Path, encoders: None) -> None:
+    """An adapter that cannot be opened is not an adapter with no provenance. Saying the second sent
+    a user looking for a Model setting when the path was resolved against the wrong root."""
+    from inline_core.graph.loader_runners import LoraRef
+    from inline_core.models.character.runner import AttachAdapterRunner
+
+    identity = Identity(doc=encode.char_encode([_image(tmp_path / "a.png")], name="Ada"))
+    with pytest.raises(ValueError, match="cannot be read"):
+        AttachAdapterRunner().run(
+            _node({}),
+            {
+                "character": [identity],
+                "lora": [(LoraRef(file="loras/gone.safetensors", strength=1.0),)],
+            },
             _ctx(),  # type: ignore[arg-type]
         )
 

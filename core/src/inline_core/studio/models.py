@@ -75,13 +75,13 @@ class ModelDownloads:
 
     # --- requirements (the popup's data) --------------------------------------------------------
 
-    def requirements(self, node_type: str) -> dict[str, Any]:
+    def requirements(self, node_type: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """The node's model components with live presence + a memory fit estimate:
         ``{components: [...], allPresent, estimate}``.
 
         Returns an empty, all-present view for node types with no requirements (or when the model
         runtime isn't installed - the node then shows its own "unavailable" state instead)."""
-        components = self._components(node_type)
+        components = self._components(node_type, params)
         return {
             "components": [_component_json(c) for c in components],
             # Suggested (optional) components never count as missing; control is opt-in.
@@ -284,14 +284,18 @@ class ModelDownloads:
 
     # --- internals ------------------------------------------------------------------------------
 
-    def _components(self, node_type: str) -> list[Any]:
+    def _components(self, node_type: str, params: dict[str, Any] | None = None) -> list[Any]:
         """The node's components, or ``[]`` for a node type with no registered provider (which is
-        also what a torch-less install sees - the node shows its own "unavailable" state)."""
+        also what a torch-less install sees - the node shows its own "unavailable" state).
+
+        Params travel because Train LoRA's base checkpoint follows the architecture its settings
+        pick, and no param on the node names the file.
+        """
         provider = self._requirements.get(node_type)
         if provider is None:
             return []
         try:
-            return list(provider.components())
+            return list(provider.components(params or {}))
         except Exception:  # noqa: BLE001 - a provider is extension code; never break the popup
             return []
 

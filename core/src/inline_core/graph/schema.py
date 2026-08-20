@@ -38,6 +38,15 @@ class PortKind(str, Enum):
     METRICS = "metrics"
 
 
+def is_list_kind(kind: PortKind) -> bool:
+    """Whether a port takes several wires at once rather than the last one to arrive.
+
+    Asking for IMAGE_LIST by name was the same bug twice: `payloads` on Write .char kept only the
+    last payload wired to it, so a graph that trained an adapter wrote a .char without one.
+    """
+    return kind.value.endswith("[]")
+
+
 def port_satisfies(source: PortKind, target: PortKind) -> bool:
     """Whether an output of `source` kind may feed an input of `target` kind."""
     if source == target:

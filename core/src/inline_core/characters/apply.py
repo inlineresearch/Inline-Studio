@@ -31,12 +31,16 @@ class AppliedCharacter:
         refs: list[AssetRef],
         description: str,
         lora: Path | None = None,
+        lora_strength: float = 1.0,
     ) -> None:
         self.name = name
         self.refs = refs
         self.description = description
         #: A trained adapter, which for a model with no reference channel is the only route.
         self.lora = lora
+        #: What it fuses at. Set on Attach Adapter, because an overfit adapter is only usable
+        #: turned down and the character wire carries no controls of its own.
+        self.lora_strength = lora_strength
 
     def prompt_prefix(self, first_position: int) -> str:
         """Text naming the positions the character lands on, so ordinal prompting resolves."""
@@ -88,6 +92,7 @@ def char_apply(chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH) -> AppliedChara
 
     description = _description(doc)
     lora = _extract_lora(doc, digest, arch)
+    strength = encode.lora_strength(doc.manifest, arch)
     # A trained adapter wins unless the character says otherwise: the user asked for it explicitly,
     # and loading both would apply the identity twice.
     mode = doc.manifest.apply.get(arch) or ("lora" if lora else "reference")
@@ -96,7 +101,11 @@ def char_apply(chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH) -> AppliedChara
         mode = "lora"
     refs = [] if mode == "lora" else _extract(doc, digest, arch)
     return AppliedCharacter(
-        doc.manifest.name or path.stem, refs, description, lora if mode == "lora" else None
+        doc.manifest.name or path.stem,
+        refs,
+        description,
+        lora if mode == "lora" else None,
+        strength,
     )
 
 

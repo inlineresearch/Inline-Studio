@@ -644,8 +644,12 @@ export interface InlineStudioApi {
     models(): Promise<Result<CoreModels>>
   }
   models: {
-    /** The model components a node needs + whether each is present under models/. */
-    requirements(nodeType: string): Promise<Result<ModelRequirements>>
+    /** The model components a node needs + whether each is present under models/.
+     * `params` because Train LoRA's base checkpoint follows the architecture its settings pick. */
+    requirements(
+      nodeType: string,
+      params?: Record<string, unknown>,
+    ): Promise<Result<ModelRequirements>>
     /** Download one component (its `id`) or `'all'` missing ones into models/. Fire-and-forget;
      * progress arrives on `events:modelDownload*`. */
     download(nodeType: string, componentId: string): Promise<Result<void>>

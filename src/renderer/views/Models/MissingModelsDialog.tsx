@@ -1,6 +1,6 @@
 import { Modal } from '../../components/Modal'
 import type { MissingModel, RegistryModel } from '@shared/types'
-import { useModelRegistryStore } from '../../store/modelRegistryStore'
+import { preferredMatch, useModelRegistryStore } from '../../store/modelRegistryStore'
 import { sourceUrl } from './sourceUrl'
 
 /** Folder name to the word people use for it; an unmapped folder shows its own name. */
@@ -14,11 +14,6 @@ const TYPE_LABELS: Record<string, string> = {
   upscale_models: 'Upscale',
   embeddings: 'Embedding',
   checkpoints: 'Checkpoint',
-}
-
-/** The registry may carry the same file at several precisions; an exact filename match wins. */
-function preferredMatch(row: MissingModel): MissingModel['matches'][number] | null {
-  return row.matches.find((m) => m.exact) ?? row.matches[0] ?? null
 }
 
 function typeLabel(path: string): string {

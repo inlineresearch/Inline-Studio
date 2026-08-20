@@ -84,12 +84,15 @@ export const useModelRegistryStore = create<ModelRegistryState>((set) => ({
   },
 
   downloadAll: async () => {
-    // Only what the registry can supply: a file with no match has nowhere to be fetched from, and
-    // queueing it would leave a row that never moves.
-    const { missing, download } = useModelRegistryStore.getState()
+    // Only what the registry can supply and does not already have: a file with no match has nowhere
+    // to be fetched from, and queueing it would leave a row that never moves.
+    const { missing, download, downloading } = useModelRegistryStore.getState()
     for (const row of missing ?? []) {
-      const first = row.matches[0]
-      if (first) await download(first.model.id)
+      // The same match the row's own button would fetch, or Download all quietly picks a different
+      // precision than the one beside it.
+      const match = preferredMatch(row)
+      if (!match || match.present || downloading[match.model.id]) continue
+      await download(match.model.id)
     }
   },
 
@@ -103,6 +106,24 @@ export const useModelRegistryStore = create<ModelRegistryState>((set) => ({
     }
   },
 }))
+
+/** The registry may carry the same file at several precisions; an exact filename match wins. */
+export function preferredMatch(row: MissingModel): MissingModel['matches'][number] | null {
+  return row.matches.find((m) => m.exact) ?? row.matches[0] ?? null
+}
+
+/** A row whose matched model just landed now reports it present, so it stops offering Download. */
+export function markPresent(rows: MissingModel[] | null, modelId: string): MissingModel[] | null {
+  if (!rows) return rows
+  return rows.map((row) =>
+    row.matches.some((m) => m.model.id === modelId && !m.present)
+      ? {
+          ...row,
+          matches: row.matches.map((m) => (m.model.id === modelId ? { ...m, present: true } : m)),
+        }
+      : row,
+  )
+}
 
 function without<T>(map: Record<string, T>, key: string): Record<string, T> {
   const next = { ...map }
@@ -126,7 +147,12 @@ export function subscribeModelRegistry(): () => void {
   })
   const onDone = events.onModelDownloadDone((e) => {
     if (e.nodeType !== REGISTRY_NODE) return
-    useModelRegistryStore.setState((s) => ({ downloading: without(s.downloading, e.componentId) }))
+    // The popup's rows are the snapshot taken when it opened, so clearing the progress alone left
+    // the row offering Download again - the one action that is certainly wrong once it has landed.
+    useModelRegistryStore.setState((s) => ({
+      downloading: without(s.downloading, e.componentId),
+      missing: markPresent(s.missing, e.componentId),
+    }))
     void useModelRegistryStore.getState().load()
   })
   const onError = events.onModelDownloadError((e) => {

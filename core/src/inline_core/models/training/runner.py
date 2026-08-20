@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ...config import models_dir
 from ...errors import ComponentError
 from ...graph.descriptor import NodeDescriptor, ParamField, Port, Widget
 from ...graph.loader_runners import LoraRef
@@ -194,9 +195,13 @@ class TrainLoraRunner(NodeRunner):
             raise ComponentError(
                 str(state.get("error") or "") or f"Training {status or 'did not finish'}."
             )
-        path = str(state.get("outputLoraPath") or "")
-        if not path:
+        saved = str(state.get("outputLoraPath") or "")
+        if not saved:
             raise ComponentError("Training finished without writing an adapter.")
+        # The run row stores it relative to the models root, and every `lora` consumer opens the
+        # value as given: unresolved, it read as a path under the server's CWD and simply was not
+        # there, which surfaces as an adapter that "does not say which model it trained on".
+        path = str(models_dir() / saved)
         # A stack of LoraRef, not a bare path: that is what every `lora` input reads, so the adapter
         # this node just trained wires straight into Attach Adapter or a generation node.
         return NodeResult(

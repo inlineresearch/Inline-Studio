@@ -121,7 +121,8 @@ def register_studio_handlers(
 
     # --- model requirements + explicit downloads (the node's "missing models" popup) ------------
     if model_downloads is not None:
-        reg("models:requirements", lambda node_type: model_downloads.requirements(node_type))
+        reg("models:requirements",
+            lambda node_type, params=None: model_downloads.requirements(node_type, params))
         reg("models:download", lambda node_type, cid: model_downloads.download(node_type, cid))
         reg("models:registry", lambda refresh=False: model_downloads.registry(refresh))
         reg("models:resolveMissing",
@@ -130,7 +131,8 @@ def register_studio_handlers(
         reg("models:cancelRegistryDownload", lambda mid: model_downloads.cancel_registry(mid))
         reg("models:downloadQueue", lambda: model_downloads.download_queue())
     else:
-        reg("models:requirements", lambda _node_type: {"components": [], "allPresent": True})
+        reg("models:requirements",
+            lambda _node_type, _params=None: {"components": [], "allPresent": True})
         reg("models:download", not_wired("Model downloads"))
         reg("models:registry", lambda _refresh=False: {"entries": [], "stale": True})
         reg("models:cancelRegistryDownload", not_wired("Model downloads"))

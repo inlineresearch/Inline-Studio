@@ -437,13 +437,21 @@ def create_app(
 
         studio_recipe.set_param_resolver(node_param_fallbacks)
 
-        def node_required_models(node_type: str) -> list[tuple[str, str]]:
-            """What a node needs on disk but never names in a param, for the recipe's model list."""
+        def node_required_models(
+            node_type: str, params: dict[str, Any] | None = None
+        ) -> list[tuple[str, str]]:
+            """What a node needs on disk but never names in a param, for the recipe's model list.
+
+            Params travel because Train LoRA's base checkpoint follows the architecture its own
+            settings pick, and no param on the node names the file.
+            """
             provider = reqs.get(node_type)
             if provider is None:
                 return []
             return [
-                (c.filename, c.category) for c in provider.components() if not c.optional
+                (c.filename, c.category)
+                for c in provider.components(params or {})
+                if not c.optional
             ]
 
         studio_recipe.set_model_resolver(node_required_models)

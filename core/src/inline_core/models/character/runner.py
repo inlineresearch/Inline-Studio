@@ -133,6 +133,12 @@ ATTACH = NodeDescriptor(
     ),
     outputs=(Port("payload", "Payload", PortKind.PAYLOAD),),
     params=(
+        # An overfit adapter is only usable turned down, and a character applies through a wire
+        # that carries no controls, so the strength has to be decided here and ride in the file.
+        ParamField(
+            "strength", "Strength", Widget.NUMBER, 1.0,
+            min=0.0, max=2.0, step=0.05, on_face=True,
+        ),
         # Read from the adapter's own metadata when it has any; these are the fallback for one
         # trained before provenance was written.
         ParamField("arch", "Model", Widget.TEXT, ""),
@@ -503,6 +509,10 @@ class AttachAdapterRunner(NodeRunner):
             raise ValueError("Attach Adapter needs a trained LoRA.")
 
         path = Path(str(file))
+        # A file that will not open is not a file with no provenance, and reporting the second sent
+        # a user to look for a Model setting when the path was resolved against the wrong root.
+        if not path.is_file():
+            raise ValueError(f"{path} cannot be read, so its adapter cannot be filed.")
         meta = _adapter_metadata(path)
         arch = str(node.params.get("arch") or meta.get("inline_arch") or "").strip()
         if not arch:
@@ -514,15 +524,24 @@ class AttachAdapterRunner(NodeRunner):
         rank = _as_int(meta.get("inline_rank"), 16)
         steps = _as_int(meta.get("inline_steps"), 0)
         resolution = _as_int(meta.get("inline_resolution"), 512)
+        strength = _as_float(node.params.get("strength"), 1.0)
 
         def apply(doc: cf.CharDoc) -> None:
             encode.set_lora_payload(
                 doc.manifest, doc.members, adapter, arch=arch,
                 base=base, rank=rank, steps=steps, resolution=resolution,
+                strength=strength,
             )
 
         payload = Payload(arch=arch, kind=encode.PAYLOAD_LORA, apply=apply)
         return NodeResult(outputs={"payload": payload})
+
+
+def _as_float(value: Any, fallback: float) -> float:
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _as_int(value: Any, fallback: int) -> int:

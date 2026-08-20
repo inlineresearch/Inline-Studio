@@ -214,7 +214,7 @@ class Flux2Runner(NodeRunner):
             prompt = character.prefix + prompt
             if character.lora is not None:
                 # Appended, so a user's own wired LoRAs still apply alongside the character's.
-                loras = (*loras, LoraRef(file=str(character.lora), strength=1.0))
+                loras = (*loras, LoraRef(file=str(character.lora), strength=character.strength))
 
         images = [rt.load_image(ref, _LABEL) for ref in refs]
         control_map = rt.load_image(control, _LABEL) if control_file else None
@@ -570,6 +570,7 @@ class _Character:
     prefix: str
     #: The trained adapter, when the character is applied that way instead of by reference.
     lora: Any = None
+    strength: float = 1.0
 
 
 def _apply_character(inputs: dict[str, Any], wired: int) -> _Character | None:
@@ -589,7 +590,10 @@ def _apply_character(inputs: dict[str, Any], wired: int) -> _Character | None:
     how = "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)"
     logger.info("Applying character %s by %s", applied.name, how)
     return _Character(
-        refs=list(applied.refs), prefix=applied.prompt_prefix(wired + 1), lora=applied.lora
+        refs=list(applied.refs),
+        prefix=applied.prompt_prefix(wired + 1),
+        lora=applied.lora,
+        strength=applied.lora_strength,
     )
 
 

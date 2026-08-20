@@ -92,6 +92,10 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // This node is the selected graph's output node → it floats the graph's single Run control.
   const isRunTarget = useGraphSelectionStore((s) => s.runTargets.includes(itemId))
   const busy = useGenerationStore((s) => s.busyByFrame[itemId] ?? false)
+  // Green follows the node actually executing, not only the one Run was pressed on; red stays on
+  // whichever node stopped the run, which in a chain is rarely the same node.
+  const executing = useGenerationStore((s) => s.runningNode === itemId)
+  const failed = useGenerationStore((s) => s.failedNode === itemId)
   const progress = useGenerationStore((s) => s.progressByFrame[itemId])
   const status = useGenerationStore((s) => s.statusByFrame[itemId])
   // Read before the early returns below, because hooks cannot be called conditionally.
@@ -133,7 +137,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         minWidth={200}
         minHeight={92}
         subtleSelect
-        running={busy}
+        running={busy || executing}
       >
         <div className="flex h-full flex-col items-center justify-center gap-1 p-3 text-center">
           {coreType && disabledPack ? (
@@ -338,9 +342,17 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
       field.onFace ?? field.widget === 'select'
     const faceParams = descriptor.params.filter(onFace)
     const otherParams = descriptor.params.filter((p) => !onFace(p))
-    const setParam = (key: string, value: string): void => {
+    // Numbers store as numbers: the recipe declares each param's type, and a string under
+    // `type: "number"` leaves a reader guessing. Coerced only when it round-trips, so a half-typed
+    // "0." survives long enough to become "0.5".
+    const setParam = (key: string, value: string, widget?: string): void => {
+      const trimmed = value.trim()
+      const stored: string | number =
+        widget === 'number' && trimmed !== '' && String(Number(trimmed)) === trimmed
+          ? Number(trimmed)
+          : value
       void updateItem(itemId, {
-        data: { ...item.data, core: { ...core, params: { ...core.params, [key]: value } } },
+        data: { ...item.data, core: { ...core, params: { ...core.params, [key]: stored } } },
       })
     }
     return (
@@ -377,21 +389,29 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           minHeight={compactNodeMinHeight(descriptor)}
           padded={false}
           subtleSelect
-          running={busy}
-          invalid={missing.length > 0}
+          running={busy || executing}
+          invalid={missing.length > 0 || failed}
         >
           <div className="flex h-full w-full flex-col gap-1 px-2 py-1.5">
             {faceParams.length > 0 ? (
               faceParams.map((field) => {
                 if (field.widget !== 'select') {
+                  // Unset shows the default the run will actually use; cleared stays cleared. The
+                  // two are distinguishable, and a box reading empty beside a strength of 1 is the
+                  // node claiming it has no value.
+                  const held = core.params?.[field.key]
+                  const isNumber = field.widget === 'number'
                   return (
                     <input
                       key={field.key}
-                      type="text"
-                      value={String(core.params?.[field.key] ?? '')}
+                      type={isNumber ? 'number' : 'text'}
+                      min={isNumber ? field.min : undefined}
+                      max={isNumber ? field.max : undefined}
+                      step={isNumber ? field.step : undefined}
+                      value={String(held ?? field.default ?? '')}
                       placeholder={field.label}
                       title={field.label}
-                      onChange={(e) => setParam(field.key, e.target.value)}
+                      onChange={(e) => setParam(field.key, e.target.value, field.widget)}
                       className="nodrag w-full min-w-0 rounded border border-border bg-panel px-1.5 py-1 text-[10px] text-zinc-200 outline-none focus:border-accent"
                     />
                   )
@@ -520,8 +540,8 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         minHeight={200}
         padded={false}
         subtleSelect
-        running={busy}
-        invalid={missing.length > 0}
+        running={busy || executing}
+        invalid={missing.length > 0 || failed}
       >
         <div className="relative flex h-full w-full flex-col">
           {/* Edge-to-edge output preview. */}

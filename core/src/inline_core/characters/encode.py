@@ -326,12 +326,16 @@ def set_lora_payload(
     rank: int,
     steps: int,
     resolution: int,
+    strength: float = 1.0,
 ) -> str:
     """Store a trained adapter as this character's LoRA payload for ``arch``.
 
     Records what it was trained against, because a LoRA is only valid for that base: loading a 4B
     adapter onto a 9B silently degrades rather than raising. Shares the reference fingerprint, so
     editing the reference set invalidates the adapter the same way it invalidates a reference set.
+
+    ``strength`` rides with the adapter because an overfit one is only usable turned down, and the
+    character applies through a wire that carries no controls of its own.
     """
     key = payload_key(arch, PAYLOAD_LORA)
     for stale in [m for m in members if m.startswith(f"payloads/{key}/")]:
@@ -345,10 +349,20 @@ def set_lora_payload(
         "source_sha256": cf.refs_fingerprint(manifest, PAYLOAD_POLICY),
         "policy": dict(PAYLOAD_POLICY),
         "base": base,
+        "strength": float(strength),
         "training": {"rank": rank, "steps": steps, "resolution": resolution},
         "files": [{"path": member, "sha256": cf.sha256_bytes(adapter)}],
     }
     return key
+
+
+def lora_strength(manifest: cf.Manifest, arch: str = FLUX2_KLEIN_ARCH) -> float:
+    """The strength this character's adapter fuses at, or 1.0 for one filed before it was set."""
+    entry = lora_payload(manifest, arch) or {}
+    try:
+        return float(entry.get("strength", 1.0))
+    except (TypeError, ValueError):
+        return 1.0
 
 
 def lora_payload(manifest: cf.Manifest, arch: str = FLUX2_KLEIN_ARCH) -> dict[str, Any] | None:

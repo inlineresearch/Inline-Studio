@@ -18,6 +18,7 @@ import type {
 import { downloadUrl } from '@shared/modelRefs'
 import { useModelRequirementsStore } from '../../store/modelRequirementsStore'
 import { useModelRegistryStore } from '../../store/modelRegistryStore'
+import { studio } from '@/lib/studio'
 import { copyText } from '../../lib/clipboard'
 import { useMoodboardStore } from '../../store/moodboardStore'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
@@ -176,6 +177,14 @@ function coreEntry(core: { type?: string; params?: Record<string, unknown> }): {
   return models.length ? { type, params: typed, models } : { type, params: typed }
 }
 
+/** A training node's models sit beside its settings; a core node keeps them under `core`. */
+function withModels(
+  data: Record<string, unknown>,
+  models: RecipeModel[] | undefined,
+): Record<string, unknown> {
+  return models?.length ? { ...data, models } : data
+}
+
 export async function graphRecipe(itemId: string): Promise<Recipe> {
   const { items, connectors } = graphSlice(itemId)
   // Loaded rather than assumed: a node scrolled out of view was never mounted, so its
@@ -193,6 +202,27 @@ export async function graphRecipe(itemId: string): Promise<Recipe> {
       ? Promise.resolve()
       : useModelRegistryStore.getState().load(),
   ])
+  // A Train LoRA node names an architecture, never the checkpoint it trains against: Core resolves
+  // that at run time, so a published training graph left its largest download to be worked out.
+  const trainingModels = new Map<string, RecipeModel[]>()
+  const registry = useModelRegistryStore.getState().entries
+  await Promise.all(
+    items
+      .filter((i) => i.type === 'train/lora')
+      .map(async (i) => {
+        const res = await studio().models.requirements(i.type, i.data as Record<string, unknown>)
+        if (!res.ok) return
+        const rows = res.value.components
+          .filter((c) => !c.optional)
+          .map((c) => {
+            const name = c.localPath.split('/').pop() ?? c.localPath
+            const entry = registry.find((e) => e.filename.toLowerCase() === name.toLowerCase())
+            return { directory: c.category, name, url: entry ? downloadUrl(entry) : '' }
+          })
+        if (rows.length) trainingModels.set(i.id, rows)
+      }),
+  )
+
   const target = items.find((i) => i.id === itemId)
   const core = (
     (target?.data ?? {}) as { core?: { type?: string; params?: Record<string, unknown> } }
@@ -201,7 +231,7 @@ export async function graphRecipe(itemId: string): Promise<Recipe> {
   const recipeItems: RecipeItem[] = items.map((i) => ({
     id: i.id,
     type: i.type,
-    data: cleanData(i),
+    data: withModels(cleanData(i), trainingModels.get(i.id)),
     x: i.x,
     y: i.y,
     width: i.width,

@@ -256,7 +256,7 @@ def test_the_recipe_lists_models_no_param_names() -> None:
     node = mb.add_core_node(conn, "character/encode", 0, 0)
 
     studio_recipe.set_model_resolver(
-        lambda _t: [("face_detection_yunet_2023mar.onnx", "annotators")]
+        lambda _t, _p=None: [("face_detection_yunet_2023mar.onnx", "annotators")]
     )
     try:
         built = studio_recipe.build_recipe(conn, node["id"])

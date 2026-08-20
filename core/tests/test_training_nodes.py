@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from inline_core.config import models_dir
 from inline_core.errors import ComponentError
 from inline_core.graph.loader_runners import LoraRef
 from inline_core.graph.schema import Node, PortKind, port_satisfies
@@ -101,6 +102,36 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- the canvas -> graph mapping -----------------------------------------------------------------
 
 
+def test_a_second_payload_wire_adds_rather_than_replaces(conn: sqlite3.Connection) -> None:
+    """Write .char takes `payload[]`, and only IMAGE_LIST counted as a list: a graph that trained
+    an adapter and compiled references wrote whichever was wired last, dropping the training."""
+    from inline_core.graph.schema import is_list_kind
+    from inline_core.models.character import runner as cr
+
+    descriptors = {d.type: d for d in (cr.WRITE, cr.ATTACH, cr.COMPILE_REFS)}
+
+    def is_list_port(node_type: str, port_id: str) -> bool:
+        descriptor = descriptors.get(node_type)
+        if descriptor is None:
+            return False
+        port = next((p for p in descriptor.inputs if p.id == port_id), None)
+        return port is not None and is_list_kind(port.kind)
+
+    adapter = mb.add_core_node(conn, "character/adapter", 0, 0)
+    refs = mb.add_core_node(conn, "character/references", 0, 0)
+    write = mb.add_core_node(conn, "character/write", 0, 0)
+    mb.create_connector(conn, adapter["id"], write["id"], "payload", "payloads")
+    mb.create_connector(conn, refs["id"], write["id"], "payload", "payloads")
+
+    graph, _target = build_workflow_graph(conn, Path("/tmp"), write["id"], is_list_port)
+    node = next(n for n in graph["nodes"] if n["id"] == write["id"])
+    wired = [e["from"] for e in node["inputs"]["payloads"]]
+
+    # Set, not list: a payload is filed under its own arch and kind, so unlike an image list the
+    # order it arrives in carries no meaning (and both connectors share a created_at here).
+    assert set(wired) == {adapter["id"], refs["id"]}, "both payloads reach the file"
+
+
 def test_a_wired_training_chain_becomes_a_graph(conn: sqlite3.Connection) -> None:
     dataset = mb.add_train_dataset(conn, 0, 0)
     caption = mb.add_caption(conn, 0, 0)
@@ -192,7 +223,11 @@ def test_train_lora_blocks_until_the_run_finishes_and_returns_the_adapter() -> N
     assert service.started == [("d1", {"rank": 8})]
     # A LoraRef stack, the shape every `lora` input reads - so Attach Adapter and the generation
     # nodes take the adapter straight off the wire instead of being handed a string they ignore.
-    assert out.outputs["lora"] == (LoraRef(file="loras/maya.safetensors", strength=1.0),)
+    # Absolute, because the run row stores it relative to the models root and a consumer opens the
+    # value as given: unresolved it pointed under the server's CWD, where nothing was.
+    assert out.outputs["lora"] == (
+        LoraRef(file=str(models_dir() / "loras/maya.safetensors"), strength=1.0),
+    )
     # The loss curve is wired, not looked up: the run id rides its own port.
     assert out.outputs["metrics"] == "run-1"
     # Steps reach the graph's own stream, which is what makes one Run legible while training.

@@ -407,16 +407,21 @@ export interface TimelineProgressEvent {
 
 /** Main → renderer: per-node generation progress (0..1), correlated by the running frame's id. */
 export interface GenerationProgressEvent {
+  /** The node the run was started from - what the run is filed under. */
   frameId: string
   fraction: number
   /** Optional short status label from the fal queue (e.g. "in queue", "generating"). */
   status?: string
+  /** The node executing right now, which is only `frameId` for a single-node graph. */
+  nodeId?: string
 }
 
 /** Main → renderer: a node in the run finished and produced a take. */
 export interface GenerationNodeDoneEvent {
   frameId: string
   takeId: string
+  /** The node that finished, so the canvas can stop showing that one as running. */
+  nodeId?: string
 }
 
 /** Main → renderer: the whole run (target frame + its upstream chain) completed. */

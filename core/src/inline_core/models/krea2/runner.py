@@ -170,7 +170,7 @@ class Krea2Runner(NodeRunner):
         if character is not None:
             prompt = character.prefix + prompt
             # Appended, so a user's own wired LoRAs still apply alongside the character's.
-            loras = (*loras, LoraRef(file=str(character.lora), strength=1.0))
+            loras = (*loras, LoraRef(file=str(character.lora), strength=character.strength))
         wired = {ref.kind for ref in (model_ref, vae_ref, te_ref) if ref is not None}
 
         missing = [
@@ -388,6 +388,7 @@ _CHARACTER_ARCH = "krea2"
 class _Character:
     lora: Any
     prefix: str
+    strength: float = 1.0
 
 
 def _apply_character(inputs: dict[str, Any]) -> _Character | None:
@@ -407,7 +408,9 @@ def _apply_character(inputs: dict[str, Any]) -> _Character | None:
         logger.info("Character %s has no Krea 2 adapter yet; generating without it.", chosen)
         return None
     logger.info("Applying character %s by adapter", applied.name)
-    return _Character(lora=applied.lora, prefix=applied.prompt_prefix(1))
+    return _Character(
+        lora=applied.lora, prefix=applied.prompt_prefix(1), strength=applied.lora_strength
+    )
 
 
 def _load_pipeline(
