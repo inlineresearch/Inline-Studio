@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.2.74-blue?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/badge/Release-v1.3.0-blue?style=for-the-badge"></a>
   <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
 </p>
 
@@ -515,7 +515,7 @@ Yes, that is what the [Trainer tab](#lora-training) is for, and it runs entirely
 
 ### The UI is a blank page on Windows, what is wrong?
 
-Open the browser's developer console. If it refuses the app's script with a MIME type of `text/plain`, you are on a build older than v1.2.74. A clean Windows install maps `.js` to `text/plain` in the registry, Python's `mimetypes` honours that over its own table, and browsers will not run a module script served under it. Update to v1.2.74 or newer and Core sets the type itself rather than asking Windows. Nothing to change on your machine.
+Open the browser's developer console. If it refuses the app's script with a MIME type of `text/plain`, you are on a build older than v1.3.0. A clean Windows install maps `.js` to `text/plain` in the registry, Python's `mimetypes` honours that over its own table, and browsers will not run a module script served under it. Update to v1.3.0 or newer and Core sets the type itself rather than asking Windows. Nothing to change on your machine.
 
 ### What models can I run?
 
