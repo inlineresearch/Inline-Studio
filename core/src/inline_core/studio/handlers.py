@@ -123,7 +123,8 @@ def register_studio_handlers(
     if model_downloads is not None:
         reg("models:requirements",
             lambda node_type, params=None: model_downloads.requirements(node_type, params))
-        reg("models:download", lambda node_type, cid: model_downloads.download(node_type, cid))
+        reg("models:download",
+            lambda node_type, cid, params=None: model_downloads.download(node_type, cid, params))
         reg("models:registry", lambda refresh=False: model_downloads.registry(refresh))
         reg("models:resolveMissing",
             lambda wanted, refresh=False: model_downloads.resolve_missing(wanted, refresh))

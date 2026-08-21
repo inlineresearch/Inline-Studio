@@ -103,10 +103,16 @@ class ModelDownloads:
 
     # --- download (explicit, user-triggered) ----------------------------------------------------
 
-    def download(self, node_type: str, component_id: str) -> None:
-        """Download one component (by id) or ``"all"`` missing ones, in a background thread."""
+    def download(
+        self, node_type: str, component_id: str, params: dict[str, Any] | None = None
+    ) -> None:
+        """Download one component (by id) or ``"all"`` missing ones, in a background thread.
+
+        Params travel for the same reason they do on ``requirements``: Train LoRA's components
+        follow the architecture its own settings pick, so without them there is nothing to fetch.
+        """
         loop = asyncio.get_running_loop()
-        asyncio.create_task(asyncio.to_thread(self._run, node_type, component_id, loop))
+        asyncio.create_task(asyncio.to_thread(self._run, node_type, component_id, loop, params))
 
     # --- the published registry ------------------------------------------------------------
 
@@ -241,11 +247,17 @@ class ModelDownloads:
             self._emit(loop, "events:modelDownloadError",
                        {"nodeType": _REGISTRY, "componentId": model.id, "error": str(error)})
 
-    def _run(self, node_type: str, component_id: str, loop: asyncio.AbstractEventLoop) -> None:
+    def _run(
+        self,
+        node_type: str,
+        component_id: str,
+        loop: asyncio.AbstractEventLoop,
+        params: dict[str, Any] | None = None,
+    ) -> None:
         provider = self._requirements.get(node_type)
         if provider is None:
             return
-        components = self._components(node_type)
+        components = self._components(node_type, params)
         if component_id == "all":
             # "Download all" grabs required-missing only; a suggested component (e.g. a multi-GB
             # ControlNet) is fetched only when asked for by its own id.

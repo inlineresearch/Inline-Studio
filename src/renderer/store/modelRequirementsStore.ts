@@ -25,36 +25,78 @@ export interface ComponentDownload {
 }
 
 interface ModelRequirementsState {
-  /** Requirements per node type, from the last `load`. */
+  /** Requirements per cache key (usually the node type), from the last `load`. */
   byType: Record<string, ModelRequirements>
+  /** What each key was asked for, so a reload after a download repeats the same question. */
+  asked: Record<string, { nodeType: string; params?: Record<string, unknown> }>
   /** The node type whose popup is open, or null. */
   openFor: string | null
   /** Per node type → per component id → live download state. */
   downloads: Record<string, Record<string, ComponentDownload>>
-  load: (nodeType: string) => Promise<void>
-  checkOnUse: (nodeType: string, reason: string) => Promise<number>
-  open: (nodeType: string) => void
+  /**
+   * `key` is where the answer is cached, defaulting to the node type.
+   *
+   * A node type is not always enough: Train LoRA's components follow the architecture in its own
+   * settings, so two of them on different archs would otherwise overwrite each other's answer.
+   */
+  load: (nodeType: string, params?: Record<string, unknown>, key?: string) => Promise<void>
+  checkOnUse: (
+    nodeType: string,
+    reason: string,
+    params?: Record<string, unknown>,
+    key?: string,
+  ) => Promise<number>
+  open: (key: string) => void
   close: () => void
-  download: (nodeType: string, componentId: string) => Promise<void>
+  download: (
+    key: string,
+    componentId: string,
+    nodeType?: string,
+    params?: Record<string, unknown>,
+  ) => Promise<void>
   onProgress: (e: ModelDownloadProgressEvent) => void
   onDone: (e: ModelDownloadDoneEvent) => void
   onError: (e: ModelDownloadErrorEvent) => void
 }
 
+/** Every cache key that asked about this node type: the type itself, plus any keyed entries. */
+function keysFor(state: ModelRequirementsState, nodeType: string): string[] {
+  const keys = Object.entries(state.asked)
+    .filter(([, asked]) => asked.nodeType === nodeType)
+    .map(([key]) => key)
+  return keys.length ? keys : [nodeType]
+}
+
+function patch(
+  downloads: Record<string, Record<string, ComponentDownload>>,
+  keys: string[],
+  edit: (forKey: Record<string, ComponentDownload>) => Record<string, ComponentDownload>,
+): Record<string, Record<string, ComponentDownload>> {
+  const next = { ...downloads }
+  for (const key of keys) next[key] = edit(next[key] ?? {})
+  return next
+}
+
 export const useModelRequirementsStore = create<ModelRequirementsState>((set, get) => ({
   byType: {},
+  asked: {},
   openFor: null,
   downloads: {},
 
-  load: async (nodeType) => {
-    const res = await studio().models.requirements(nodeType)
-    if (res.ok) set((s) => ({ byType: { ...s.byType, [nodeType]: res.value } }))
+  load: async (nodeType, params, key) => {
+    const at = key ?? nodeType
+    const res = await studio().models.requirements(nodeType, params)
+    if (!res.ok) return
+    set((s) => ({
+      byType: { ...s.byType, [at]: res.value },
+      asked: { ...s.asked, [at]: { nodeType, params } },
+    }))
   },
 
   /** Load, then offer the registry whatever this node is missing. Used where a node is chosen. */
-  checkOnUse: async (nodeType, reason) => {
-    await get().load(nodeType)
-    const reqs = get().byType[nodeType]
+  checkOnUse: async (nodeType, reason, params, key) => {
+    await get().load(nodeType, params, key)
+    const reqs = get().byType[key ?? nodeType]
     if (!reqs || reqs.allPresent) return 0
     const { checkComponentModels } = await import('../lib/checkModels')
     return checkComponentModels(reqs.components, reason)
@@ -63,40 +105,43 @@ export const useModelRequirementsStore = create<ModelRequirementsState>((set, ge
   open: (nodeType) => set({ openFor: nodeType }),
   close: () => set({ openFor: null }),
 
-  download: async (nodeType, componentId) => {
-    const reqs = get().byType[nodeType]
+  download: async (key, componentId, nodeType, params) => {
+    const reqs = get().byType[key]
     // Which component ids this call starts (a specific one, or every missing one for "all").
     const ids =
       componentId === 'all'
         ? (reqs?.components.filter((c) => !c.present).map((c) => c.id) ?? [])
         : [componentId]
     set((s) => {
-      const forType = { ...(s.downloads[nodeType] ?? {}) }
+      const forType = { ...(s.downloads[key] ?? {}) }
       for (const id of ids) forType[id] = { fraction: 0, status: 'Starting…' }
-      return { downloads: { ...s.downloads, [nodeType]: forType } }
+      return { downloads: { ...s.downloads, [key]: forType } }
     })
-    await studio().models.download(nodeType, componentId)
+    await studio().models.download(nodeType ?? key, componentId, params)
   },
 
   onProgress: (e) =>
     set((s) => ({
-      downloads: {
-        ...s.downloads,
-        [e.nodeType]: {
-          ...(s.downloads[e.nodeType] ?? {}),
-          [e.componentId]: { fraction: e.fraction, status: e.status ?? 'Downloading…' },
-        },
-      },
+      downloads: patch(s.downloads, keysFor(s, e.nodeType), (forKey) => ({
+        ...forKey,
+        [e.componentId]: { fraction: e.fraction, status: e.status ?? 'Downloading…' },
+      })),
     })),
 
   onDone: (e) => {
-    set((s) => {
-      const forType = { ...(s.downloads[e.nodeType] ?? {}) }
-      delete forType[e.componentId]
-      return { downloads: { ...s.downloads, [e.nodeType]: forType } }
-    })
+    set((s) => ({
+      downloads: patch(s.downloads, keysFor(s, e.nodeType), (forKey) => {
+        const next = { ...forKey }
+        delete next[e.componentId]
+        return next
+      }),
+    }))
     // The files are under models/ now - refresh requirements + the node palette (options/version).
-    void get().load(e.nodeType)
+    // Re-asked exactly as before, because a keyed entry's answer depends on the params it carried.
+    for (const key of keysFor(get(), e.nodeType)) {
+      const asked = get().asked[key]
+      if (asked) void get().load(asked.nodeType, asked.params, key)
+    }
     void useCoreNodesStore.getState().load()
   },
 

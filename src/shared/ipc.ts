@@ -652,7 +652,11 @@ export interface InlineStudioApi {
     ): Promise<Result<ModelRequirements>>
     /** Download one component (its `id`) or `'all'` missing ones into models/. Fire-and-forget;
      * progress arrives on `events:modelDownload*`. */
-    download(nodeType: string, componentId: string): Promise<Result<void>>
+    download(
+      nodeType: string,
+      componentId: string,
+      params?: Record<string, unknown>,
+    ): Promise<Result<void>>
     /** Every models root on disk as a read-only tree. No file actions. */
     tree(): Promise<Result<ModelTreeRoot[]>>
     /**

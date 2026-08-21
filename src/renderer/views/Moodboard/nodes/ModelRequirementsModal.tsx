@@ -10,14 +10,16 @@ import type { ModelComponent } from '@shared/coreNodes'
 import { DownloadIcon, XIcon } from './NodeBadge'
 
 function ComponentRow({
-  nodeType,
+  cacheKey,
   comp,
 }: {
-  nodeType: string
+  /** Where this popup's answer is cached, which is the node type unless the caller keyed it. */
+  cacheKey: string
   comp: ModelComponent
 }): React.JSX.Element {
   const download = useModelRequirementsStore((s) => s.download)
-  const dl = useModelRequirementsStore((s) => s.downloads[nodeType]?.[comp.id])
+  const asked = useModelRequirementsStore((s) => s.asked[cacheKey])
+  const dl = useModelRequirementsStore((s) => s.downloads[cacheKey]?.[comp.id])
   // A present component always reads as "Ready" - never as an in-progress bar (a sibling's reload can
   // land while this one is mid-download; presence wins).
   const busy = dl !== undefined && dl.error === undefined && !comp.present
@@ -36,7 +38,7 @@ function ComponentRow({
           </span>
         ) : comp.optional && !busy ? (
           <button
-            onClick={() => void download(nodeType, comp.id)}
+            onClick={() => void download(cacheKey, comp.id, asked?.nodeType, asked?.params)}
             title={`Optional. ${comp.label}. Not required to generate.`}
             className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-panel px-2 py-1 text-[10px] font-medium text-zinc-300 hover:border-emerald-500/50 hover:text-emerald-300"
           >
@@ -47,7 +49,7 @@ function ComponentRow({
           <span className="shrink-0 text-[10px] font-medium text-emerald-300">{pct}%</span>
         ) : (
           <button
-            onClick={() => void download(nodeType, comp.id)}
+            onClick={() => void download(cacheKey, comp.id, asked?.nodeType, asked?.params)}
             className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-panel px-2 py-1 text-[10px] font-medium text-zinc-100 hover:border-emerald-500/50 hover:text-emerald-300"
           >
             <DownloadIcon className="h-3.5 w-3.5" />
@@ -68,20 +70,23 @@ function ComponentRow({
 }
 
 export function ModelRequirementsModal(): React.JSX.Element | null {
-  const nodeType = useModelRequirementsStore((s) => s.openFor)
+  const cacheKey = useModelRequirementsStore((s) => s.openFor)
   const close = useModelRequirementsStore((s) => s.close)
   const download = useModelRequirementsStore((s) => s.download)
-  const reqs = useModelRequirementsStore((s) => (nodeType ? s.byType[nodeType] : undefined))
+  const asked = useModelRequirementsStore((s) => (cacheKey ? s.asked[cacheKey] : undefined))
+  const reqs = useModelRequirementsStore((s) => (cacheKey ? s.byType[cacheKey] : undefined))
   const anyBusy = useModelRequirementsStore((s) =>
-    nodeType
-      ? Object.values(s.downloads[nodeType] ?? {}).some((d) => d.error === undefined)
+    cacheKey
+      ? Object.values(s.downloads[cacheKey] ?? {}).some((d) => d.error === undefined)
       : false,
   )
-  const title = useCoreNodesStore((s) =>
-    nodeType ? (s.descriptors.find((d) => d.type === nodeType)?.title ?? nodeType) : '',
+  // The descriptor is keyed by node type, and a keyed entry's cache key is not one.
+  const nodeType = asked?.nodeType ?? cacheKey ?? ''
+  const title = useCoreNodesStore(
+    (s) => s.descriptors.find((d) => d.type === nodeType)?.title ?? nodeType,
   )
 
-  if (!nodeType || !reqs) return null
+  if (!cacheKey || !reqs) return null
   // Optional (suggested) components never count as "missing" or block "Download all".
   const missing = reqs.components.filter((c) => !c.present && !c.optional)
 
@@ -118,13 +123,13 @@ export function ModelRequirementsModal(): React.JSX.Element | null {
 
         <div className="flex flex-col gap-2 overflow-y-auto p-4">
           {reqs.components.map((comp) => (
-            <ComponentRow key={comp.id} nodeType={nodeType} comp={comp} />
+            <ComponentRow key={comp.id} cacheKey={cacheKey} comp={comp} />
           ))}
         </div>
 
         <footer className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
           <button
-            onClick={() => void download(nodeType, 'all')}
+            onClick={() => void download(cacheKey, 'all', nodeType, asked?.params)}
             disabled={reqs.allPresent || anyBusy}
             className="flex items-center gap-1.5 rounded-md bg-emerald-500/90 px-3 py-1.5 text-[11px] font-semibold text-black hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
           >

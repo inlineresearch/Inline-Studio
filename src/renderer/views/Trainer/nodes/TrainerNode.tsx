@@ -6,7 +6,7 @@
  * `runId` is persisted in the node's data, so the node rebinds to its run after a reload and can
  * still offer Resume. Hyperparameters live in the Adjust sidebar, never on the node face.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { type NodeProps } from '@xyflow/react'
 import { PortHandle } from '../../Moodboard/nodes/PortHandle'
 import { topStyle } from '../../Moodboard/nodes/nodeSize'
@@ -29,15 +29,8 @@ import { NodeRunToolbar } from '../../Moodboard/nodes/NodeRunToolbar'
 import { DATASET_HANDLE, LORA_HANDLE, METRICS_HANDLE, wiredDatasetId } from './handles'
 import { useBoardActions } from '../../Moodboard/nodes/boardActions'
 
-/** The training arch + base maps to the generation node type whose weights it trains on, so the
- * Trainer node can reuse that node's requirements check + download flow. */
-function requirementType(arch: string, baseMode: string): string {
-  if (arch === 'krea2')
-    return baseMode === 'turbo_adapter' ? 'krea/krea-2-turbo' : 'krea/krea-2-raw'
-  if (arch === 'flux2') return 'black-forest-labs/flux-2'
-  if (arch === 'minimax-h3') return 'minimax/h3-text-to-video'
-  return 'alibaba/z-image-turbo'
-}
+/** This node's own type, which is what declares the base checkpoint and the training adapter. */
+const TRAIN_NODE = 'train/lora'
 
 const DEFAULT_HP = {
   baseMode: 'deturbo' as const,
@@ -113,21 +106,29 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
   const control = controlFor(run)
   const hp = { ...DEFAULT_HP, ...(item?.data.hyperparams ?? {}) }
 
-  // Same "missing models" hint the Generate / Core nodes show: resolve the base this run needs to
-  // its generation node type, check its requirements, and blink a chip that opens the download popup.
+  // The same "missing models" hint the Generate / Core nodes show, asked of this node rather than
+  // of a generation node standing in for it. Borrowing one checked the wrong list: Turbo mode's
+  // de-distillation adapter belongs to training and no generation node ever loads it.
   const arch = (item?.data.hyperparams as { arch?: string } | undefined)?.arch ?? 'z-image'
-  const reqType = requirementType(arch, hp.baseMode)
+  const reqParams = useMemo(
+    () => ({ hyperparams: { arch, baseMode: hp.baseMode } }),
+    [arch, hp.baseMode],
+  )
+  // Keyed per arch and base, or two Train LoRA nodes would overwrite each other's answer.
+  const reqKey = `${TRAIN_NODE}:${arch}:${hp.baseMode}`
   useEffect(() => {
-    void useModelRequirementsStore.getState().checkOnUse(reqType, 'Training needs the base model.')
-  }, [reqType])
+    void useModelRequirementsStore
+      .getState()
+      .checkOnUse(TRAIN_NODE, 'Training needs the base model.', reqParams, reqKey)
+  }, [reqKey, reqParams])
   const registryVersion = useCoreNodesStore((s) => s.registryVersion)
   const loadReqs = useModelRequirementsStore((s) => s.load)
   const openReqs = useModelRequirementsStore((s) => s.open)
-  const reqs = useModelRequirementsStore((s) => s.byType[reqType])
-  const downloadsForType = useModelRequirementsStore((s) => s.downloads[reqType])
+  const reqs = useModelRequirementsStore((s) => s.byType[reqKey])
+  const downloadsForType = useModelRequirementsStore((s) => s.downloads[reqKey])
   useEffect(() => {
-    void loadReqs(reqType)
-  }, [reqType, registryVersion, loadReqs])
+    void loadReqs(TRAIN_NODE, reqParams, reqKey)
+  }, [reqKey, reqParams, registryVersion, loadReqs])
   const modelsMissing = reqs ? !reqs.allPresent : false
   const download = downloadsForType ? activeDownload(downloadsForType, reqs) : null
 
@@ -171,7 +172,7 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
         </NodeBadge>
         {(modelsMissing || download) && (
           <button
-            onClick={() => openReqs(reqType)}
+            onClick={() => openReqs(reqKey)}
             title={download ? 'Downloading base model…' : 'Base model missing - click to download'}
             className={`nodrag flex h-6 items-center gap-1 rounded-full border px-2 text-[10px] font-medium shadow-sm backdrop-blur ${
               download
