@@ -19,7 +19,8 @@ ANNOTATOR_DIR = "annotators"
 #: similarity across two encoder builds is a number with no meaning, so this is not cosmetic.
 YUNET_VERSION = "2023mar"
 SFACE_VERSION = "2021dec"
-DINOV2_VERSION = "1"
+#: 2: the subject term keeps a per-reference gallery; a v1 character has none and must recompute.
+DINOV2_VERSION = "2"
 
 YUNET_REPO = "opencv/face_detection_yunet"
 YUNET_FILE = "face_detection_yunet_2023mar.onnx"

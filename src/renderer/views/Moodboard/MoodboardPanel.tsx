@@ -26,7 +26,7 @@ import { audioPeaksPath } from '@shared/media'
 import { importFilesToLibrary, importMediaUrlToLibrary } from '@/lib/importFiles'
 import { copyText } from '@/lib/clipboard'
 import type { MoodboardItem, MoodboardConnector, TextItemData, Frame, Asset } from '@shared/types'
-import { portKindColor, portsSatisfy, type NodeDescriptor, type PortKind } from '@shared/coreNodes'
+import { portKindColor, type NodeDescriptor, type PortKind } from '@shared/coreNodes'
 import { getNodeDef } from '@shared/nodes/registry'
 import { portIdForHandle } from '@shared/nodes/handles'
 import { useMoodboardStore } from '../../store/moodboardStore'
@@ -55,13 +55,20 @@ import { TextNode } from './nodes/TextNode'
 import { FrameNode } from './nodes/FrameNode'
 import { GenNode } from './nodes/GenNode'
 import { PromptNode } from './nodes/PromptNode'
+import { canWire } from './wiring'
+import { compactNodeMinHeight } from './nodes/nodeSize'
 import { GenerateSettingsPanel } from './GenerateSettingsPanel'
 import { CoreSettingsPanel } from './CoreSettingsPanel'
+import { TrainingSettingsMount } from '../Trainer/TrainingSettingsMount'
 import { ModelInfoPanel } from './ModelInfoPanel'
 import { ModelRequirementsModal } from './nodes/ModelRequirementsModal'
 import { PreviewNode } from './nodes/PreviewNode'
 import { LayerNode } from './nodes/LayerNode'
 import { DirectorNode } from './nodes/DirectorNode'
+import { TrainDatasetNode } from '../Trainer/nodes/TrainDatasetNode'
+import { CaptionNode } from '../Trainer/nodes/CaptionNode'
+import { TrainerNode } from '../Trainer/nodes/TrainerNode'
+import { LossGraphNode } from '../Trainer/nodes/LossGraphNode'
 import { TrimNode } from './nodes/TrimNode'
 import { LoaderNode } from './nodes/LoaderNode'
 import { ControlSpaceNode } from './nodes/ControlSpaceNode'
@@ -69,6 +76,8 @@ import { GraphNode } from './nodes/GraphNode'
 import { ResourceNode } from './nodes/ResourceNode'
 import { DeletableEdge } from './edges/DeletableEdge'
 import { SideMenu } from './SideMenu'
+import { MissingModelsDialog } from '../Models/MissingModelsDialog'
+import { checkGraphModels } from '../../lib/checkModels'
 import { CanvasToolbar } from './CanvasToolbar'
 import { AddNodeMenu, type AddNodeKind } from './AddNodeMenu'
 import { FirstRunHints } from './GettingStarted/FirstRunHints'
@@ -117,6 +126,9 @@ function writeViewport(id: string, v: { x: number; y: number; zoom: number }): v
   }
 }
 
+/** Item types the Training category adds; they map straight through to their own components. */
+const TRAINING_TYPES = new Set(['train/dataset', 'train/caption', 'train/lora', 'train/loss'])
+
 const nodeTypes: NodeTypes = {
   image: ImageNode,
   video: VideoNode,
@@ -132,6 +144,10 @@ const nodeTypes: NodeTypes = {
   controlSpace: ControlSpaceNode,
   core: GraphNode,
   resource: ResourceNode,
+  'train/dataset': TrainDatasetNode,
+  'train/caption': CaptionNode,
+  'train/lora': TrainerNode,
+  'train/loss': LossGraphNode,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -301,6 +317,8 @@ function Board(): React.JSX.Element {
   const addLoaderAssets = useMoodboardStore((s) => s.addLoaderAssets)
   const addPrompt = useMoodboardStore((s) => s.addPrompt)
   const addCoreNode = useMoodboardStore((s) => s.addCoreNode)
+  const addTrainingNode = useMoodboardStore((s) => s.addTrainingNode)
+  const addResource = useMoodboardStore((s) => s.addResource)
   const addGenNode = useMoodboardStore((s) => s.addGenNode)
   const duplicateItems = useMoodboardStore((s) => s.duplicateItems)
   const undo = useMoodboardStore((s) => s.undo)
@@ -322,7 +340,8 @@ function Board(): React.JSX.Element {
   const setCanvasSelection = useUiStore((s) => s.setCanvasSelection)
   const setCanvasCenter = useUiStore((s) => s.setCanvasCenter)
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const { screenToFlowPosition, getNodes, getViewport, setViewport, fitView } = useReactFlow()
+  const { screenToFlowPosition, getNodes, getViewport, setViewport, fitView, setCenter } =
+    useReactFlow()
   const projectId = useProjectStore((s) => s.current?.id ?? null)
   // Restore the canvas pan/zoom where the user left it, once per project open (after its board
   // loads); a project with no saved view falls back to fit-all.
@@ -375,12 +394,26 @@ function Board(): React.JSX.Element {
     else void fitView({ maxZoom: 1 })
   }, [projectId, items.length, setViewport, fitView])
 
+  // A chain dropped clear of existing work can land off-screen, and `onlyRenderVisibleElements`
+  // means it is not even in the DOM: without this the click reads as having done nothing.
+  const reveal = useUiStore((s) => s.reveal)
+  useEffect(() => {
+    if (!reveal) return
+    void setCenter(reveal.x, reveal.y, { zoom: 0.75, duration: 400 })
+    useUiStore.getState().clearReveal()
+  }, [reveal, setCenter])
+
   const assetsById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets])
 
   // Compact/plumbing core nodes (no media output - loaders, samplers, encoders) hug their content
   // rather than stretch to a stored height, so a Load node is just its title + file dropdown.
-  const compactCoreTypes = useMemo(
-    () => new Set(coreDescriptors.filter((d) => d.outputKind === null).map((d) => d.type)),
+  const compactCore = useMemo(
+    () =>
+      new Map(
+        coreDescriptors
+          .filter((d) => d.outputKind === null)
+          .map((d) => [d.type, compactNodeMinHeight(d)]),
+      ),
     [coreDescriptors],
   )
 
@@ -390,19 +423,26 @@ function Board(): React.JSX.Element {
     () => new Map(coreDescriptors.map((d) => [d.type, d])),
     [coreDescriptors],
   )
+  // A training node is its own descriptor type rather than a generic `core` item, so reading only
+  // `data.core` left its wires uncoloured - the dots said dataset/LoRA/metrics and the links did not.
   const coreTypeById = useMemo(
     () =>
       new Map(
         items
-          .filter((i) => i.type === 'core' && i.data.core)
-          .map((i) => [i.id, (i.data.core as { type: string }).type]),
+          .map((i): [string, string] | null => {
+            if (i.type === 'core' && i.data.core) {
+              return [i.id, (i.data.core as { type: string }).type]
+            }
+            return descriptorsByType.has(i.type) ? [i.id, i.type] : null
+          })
+          .filter((entry): entry is [string, string] => entry !== null),
       ),
-    [items],
+    [items, descriptorsByType],
   )
 
   useEffect(() => {
-    setNodes(toNodes(items, assetsById, compactCoreTypes))
-  }, [items, assetsById, compactCoreTypes, setNodes])
+    setNodes(toNodes(items, assetsById, compactCore))
+  }, [items, assetsById, compactCore, setNodes])
 
   // Director render progress (main → renderer) drives the editor + node progress UI.
   useEffect(() => {
@@ -527,8 +567,10 @@ function Board(): React.JSX.Element {
       if (!it) return false
       if (it.type === 'core') {
         const type = it.data.core?.type
-        const d = type ? coreDescriptors.find((dd) => dd.type === type) : undefined
-        return !!d && d.outputKind != null // a generation core node (loaders have no media output)
+        // Any Core node can end a graph: Write .char produces a file rather than a take, and a
+        // character chain would otherwise have no Run control anywhere on it. Which node actually
+        // gets it is decided below, by which has nothing runnable downstream.
+        return !!type && coreDescriptors.some((dd) => dd.type === type)
       }
       if (it.type === 'frame') {
         const f = it.frameId ? frames.find((fr) => fr.id === it.frameId) : undefined
@@ -599,36 +641,7 @@ function Board(): React.JSX.Element {
     return hit.length ? hit[hit.length - 1] : null
   }
 
-  // The port kind of a low-level Core node's handle (null for non-core nodes / unknown handles).
-  const corePortKind = (
-    itemId: string | null | undefined,
-    handle: string | null | undefined,
-    side: 'input' | 'output',
-  ): PortKind | null => {
-    const item = items.find((it) => it.id === itemId)
-    // Control Space emits a control map, not a plain image: kind it 'control' so it can only feed a
-    // gen node's Control input, never the img2img Image input (which would ignore the pose).
-    if (item?.type === 'controlSpace' && side === 'output') return 'control'
-    const core = item?.type === 'core' ? item.data.core : undefined
-    if (!core) return null
-    const descriptor = coreDescriptors.find((d) => d.type === core.type)
-    const ports = side === 'output' ? descriptor?.outputs : descriptor?.inputs
-    return ports?.find((p) => p.id === handle)?.kind ?? null
-  }
-
-  // Type-check a wire before it's made: a Prompt node emits text and every other node emits
-  // media, so a Prompt may only feed a text ('prompt') input, and a media output may only feed a
-  // non-text input. This blocks a Prompt→image/video dot (and an image/video→prompt dot). Between
-  // two low-level Core nodes we apply Core's own engine-type rule (model/latent/conditioning/...).
-  const isValidConnection = (c: Connection | Edge): boolean => {
-    if (!c.source || !c.target || c.source === c.target) return false
-    const srcKind = corePortKind(c.source, c.sourceHandle, 'output')
-    const tgtKind = corePortKind(c.target, c.targetHandle, 'input')
-    if (srcKind && tgtKind && !portsSatisfy(srcKind, tgtKind)) return false
-    const sourceIsText = items.find((it) => it.id === c.source)?.type === 'prompt'
-    const targetIsText = (c.targetHandle ?? undefined) === 'prompt'
-    return sourceIsText === targetIsText
-  }
+  const isValidConnection = (c: Connection | Edge): boolean => canWire(c, items, coreDescriptors)
 
   const onConnect = (c: Connection): void => {
     if (!c.source || !c.target || c.source === c.target) return
@@ -771,13 +784,25 @@ function Board(): React.JSX.Element {
       case 'controlSpace':
         void addControlSpace(m.flowX, m.flowY)
         break
+      case 'train/dataset':
+      case 'train/caption':
+      case 'train/lora':
+      case 'train/loss':
+        void addTrainingNode(kind, m.flowX, m.flowY)
+        break
+      case 'resource':
+        void addResource(m.flowX, m.flowY)
+        break
     }
   }
 
   const onPickCore = (coreType: string): void => {
     const m = addMenu
     setAddMenu(null)
-    if (m) void addCoreNode(coreType, m.flowX, m.flowY)
+    if (!m) return
+    void addCoreNode(coreType, m.flowX, m.flowY).then(() =>
+      useModelRequirementsStore.getState().checkOnUse(coreType, 'This node needs models.'),
+    )
   }
 
   const onPickGen = (modelId: string): void => {
@@ -951,6 +976,8 @@ function Board(): React.JSX.Element {
       return
     }
     await buildGraphFromRecipe(recipe, drop)
+    // After placing, not before: the graph is worth having even when a weight file is missing.
+    void checkGraphModels(recipe, `${file.name} was added.`)
   }
 
   /** Read a recipe from the dropped image; if present, prompt Load-graph vs Load-as-asset, else run
@@ -1031,6 +1058,7 @@ function Board(): React.JSX.Element {
   return (
     <div className="relative flex h-full">
       <SideMenu />
+      <MissingModelsDialog />
 
       <div
         ref={wrapperRef}
@@ -1164,6 +1192,7 @@ function Board(): React.JSX.Element {
 
         <GenerateSettingsPanel />
         <CoreSettingsPanel />
+        <TrainingSettingsMount />
         <ModelInfoPanel />
         <ModelRequirementsModal />
 
@@ -1267,12 +1296,12 @@ function toNodes(
     string,
     { filePath: string; kind: string; name: string; thumbPath?: string | null }
   >,
-  compactCoreTypes: Set<string>,
+  compactCore: Map<string, number>,
 ): Node[] {
   const ordered = [...items].sort(
     (a, b) => (a.type === 'layer' ? -1 : 0) - (b.type === 'layer' ? -1 : 0),
   )
-  return ordered.map((item) => itemToNode(item, assetsById, compactCoreTypes))
+  return ordered.map((item) => itemToNode(item, assetsById, compactCore))
 }
 
 function itemToNode(
@@ -1281,18 +1310,19 @@ function itemToNode(
     string,
     { filePath: string; kind: string; name: string; thumbPath?: string | null }
   >,
-  compactCoreTypes: Set<string>,
+  compactCore: Map<string, number>,
 ): Node {
   // A compact/plumbing core node auto-sizes its height (hugs content) instead of taking the stored
   // height; everything else keeps its persisted box.
-  const compact =
-    item.type === 'core' && !!item.data.core && compactCoreTypes.has(item.data.core.type)
+  const compact = item.type === 'core' && !!item.data.core && compactCore.has(item.data.core.type)
   const common: Node = {
     id: item.id,
     position: { x: item.x, y: item.y },
     style: {
       width: item.width,
+      // A compact node hugs its content, so it needs a floor or its dots hang outside it.
       height: compact ? undefined : item.height,
+      ...(compact ? { minHeight: compactCore.get(item.data.core?.type ?? '') } : {}),
       zIndex: item.zIndex,
     },
     data: {},
@@ -1340,6 +1370,11 @@ function itemToNode(
   }
   if (item.type === 'text') {
     return { ...common, type: 'text', data: { text: item.data.text ?? FALLBACK_TEXT } }
+  }
+  // Training nodes read everything from the board context by id, like the Core node does. Without
+  // this they fall through to the asset branch below and render as a blank image.
+  if (TRAINING_TYPES.has(item.type)) {
+    return { ...common, type: item.type, data: { itemId: item.id } }
   }
   const asset = item.assetId ? assetsById.get(item.assetId) : undefined
   // Images render from their downscaled thumbnail when available (full-res only in the

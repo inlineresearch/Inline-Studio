@@ -81,6 +81,13 @@ def test_full_project_and_canvas_flow(client) -> None:
         "vae/decode",
         "vae/encode",
         "control/apply",
+        "character/encode",
+        "character/edit",
+        "character/load",
+        "character/dataset",
+        "character/references",
+        "character/adapter",
+        "character/write",
     }
     assert rpc(client, "core:status")["value"]["running"] is True
 
@@ -129,3 +136,11 @@ def test_app_version_reports_the_installed_package_version(client) -> None:
     assert reported == __version__
     assert reported != "1.0.0"
     assert reported.count(".") == 2  # a real semver, not a placeholder
+
+
+def test_activity_history_survives_an_omitted_limit(client) -> None:
+    """The browser sends an omitted optional as null, which overrides the Python default rather
+    than falling back to it. Left alone, the activity panel's history never loads at all."""
+    assert rpc(client, "activity:history", None)["ok"] is True
+    assert rpc(client, "activity:history")["ok"] is True
+    assert rpc(client, "activity:history", 5)["ok"] is True

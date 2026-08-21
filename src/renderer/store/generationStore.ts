@@ -11,6 +11,7 @@ import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
 import { useFrameStore } from './frameStore'
 import { useMoodboardStore } from './moodboardStore'
+import { useModelRequirementsStore } from './modelRequirementsStore'
 
 interface GenerationState {
   /** Per-frame "currently generating" flag. */
@@ -19,6 +20,13 @@ interface GenerationState {
   progressByFrame: Record<string, number | null>
   /** Per-frame short status label from the fal queue. */
   statusByFrame: Record<string, string | undefined>
+  /** Where a run actually is: the node executing now, and the one that stopped it.
+   *
+   * Separate from `busyByFrame`, which is keyed by the node the run was *started* from. A chain
+   * showed one green border on the node nobody was waiting for, and an error named no node at all.
+   */
+  runningNode: string | null
+  failedNode: string | null
   /** The frame whose settings sidebar is open, or null. */
   settingsFrameId: string | null
   /** The Core node (moodboard item) whose settings sidebar is open, or null. */
@@ -52,6 +60,8 @@ interface GenerationState {
   closeModelInfo: () => void
   setProgress: (frameId: string, fraction: number | null, status?: string) => void
   setBusy: (frameId: string, busy: boolean) => void
+  setRunningNode: (nodeId: string | null) => void
+  setFailedNode: (nodeId: string | null) => void
   /**
    * Clear one node's busy/progress. Keyed by id rather than clearing everything, because with a
    * visible queue more than one node is legitimately in flight at a time.
@@ -64,6 +74,8 @@ interface GenerationState {
 
 export const useGenerationStore = create<GenerationState>((set) => ({
   busyByFrame: {},
+  runningNode: null,
+  failedNode: null,
   progressByFrame: {},
   statusByFrame: {},
   settingsFrameId: null,
@@ -256,14 +268,28 @@ export const useGenerationStore = create<GenerationState>((set) => ({
 
   setBusy: (frameId, busy) => set((s) => ({ busyByFrame: { ...s.busyByFrame, [frameId]: busy } })),
 
+  /** The node executing now. Starting one clears a previous failure, which belongs to the last run. */
+  setRunningNode: (nodeId) => set({ runningNode: nodeId, failedNode: null }),
+
+  setFailedNode: (nodeId) => set({ failedNode: nodeId, runningNode: null }),
+
   finishRun: (frameId) =>
     set((s) => ({
       busyByFrame: { ...s.busyByFrame, [frameId]: false },
       progressByFrame: { ...s.progressByFrame, [frameId]: null },
       statusByFrame: { ...s.statusByFrame, [frameId]: undefined },
+      runningNode: null,
     })),
 
-  reset: () => set({ busyByFrame: {}, progressByFrame: {}, statusByFrame: {}, error: null }),
+  reset: () =>
+    set({
+      busyByFrame: {},
+      progressByFrame: {},
+      statusByFrame: {},
+      runningNode: null,
+      failedNode: null,
+      error: null,
+    }),
 
   setError: (error) => set({ error }),
 }))
@@ -272,6 +298,18 @@ export const useGenerationStore = create<GenerationState>((set) => ({
  * Subscribe once for the whole app (see App.tsx). This used to live inside MoodboardPanel, which
  * unmounts on a tab switch - so switching to the Trainer mid-render dropped every progress event.
  */
+/** True when the error was a missing-model one and the popup took over from it. */
+function openMissingModels(itemId: string, error: string): boolean {
+  if (!/models missing/i.test(error)) return false
+  const item = useMoodboardStore.getState().items.find((i) => i.id === itemId)
+  const nodeType = item?.type === 'core' ? item.data.core?.type : undefined
+  if (!nodeType) return false
+  void useModelRequirementsStore
+    .getState()
+    .checkOnUse(nodeType, 'This node needs models before it can generate.')
+  return true
+}
+
 export function subscribeGenerationEvents(): () => void {
   const gen = useGenerationStore.getState()
   // Finish any generations still running when the app last closed; their events arrive below.
@@ -283,10 +321,17 @@ export function subscribeGenerationEvents(): () => void {
     studio().events.onGenerationProgress((e) => {
       gen.setBusy(e.frameId, true)
       gen.setProgress(e.frameId, e.fraction, e.status)
+      gen.setRunningNode(e.nodeId ?? e.frameId)
     }),
     studio().events.onGenerationNodeDone((e) => {
       gen.setBusy(e.frameId, false)
       gen.setProgress(e.frameId, null)
+      // Read live, not off the snapshot above: only clear when this is still the node showing as
+      // running, since the next node's first progress often lands first and clearing then would
+      // blink the border off whatever is actually working.
+      if (e.nodeId && useGenerationStore.getState().runningNode === e.nodeId) {
+        gen.setRunningNode(null)
+      }
       void useFrameStore.getState().load()
     }),
     studio().events.onGenerationDone((e) => {
@@ -296,6 +341,11 @@ export function subscribeGenerationEvents(): () => void {
     }),
     studio().events.onGenerationError((e) => {
       gen.finishRun(e.frameId ?? e.targetFrameId)
+      // The node that stopped, which for a chain is rarely the one the run was started from.
+      gen.setFailedNode(e.frameId ?? e.targetFrameId)
+      // A missing weight file is a thing to fix, not a sentence to read: open the popup that can
+      // fetch it rather than restating the filenames as an error.
+      if (openMissingModels(e.frameId ?? e.targetFrameId, e.error)) return
       gen.setError(e.error)
     }),
     studio().events.onGenerationCancelled((e) => {

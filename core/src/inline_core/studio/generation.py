@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ..graph.schema import PortKind, parse_graph
+from ..graph.schema import is_list_kind, parse_graph
 from ..runtime.progress import (
     CancelledEvent,
     ErrorEvent,
@@ -69,7 +69,7 @@ class CoreGeneration:
         if self._registry is None or not self._registry.has(node_type):
             return False
         port = self._registry.get(node_type).input(port_id)
-        return port is not None and port.kind is PortKind.IMAGE_LIST
+        return port is not None and is_list_kind(port.kind)
 
     def run_workflow(self, item_id: str) -> None:
         # If this item still has a run in flight - e.g. the user hit Run again without waiting for a
@@ -146,7 +146,12 @@ class CoreGeneration:
                 if event is None:  # terminal sentinel
                     break
                 if isinstance(event, ProgressEvent):
-                    self._progress(item_id, max(0.05, event.fraction), event.status or None)
+                    self._progress(
+                        item_id,
+                        max(0.05, event.fraction),
+                        event.status or None,
+                        node_id=event.node_id,
+                    )
                 elif isinstance(event, NodeDoneEvent):
                     for take in event.takes:
                         if take.id in seen:
@@ -154,7 +159,14 @@ class CoreGeneration:
                         seen.add(take.id)
                         self._save_take(item_id, take, ref)
                         self._events.broadcast(
-                            "events:generationNodeDone", {"frameId": item_id, "takeId": take.id}
+                            "events:generationNodeDone",
+                            {
+                                "frameId": item_id,
+                                "takeId": take.id,
+                                # Which node finished, so the canvas can stop showing it as running
+                                # rather than only knowing the run as a whole moved on.
+                                "nodeId": take.node_id,
+                            },
                         )
                 elif isinstance(event, RunDoneEvent):
                     break
@@ -197,11 +209,27 @@ class CoreGeneration:
         """The runs still in flight, for a client that has lost its own copy of the queue."""
         return [active_entry(i, self._last.get(i)) for i in self._active]
 
-    def _progress(self, item_id: str, fraction: float, status: str | None) -> None:
+    def _progress(
+        self,
+        item_id: str,
+        fraction: float,
+        status: str | None,
+        node_id: str | None = None,
+    ) -> None:
+        """``frameId`` is the node the run was started from; ``nodeId`` is the one executing now.
+
+        The two are the same only for a single-node graph, and reporting just the first left a long
+        chain showing one green border on the node nobody was waiting for.
+        """
         self._last[item_id] = (fraction, status)
         self._events.broadcast(
             "events:generationProgress",
-            {"frameId": item_id, "fraction": fraction, "status": status},
+            {
+                "frameId": item_id,
+                "fraction": fraction,
+                "status": status,
+                "nodeId": node_id or item_id,
+            },
         )
 
     def set_characters(self, characters: Any) -> None:
@@ -224,7 +252,12 @@ class CoreGeneration:
         if result is None:
             # Measured nothing. Record the character anyway so the UI can say which one was used.
             return {"characterId": chosen}
-        return {"characterId": chosen, "continuityScore": result["score"]}
+        return {
+            "characterId": chosen,
+            "continuityScore": result["score"],
+            # False when the number is the face alone, so a dropped term is never hidden.
+            "continuityFaceOnly": not result.get("subjectCounted", True),
+        }
 
     def _save_take(self, item_id: str, take: Any, ref: Any) -> None:
         """Copy a take's bytes into the project's takes/ dir and set its Core node's output. Image

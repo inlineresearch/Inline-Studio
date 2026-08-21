@@ -34,11 +34,15 @@ export function GenerateSettingsPanel(): React.JSX.Element | null {
     persist,
   )
 
+  // Armed only while this panel is really on screen: otherwise `rootRef` is null and every click
+  // counts as outside, closing whichever sidebar the right gutter is actually showing.
+  const open = Boolean(frameId && frame && def)
+
   // Close when clicking anywhere outside the panel - except the node's adjust (toggle) button,
   // which manages open/close itself (so a click there doesn't close-then-reopen). Flush pending
   // edits before closing so a click-away never drops the last change.
   useEffect(() => {
-    if (!frameId) return
+    if (!open) return
     const onDown = (e: PointerEvent): void => {
       const target = e.target as HTMLElement | null
       if (!target || rootRef.current?.contains(target)) return
@@ -48,7 +52,7 @@ export function GenerateSettingsPanel(): React.JSX.Element | null {
     }
     document.addEventListener('pointerdown', onDown)
     return () => document.removeEventListener('pointerdown', onDown)
-  }, [frameId, close, apply])
+  }, [open, close, apply])
 
   if (!frameId || !frame || !def) return null
 

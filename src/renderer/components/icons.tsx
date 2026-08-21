@@ -72,6 +72,15 @@ export function EditIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
+/** `delete` - a waste basket, for destructive actions that are not "close". */
+export function TrashIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+    </Svg>
+  )
+}
+
 /** `create_new_folder` - folder with a +. */
 export function CreateNewFolderIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -109,6 +118,34 @@ export function FolderIcon({ className }: { className?: string }): React.JSX.Ele
 }
 
 /** `settings` - a gear. */
+/** Outlined "i", carrying a setting's explanation so the panel stays a list of controls. */
+export function InfoIcon({
+  className,
+  title,
+}: {
+  className?: string
+  title?: string
+}): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className ?? 'h-[1em] w-[1em]'}
+      // Titled: it is the setting's explanation, so it must reach a screen reader too.
+      role={title ? 'img' : undefined}
+      aria-hidden={title ? undefined : true}
+    >
+      {title ? <title>{title}</title> : null}
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4M12 8h.01" />
+    </svg>
+  )
+}
+
 export function SettingsIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -199,7 +236,7 @@ export function ChevronDownIcon({ className }: { className?: string }): React.JS
   )
 }
 
-/** `model_training` - the LoRA Trainer tab. */
+/** `model_training` - LoRA training. */
 export function TrainIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>
@@ -253,7 +290,7 @@ export function ModelsIcon({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-/** `movie` - video material. Distinct from `TrainIcon`, which is the Trainer tab's own glyph. */
+/** `movie` - video material. Distinct from `TrainIcon`, which is the training glyph. */
 export function MovieIcon({ className }: { className?: string }): React.JSX.Element {
   return (
     <Svg className={className}>

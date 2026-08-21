@@ -118,13 +118,15 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
   const toggleSettings = useGenerationStore((s) => s.toggleSettings)
   const openModelInfo = useGenerationStore((s) => s.openModelInfo)
   const busy = useGenerationStore((s) => s.busyByFrame[frameId] ?? false)
+  // A fal run is one node, so green tracks `busy`; red is what was missing - a failed run said
+  // nothing on the canvas at all.
+  const executing = useGenerationStore((s) => s.runningNode === frameId)
+  const failed = useGenerationStore((s) => s.failedNode === frameId)
   const progress = useGenerationStore((s) => s.progressByFrame[frameId])
   const status = useGenerationStore((s) => s.statusByFrame[frameId])
   // This node is the selected graph's output node → it floats the graph's single Run control.
   const isRunTarget = useGraphSelectionStore((s) => s.runTargets.includes(id))
-  // Hooks cannot be conditional, so the hero take is resolved before the early return below.
-  const heroTake = takes.find((t) => t.id === frame?.heroTakeId) ?? takes[0]
-  const graphMenu = useGraphMenu(id, 'graph', heroTake?.kind === 'image' ? heroTake.id : undefined)
+  const graphMenu = useGraphMenu(id, 'graph')
   const onMediaContextMenu = useMediaContextMenu()
   const openLightbox = useLightboxStore((s) => s.open)
   const [dropActive, setDropActive] = useState(false)
@@ -279,6 +281,8 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
         minHeight={220}
         padded={false}
         subtleSelect
+        running={busy || executing}
+        invalid={failed}
       >
         <div
           className="relative flex h-full w-full flex-col"

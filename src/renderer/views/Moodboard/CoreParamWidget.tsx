@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { CoreParamField } from '@shared/coreNodes'
 import { useModelsTreeStore } from '../../store/modelsTreeStore'
 import { RefreshIcon } from '../../components/icons'
-import { basename } from './missingInputs'
+import { basename, optionsWithPick } from './missingInputs'
+import { useAutoCommit } from '../../lib/useAutoCommit'
+import type { WiredParam } from './wiredParams'
 
 /** Re-scan the models folders so a file added since Core started reaches this picker. */
 function ModelRefreshButton(): React.JSX.Element {
@@ -32,17 +34,37 @@ function ModelRefreshButton(): React.JSX.Element {
 export function CoreParamWidget({
   field,
   value,
+  wired,
   onChange,
   onCommit,
 }: {
   field: CoreParamField
   value: unknown
+  /** Set when a wire drives this param; the field then shows what the run will use. */
+  wired?: WiredParam
   onChange: (v: string | number | boolean) => void
   onCommit: (v: string | number | boolean) => void
 }): React.JSX.Element {
   const labelCls = 'text-[10px] font-medium uppercase tracking-wide text-zinc-500'
   const inputCls =
     'w-full rounded-md border border-border bg-panel px-2 py-1.5 text-xs text-zinc-100 outline-none transition-colors focus:border-accent'
+  // Declared above the widget branches: a hook cannot sit behind an early return.
+  const { schedule, flush } = useAutoCommit(() => onCommit(String(value ?? field.default ?? '')))
+
+  // Editing it would change nothing, so it reads as what it is: driven from the canvas.
+  if (wired && !wired.fallsBack) {
+    return (
+      <label className="flex flex-col gap-1">
+        <span className={labelCls}>{field.label}</span>
+        <div
+          className={`${inputCls} min-h-[30px] whitespace-pre-wrap break-words border-dashed text-zinc-400`}
+        >
+          {wired.text || `Set by ${wired.from} when the graph runs`}
+        </div>
+        <span className="text-[10px] text-zinc-500">From the wired {wired.from} node</span>
+      </label>
+    )
+  }
 
   if (field.widget === 'boolean') {
     return (
@@ -80,6 +102,9 @@ export function CoreParamWidget({
       typeof stored === 'string' && !options.some((o) => o.value === stored)
         ? basename(stored)
         : stored
+    // A pick the catalog lacks stays listed, or the select renders blank and the name the graph
+    // arrived with is lost - which is the one thing needed to go and fetch the right file.
+    const shown = optionsWithPick(options, String(selected ?? ''))
     return (
       <label className="flex flex-col gap-1">
         <span className={labelCls}>{field.label}</span>
@@ -90,7 +115,7 @@ export function CoreParamWidget({
             className={`${inputCls} min-w-0 flex-1`}
           >
             {needsEmpty && <option value="">{emptyLabel}</option>}
-            {options.map((o) => (
+            {shown.map((o) => (
               <option key={o.value} value={o.value}>
                 {/* The value has to stay the filename Core resolves by; only the label is
                     friendly. */}
@@ -120,9 +145,11 @@ export function CoreParamWidget({
   const text = String(value ?? field.default ?? '')
   const common = {
     value: text,
-    onChange: (e: React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) =>
-      onChange(e.target.value),
-    onBlur: () => onCommit(text),
+    onChange: (e: React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+      onChange(e.target.value)
+      schedule()
+    },
+    onBlur: flush,
     placeholder: field.label,
     className: inputCls,
   }

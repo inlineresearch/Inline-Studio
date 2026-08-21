@@ -25,8 +25,7 @@ export function H3TrainingCard(): React.JSX.Element {
           </span>
         </span>
         <span className="block text-xs text-zinc-400">
-          Train a LoRA on your own clips in the Trainer tab, on your own GPU. Your footage never
-          leaves the machine.
+          Train a LoRA on your own clips, on your own GPU. Your footage never leaves the machine.
         </span>
       </span>
       <ExternalLinkIcon />

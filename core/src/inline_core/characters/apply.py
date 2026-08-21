@@ -25,15 +25,29 @@ _CACHE_LIMIT_BYTES = 2 * 1024**3
 class AppliedCharacter:
     """What a runner needs: ordered reference handles, plus the prompt text that names them."""
 
-    def __init__(self, name: str, refs: list[AssetRef], description: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        refs: list[AssetRef],
+        description: str,
+        lora: Path | None = None,
+        lora_strength: float = 1.0,
+    ) -> None:
         self.name = name
         self.refs = refs
         self.description = description
+        #: A trained adapter, which for a model with no reference channel is the only route.
+        self.lora = lora
+        #: What it fuses at. Set on Attach Adapter, because an overfit adapter is only usable
+        #: turned down and the character wire carries no controls of its own.
+        self.lora_strength = lora_strength
 
     def prompt_prefix(self, first_position: int) -> str:
         """Text naming the positions the character lands on, so ordinal prompting resolves."""
         if not self.refs:
-            return ""
+            # A LoRA carries the likeness, so the description is all the prompt needs.
+            detail = " ".join(self.description.split())
+            return f"{detail} " if detail else ""
         positions = [str(first_position + i) for i in range(len(self.refs))]
         if len(positions) == 1:
             which = f"Image {positions[0]} shows"
@@ -53,9 +67,12 @@ def _cache_root() -> Path:
     return data_dir() / "characters"
 
 
-def char_apply(chosen: str) -> AppliedCharacter | None:
-    """References and prompt text for a pick, or None when none. An unreadable pick raises rather
-    than silently generating the wrong person."""
+def char_apply(chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH) -> AppliedCharacter | None:
+    """How a character applies on ``arch``, or None when none is picked. An unreadable pick raises
+    rather than silently generating the wrong person.
+
+    ``arch`` matters because a model without a reference channel can only take the adapter, and its
+    payloads are keyed separately."""
     name = str(chosen or "").strip()
     if not name:
         return None
@@ -67,15 +84,52 @@ def char_apply(chosen: str) -> AppliedCharacter | None:
 
     doc = cf.read(path)
     digest = library.content_hash(path)
-    arch = encode.FLUX2_KLEIN_ARCH
+    references = arch == encode.FLUX2_KLEIN_ARCH
 
-    if not cf.payload_valid(doc.manifest, arch, encode.PAYLOAD_ENCODER_VERSION):
+    if references and not cf.payload_valid(doc.manifest, arch, encode.PAYLOAD_ENCODER_VERSION):
         doc = _recompile(doc, path)
         digest = library.content_hash(path)
 
-    refs = _extract(doc, digest, arch)
     description = _description(doc)
-    return AppliedCharacter(doc.manifest.name or path.stem, refs, description)
+    lora = _extract_lora(doc, digest, arch)
+    strength = encode.lora_strength(doc.manifest, arch)
+    # A trained adapter wins unless the character says otherwise: the user asked for it explicitly,
+    # and loading both would apply the identity twice.
+    mode = doc.manifest.apply.get(arch) or ("lora" if lora else "reference")
+    # No reference channel on this arch, so the adapter is the only way it can apply at all.
+    if not references:
+        mode = "lora"
+    refs = [] if mode == "lora" else _extract(doc, digest, arch)
+    return AppliedCharacter(
+        doc.manifest.name or path.stem,
+        refs,
+        description,
+        lora if mode == "lora" else None,
+        strength,
+    )
+
+
+def _extract_lora(doc: cf.CharDoc, digest: str, arch: str) -> Path | None:
+    """The adapter for ``arch``, or None. A stale one is the wrong face, so it is ignored."""
+    entry = encode.lora_payload(doc.manifest, arch)
+    if not entry:
+        return None
+    key = encode.payload_key(arch, encode.PAYLOAD_LORA)
+    if not cf.payload_valid(doc.manifest, key, encode.LORA_PAYLOAD_VERSION):
+        logger.info("Ignoring a stale %s adapter for %s", arch, doc.manifest.name)
+        return None
+    files = [str(f.get("path")) for f in entry.get("files") or [] if f.get("path")]
+    if not files:
+        return None
+    root = _cache_root() / digest / key
+    target = root / Path(files[0]).name
+    if not target.is_file():
+        root.mkdir(parents=True, exist_ok=True)
+        data = doc.members.get(files[0])
+        if data is None:
+            return None
+        target.write_bytes(data)
+    return target
 
 
 def _description(doc: cf.CharDoc) -> str:

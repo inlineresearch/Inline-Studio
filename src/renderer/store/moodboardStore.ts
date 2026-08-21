@@ -9,6 +9,10 @@ import type { MoodboardItem, MoodboardConnector } from '@shared/types'
 import type { MoodboardItemPatch } from '@shared/ipc'
 import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
+
+/** Training node kinds this canvas can add; they share the Trainer graph's channels. */
+export type TrainingNodeKind = 'train/dataset' | 'train/caption' | 'train/lora' | 'train/loss'
+
 import { useFrameStore } from './frameStore'
 
 /** A board snapshot for the undo/redo stacks. */
@@ -58,6 +62,8 @@ interface MoodboardState {
   addPreview: (x: number, y: number) => Promise<MoodboardItem | null>
   /** Utility: a read-only host-telemetry node (no handles). */
   addResource: (x: number, y: number) => Promise<MoodboardItem | null>
+  /** A training node on this canvas. Same channels the Trainer graph uses, on the studio surface. */
+  addTrainingNode: (kind: TrainingNodeKind, x: number, y: number) => Promise<MoodboardItem | null>
   addLayer: (x: number, y: number) => Promise<void>
   addDirector: (x: number, y: number) => Promise<MoodboardItem | null>
   addTrim: (x: number, y: number) => Promise<MoodboardItem | null>
@@ -88,6 +94,8 @@ interface MoodboardState {
   lastDuplicateIdMap: Map<string, string>
   /** `recordHistory: false` skips the undo snapshot - used by programmatic layout fits. */
   updateItem: (id: string, patch: MoodboardItemPatch, recordHistory?: boolean) => Promise<void>
+  /** Merge into an item's `data`. Node selections (dataset, run, hyperparams) live there. */
+  patchItemData: (id: string, data: Record<string, unknown>) => Promise<void>
   /** Restore the text of the prompt node wired into `nodeId`'s `prompt` input (no-op if none). Used
    * when switching a gen node's take history so the shown image's prompt is restored non-destructively. */
   setConnectedPromptText: (nodeId: string, text: string) => Promise<void>
@@ -436,6 +444,31 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     }
   },
 
+  addTrainingNode: async (kind, x, y) => {
+    try {
+      get().record()
+      const m = studio().moodboard
+      const call =
+        kind === 'train/dataset'
+          ? m.addTrainDataset(x, y)
+          : kind === 'train/caption'
+            ? m.addCaption(x, y)
+            : kind === 'train/lora'
+              ? m.addTrainer(x, y)
+              : m.addLossGraph(x, y)
+      const res = await call
+      if (!res.ok) {
+        set({ error: res.error })
+        return null
+      }
+      set((s) => ({ items: [...s.items, res.value] }))
+      return res.value
+    } catch (e) {
+      set({ error: ipcErrorMessage(e) })
+      return null
+    }
+  },
+
   addResource: async (x, y) => {
     try {
       get().record()
@@ -694,6 +727,11 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
       set({ error: ipcErrorMessage(e) })
       return []
     }
+  },
+
+  patchItemData: async (id, data) => {
+    const item = get().items.find((it) => it.id === id)
+    if (item) await get().updateItem(id, { data: { ...item.data, ...data } }, false)
   },
 
   updateItem: async (id, patch, recordHistory = true) => {

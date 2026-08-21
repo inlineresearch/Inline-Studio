@@ -7,6 +7,15 @@ export function scoreTone(score: number): string {
   return 'text-red-300'
 }
 
-export function scoreTitle(score: number): string {
-  return `Continuity ${Math.round(score)} of 100 against the applied character`
+export function scoreTitle(score: number, faceOnly = false): string {
+  const base = `Continuity ${Math.round(score)} of 100 against the applied character`
+  if (!faceOnly) return base
+  // Say which term was dropped and how to get it back, not hide noise behind a total.
+  return `${base}. Face only: the references are all closely cropped, so they cannot judge this
+framing. Add a full-body reference to score the whole subject.`.replace(/\s+/g, ' ')
+}
+
+/** A short marker for the score pill, so a face-only number is not read as a whole-subject one. */
+export function scoreSuffix(faceOnly = false): string {
+  return faceOnly ? ' face' : ''
 }

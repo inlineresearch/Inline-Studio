@@ -212,12 +212,12 @@ real codec that moves tensors lives with the model runner.
 
 - **Typed, strict.** `pyright` in strict mode (`[tool.pyright]`, `typeCheckingMode = "strict"`), all of
   `src` + `tests`. No silent `Any` leaks across component/graph boundaries.
-- **Comments are short.** One or two lines, and only for the **why** a reader can't infer from the
-  code - a non-obvious constraint, a rejected alternative, an ordering that matters. Module
-  docstrings: 1-3 sentences. Function docstrings: one line, or none when the signature says it.
+- **Comments are one line.** Not two, not a paragraph, and only for the **why** a reader can't infer
+  from the code - a non-obvious constraint, a rejected alternative, an ordering that matters. Module
+  docstrings: one sentence. Function docstrings: one line, or none when the signature says it.
   Never narrate what the code does, never write an essay in a docstring, never leave a comment that
-  restates the line below it. If the reasoning genuinely needs paragraphs, it belongs in a doc, not
-  in the source.
+  restates the line below it. If the reasoning genuinely needs more, it belongs in a doc, not in
+  the source.
 - **Lint.** `ruff` with `select = ["E", "F", "I", "UP", "B"]`, line length 100, target `py311`.
 - **Typed graph, validated before run.** Never execute an unvalidated graph. Edge type-checking
   (`graph/validate.py` + `port_satisfies`) rejects bad wiring at submit. New port kinds go in

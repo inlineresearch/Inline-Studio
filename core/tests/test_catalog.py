@@ -126,10 +126,10 @@ def test_tree_reports_each_root_with_sizes(tmp_path: Path) -> None:
     roots = ModelCatalog([primary, extra]).tree()
 
     assert [r["writable"] for r in roots] == [True, False]
-    loras = roots[0]["categories"][0]
-    assert loras["name"] == "loras" and loras["fileCount"] == 1
+    loras = next(c for c in roots[0]["categories"] if c["name"] == "loras")
+    assert loras["fileCount"] == 1
     assert loras["children"][0]["sizeBytes"] == 5
-    # Categories with nothing in them are left out entirely.
+    # A root only ever holds the category folders it was given; nothing invents the rest.
     assert [c["name"] for c in roots[1]["categories"]] == ["vae"]
 
 
@@ -144,3 +144,62 @@ def test_tree_nests_sharded_model_folders(tmp_path: Path) -> None:
     categories = {c["name"]: c for c in catalog.tree()[0]["categories"]}
     folder = categories["text_encoders"]["children"][0]
     assert folder["kind"] == "dir" and folder["fileCount"] == 2
+
+
+def test_tree_lists_a_category_that_is_still_empty(tmp_path: Path) -> None:
+    """The panel answers "what is on disk". A folder Core created and watches, dropped because it
+    happens to be empty, reads as one Core cannot see - which is the opposite of the truth."""
+    catalog = ModelCatalog(tmp_path)
+    catalog.ensure_dirs()
+    (tmp_path / "loras" / "a.safetensors").write_bytes(b"x")
+
+    categories = {c["name"]: c for c in catalog.tree()[0]["categories"]}
+
+    assert "loras" in categories and categories["loras"]["fileCount"] == 1
+    assert "vae" in categories, "an empty category is still listed"
+    assert categories["vae"]["children"] == []
+
+
+def test_tree_shows_a_folder_the_user_added_themselves(tmp_path: Path) -> None:
+    """Mirrors the models root rather than only the categories this build knows about."""
+    catalog = ModelCatalog(tmp_path)
+    catalog.ensure_dirs()
+    extra = tmp_path / "my_experiments"
+    extra.mkdir()
+    (extra / "thing.safetensors").write_bytes(b"x")
+
+    names = [c["name"] for c in catalog.tree()[0]["categories"]]
+    assert "my_experiments" in names
+
+
+def test_tree_still_hides_an_unknown_folder_with_no_weights(tmp_path: Path) -> None:
+    catalog = ModelCatalog(tmp_path)
+    catalog.ensure_dirs()
+    (tmp_path / "scratch").mkdir()
+
+    names = [c["name"] for c in catalog.tree()[0]["categories"]]
+    assert "scratch" not in names
+
+
+def test_tree_lists_saved_characters(tmp_path: Path) -> None:
+    """The panel and the dropdowns answer the same question, so they must agree on what counts.
+    A `.char` is not a weight, and listing only weights hid every character the user saved."""
+    catalog = ModelCatalog(tmp_path)
+    catalog.ensure_dirs()
+    (tmp_path / "characters" / "Ada.char").write_bytes(b"PK\x03\x04")
+
+    categories = {c["name"]: c for c in catalog.tree()[0]["categories"]}
+
+    assert categories["characters"]["fileCount"] == 1
+    assert categories["characters"]["children"][0]["name"] == "Ada.char"
+    # And the dropdown agrees, which is the pairing that was out of step.
+    assert catalog.rescan()["characters"] == ["Ada.char"]
+
+
+def test_tree_does_not_offer_a_character_as_a_weight(tmp_path: Path) -> None:
+    catalog = ModelCatalog(tmp_path)
+    catalog.ensure_dirs()
+    (tmp_path / "loras" / "Ada.char").write_bytes(b"PK\x03\x04")
+
+    categories = {c["name"]: c for c in catalog.tree()[0]["categories"]}
+    assert categories["loras"]["children"] == []

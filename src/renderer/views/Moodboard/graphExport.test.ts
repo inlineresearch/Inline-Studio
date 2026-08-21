@@ -5,6 +5,10 @@ import type { MoodboardConnector, MoodboardItem } from '@shared/types'
 import { parseRecipeJson } from '../../lib/pngRecipe'
 import { setStudioClient } from '../../lib/studio'
 import { useMoodboardStore } from '../../store/moodboardStore'
+import { useModelRequirementsStore } from '../../store/modelRequirementsStore'
+import { useModelRegistryStore } from '../../store/modelRegistryStore'
+import { useCoreNodesStore } from '../../store/coreNodesStore'
+import type { NodeDescriptor } from '@shared/coreNodes'
 import { duplicateGraph, graphJson, graphRecipe, graphSlice, unsupportedTypes } from './graphExport'
 
 function item(id: string, type: string, data: Record<string, unknown> = {}): MoodboardItem {
@@ -52,6 +56,47 @@ beforeEach(() => {
     items: [PROMPT, CORE, STRAY],
     connectors: [connector('prompt1', 'core1')],
   })
+  // The export reads the descriptor for each param's kind, and Core for what the node requires
+  // without naming it.
+  useCoreNodesStore.setState({
+    descriptors: [
+      {
+        type: 'alibaba/z-image-turbo',
+        title: 'Z-Image Turbo',
+        category: 'Generate',
+        icon: 'wand',
+        outputKind: 'image',
+        inputs: [],
+        outputs: [],
+        params: [{ key: 'steps', label: 'Steps', widget: 'number', default: 8, kind: 'number' }],
+      },
+    ] as unknown as NodeDescriptor[],
+  })
+  useModelRegistryStore.setState({ entries: [] })
+  useModelRequirementsStore.setState({ byType: {} })
+  setStudioClient({
+    models: {
+      requirements: async (nodeType: string) =>
+        ok({
+          allPresent: nodeType !== 'alibaba/z-image-turbo',
+          components:
+            nodeType === 'alibaba/z-image-turbo'
+              ? [
+                  {
+                    id: 'te',
+                    label: 'Text encoder',
+                    category: 'text_encoders',
+                    present: false,
+                    localPath: 'text_encoders/qwen_3_4b.safetensors',
+                    repo: 'org/repo',
+                    source: 'org/repo/qwen_3_4b.safetensors',
+                    optional: false,
+                  },
+                ]
+              : [],
+        }),
+    },
+  } as unknown as InlineStudioApi)
 })
 
 describe('graphSlice', () => {
@@ -68,10 +113,10 @@ describe('graphSlice', () => {
 })
 
 describe('graphRecipe', () => {
-  it('emits the recipe shape the PNG importer already reads', () => {
-    const recipe = graphRecipe('core1')
+  it('emits the recipe shape the PNG importer already reads', async () => {
+    const recipe = await graphRecipe('core1')
     expect(recipe.app).toBe('inline-studio')
-    expect(recipe.version).toBe(1)
+    expect(recipe.version).toBe(2)
     expect(recipe.target).toBe('core1')
     expect(recipe.coreType).toBe('alibaba/z-image-turbo')
     expect(recipe.params).toEqual({ steps: 8 })
@@ -86,21 +131,21 @@ describe('graphRecipe', () => {
     ])
   })
 
-  it('keeps the take history out of the exported graph', () => {
+  it('keeps the take history out of the exported graph', async () => {
     // A recipe describes how to make the image, not the images already made.
-    const core = graphRecipe('core1').graph?.items.find((i) => i.id === 'core1')
+    const core = (await graphRecipe('core1')).graph?.items.find((i) => i.id === 'core1')
     expect((core?.data.core as Record<string, unknown>).output).toBeUndefined()
   })
 
-  it('round-trips through JSON unchanged', () => {
-    const recipe = graphRecipe('core1')
+  it('round-trips through JSON unchanged', async () => {
+    const recipe = await graphRecipe('core1')
     expect(JSON.parse(JSON.stringify(recipe))).toEqual(recipe)
   })
 
-  it('exported JSON is accepted by the drop-side parser', () => {
+  it('exported JSON is accepted by the drop-side parser', async () => {
     // Export then drop is the whole point: the file has to satisfy the same `app` guard the PNG
     // chunk does, or dragging it back onto the canvas silently does nothing.
-    const parsed = parseRecipeJson(graphJson('core1'))
+    const parsed = parseRecipeJson(await graphJson('core1'))
     expect(parsed).not.toBeNull()
     expect(parsed?.target).toBe('core1')
     expect(parsed?.graph?.items).toHaveLength(2)
@@ -182,5 +227,166 @@ describe('duplicateGraph', () => {
     expect(core?.params).toEqual({ steps: 8 })
     // The copy is a fresh slot, so it must not claim the original's renders.
     expect(core?.output).toBeUndefined()
+  })
+})
+
+describe('the exported node', () => {
+  it('types each param, so the folder is never guessed from its name', async () => {
+    const core = (await graphRecipe('core1')).graph?.items.find((i) => i.id === 'core1')
+    const params = (core?.data.core as { params: Record<string, { type: string; value: unknown }> })
+      .params
+    expect(params.steps).toEqual({ type: 'number', value: 8 })
+  })
+
+  it('carries the models beside the node that needs them, not in a list of its own', async () => {
+    // A graph-wide list was built from params and from node defaults at once, so a node set to
+    // klein-9b exported klein-4b beside it. Everything now derives from the node itself.
+    const core = (await graphRecipe('core1')).graph?.items.find((i) => i.id === 'core1')
+    const models = (core?.data.core as { models?: { name: string; directory: string }[] }).models
+    expect(models?.map((m) => m.name)).toContain('qwen_3_4b.safetensors')
+    expect(models?.find((m) => m.name === 'qwen_3_4b.safetensors')?.directory).toBe('text_encoders')
+  })
+
+  it('names the version, so a reader can tell the shapes apart', async () => {
+    expect((await graphRecipe('core1')).version).toBe(2)
+  })
+})
+
+describe('a node set to a non-default build', () => {
+  it('does not export the default one beside it', async () => {
+    // The bug this format replaced: a graph-wide list took the params and the node's declared
+    // requirements at once, so a node on klein-9b carried klein-4b too.
+    useModelRegistryStore.setState({
+      entries: [
+        {
+          id: 'te-8b',
+          filename: 'qwen_3_8b.safetensors',
+          category: 'text_encoders',
+          repo: 'org/repo',
+          path: 'qwen_3_8b.safetensors',
+          url: '',
+        },
+      ] as unknown as ReturnType<typeof useModelRegistryStore.getState>['entries'],
+    })
+    useCoreNodesStore.setState({
+      descriptors: [
+        {
+          type: 'alibaba/z-image-turbo',
+          title: 'Z',
+          category: 'Generate',
+          icon: 'wand',
+          outputKind: 'image',
+          inputs: [],
+          outputs: [],
+          params: [
+            {
+              key: 'text_encoder',
+              label: 'Text encoder',
+              widget: 'select',
+              default: '',
+              kind: 'model',
+            },
+          ],
+        },
+      ] as unknown as NodeDescriptor[],
+    })
+    useMoodboardStore.setState({
+      items: [
+        item('core9', 'core', {
+          core: {
+            type: 'alibaba/z-image-turbo',
+            params: { text_encoder: 'qwen_3_8b.safetensors' },
+          },
+        }),
+      ],
+      connectors: [],
+    })
+
+    const core = (await graphRecipe('core9')).graph?.items[0]
+    const models = (core?.data.core as { models?: { name: string }[] }).models ?? []
+    expect(models.map((m) => m.name)).toEqual(['qwen_3_8b.safetensors'])
+  })
+})
+
+describe('a param a wire is driving', () => {
+  // A gen node's `model`/`vae`/`text_encoder` are params and input ports at once. Wired, the loader
+  // wins at run time, so exporting the typed value listed the wrong checkpoint beside the right one.
+  const GEN = item('gen1', 'core', {
+    core: {
+      type: 'krea/krea-2-turbo',
+      params: { model: 'models/diffusion_models/krea2_turbo_bf16.safetensors' },
+    },
+  })
+  const LOADER = item('load1', 'core', {
+    core: { type: 'load/diffusion-model', params: { file: 'krea2_raw_bf16.safetensors' } },
+  })
+
+  function wire(from: string, to: string, handle: string): MoodboardConnector {
+    return {
+      ...connector(from, to),
+      data: { sourceHandle: handle, targetHandle: handle },
+    } as MoodboardConnector
+  }
+
+  const DESCRIPTORS = [
+    {
+      type: 'krea/krea-2-turbo',
+      title: 'Krea 2 Turbo',
+      category: 'Generate',
+      icon: 'wand',
+      outputKind: 'image',
+      inputs: [{ id: 'model', label: 'Diffusion model', kind: 'model', required: false }],
+      outputs: [],
+      params: [{ key: 'model', label: 'Model', widget: 'select', default: '', kind: 'model' }],
+    },
+    {
+      type: 'load/diffusion-model',
+      title: 'Load Diffusion Model',
+      category: 'Loaders',
+      icon: 'box',
+      outputKind: null,
+      inputs: [],
+      outputs: [{ id: 'model', label: 'Model', kind: 'model', required: false }],
+      params: [{ key: 'file', label: 'File', widget: 'select', default: '', kind: 'model' }],
+    },
+  ] as unknown as NodeDescriptor[]
+
+  beforeEach(() => {
+    useMoodboardStore.setState({
+      items: [GEN, LOADER],
+      connectors: [wire('load1', 'gen1', 'model')],
+    })
+    useCoreNodesStore.setState({ descriptors: DESCRIPTORS })
+  })
+
+  it('is not exported as a model the graph needs', async () => {
+    const recipe = await graphRecipe('gen1')
+    const gen = recipe.graph!.items.find((i) => i.id === 'gen1')!
+    const core = (gen.data as { core: { models?: { name: string }[] } }).core
+    expect(core.models ?? []).toEqual([])
+  })
+
+  it('leaves the loader driving it to name the file', async () => {
+    const recipe = await graphRecipe('gen1')
+    const loader = recipe.graph!.items.find((i) => i.id === 'load1')!
+    const core = (loader.data as { core: { models?: { name: string }[] } }).core
+    expect((core.models ?? []).map((m) => m.name)).toEqual(['krea2_raw_bf16.safetensors'])
+  })
+
+  it('keeps the typed value in params, since that is what the node still holds', async () => {
+    const recipe = await graphRecipe('gen1')
+    const gen = recipe.graph!.items.find((i) => i.id === 'gen1')!
+    const core = (gen.data as { core: { params: Record<string, { value: unknown }> } }).core
+    expect(core.params.model.value).toBe('models/diffusion_models/krea2_turbo_bf16.safetensors')
+  })
+
+  it('exports a path-shaped pick under its bare filename', async () => {
+    // A legacy full-path pick matched no registry row, so the same file appeared twice: once
+    // correctly and once with an empty directory and no download link.
+    useMoodboardStore.setState({ items: [GEN], connectors: [] })
+    const recipe = await graphRecipe('gen1')
+    const gen = recipe.graph!.items.find((i) => i.id === 'gen1')!
+    const core = (gen.data as { core: { models?: { name: string }[] } }).core
+    expect((core.models ?? []).map((m) => m.name)).toEqual(['krea2_turbo_bf16.safetensors'])
   })
 })

@@ -30,12 +30,21 @@ from ..graph.schema import SCHEMA_VERSION, parse_graph
 from ..models.catalog import ModelCatalog
 from ..models.requirements import RequirementsRegistry
 from ..runtime.file_store import FileTakeStore
+from ..studio import recipe as studio_recipe
 from ..studio.system_stats import SystemStats
 from .assets import AssetStore
 from .manager import RunConflict, RunManager
 from .rpc import EventBroadcaster, RpcRouter
 from .run_store import RunStore
-from .serialize import descriptor_json, event_json, run_json, run_summary_json, take_json
+from .serialize import (
+    descriptor_json,
+    event_json,
+    param_kind,
+    resolved_params,
+    run_json,
+    run_summary_json,
+    take_json,
+)
 
 # GET /v1/runs/<id> (the client's run-status poll) - but not /events or nested paths.
 _RUN_POLL_PATH = re.compile(r"^/v1/runs/[^/]+$")
@@ -167,14 +176,17 @@ def create_app(
     events = events or EventBroadcaster()
     # Host/GPU telemetry for the Trainer tab; only meaningful with the SPA (studio) backend wired.
     stats = SystemStats(events) if studio_store is not None else None
-    # Assigned further down with the studio wiring; the lifespan closure reads it at startup.
+    # Assigned further down with the studio wiring; the lifespan closure reads them at startup.
     activity_registry: Any = None
+    training_bridge: Any = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # noqa: ANN202
         manager.bind_loop(asyncio.get_running_loop())
         if activity_registry is not None:
             activity_registry.bind_loop(asyncio.get_running_loop())
+        if training_bridge is not None:
+            training_bridge.bind_loop(asyncio.get_running_loop())
         catalog.ensure_dirs()
         catalog.scan()
         if stats is not None:
@@ -388,9 +400,81 @@ def create_app(
         activity.set_canceller("fal", fal_generation.cancel_run)
         activity.set_canceller("training", training_service.cancel)
         activity_registry = activity
+        # Training as graph nodes, so one Run walks dataset -> caption -> train in order.
+        from ..models.training import register_training_nodes
+
+        def bind_training_node(item_id: str, run_id: str) -> None:
+            """Persist the run on its node and tell the canvas, so Resume survives a reload."""
+            from ..studio import moodboard as studio_moodboard
+
+            try:
+                item = studio_moodboard.get_item(studio_store.conn(), item_id)
+            except ValueError:
+                return  # the node was deleted while its run was starting
+            studio_moodboard.update_item(
+                studio_store.conn(), item_id, {"data": {**item["data"], "runId": run_id}}
+            )
+            events.broadcast("events:trainingNodeBound", {"itemId": item_id, "runId": run_id})
+
+        training_bridge = register_training_nodes(
+            registry, training_service, on_bound=bind_training_node
+        )
+        try:
+            from ..models.character import set_training_bridge
+
+            set_training_bridge(training_bridge)
+        except ImportError:
+            pass
         # Rescan on change, so a new character reaches the node's dropdown without a restart.
         characters_service = Characters(studio_store, events, on_change=catalog.rescan)
         core_generation.set_characters(characters_service)
+
+        def node_param_fallbacks(node_type: str) -> dict[str, Any]:
+            """What a node's params resolve to when the item stores none, for the PNG recipe."""
+            if not registry.has(node_type):
+                return {}
+            return resolved_params(registry.get(node_type), catalog, reqs)
+
+        studio_recipe.set_param_resolver(node_param_fallbacks)
+
+        def node_required_models(
+            node_type: str, params: dict[str, Any] | None = None
+        ) -> list[tuple[str, str]]:
+            """What a node needs on disk but never names in a param, for the recipe's model list.
+
+            Params travel because Train LoRA's base checkpoint follows the architecture its own
+            settings pick, and no param on the node names the file.
+            """
+            provider = reqs.get(node_type)
+            if provider is None:
+                return []
+            return [
+                (c.filename, c.category)
+                for c in provider.components(params or {})
+                if not c.optional
+            ]
+
+        studio_recipe.set_model_resolver(node_required_models)
+
+        def node_param_kinds(node_type: str) -> dict[str, str]:
+            """What each of a node's params is, so an exported graph says rather than implies."""
+            if not registry.has(node_type):
+                return {}
+            return {p.key: param_kind(p) for p in registry.get(node_type).params}
+
+        studio_recipe.set_kind_resolver(node_param_kinds)
+
+        def character_saved(_file: str) -> None:
+            """Same refresh the library list does: rescan, then tell the canvas to reload."""
+            catalog.rescan()
+            events.broadcast("events:charactersChanged", {})
+
+        try:
+            from ..models.character import set_save_listener
+
+            set_save_listener(character_saved)
+        except ImportError:
+            pass
 
         register_studio_handlers(
             rpc,

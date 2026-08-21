@@ -152,22 +152,16 @@ export type MoodboardItemType =
   /** A "Control Space" node: a 3D pose editor whose rendered OpenPose map (`data.controlAssetId`)
    * feeds a gen node's control input. */
   | 'controlSpace'
-  /** Trainer-canvas: picks a training dataset and feeds it downstream. */
-  | 'trainDataset'
-  /** Trainer-canvas: auto-captions a dataset's images. */
-  | 'caption'
-  /** Trainer-canvas: runs a LoRA training job (run/stop/resume, live steps + logs). */
-  | 'trainer'
-  /** Trainer-canvas: plots a training run's loss curve. */
-  | 'lossGraph'
-  /** Utility: read-only host telemetry (CPU/RAM/VRAM). No handles; usable on either canvas. */
+  /** Picks a training dataset and feeds it downstream. */
+  | 'train/dataset'
+  /** Auto-captions a dataset's images. */
+  | 'train/caption'
+  /** Runs a LoRA training job (run/stop/resume, live steps + logs). */
+  | 'train/lora'
+  /** Plots a training run's loss curve. */
+  | 'train/loss'
+  /** Utility: read-only host telemetry (CPU/RAM/VRAM). No handles. */
   | 'resource'
-
-/**
- * Which canvas an item lives on. The Studio moodboard and the Trainer tab's graph share the same
- * item/connector tables, kept apart by this discriminator.
- */
-export type CanvasSurface = 'studio' | 'trainer'
 
 /** Output settings for a video-director node (stored in its moodboard item data). */
 export interface DirectorItemData {
@@ -302,11 +296,11 @@ export interface MoodboardItemData {
     /** Whether the facing prompt hint is applied downstream (default true). */
     applyPromptHint?: boolean
   }
-  /** `trainDataset` / `caption` / `trainer` nodes: the training dataset they operate on. */
+  /** Training nodes: the training dataset they operate on. */
   datasetId?: string | null
   /** `caption` node: re-caption images that already have a caption. */
   overwrite?: boolean
-  /** `trainer` / `lossGraph` nodes: the training run they're bound to. Persisted so the node
+  /** Training nodes: the training run they're bound to. Persisted so the node
    * rebinds after a reload and can still offer Resume on an interrupted run. */
   runId?: string | null
   /** `trainer` node: its hyperparameters (edited in the Adjust sidebar, off the node face). */
@@ -340,6 +334,8 @@ export interface CoreTakeRef {
   /** 0-100 identity match against that character's centroid. Absent means "not measured", which
    * is a different fact from a low score, so it must never be defaulted to zero. */
   continuityScore?: number
+  /** The score is the face term alone: the references cannot speak to this take's framing. */
+  continuityFaceOnly?: boolean
 }
 
 /** One saved character in `models/characters/`, as the library panel lists it. */
@@ -355,28 +351,17 @@ export interface CharacterSummary {
   /** Non-blocking nudges toward a stronger character ("Add a profile view"). */
   hints?: string[]
   sizeBytes?: number
+  /** The references moved on from what scoring and the payload were built from. */
+  needsRebuild?: boolean
   /** Set when the file could not be read. The row is still listed, so a corrupt file is visible. */
   error?: string
-}
-
-/** A character opened for editing: the summary plus its reference images as URLs. */
-export interface CharacterDetail extends CharacterSummary {
-  /** One URL per reference, in the order the prompt will address them. */
-  refUrls: string[]
-  /** Whether a face was found, which decides how a take is scored against this character. */
-  faceBearing: boolean
-  /** Each reference's mean face agreement with the others, 0-100. */
-  refAgreement?: number[]
-  /** Indices of references that may not be the same person. Scoring matches the best-fitting
-   *  reference, so one wrong image would otherwise let a wrong-person take score high. */
-  flaggedRefs?: number[]
 }
 
 export interface MoodboardItem {
   id: string
   projectId: string
   /** Which canvas this item belongs to (defaults to the Studio moodboard). */
-  surface: CanvasSurface
+  surface: string
   type: MoodboardItemType
   /** Set when type === 'asset'. */
   assetId: string | null
@@ -400,7 +385,7 @@ export interface MoodboardConnector {
   id: string
   projectId: string
   /** Derived from the nodes it joins - a connector never spans two canvases. */
-  surface: CanvasSurface
+  surface: string
   fromItemId: string
   toItemId: string
   label: string | null
@@ -422,16 +407,21 @@ export interface TimelineProgressEvent {
 
 /** Main → renderer: per-node generation progress (0..1), correlated by the running frame's id. */
 export interface GenerationProgressEvent {
+  /** The node the run was started from - what the run is filed under. */
   frameId: string
   fraction: number
   /** Optional short status label from the fal queue (e.g. "in queue", "generating"). */
   status?: string
+  /** The node executing right now, which is only `frameId` for a single-node graph. */
+  nodeId?: string
 }
 
 /** Main → renderer: a node in the run finished and produced a take. */
 export interface GenerationNodeDoneEvent {
   frameId: string
   takeId: string
+  /** The node that finished, so the canvas can stop showing that one as running. */
+  nodeId?: string
 }
 
 /** Main → renderer: the whole run (target frame + its upstream chain) completed. */
@@ -487,6 +477,45 @@ export interface ActivityRun {
 }
 
 /** Main → renderer: the live run list changed. Carries the whole list, so it replaces state. */
+/** One phase of a character encode, streamed while the create/edit RPC is still in flight. */
+/** What one architecture can apply for a character, and whether its adapter is worth trusting. */
+/** One model in the published registry: where it comes from, and whether it is already here. */
+export interface RegistryModel {
+  id: string
+  label: string
+  filename: string
+  /** The `models/` subfolder it lands in. */
+  category: string
+  kind: 'hf_file' | 'hf_folder' | 'url'
+  repo: string
+  path: string
+  url: string
+  verified: boolean
+  optional: boolean
+  sizeBytes: number | null
+  updated: string
+  /** Entries sharing a group are the same model at a different precision. */
+  group: string
+  precision: string
+  present?: boolean
+}
+
+/** A weight file something asked for that is not on disk. */
+export interface MissingModel {
+  wanted: string
+  /** Where it belongs, relative to the models root. Shown even when nothing can be downloaded. */
+  path: string
+  matches: { model: RegistryModel; exact: boolean; present: boolean }[]
+}
+
+export interface CharacterProgressEvent {
+  /** The character's name, which is all the client has to match on before a file exists. */
+  name: string
+  /** 0 to 1. */
+  fraction: number
+  status: string
+}
+
 export interface ActivityChangedEvent {
   runs: ActivityRun[]
 }
@@ -781,6 +810,12 @@ export interface TrainingDoneEvent {
   outputLoraPath: string
 }
 
+/** Main → renderer: a graph run's Train LoRA node started a run and this node now owns it. */
+export interface TrainingNodeBoundEvent {
+  itemId: string
+  runId: string
+}
+
 /** Main → renderer: a training run failed. */
 export interface TrainingErrorEvent {
   runId: string
@@ -800,7 +835,7 @@ export interface GpuStat {
   temperature: number | null
 }
 
-/** Main → renderer: periodic host + GPU telemetry (Trainer tab). */
+/** Main → renderer: periodic host + GPU telemetry (the Resources node). */
 export interface SystemStatsEvent {
   /** CPU utilization %, 0..100. */
   cpu: number

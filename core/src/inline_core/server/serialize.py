@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..graph.descriptor import NodeDescriptor, ParamField, Port
+from ..graph.descriptor import NodeDescriptor, ParamField, Port, Widget
 from ..models.catalog import ModelCatalog
 from ..runtime.progress import (
     CancelledEvent,
@@ -58,7 +58,25 @@ def param_json(
         out["options"] = options
     if field.advanced:
         out["advanced"] = True
+    if field.on_face is not None:
+        out["onFace"] = field.on_face
+    out["kind"] = param_kind(field)
     return out
+
+
+def param_kind(field: ParamField) -> str:
+    """What a param is, for an exported graph. Declared when the widget cannot say."""
+    if field.kind:
+        return field.kind
+    if field.options_from:
+        return "character" if field.options_from == "characters" else "model"
+    return {
+        Widget.SEED: "seed",
+        Widget.SELECT: "enum",
+        Widget.TEXTAREA: "text",
+        Widget.NUMBER: "number",
+        Widget.BOOLEAN: "boolean",
+    }.get(field.widget, "string")
 
 
 def descriptor_json(
@@ -87,6 +105,29 @@ def descriptor_json(
     }
     if descriptor.hidden:
         out["hidden"] = True
+    return out
+
+
+def resolved_params(
+    descriptor: NodeDescriptor,
+    catalog: ModelCatalog | None = None,
+    requirements: Any = None,
+) -> dict[str, Any]:
+    """Every param's effective value: what a run uses where the item stores nothing.
+
+    Read back off the served descriptor rather than recomputed, so this cannot drift from what the
+    node face shows: its `default` already folds in the node's own resolution, and its options are
+    already narrowed to the files this node can load. An empty pick means "engine auto-picks",
+    which is the first option.
+    """
+    out: dict[str, Any] = {}
+    for field in descriptor_json(descriptor, catalog, requirements)["params"]:
+        value = field.get("default")
+        if value in (None, ""):
+            options = field.get("options") or []
+            value = options[0]["value"] if options else None
+        if value not in (None, ""):
+            out[str(field["key"])] = value
     return out
 
 

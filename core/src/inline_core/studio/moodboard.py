@@ -21,7 +21,7 @@ _ITEM_COLUMNS = (
     "rotation, z_index, created_at, updated_at"
 )
 
-#: The Studio moodboard; the Trainer tab's graph is the other surface (see schema `surface`).
+#: The one canvas. The column survives from when the Trainer graph was a second surface.
 STUDIO_SURFACE = "studio"
 
 _DEFAULT_SIZE = {"image": (320, 180), "video": (360, 203), "audio": (320, 80)}
@@ -108,13 +108,12 @@ def list_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [_row_to_item(r) for r in rows]
 
 
-def list_board(conn: sqlite3.Connection, surface: str = STUDIO_SURFACE) -> dict[str, Any]:
-    """One canvas's items + connectors. Surfaces are isolated: the Trainer graph never leaks into
-    the Studio moodboard (and vice versa)."""
+def list_board(conn: sqlite3.Connection) -> dict[str, Any]:
+    """The canvas's items + connectors."""
     items = [
         _row_to_item(r)
         for r in conn.execute(
-            "SELECT * FROM moodboard_items WHERE surface = ?", (surface,)
+            "SELECT * FROM moodboard_items WHERE surface = ?", (STUDIO_SURFACE,)
         ).fetchall()
     ]
     # Ordered explicitly: wiring order is user-visible semantics for a list input (FLUX.2 addresses
@@ -123,7 +122,7 @@ def list_board(conn: sqlite3.Connection, surface: str = STUDIO_SURFACE) -> dict[
         _row_to_connector(r)
         for r in conn.execute(
             "SELECT * FROM moodboard_connectors WHERE surface = ? ORDER BY created_at, id",
-            (surface,),
+            (STUDIO_SURFACE,),
         ).fetchall()
     ]
     return {"items": items, "connectors": connectors}
@@ -240,55 +239,44 @@ def add_gen_node(
     )
 
 
-#: Trainer-canvas nodes. They only ever exist on the `trainer` surface (the Trainer tab's graph);
-#: `resource` is the exception - a read-only telemetry node usable on either canvas.
-TRAINER_SURFACE = "trainer"
+#: Training nodes, namespaced so they never collide with a generation node on the merged canvas.
+TRAIN_DATASET = "train/dataset"
+TRAIN_CAPTION = "train/caption"
+TRAIN_LORA = "train/lora"
+TRAIN_LOSS = "train/loss"
 
 
-def add_train_dataset(
-    conn: sqlite3.Connection, x: float, y: float, surface: str = TRAINER_SURFACE
-) -> dict[str, Any]:
+def add_train_dataset(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     return _insert_item(
-        conn, item_type="trainDataset", x=x, y=y, width=280, height=240,
-        data={"datasetId": None}, surface=surface,
+        conn, item_type=TRAIN_DATASET, x=x, y=y, width=280, height=240,
+        data={"datasetId": None},
     )
 
 
-def add_caption(
-    conn: sqlite3.Connection, x: float, y: float, surface: str = TRAINER_SURFACE
-) -> dict[str, Any]:
+def add_caption(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     return _insert_item(
-        conn, item_type="caption", x=x, y=y, width=280, height=200,
-        data={"datasetId": None, "overwrite": False}, surface=surface,
+        conn, item_type=TRAIN_CAPTION, x=x, y=y, width=280, height=200,
+        data={"datasetId": None, "overwrite": False},
     )
 
 
-def add_trainer(
-    conn: sqlite3.Connection, x: float, y: float, surface: str = TRAINER_SURFACE
-) -> dict[str, Any]:
+def add_trainer(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     return _insert_item(
         # Roomier than the other nodes on purpose: the body is a live log tail.
-        conn, item_type="trainer", x=x, y=y, width=420, height=340,
+        conn, item_type=TRAIN_LORA, x=x, y=y, width=420, height=340,
         # `runId` is persisted so the node rebinds to its run after a reload and can still Resume.
-        data={"datasetId": None, "runId": None, "hyperparams": {}}, surface=surface,
+        data={"datasetId": None, "runId": None, "hyperparams": {}},
     )
 
 
-def add_loss_graph(
-    conn: sqlite3.Connection, x: float, y: float, surface: str = TRAINER_SURFACE
-) -> dict[str, Any]:
+def add_loss_graph(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     return _insert_item(
-        conn, item_type="lossGraph", x=x, y=y, width=320, height=220,
-        data={"runId": None}, surface=surface,
+        conn, item_type=TRAIN_LOSS, x=x, y=y, width=320, height=220, data={"runId": None},
     )
 
 
-def add_resource(
-    conn: sqlite3.Connection, x: float, y: float, surface: str = STUDIO_SURFACE
-) -> dict[str, Any]:
-    return _insert_item(
-        conn, item_type="resource", x=x, y=y, width=280, height=170, data={}, surface=surface
-    )
+def add_resource(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
+    return _insert_item(conn, item_type="resource", x=x, y=y, width=280, height=170, data={})
 
 
 def add_layer(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
@@ -428,11 +416,10 @@ def replace_board(
     conn: sqlite3.Connection,
     items: list[dict[str, Any]],
     connectors: list[dict[str, Any]],
-    surface: str = STUDIO_SURFACE,
 ) -> None:
-    """Replace ONE surface's board (undo/redo restore), preserving ids, in one transaction. Scoped
-    by surface so a Studio undo never wipes the Trainer canvas (they share the table)."""
+    """Replace the board (undo/redo restore), preserving ids, in one transaction."""
     pid = _project_id(conn)
+    surface = STUDIO_SURFACE
     conn.execute(
         "DELETE FROM moodboard_connectors WHERE project_id = ? AND surface = ?", (pid, surface)
     )

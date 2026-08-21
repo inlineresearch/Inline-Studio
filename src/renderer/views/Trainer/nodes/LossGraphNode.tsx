@@ -2,12 +2,14 @@
  * Graph node: the loss curve for a wired training run. A hand-rolled SVG sparkline (no chart lib),
  * matching how DirectorNode hand-rolls its timeline.
  */
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
+import { PortHandle } from '../../Moodboard/nodes/PortHandle'
+import { topStyle } from '../../Moodboard/nodes/nodeSize'
 import { useTrainingStore } from '../../../store/trainingStore'
-import { useTrainerBoardStore } from '../../../store/trainerBoardStore'
 import { NodeFrame } from '../../Moodboard/nodes/NodeFrame'
 import { ChartIcon, NodeBadge, NodeBadgeRow } from '../../Moodboard/nodes/NodeBadge'
-import { RUN_HANDLE } from './handles'
+import { METRICS_HANDLE } from './handles'
+import { useBoardActions } from '../../Moodboard/nodes/boardActions'
 
 /** Resolve the run id from an incoming edge (Trainer → Graph). */
 function wiredRunId(
@@ -85,8 +87,7 @@ function Curve({ loss, lastStep }: { loss: number[]; lastStep: number }): React.
 }
 
 export function LossGraphNode({ id, selected }: NodeProps): React.JSX.Element {
-  const items = useTrainerBoardStore((s) => s.items)
-  const connectors = useTrainerBoardStore((s) => s.connectors)
+  const { items, connectors } = useBoardActions()
   const runId = wiredRunId(id, connectors, items)
   const loss = useTrainingStore((s) => (runId ? s.lossByRun[runId] : undefined)) ?? []
   const progress = useTrainingStore((s) => (runId ? s.progressByRun[runId] : undefined))
@@ -121,12 +122,12 @@ export function LossGraphNode({ id, selected }: NodeProps): React.JSX.Element {
           </div>
         </div>
       </NodeFrame>
-      <Handle
-        type="target"
-        position={Position.Left}
-        id={RUN_HANDLE}
-        className="group !h-3 !w-3 !border-2 !border-surface !bg-violet-400"
-        title="Run"
+      <PortHandle
+        id={METRICS_HANDLE}
+        label="Graph"
+        kind="metrics"
+        side="input"
+        style={topStyle(0)}
       />
     </>
   )

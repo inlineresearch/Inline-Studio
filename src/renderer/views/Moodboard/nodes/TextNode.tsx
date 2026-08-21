@@ -7,6 +7,7 @@ import { TextToolbar } from './TextToolbar'
 import { useMoodboardStore } from '../../../store/moodboardStore'
 import type { TextNodeData } from './nodeData'
 import type { TextItemData } from '@shared/types'
+import { useAutoCommit } from '../../../lib/useAutoCommit'
 
 /**
  * Editable text item - floats bare on the canvas (no surface box), light-grey by
@@ -50,10 +51,14 @@ export function TextNode({ id, data, selected }: NodeProps): React.JSX.Element {
     cursor: text.link && !editing ? 'pointer' : undefined,
   }
 
-  const commit = (): void => {
-    setEditing(false)
+  const save = (): void => {
     const next = ref.current?.innerText ?? text.text
     if (next !== text.text) void updateItem(id, { data: { text: { ...text, text: next } } })
+  }
+  const { schedule, flush } = useAutoCommit(save)
+  const commit = (): void => {
+    setEditing(false)
+    flush()
   }
 
   const applyPatch = (patch: Partial<TextItemData>): void =>
@@ -83,7 +88,10 @@ export function TextNode({ id, data, selected }: NodeProps): React.JSX.Element {
           suppressContentEditableWarning
           onDoubleClick={() => setEditing(true)}
           onClick={openLink}
-          onInput={fitHeight}
+          onInput={() => {
+            fitHeight()
+            schedule()
+          }}
           onBlur={commit}
         >
           {text.text}

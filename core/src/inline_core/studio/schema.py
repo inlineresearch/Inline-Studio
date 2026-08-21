@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 21
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS project (
@@ -238,6 +238,66 @@ def _run_data_migrations(conn: sqlite3.Connection, from_version: int) -> None:
               AND NOT EXISTS (SELECT 1 FROM frame_inputs si WHERE si.frame_id = frames.id);
             """
         )
+    # v19 -> v20: the Trainer canvas merged into the Studio one.
+    if from_version < 20:
+        _migrate_merge_canvases(conn)
+    # v20 -> v21: Train LoRA's loss-curve port got its own kind, so its handle id changed.
+    if from_version < 21:
+        _migrate_metrics_handle(conn)
+
+
+_TRAINING_TYPE_RENAMES = {
+    "trainDataset": "train/dataset",
+    "caption": "train/caption",
+    "trainer": "train/lora",
+    "lossGraph": "train/loss",
+}
+
+
+def _migrate_merge_canvases(conn: sqlite3.Connection) -> None:
+    """Move the trainer surface onto the studio one, clear of what is already there.
+
+    Both canvases start at the origin, so migrating in place would drop the training graph on top
+    of the generation graph. The offset is computed once, before any row moves.
+    """
+    for old, new in _TRAINING_TYPE_RENAMES.items():
+        conn.execute("UPDATE moodboard_items SET type=? WHERE type=?", (new, old))
+    # Indexed, not keyed: a bare connection has no Row factory.
+    right = conn.execute(
+        "SELECT MAX(x + width) FROM moodboard_items WHERE surface='studio'"
+    ).fetchone()
+    left = conn.execute(
+        "SELECT MIN(x) FROM moodboard_items WHERE surface='trainer'"
+    ).fetchone()
+    if left is not None and left[0] is not None:
+        edge = (right[0] if right and right[0] is not None else 0.0) + 240.0
+        conn.execute(
+            "UPDATE moodboard_items SET x = x + ? WHERE surface='trainer'",
+            (edge - float(left[0]),),
+        )
+    for table in ("moodboard_items", "moodboard_connectors"):
+        conn.execute(f"UPDATE {table} SET surface='studio' WHERE surface='trainer'")
+
+
+def _migrate_metrics_handle(conn: sqlite3.Connection) -> None:
+    """Rename the Train LoRA -> Graph handle from `run` to `metrics` on existing edges.
+
+    React Flow anchors an edge by handle id, so a wire naming a port the node no longer has is not a
+    wire that draws in the wrong place - it is one that stops drawing at all.
+    """
+    conn.execute(
+        """
+        UPDATE moodboard_connectors
+        SET data = json_set(
+              data,
+              '$.sourceHandle', 'metrics',
+              '$.targetHandle', 'metrics'
+            )
+        WHERE json_valid(data)
+          AND json_extract(data, '$.sourceHandle') = 'run'
+          AND json_extract(data, '$.targetHandle') = 'run';
+        """
+    )
 
 
 def _migrate_columns(conn: sqlite3.Connection) -> None:
@@ -271,6 +331,9 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(
         conn, "moodboard_connectors", "surface", "TEXT NOT NULL DEFAULT 'studio'"
     )
+    # Only ever created by SCHEMA_SQL, so a table that predates them was never brought forward.
+    _add_column_if_missing(conn, "moodboard_connectors", "label", "TEXT")
+    _add_column_if_missing(conn, "moodboard_connectors", "data", "TEXT")
     _add_column_if_missing(conn, "frame_inputs", "source_frame_id", "TEXT")
 
     _relax_frame_inputs_asset_id(conn)  # v8 -> v9: asset_id must be nullable

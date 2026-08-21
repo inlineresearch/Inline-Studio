@@ -1,34 +1,43 @@
 /**
  * Saved characters: the `.char` library in `models/characters/`, which is global rather than
- * per-project. Work happens in Core via studio().characters; this only holds the list, the open
- * editor, and whether an encode is in flight (it runs two embedding passes, so it is not instant).
+ * per-project. This is the browser only - creating, editing and building all happen on the canvas,
+ * through the character nodes, so nothing here writes to a character except the one-shot
+ * "Save as character" a take offers.
  */
 import { create } from 'zustand'
-import type { CharacterDetail, CharacterSummary } from '@shared/types'
+import type { CharacterProgressEvent, CharacterSummary } from '@shared/types'
 import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
 
 interface CharacterState {
   characters: CharacterSummary[]
-  /** The character open in the editor, with its reference URLs resolved. */
-  editing: CharacterDetail | null
   loading: boolean
-  /** An encode is running. Creating and editing both recompile, so both set this. */
+  /** An encode is running. It runs two embedding passes, so it is not instant. */
   busy: boolean
+  /** The running encode's latest phase, or null between encodes. */
+  progress: CharacterProgressEvent | null
   error: string | null
 
   load: () => Promise<void>
-  create: (name: string, assetIds: string[], description: string) => Promise<boolean>
   createFromTake: (takeId: string, name: string) => Promise<boolean>
-  open: (file: string) => Promise<void>
-  closeEditor: () => void
-  rename: (file: string, name: string) => Promise<void>
-  setDescription: (file: string, description: string) => Promise<void>
-  addRefs: (file: string, assetIds: string[]) => Promise<void>
-  removeRef: (file: string, index: number) => Promise<void>
   remove: (file: string) => Promise<void>
   importFile: (file: File) => Promise<void>
   reset: () => void
+}
+
+//: What encoding needs on disk before it will run, so the popup can offer them by name.
+const ENCODERS = [
+  { filename: 'face_detection_yunet_2023mar.onnx', category: 'annotators' },
+  { filename: 'face_recognition_sface_2021dec.onnx', category: 'annotators' },
+  { filename: 'dinov2-base', category: 'annotators' },
+]
+
+/** True when the failure was a missing encoder and the model popup took over from it. */
+async function offerEncoders(error: string): Promise<boolean> {
+  if (!/character encoders/i.test(error)) return false
+  const { checkModels } = await import('../lib/checkModels')
+  await checkModels(ENCODERS, 'Creating a character needs its scoring encoders.')
+  return true
 }
 
 /** Merge an updated summary into the list without reordering it under the user's cursor. */
@@ -38,11 +47,11 @@ function merged(list: CharacterSummary[], updated: CharacterSummary): CharacterS
   return list.map((c, i) => (i === index ? updated : c))
 }
 
-export const useCharacterStore = create<CharacterState>((set, get) => ({
+export const useCharacterStore = create<CharacterState>((set) => ({
   characters: [],
-  editing: null,
   loading: false,
   busy: false,
+  progress: null,
   error: null,
 
   load: async () => {
@@ -56,65 +65,21 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
     }
   },
 
-  create: async (name, assetIds, description) => {
-    set({ busy: true, error: null })
-    try {
-      const res = await studio().characters.create({ name, assetIds, description })
-      if (!res.ok) {
-        set({ busy: false, error: res.error })
-        return false
-      }
-      set((s) => ({ characters: merged(s.characters, res.value), busy: false }))
-      return true
-    } catch (e) {
-      set({ busy: false, error: ipcErrorMessage(e) })
-      return false
-    }
-  },
-
   createFromTake: async (takeId, name) => {
-    set({ busy: true, error: null })
+    set({ busy: true, error: null, progress: null })
     try {
       const res = await studio().characters.createFromTake(takeId, name)
       if (!res.ok) {
-        set({ busy: false, error: res.error })
+        const handled = await offerEncoders(res.error)
+        set({ busy: false, progress: null, error: handled ? null : res.error })
         return false
       }
-      set((s) => ({ characters: merged(s.characters, res.value), busy: false }))
+      set((s) => ({ characters: merged(s.characters, res.value), busy: false, progress: null }))
       return true
     } catch (e) {
-      set({ busy: false, error: ipcErrorMessage(e) })
+      set({ busy: false, progress: null, error: ipcErrorMessage(e) })
       return false
     }
-  },
-
-  open: async (file) => {
-    set({ error: null })
-    try {
-      const res = await studio().characters.get(file)
-      if (!res.ok) return set({ error: res.error })
-      set({ editing: res.value })
-    } catch (e) {
-      set({ error: ipcErrorMessage(e) })
-    }
-  },
-
-  closeEditor: () => set({ editing: null }),
-
-  rename: async (file, name) => {
-    await applyEdit(set, get, () => studio().characters.rename(file, name))
-  },
-
-  setDescription: async (file, description) => {
-    await applyEdit(set, get, () => studio().characters.setDescription(file, description))
-  },
-
-  addRefs: async (file, assetIds) => {
-    await applyEdit(set, get, () => studio().characters.addRefs(file, assetIds), true)
-  },
-
-  removeRef: async (file, index) => {
-    await applyEdit(set, get, () => studio().characters.removeRef(file, index), true)
   },
 
   remove: async (file) => {
@@ -122,17 +87,14 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
     try {
       const res = await studio().characters.delete(file)
       if (!res.ok) return set({ error: res.error })
-      set((s) => ({
-        characters: s.characters.filter((c) => c.file !== file),
-        editing: s.editing?.file === file ? null : s.editing,
-      }))
+      set((s) => ({ characters: s.characters.filter((c) => c.file !== file) }))
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
     }
   },
 
   importFile: async (file) => {
-    set({ busy: true, error: null })
+    set({ busy: true, error: null, progress: null })
     try {
       // /upload routes through the asset importer, which drops unknown extensions, so a .char
       // needs its own endpoint.
@@ -141,46 +103,32 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
         body: file,
       })
       const result = (await response.json()) as { ok: boolean; error?: string }
-      if (!result.ok) return set({ busy: false, error: result.error ?? 'Import failed' })
-      set({ busy: false })
-      await get().load()
+      if (!result.ok)
+        return set({ busy: false, progress: null, error: result.error ?? 'Import failed' })
+      set({ busy: false, progress: null })
+      await useCharacterStore.getState().load()
     } catch (e) {
-      set({ busy: false, error: ipcErrorMessage(e) })
+      set({ busy: false, progress: null, error: ipcErrorMessage(e) })
     }
   },
 
-  reset: () => set({ characters: [], editing: null, error: null, busy: false }),
+  reset: () => set({ characters: [], error: null, busy: false, progress: null }),
 }))
-
-type Setter = (
-  partial: Partial<CharacterState> | ((s: CharacterState) => Partial<CharacterState>),
-) => void
-
-/** Every edit returns the rewritten summary, so the list and the open editor stay in step. */
-async function applyEdit(
-  set: Setter,
-  get: () => CharacterState,
-  call: () => Promise<{ ok: true; value: CharacterSummary } | { ok: false; error: string }>,
-  recompiles = false,
-): Promise<void> {
-  set({ error: null, ...(recompiles ? { busy: true } : {}) })
-  try {
-    const res = await call()
-    if (!res.ok) return set({ busy: false, error: res.error })
-    set((s) => ({ characters: merged(s.characters, res.value), busy: false }))
-    // Adding or removing a reference changes refUrls, so the editor has to be refetched.
-    if (get().editing?.file === res.value.file) await get().open(res.value.file)
-  } catch (e) {
-    set({ busy: false, error: ipcErrorMessage(e) })
-  }
-}
 
 /**
  * Refresh when Core says the library moved. Called once from App's effect rather than at module
  * load, so the injected backend client is set first.
  */
 export function subscribeCharacterChanges(): () => void {
-  return studio().events.onCharactersChanged(() => {
+  const onChanged = studio().events.onCharactersChanged(() => {
     void useCharacterStore.getState().load()
   })
+  // Cleared on the last phase, since progress arrives while the call is still open.
+  const onProgress = studio().events.onCharacterProgress((e) => {
+    useCharacterStore.setState({ progress: e.fraction >= 1 ? null : e })
+  })
+  return () => {
+    onChanged()
+    onProgress()
+  }
 }

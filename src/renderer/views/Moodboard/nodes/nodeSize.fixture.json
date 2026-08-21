@@ -1,0 +1,2657 @@
+{
+  "models": [
+    {
+      "type": "input/text",
+      "outputKind": null,
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "text",
+          "label": "Text",
+          "kind": "text",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "text",
+          "label": "Text",
+          "widget": "textarea",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "type": "input/image",
+      "outputKind": null,
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "image",
+          "label": "Image",
+          "kind": "image",
+          "required": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "type": "input/video",
+      "outputKind": null,
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "video",
+          "label": "Video",
+          "kind": "video",
+          "required": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "type": "encode/text",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": true
+        },
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "id": "conditioning",
+          "label": "Conditioning",
+          "kind": "conditioning",
+          "required": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "type": "latent/empty",
+      "outputKind": null,
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "latent",
+          "label": "Latent",
+          "kind": "latent",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "width",
+          "label": "Width",
+          "widget": "number",
+          "default": 1024,
+          "min": 64,
+          "max": 4096,
+          "step": 8
+        },
+        {
+          "key": "height",
+          "label": "Height",
+          "widget": "number",
+          "default": 1024,
+          "min": 64,
+          "max": 4096,
+          "step": 8
+        },
+        {
+          "key": "batch",
+          "label": "Batch",
+          "widget": "number",
+          "default": 1,
+          "min": 1,
+          "max": 16,
+          "step": 1
+        }
+      ]
+    },
+    {
+      "type": "sample",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "model",
+          "label": "Model",
+          "kind": "model",
+          "required": true
+        },
+        {
+          "id": "positive",
+          "label": "Positive",
+          "kind": "conditioning",
+          "required": true
+        },
+        {
+          "id": "negative",
+          "label": "Negative",
+          "kind": "conditioning",
+          "required": false
+        },
+        {
+          "id": "latent",
+          "label": "Latent",
+          "kind": "latent",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "id": "latent",
+          "label": "Latent",
+          "kind": "latent",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "steps",
+          "label": "Steps",
+          "widget": "number",
+          "default": 20,
+          "min": 1,
+          "max": 200,
+          "step": 1
+        },
+        {
+          "key": "cfg",
+          "label": "CFG",
+          "widget": "number",
+          "default": 5.0,
+          "min": 0.0,
+          "max": 30.0,
+          "step": 0.1
+        },
+        {
+          "key": "sampler",
+          "label": "Sampler",
+          "widget": "select",
+          "default": "euler",
+          "options": [
+            {
+              "value": "euler",
+              "label": "Euler"
+            },
+            {
+              "value": "dpmpp_2m",
+              "label": "DPM++ 2M"
+            },
+            {
+              "value": "heun",
+              "label": "Heun"
+            }
+          ]
+        },
+        {
+          "key": "scheduler",
+          "label": "Scheduler",
+          "widget": "select",
+          "default": "simple",
+          "options": [
+            {
+              "value": "simple",
+              "label": "Simple"
+            },
+            {
+              "value": "karras",
+              "label": "Karras"
+            }
+          ]
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        }
+      ]
+    },
+    {
+      "type": "vae/decode",
+      "outputKind": "image",
+      "inputs": [
+        {
+          "id": "vae",
+          "label": "VAE",
+          "kind": "vae",
+          "required": true
+        },
+        {
+          "id": "latent",
+          "label": "Latent",
+          "kind": "latent",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "id": "image",
+          "label": "Image",
+          "kind": "image",
+          "required": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "type": "vae/encode",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "vae",
+          "label": "VAE",
+          "kind": "vae",
+          "required": true
+        },
+        {
+          "id": "image",
+          "label": "Image",
+          "kind": "image",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "id": "latent",
+          "label": "Latent",
+          "kind": "latent",
+          "required": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "type": "load/diffusion-model",
+      "outputKind": null,
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "model",
+          "label": "Model",
+          "kind": "model",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "file",
+          "label": "Model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models"
+        }
+      ]
+    },
+    {
+      "type": "load/vae",
+      "outputKind": null,
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "vae",
+          "label": "VAE",
+          "kind": "vae",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "file",
+          "label": "VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae"
+        }
+      ]
+    },
+    {
+      "type": "load/text-encoder",
+      "outputKind": null,
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "file",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders"
+        }
+      ]
+    },
+    {
+      "type": "load/lora",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "file",
+          "label": "LoRA",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "loras"
+        },
+        {
+          "key": "strength",
+          "label": "Strength",
+          "widget": "number",
+          "default": 1.0,
+          "min": -2.0,
+          "max": 2.0,
+          "step": 0.05
+        }
+      ]
+    },
+    {
+      "type": "character/encode",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "images",
+          "label": "References",
+          "kind": "image[]",
+          "required": true
+        },
+        {
+          "id": "description",
+          "label": "Description",
+          "kind": "text",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "name",
+          "label": "Name",
+          "widget": "text",
+          "default": ""
+        },
+        {
+          "key": "description",
+          "label": "Description",
+          "widget": "textarea",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "type": "character/load",
+      "outputKind": null,
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "file",
+          "label": "Character",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "characters"
+        }
+      ]
+    },
+    {
+      "type": "character/dataset",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "id": "images",
+          "label": "References",
+          "kind": "image[]",
+          "required": false
+        },
+        {
+          "id": "captions",
+          "label": "Captions",
+          "kind": "text",
+          "required": false
+        }
+      ],
+      "params": []
+    },
+    {
+      "type": "character/edit",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": true
+        },
+        {
+          "id": "images",
+          "label": "Add references",
+          "kind": "image[]",
+          "required": false
+        },
+        {
+          "id": "description",
+          "label": "Description",
+          "kind": "text",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "name",
+          "label": "Rename to",
+          "widget": "text",
+          "default": ""
+        },
+        {
+          "key": "description",
+          "label": "Description",
+          "widget": "textarea",
+          "default": ""
+        },
+        {
+          "key": "drop",
+          "label": "Remove references",
+          "widget": "text",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "type": "character/references",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "id": "payload",
+          "label": "Payload",
+          "kind": "payload",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "arch",
+          "label": "Model",
+          "widget": "select",
+          "default": "flux2-klein",
+          "options": [
+            {
+              "value": "flux2-klein",
+              "label": "flux2-klein"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "character/adapter",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": true
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "id": "payload",
+          "label": "Payload",
+          "kind": "payload",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "arch",
+          "label": "Model",
+          "widget": "text",
+          "default": ""
+        },
+        {
+          "key": "base",
+          "label": "Trained against",
+          "widget": "text",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "type": "character/write",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": true
+        },
+        {
+          "id": "payloads",
+          "label": "Payloads",
+          "kind": "payload[]",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "apply",
+          "label": "When a model has both",
+          "widget": "select",
+          "default": "auto",
+          "options": [
+            {
+              "value": "auto",
+              "label": "Auto (the adapter)"
+            },
+            {
+              "value": "reference",
+              "label": "Its references"
+            },
+            {
+              "value": "lora",
+              "label": "Its adapter"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "alibaba/z-image-turbo",
+      "outputKind": "image",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        },
+        {
+          "id": "image",
+          "label": "Image (img2img)",
+          "kind": "image",
+          "required": false
+        },
+        {
+          "id": "control_image",
+          "label": "Control",
+          "kind": "control",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "image",
+          "label": "Image",
+          "kind": "image",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "negative_prompt",
+          "label": "Negative prompt",
+          "widget": "textarea",
+          "default": ""
+        },
+        {
+          "key": "width",
+          "label": "Width",
+          "widget": "number",
+          "default": 1024,
+          "min": 256,
+          "max": 2048,
+          "step": 64
+        },
+        {
+          "key": "height",
+          "label": "Height",
+          "widget": "number",
+          "default": 1024,
+          "min": 256,
+          "max": 2048,
+          "step": 64
+        },
+        {
+          "key": "steps",
+          "label": "Steps",
+          "widget": "number",
+          "default": 8,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "guidance",
+          "label": "Guidance (CFG)",
+          "widget": "number",
+          "default": 0.0,
+          "min": 0.0,
+          "max": 20.0,
+          "step": 0.5
+        },
+        {
+          "key": "sampler",
+          "label": "Sampler",
+          "widget": "select",
+          "default": "euler",
+          "options": [
+            {
+              "value": "euler",
+              "label": "Euler"
+            },
+            {
+              "value": "euler_a",
+              "label": "Euler Ancestral"
+            }
+          ],
+          "advanced": true
+        },
+        {
+          "key": "scheduler",
+          "label": "Scheduler",
+          "widget": "select",
+          "default": "simple",
+          "options": [
+            {
+              "value": "simple",
+              "label": "Simple"
+            },
+            {
+              "value": "karras",
+              "label": "Karras"
+            },
+            {
+              "value": "exponential",
+              "label": "Exponential"
+            },
+            {
+              "value": "beta",
+              "label": "Beta"
+            }
+          ],
+          "advanced": true
+        },
+        {
+          "key": "strength",
+          "label": "Denoise strength",
+          "widget": "number",
+          "default": 0.6,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.05,
+          "advanced": true
+        },
+        {
+          "key": "controlnet",
+          "label": "ControlNet",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "controlnet"
+        },
+        {
+          "key": "controlnet_conditioning_scale",
+          "label": "Control strength",
+          "widget": "number",
+          "default": 1.0,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.05
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "krea/krea-2-turbo",
+      "outputKind": "image",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        },
+        {
+          "id": "image",
+          "label": "Image (img2img)",
+          "kind": "image",
+          "required": false
+        },
+        {
+          "id": "control_image",
+          "label": "Depth control",
+          "kind": "control",
+          "required": false
+        },
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "image",
+          "label": "Image",
+          "kind": "image",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "negative_prompt",
+          "label": "Negative prompt",
+          "widget": "textarea",
+          "default": ""
+        },
+        {
+          "key": "width",
+          "label": "Width",
+          "widget": "number",
+          "default": 1024,
+          "min": 256,
+          "max": 2048,
+          "step": 64
+        },
+        {
+          "key": "height",
+          "label": "Height",
+          "widget": "number",
+          "default": 1024,
+          "min": 256,
+          "max": 2048,
+          "step": 64
+        },
+        {
+          "key": "steps",
+          "label": "Steps",
+          "widget": "number",
+          "default": 8,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "guidance",
+          "label": "Guidance (CFG)",
+          "widget": "number",
+          "default": 0.0,
+          "min": 0.0,
+          "max": 20.0,
+          "step": 0.5
+        },
+        {
+          "key": "sampler",
+          "label": "Sampler",
+          "widget": "select",
+          "default": "euler",
+          "options": [
+            {
+              "value": "euler",
+              "label": "Euler"
+            },
+            {
+              "value": "euler_a",
+              "label": "Euler Ancestral"
+            }
+          ],
+          "advanced": true
+        },
+        {
+          "key": "scheduler",
+          "label": "Scheduler",
+          "widget": "select",
+          "default": "simple",
+          "options": [
+            {
+              "value": "simple",
+              "label": "Simple"
+            },
+            {
+              "value": "karras",
+              "label": "Karras"
+            },
+            {
+              "value": "exponential",
+              "label": "Exponential"
+            },
+            {
+              "value": "beta",
+              "label": "Beta"
+            }
+          ],
+          "advanced": true
+        },
+        {
+          "key": "strength",
+          "label": "Denoise strength",
+          "widget": "number",
+          "default": 0.6,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.05,
+          "advanced": true
+        },
+        {
+          "key": "depth_controlnet",
+          "label": "Depth control-LoRA",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "controlnet"
+        },
+        {
+          "key": "control_strength",
+          "label": "Control strength",
+          "widget": "number",
+          "default": 1.0,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.05
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "krea/krea-2-raw",
+      "outputKind": "image",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        },
+        {
+          "id": "image",
+          "label": "Image (img2img)",
+          "kind": "image",
+          "required": false
+        },
+        {
+          "id": "control_image",
+          "label": "Depth control",
+          "kind": "control",
+          "required": false
+        },
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "image",
+          "label": "Image",
+          "kind": "image",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "negative_prompt",
+          "label": "Negative prompt",
+          "widget": "textarea",
+          "default": ""
+        },
+        {
+          "key": "width",
+          "label": "Width",
+          "widget": "number",
+          "default": 1024,
+          "min": 256,
+          "max": 2048,
+          "step": 64
+        },
+        {
+          "key": "height",
+          "label": "Height",
+          "widget": "number",
+          "default": 1024,
+          "min": 256,
+          "max": 2048,
+          "step": 64
+        },
+        {
+          "key": "steps",
+          "label": "Steps",
+          "widget": "number",
+          "default": 28,
+          "min": 1,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "guidance",
+          "label": "Guidance (CFG)",
+          "widget": "number",
+          "default": 4.5,
+          "min": 0.0,
+          "max": 20.0,
+          "step": 0.5
+        },
+        {
+          "key": "sampler",
+          "label": "Sampler",
+          "widget": "select",
+          "default": "euler",
+          "options": [
+            {
+              "value": "euler",
+              "label": "Euler"
+            },
+            {
+              "value": "euler_a",
+              "label": "Euler Ancestral"
+            }
+          ],
+          "advanced": true
+        },
+        {
+          "key": "scheduler",
+          "label": "Scheduler",
+          "widget": "select",
+          "default": "simple",
+          "options": [
+            {
+              "value": "simple",
+              "label": "Simple"
+            },
+            {
+              "value": "karras",
+              "label": "Karras"
+            },
+            {
+              "value": "exponential",
+              "label": "Exponential"
+            },
+            {
+              "value": "beta",
+              "label": "Beta"
+            }
+          ],
+          "advanced": true
+        },
+        {
+          "key": "strength",
+          "label": "Denoise strength",
+          "widget": "number",
+          "default": 0.6,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.05,
+          "advanced": true
+        },
+        {
+          "key": "depth_controlnet",
+          "label": "Depth control-LoRA",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "controlnet"
+        },
+        {
+          "key": "control_strength",
+          "label": "Control strength",
+          "widget": "number",
+          "default": 1.0,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.05
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "black-forest-labs/flux-2",
+      "outputKind": "image",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        },
+        {
+          "id": "image",
+          "label": "Reference image(s)",
+          "kind": "image[]",
+          "required": false
+        },
+        {
+          "id": "control_image",
+          "label": "Structure map",
+          "kind": "control",
+          "required": false
+        },
+        {
+          "id": "character",
+          "label": "Character",
+          "kind": "character",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "image",
+          "label": "Image",
+          "kind": "image",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "negative_prompt",
+          "label": "Negative prompt (base models only)",
+          "widget": "textarea",
+          "default": ""
+        },
+        {
+          "key": "width",
+          "label": "Width",
+          "widget": "number",
+          "default": 1024,
+          "min": 256,
+          "max": 2048,
+          "step": 64
+        },
+        {
+          "key": "height",
+          "label": "Height",
+          "widget": "number",
+          "default": 1024,
+          "min": 256,
+          "max": 2048,
+          "step": 64
+        },
+        {
+          "key": "steps",
+          "label": "Steps (0 = from model)",
+          "widget": "number",
+          "default": 0,
+          "min": 0,
+          "max": 100,
+          "step": 1
+        },
+        {
+          "key": "guidance",
+          "label": "Guidance (-1 = from model)",
+          "widget": "number",
+          "default": -1.0,
+          "min": -1.0,
+          "max": 20.0,
+          "step": 0.5
+        },
+        {
+          "key": "sampler",
+          "label": "Sampler",
+          "widget": "select",
+          "default": "euler",
+          "options": [
+            {
+              "value": "euler",
+              "label": "Euler"
+            },
+            {
+              "value": "euler_a",
+              "label": "Euler Ancestral"
+            }
+          ],
+          "advanced": true
+        },
+        {
+          "key": "scheduler",
+          "label": "Scheduler",
+          "widget": "select",
+          "default": "simple",
+          "options": [
+            {
+              "value": "simple",
+              "label": "Simple"
+            },
+            {
+              "value": "karras",
+              "label": "Karras"
+            },
+            {
+              "value": "exponential",
+              "label": "Exponential"
+            },
+            {
+              "value": "beta",
+              "label": "Beta"
+            }
+          ],
+          "advanced": true
+        },
+        {
+          "key": "controlnet",
+          "label": "ControlNet (dev only)",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "controlnet"
+        },
+        {
+          "key": "control_strength",
+          "label": "Control strength",
+          "widget": "number",
+          "default": 0.75,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.05
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "variant",
+          "label": "Model variant",
+          "widget": "select",
+          "default": "",
+          "options": [
+            {
+              "value": "klein-4b",
+              "label": "FLUX.2 Klein 4B"
+            },
+            {
+              "value": "klein-4b-base",
+              "label": "FLUX.2 Klein 4B Base"
+            },
+            {
+              "value": "klein-9b",
+              "label": "FLUX.2 Klein 9B"
+            },
+            {
+              "value": "klein-9b-base",
+              "label": "FLUX.2 Klein 9B Base"
+            },
+            {
+              "value": "klein-9b-kv",
+              "label": "FLUX.2 Klein 9B KV"
+            },
+            {
+              "value": "dev",
+              "label": "FLUX.2 dev"
+            }
+          ],
+          "advanced": true
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "minimax/h3-text-to-video",
+      "outputKind": "video",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "Video VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "video",
+          "label": "Video",
+          "kind": "video",
+          "required": false
+        },
+        {
+          "id": "audio",
+          "label": "Audio",
+          "kind": "audio",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "duration",
+          "label": "Duration (seconds, 5 to 15)",
+          "widget": "number",
+          "default": 5.17,
+          "min": 5.0,
+          "max": 15.0,
+          "step": 0.5
+        },
+        {
+          "key": "width",
+          "label": "Width (multiples of 32; 960x544 renders about 2.3x faster per step than 1344x768)",
+          "widget": "number",
+          "default": 1344,
+          "min": 32,
+          "max": 1344,
+          "step": 32
+        },
+        {
+          "key": "height",
+          "label": "Height (multiples of 32; 960x544 renders about 2.3x faster per step than 1344x768)",
+          "widget": "number",
+          "default": 768,
+          "min": 32,
+          "max": 1344,
+          "step": 32
+        },
+        {
+          "key": "num_inference_steps",
+          "label": "Steps",
+          "widget": "number",
+          "default": 50,
+          "min": 1,
+          "max": 200,
+          "step": 1
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "Video VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "minimax/h3-image-to-video",
+      "outputKind": "video",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "Video VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        },
+        {
+          "id": "image",
+          "label": "First frame",
+          "kind": "image",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "video",
+          "label": "Video",
+          "kind": "video",
+          "required": false
+        },
+        {
+          "id": "audio",
+          "label": "Audio",
+          "kind": "audio",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "duration",
+          "label": "Duration (seconds, 5 to 15)",
+          "widget": "number",
+          "default": 5.17,
+          "min": 5.0,
+          "max": 15.0,
+          "step": 0.5
+        },
+        {
+          "key": "width",
+          "label": "Width (multiples of 32; 960x544 renders about 2.3x faster per step than 1344x768)",
+          "widget": "number",
+          "default": 1344,
+          "min": 32,
+          "max": 1344,
+          "step": 32
+        },
+        {
+          "key": "height",
+          "label": "Height (multiples of 32; 960x544 renders about 2.3x faster per step than 1344x768)",
+          "widget": "number",
+          "default": 768,
+          "min": 32,
+          "max": 1344,
+          "step": 32
+        },
+        {
+          "key": "num_inference_steps",
+          "label": "Steps",
+          "widget": "number",
+          "default": 50,
+          "min": 1,
+          "max": 200,
+          "step": 1
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "Video VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "minimax/h3-first-last-frame",
+      "outputKind": "video",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "Video VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        },
+        {
+          "id": "image",
+          "label": "First frame",
+          "kind": "image",
+          "required": false
+        },
+        {
+          "id": "last_image",
+          "label": "Last frame",
+          "kind": "image",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "video",
+          "label": "Video",
+          "kind": "video",
+          "required": false
+        },
+        {
+          "id": "audio",
+          "label": "Audio",
+          "kind": "audio",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "duration",
+          "label": "Duration (seconds, 5 to 15)",
+          "widget": "number",
+          "default": 5.17,
+          "min": 5.0,
+          "max": 15.0,
+          "step": 0.5
+        },
+        {
+          "key": "width",
+          "label": "Width (multiples of 32; 960x544 renders about 2.3x faster per step than 1344x768)",
+          "widget": "number",
+          "default": 1344,
+          "min": 32,
+          "max": 1344,
+          "step": 32
+        },
+        {
+          "key": "height",
+          "label": "Height (multiples of 32; 960x544 renders about 2.3x faster per step than 1344x768)",
+          "widget": "number",
+          "default": 768,
+          "min": 32,
+          "max": 1344,
+          "step": 32
+        },
+        {
+          "key": "num_inference_steps",
+          "label": "Steps",
+          "widget": "number",
+          "default": 50,
+          "min": 1,
+          "max": 200,
+          "step": 1
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "Video VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "minimax/h3-reference-to-video",
+      "outputKind": "video",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "Video VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        },
+        {
+          "id": "references",
+          "label": "References",
+          "kind": "image[]",
+          "required": false
+        },
+        {
+          "id": "video",
+          "label": "Reference video",
+          "kind": "video",
+          "required": false
+        },
+        {
+          "id": "audio",
+          "label": "Reference audio",
+          "kind": "audio",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "video",
+          "label": "Video",
+          "kind": "video",
+          "required": false
+        },
+        {
+          "id": "audio",
+          "label": "Audio",
+          "kind": "audio",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "duration",
+          "label": "Duration (seconds, 5 to 15)",
+          "widget": "number",
+          "default": 5.17,
+          "min": 5.0,
+          "max": 15.0,
+          "step": 0.5
+        },
+        {
+          "key": "width",
+          "label": "Width (multiples of 32; 960x544 renders about 2.3x faster per step than 1344x768)",
+          "widget": "number",
+          "default": 1344,
+          "min": 32,
+          "max": 1344,
+          "step": 32
+        },
+        {
+          "key": "height",
+          "label": "Height (multiples of 32; 960x544 renders about 2.3x faster per step than 1344x768)",
+          "widget": "number",
+          "default": 768,
+          "min": 32,
+          "max": 1344,
+          "step": 32
+        },
+        {
+          "key": "num_inference_steps",
+          "label": "Steps",
+          "widget": "number",
+          "default": 50,
+          "min": 1,
+          "max": 200,
+          "step": 1
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "ref_image_size",
+          "label": "Reference detail",
+          "widget": "select",
+          "default": "match",
+          "advanced": true
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "Video VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "lightricks/ltx-2-5-text-to-video",
+      "outputKind": "video",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "Video VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        },
+        {
+          "id": "reference",
+          "label": "Reference clip (Control LoRA)",
+          "kind": "video",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "video",
+          "label": "Video",
+          "kind": "video",
+          "required": false
+        },
+        {
+          "id": "audio",
+          "label": "Audio",
+          "kind": "audio",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "duration",
+          "label": "Duration (seconds, 1 to 20)",
+          "widget": "number",
+          "default": 1.04,
+          "min": 1.0,
+          "max": 20.0,
+          "step": 0.5
+        },
+        {
+          "key": "width",
+          "label": "Width (multiple of 64)",
+          "widget": "number",
+          "default": 1920,
+          "min": 64,
+          "max": 1920,
+          "step": 64
+        },
+        {
+          "key": "height",
+          "label": "Height (multiple of 64)",
+          "widget": "number",
+          "default": 1088,
+          "min": 64,
+          "max": 1920,
+          "step": 64
+        },
+        {
+          "key": "mode",
+          "label": "Mode",
+          "widget": "select",
+          "default": "fast",
+          "options": [
+            {
+              "value": "fast",
+              "label": "Fast (distilled, 12 steps)"
+            },
+            {
+              "value": "quality",
+              "label": "Quality (dev, guided)"
+            }
+          ]
+        },
+        {
+          "key": "generate_audio",
+          "label": "Generate audio",
+          "widget": "boolean",
+          "default": true
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "num_inference_steps",
+          "label": "Steps (quality mode)",
+          "widget": "number",
+          "default": 30,
+          "min": 1,
+          "max": 200,
+          "step": 1,
+          "advanced": true
+        },
+        {
+          "key": "guidance",
+          "label": "Guidance (quality mode)",
+          "widget": "number",
+          "default": 3.0,
+          "min": 1.0,
+          "max": 15.0,
+          "step": 0.5,
+          "advanced": true
+        },
+        {
+          "key": "enhance_prompt",
+          "label": "Expand the prompt",
+          "widget": "boolean",
+          "default": false,
+          "advanced": true
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "Video VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        },
+        {
+          "key": "upscaler",
+          "label": "Spatial upscaler",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "latent_upscale_models",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "lightricks/ltx-2-5-image-to-video",
+      "outputKind": "video",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "Video VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        },
+        {
+          "id": "image",
+          "label": "First frame",
+          "kind": "image",
+          "required": false
+        },
+        {
+          "id": "reference",
+          "label": "Reference clip (Control LoRA)",
+          "kind": "video",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "video",
+          "label": "Video",
+          "kind": "video",
+          "required": false
+        },
+        {
+          "id": "audio",
+          "label": "Audio",
+          "kind": "audio",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "duration",
+          "label": "Duration (seconds, 1 to 20)",
+          "widget": "number",
+          "default": 1.04,
+          "min": 1.0,
+          "max": 20.0,
+          "step": 0.5
+        },
+        {
+          "key": "width",
+          "label": "Width (multiple of 64)",
+          "widget": "number",
+          "default": 1920,
+          "min": 64,
+          "max": 1920,
+          "step": 64
+        },
+        {
+          "key": "height",
+          "label": "Height (multiple of 64)",
+          "widget": "number",
+          "default": 1088,
+          "min": 64,
+          "max": 1920,
+          "step": 64
+        },
+        {
+          "key": "mode",
+          "label": "Mode",
+          "widget": "select",
+          "default": "fast",
+          "options": [
+            {
+              "value": "fast",
+              "label": "Fast (distilled, 12 steps)"
+            },
+            {
+              "value": "quality",
+              "label": "Quality (dev, guided)"
+            }
+          ]
+        },
+        {
+          "key": "generate_audio",
+          "label": "Generate audio",
+          "widget": "boolean",
+          "default": true
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "num_inference_steps",
+          "label": "Steps (quality mode)",
+          "widget": "number",
+          "default": 30,
+          "min": 1,
+          "max": 200,
+          "step": 1,
+          "advanced": true
+        },
+        {
+          "key": "guidance",
+          "label": "Guidance (quality mode)",
+          "widget": "number",
+          "default": 3.0,
+          "min": 1.0,
+          "max": 15.0,
+          "step": 0.5,
+          "advanced": true
+        },
+        {
+          "key": "enhance_prompt",
+          "label": "Expand the prompt",
+          "widget": "boolean",
+          "default": false,
+          "advanced": true
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "Video VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        },
+        {
+          "key": "upscaler",
+          "label": "Spatial upscaler",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "latent_upscale_models",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "lightricks/ltx-2-5-first-last-frame",
+      "outputKind": "video",
+      "inputs": [
+        {
+          "id": "prompt",
+          "label": "Prompt",
+          "kind": "text",
+          "required": true
+        },
+        {
+          "id": "model",
+          "label": "Diffusion model",
+          "kind": "model",
+          "required": false
+        },
+        {
+          "id": "vae",
+          "label": "Video VAE",
+          "kind": "vae",
+          "required": false
+        },
+        {
+          "id": "text_encoder",
+          "label": "Text encoder",
+          "kind": "text-encoder",
+          "required": false
+        },
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        },
+        {
+          "id": "image",
+          "label": "First frame",
+          "kind": "image",
+          "required": false
+        },
+        {
+          "id": "last_image",
+          "label": "Last frame",
+          "kind": "image",
+          "required": false
+        },
+        {
+          "id": "reference",
+          "label": "Reference clip (Control LoRA)",
+          "kind": "video",
+          "required": false
+        }
+      ],
+      "outputs": [
+        {
+          "id": "video",
+          "label": "Video",
+          "kind": "video",
+          "required": false
+        },
+        {
+          "id": "audio",
+          "label": "Audio",
+          "kind": "audio",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "duration",
+          "label": "Duration (seconds, 1 to 20)",
+          "widget": "number",
+          "default": 1.04,
+          "min": 1.0,
+          "max": 20.0,
+          "step": 0.5
+        },
+        {
+          "key": "width",
+          "label": "Width (multiple of 64)",
+          "widget": "number",
+          "default": 1920,
+          "min": 64,
+          "max": 1920,
+          "step": 64
+        },
+        {
+          "key": "height",
+          "label": "Height (multiple of 64)",
+          "widget": "number",
+          "default": 1088,
+          "min": 64,
+          "max": 1920,
+          "step": 64
+        },
+        {
+          "key": "mode",
+          "label": "Mode",
+          "widget": "select",
+          "default": "fast",
+          "options": [
+            {
+              "value": "fast",
+              "label": "Fast (distilled, 12 steps)"
+            },
+            {
+              "value": "quality",
+              "label": "Quality (dev, guided)"
+            }
+          ]
+        },
+        {
+          "key": "generate_audio",
+          "label": "Generate audio",
+          "widget": "boolean",
+          "default": true
+        },
+        {
+          "key": "seed",
+          "label": "Seed (-1 = random)",
+          "widget": "seed",
+          "default": -1
+        },
+        {
+          "key": "num_inference_steps",
+          "label": "Steps (quality mode)",
+          "widget": "number",
+          "default": 30,
+          "min": 1,
+          "max": 200,
+          "step": 1,
+          "advanced": true
+        },
+        {
+          "key": "guidance",
+          "label": "Guidance (quality mode)",
+          "widget": "number",
+          "default": 3.0,
+          "min": 1.0,
+          "max": 15.0,
+          "step": 0.5,
+          "advanced": true
+        },
+        {
+          "key": "enhance_prompt",
+          "label": "Expand the prompt",
+          "widget": "boolean",
+          "default": false,
+          "advanced": true
+        },
+        {
+          "key": "model",
+          "label": "Diffusion model",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "diffusion_models",
+          "advanced": true
+        },
+        {
+          "key": "text_encoder",
+          "label": "Text encoder",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "text_encoders",
+          "advanced": true
+        },
+        {
+          "key": "vae",
+          "label": "Video VAE",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "vae",
+          "advanced": true
+        },
+        {
+          "key": "upscaler",
+          "label": "Spatial upscaler",
+          "widget": "select",
+          "default": "",
+          "optionsFrom": "latent_upscale_models",
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "control/apply",
+      "outputKind": "image",
+      "inputs": [
+        {
+          "id": "image",
+          "label": "Image",
+          "kind": "image",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "id": "image",
+          "label": "Control map",
+          "kind": "control",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "type",
+          "label": "Type",
+          "widget": "select",
+          "default": "pose",
+          "options": [
+            {
+              "value": "pose",
+              "label": "OpenPose (pose)"
+            },
+            {
+              "value": "depth_anything",
+              "label": "Depth-Anything V2 (depth, for Krea 2)"
+            },
+            {
+              "value": "depth",
+              "label": "MiDaS (depth)"
+            },
+            {
+              "value": "canny",
+              "label": "Canny edges (no model)"
+            }
+          ]
+        },
+        {
+          "key": "detect_resolution",
+          "label": "Detail resolution",
+          "widget": "number",
+          "default": 512,
+          "min": 256,
+          "max": 1536,
+          "step": 64,
+          "advanced": true
+        }
+      ]
+    },
+    {
+      "type": "train/dataset",
+      "outputKind": null,
+      "inputs": [],
+      "outputs": [
+        {
+          "id": "dataset",
+          "label": "Dataset",
+          "kind": "dataset",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "dataset_id",
+          "label": "Dataset",
+          "widget": "text",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "type": "train/caption",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "dataset",
+          "label": "Dataset",
+          "kind": "dataset",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "id": "dataset",
+          "label": "Dataset",
+          "kind": "dataset",
+          "required": false
+        }
+      ],
+      "params": [
+        {
+          "key": "overwrite",
+          "label": "Recaption everything",
+          "widget": "boolean",
+          "default": false
+        },
+        {
+          "key": "captioner",
+          "label": "Captioner",
+          "widget": "text",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "type": "train/lora",
+      "outputKind": null,
+      "inputs": [
+        {
+          "id": "dataset",
+          "label": "Dataset",
+          "kind": "dataset",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "id": "lora",
+          "label": "LoRA",
+          "kind": "lora",
+          "required": false
+        }
+      ],
+      "params": []
+    }
+  ]
+}

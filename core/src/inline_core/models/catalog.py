@@ -66,6 +66,17 @@ def _folder_has_weight(path: Path) -> bool:
     return any(_is_weight(child) for child in path.rglob("*"))
 
 
+def _sorted_dirs(root: Path) -> list[Path]:
+    """Visible subdirectories of a models root, in name order."""
+    try:
+        return sorted(
+            (p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")),
+            key=lambda p: p.name.lower(),
+        )
+    except OSError:
+        return []
+
+
 def _file_node(path: Path) -> dict[str, Any]:
     stat = path.stat()
     return {
@@ -77,8 +88,16 @@ def _file_node(path: Path) -> dict[str, Any]:
     }
 
 
-def _dir_node(path: Path, name: str) -> dict[str, Any] | None:
-    """A directory as a tree node, or None when it holds nothing worth showing."""
+def _dir_node(
+    path: Path,
+    name: str,
+    *,
+    keep_empty: bool = False,
+    suffixes: frozenset[str] = _WEIGHT_SUFFIXES,
+) -> dict[str, Any] | None:
+    """A directory as a tree node. None when it holds nothing worth showing, unless `keep_empty` -
+    a category the user can drop files into is worth listing even while it is empty, because the
+    panel answers "what is on disk" and an absent folder reads as one Core cannot see."""
     if not path.is_dir():
         return None
     children: list[dict[str, Any]] = []
@@ -90,13 +109,13 @@ def _dir_node(path: Path, name: str) -> dict[str, Any] | None:
         # Caches like loras/.cache and text_encoders/.snap are noise in a panel about weights.
         if entry.name.startswith("."):
             continue
-        if _is_weight(entry):
+        if _is_weight(entry, suffixes):
             children.append(_file_node(entry))
         elif entry.is_dir():
-            child = _dir_node(entry, entry.name)
+            child = _dir_node(entry, entry.name, suffixes=suffixes)
             if child is not None:
                 children.append(child)
-    if not children:
+    if not children and not keep_empty:
         return None
     return {
         "name": name,
@@ -158,8 +177,24 @@ class ModelCatalog:
             categories = [
                 node
                 for category in CATEGORIES
-                if (node := _dir_node(root / category, category)) is not None
+                if (
+                    node := _dir_node(
+                        root / category,
+                        category,
+                        keep_empty=True,
+                        # `characters` holds `.char`, not weights: the panel lists what the
+                        # dropdowns offer, so it has to use the same per-category rule.
+                        suffixes=_SUFFIXES_BY_CATEGORY.get(category, _WEIGHT_SUFFIXES),
+                    )
+                )
+                is not None
             ]
+            # Anything else the user has put in the root, so the panel mirrors the folder rather
+            # than only the categories this build happens to know about.
+            known = set(CATEGORIES)
+            for entry in _sorted_dirs(root):
+                if entry.name not in known and (node := _dir_node(entry, entry.name)) is not None:
+                    categories.append(node)
             out.append(
                 {
                     "path": str(root),

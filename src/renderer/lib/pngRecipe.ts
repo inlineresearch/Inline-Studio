@@ -23,6 +23,33 @@ export interface RecipeConnector {
   data: Record<string, unknown>
 }
 
+/** 2 typed every param and moved each node's models beside it; 1 was a flat param map. */
+export const RECIPE_VERSION = 2
+
+/** What a param is, so a reader never has to guess it from the param's name. */
+export type RecipeParamType =
+  | 'string'
+  | 'text'
+  | 'number'
+  | 'boolean'
+  | 'enum'
+  | 'seed'
+  | 'model'
+  | 'character'
+  | 'file'
+
+export interface RecipeParam {
+  type: RecipeParamType
+  value: unknown
+}
+
+/** Where a model comes from: its models/ folder and a direct link. Mirrors Comfy's node models. */
+export interface RecipeModel {
+  directory: string
+  name: string
+  url: string
+}
+
 export interface Recipe {
   version?: number
   app?: string
@@ -124,4 +151,21 @@ export async function readRecipeFromJsonFile(file: Blob): Promise<Recipe | null>
   } catch {
     return null
   }
+}
+
+/**
+ * A node's params as plain values, from either shape.
+ *
+ * v2 types every param as {type, value}; v1 stored the bare value. Files already exported carry
+ * v1, and an image someone generated last week has to keep rebuilding its graph.
+ */
+export function paramValues(params: unknown): Record<string, unknown> {
+  if (!params || typeof params !== 'object') return {}
+  const out: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(params as Record<string, unknown>)) {
+    const typed =
+      entry && typeof entry === 'object' && 'value' in (entry as Record<string, unknown>)
+    out[key] = typed ? (entry as { value: unknown }).value : entry
+  }
+  return out
 }

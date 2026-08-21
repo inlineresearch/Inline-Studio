@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { isModelPort, portKindColor, type CorePort } from '@shared/coreNodes'
+import { type NodeProps } from '@xyflow/react'
+import { isModelPort } from '@shared/coreNodes'
 import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { useCoreNodesStore } from '../../../store/coreNodesStore'
 import { useGenerationStore } from '../../../store/generationStore'
@@ -15,10 +15,12 @@ import { matchControlAspect } from '../../../lib/matchControlAspect'
 import { resolveCoreInputThumbs } from './coreInputThumbs'
 import { CoreOutputPreview, CoreOutputThumb } from './CoreOutputPreview'
 import { NodeFrame } from './NodeFrame'
+import { bottomStyle, compactNodeMinHeight, topStyle } from './nodeSize'
+import { PortHandle } from './PortHandle'
 import { ReferenceStrip } from './ReferenceStrip'
-import { scoreTone, scoreTitle } from '@/lib/continuity'
+import { scoreSuffix, scoreTone, scoreTitle } from '@/lib/continuity'
 import { NodeRunToolbar } from './NodeRunToolbar'
-import { missingInputs, missingInputsMessage } from '../missingInputs'
+import { missingInputs, missingInputsMessage, optionsWithPick } from '../missingInputs'
 import { useGraphMenu } from './useGraphMenu'
 import {
   AdjustIcon,
@@ -28,6 +30,7 @@ import {
   ImageGlyph,
   NodeBadge,
   NodeBadgeRow,
+  SparkleIcon,
   SquareIcon,
   TypeIcon,
   WandIcon,
@@ -41,47 +44,7 @@ interface GraphNodeData extends Record<string, unknown> {
 // Handles are packed against an edge rather than spread down the whole side: content/signal ports
 // stack from the top, model-family ports (model/vae/text-encoder) stack from the bottom - so model
 // wiring reads as one band along the bottom and the image flow runs across the top.
-const HANDLE_BASE = 18 // px from the packed edge to the first dot
-const HANDLE_GAP = 22 // px between stacked dots
-
-function topStyle(index: number): React.CSSProperties {
-  return { top: HANDLE_BASE + index * HANDLE_GAP }
-}
-
-function bottomStyle(index: number): React.CSSProperties {
-  return { top: 'auto', bottom: HANDLE_BASE + index * HANDLE_GAP }
-}
-
 /** One colored port dot with a hover chip naming the port - input (left) or output (right). */
-function PortHandle({
-  port,
-  side,
-  style,
-}: {
-  port: CorePort
-  side: 'input' | 'output'
-  style: React.CSSProperties
-}): React.JSX.Element {
-  const input = side === 'input'
-  return (
-    <Handle
-      type={input ? 'target' : 'source'}
-      id={port.id}
-      position={input ? Position.Left : Position.Right}
-      style={{ ...style, background: portKindColor(port.kind) }}
-      className="group !h-3 !w-3 !border-2 !border-surface"
-    >
-      <span
-        className={`pointer-events-none absolute top-1/2 z-50 hidden -translate-y-1/2 whitespace-nowrap rounded bg-black/90 px-1.5 py-0.5 text-[10px] leading-none text-zinc-100 shadow group-hover:block ${
-          input ? 'right-full mr-2' : 'left-full ml-2'
-        }`}
-      >
-        {port.label} <span className="text-zinc-400">· {port.kind}</span>
-      </span>
-    </Handle>
-  )
-}
-
 /** Map a Core descriptor's `icon` string to a node-family glyph (falls back to the square). */
 function coreGlyph(icon: string): React.JSX.Element {
   switch (icon) {
@@ -93,6 +56,8 @@ function coreGlyph(icon: string): React.JSX.Element {
       return <TypeIcon />
     case 'image':
       return <ImageGlyph />
+    case 'sparkles':
+      return <SparkleIcon />
     default:
       return <SquareIcon />
   }
@@ -127,15 +92,13 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // This node is the selected graph's output node → it floats the graph's single Run control.
   const isRunTarget = useGraphSelectionStore((s) => s.runTargets.includes(itemId))
   const busy = useGenerationStore((s) => s.busyByFrame[itemId] ?? false)
+  // Green follows the node actually executing, not only the one Run was pressed on; red stays on
+  // whichever node stopped the run, which in a chain is rarely the same node.
+  const executing = useGenerationStore((s) => s.runningNode === itemId)
+  const failed = useGenerationStore((s) => s.failedNode === itemId)
   const progress = useGenerationStore((s) => s.progressByFrame[itemId])
   const status = useGenerationStore((s) => s.statusByFrame[itemId])
-  // Read before the early returns below, because hooks cannot be called conditionally.
-  const activeOutput = item?.data?.core?.output
-  const graphMenu = useGraphMenu(
-    itemId,
-    descriptor?.title ?? 'graph',
-    activeOutput?.kind === 'image' ? activeOutput.takeId : undefined,
-  )
+  const graphMenu = useGraphMenu(itemId, descriptor?.title ?? 'graph')
 
   // Model requirements (per node type) drive the blinking "missing models" hint + its popup, and
   // surface an in-node download indicator. Refetched when the model registry version changes (a
@@ -168,7 +131,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         minWidth={200}
         minHeight={92}
         subtleSelect
-        running={busy}
+        running={busy || executing}
       >
         <div className="flex h-full flex-col items-center justify-center gap-1 p-3 text-center">
           {coreType && disabledPack ? (
@@ -263,17 +226,22 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         (c.data as { targetHandle?: string }).targetHandle === 'control_image',
     )
 
-  // A loader/plumbing node (no media output) renders compact - no preview, no Run (it loads with
-  // whatever downstream node runs). Generation nodes get the full preview card + the graph Run
-  // control floated on the output node.
+  // A node with no media output renders compact: no preview card, since there is nothing to show.
   const isLoader = descriptor.outputKind == null
+  // Run belongs on whatever ends the graph. A media node always ends one; a node with no media
+  // output ends it only when nothing downstream consumes it, which is what separates Write .char
+  // (the end of a character graph) from a loader feeding the node that will run it.
+  const feedsSomething = connectors.some((c) => c.fromItemId === itemId)
+  const showRun = !isLoader || !feedsSomething
   const fileParam = core?.params?.file
   // Name the weights rather than saying "Auto": the point of the label is to tell you what will
   // load. A generation node's provider resolves this; a plain loader has none, so fall back to the
   // first file in its catalog, which is the one the engine auto-picks anyway.
   const fileField = descriptor.params.find((p) => p.key === 'file')
   const fileFallback = fileField?.default || fileField?.options?.[0]?.value
-  const fileLabel = String(fileParam || fileFallback || 'Not installed')
+  // Only a node that picks a weights file has one to name; a character node has no `file` param,
+  // and calling that "Not installed" reads as broken rather than as nothing to show.
+  const fileLabel = fileField ? String(fileParam || fileFallback || 'Not installed') : ''
   // An extension-provided node carries its owning extension's id (`ext:<id>:<module>`) - surface it
   // as a chip so it's clear which extension a canvas node came from.
   const extName = isExtensionNode(descriptor.source) ? extensionOf(descriptor.source) : null
@@ -303,33 +271,87 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const handles = (
     <>
       {inContent.map((port, i) => (
-        <PortHandle key={port.id} port={port} side="input" style={topStyle(i)} />
+        <PortHandle
+          key={port.id}
+          id={port.id}
+          label={port.label}
+          kind={port.kind}
+          side="input"
+          style={topStyle(i)}
+        />
       ))}
       {inModel.map((port, i) => (
-        <PortHandle key={port.id} port={port} side="input" style={bottomStyle(i)} />
+        <PortHandle
+          key={port.id}
+          id={port.id}
+          label={port.label}
+          kind={port.kind}
+          side="input"
+          style={bottomStyle(i)}
+        />
       ))}
       {outContent.map((port, i) => (
-        <PortHandle key={port.id} port={port} side="output" style={topStyle(i)} />
+        <PortHandle
+          key={port.id}
+          id={port.id}
+          label={port.label}
+          kind={port.kind}
+          side="output"
+          style={topStyle(i)}
+        />
       ))}
       {outModel.map((port, i) => (
-        <PortHandle key={port.id} port={port} side="output" style={bottomStyle(i)} />
+        <PortHandle
+          key={port.id}
+          id={port.id}
+          label={port.label}
+          kind={port.kind}
+          side="output"
+          style={bottomStyle(i)}
+        />
       ))}
     </>
   )
+
+  const runToolbar = showRun ? (
+    <NodeRunToolbar
+      isTarget={isRunTarget}
+      busy={busy}
+      onRun={() => void runWorkflow(itemId)}
+      onStop={() => void cancel(itemId)}
+      disabled={download !== null}
+      disabledReason="Downloading model…"
+      menuItems={graphMenu.items}
+      menuNote={graphMenu.note}
+    />
+  ) : null
 
   if (isLoader) {
     // A loader's whole job is picking a file, so its SELECT dropdown(s) live directly on the node
     // face (not behind Adjust) - the one exception to "params off the node face", which exists to
     // keep *generation* one-click. Any non-select params (rare for a loader) stay behind Adjust.
-    const selectParams = descriptor.params.filter((p) => p.widget === 'select')
-    const otherParams = descriptor.params.filter((p) => p.widget !== 'select')
-    const setParam = (key: string, value: string): void => {
+    // A select has always sat on the face; anything else opts in with `onFace`. Adjust still
+    // lists every param, so the face is a shortcut to the ones worth seeing, never the only way in.
+    const onFace = (field: (typeof descriptor.params)[number]): boolean =>
+      field.onFace ?? field.widget === 'select'
+    const faceParams = descriptor.params.filter(onFace)
+    const otherParams = descriptor.params.filter((p) => !onFace(p))
+    // Numbers store as numbers: the recipe declares each param's type, and a string under
+    // `type: "number"` leaves a reader guessing. Coerced only when it round-trips, so a half-typed
+    // "0." survives long enough to become "0.5".
+    const setParam = (key: string, value: string, widget?: string): void => {
+      const trimmed = value.trim()
+      const stored: string | number =
+        widget === 'number' && trimmed !== '' && String(Number(trimmed)) === trimmed
+          ? Number(trimmed)
+          : value
       void updateItem(itemId, {
-        data: { ...item.data, core: { ...core, params: { ...core.params, [key]: value } } },
+        data: { ...item.data, core: { ...core, params: { ...core.params, [key]: stored } } },
       })
     }
     return (
       <>
+        {runToolbar}
         <NodeBadgeRow dragNodeId={id}>
           <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>
           {extName && (
@@ -358,15 +380,36 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           id={id}
           selected={!!selected}
           minWidth={188}
-          minHeight={44}
+          minHeight={compactNodeMinHeight(descriptor)}
           padded={false}
           subtleSelect
-          running={busy}
-          invalid={missing.length > 0}
+          running={busy || executing}
+          invalid={missing.length > 0 || failed}
         >
           <div className="flex h-full w-full flex-col gap-1 px-2 py-1.5">
-            {selectParams.length > 0 ? (
-              selectParams.map((field) => {
+            {faceParams.length > 0 ? (
+              faceParams.map((field) => {
+                if (field.widget !== 'select') {
+                  // Unset shows the default the run will actually use; cleared stays cleared. The
+                  // two are distinguishable, and a box reading empty beside a strength of 1 is the
+                  // node claiming it has no value.
+                  const held = core.params?.[field.key]
+                  const isNumber = field.widget === 'number'
+                  return (
+                    <input
+                      key={field.key}
+                      type={isNumber ? 'number' : 'text'}
+                      min={isNumber ? field.min : undefined}
+                      max={isNumber ? field.max : undefined}
+                      step={isNumber ? field.step : undefined}
+                      value={String(held ?? field.default ?? '')}
+                      placeholder={field.label}
+                      title={field.label}
+                      onChange={(e) => setParam(field.key, e.target.value, field.widget)}
+                      className="nodrag w-full min-w-0 rounded border border-border bg-panel px-1.5 py-1 text-[10px] text-zinc-200 outline-none focus:border-accent"
+                    />
+                  )
+                }
                 const opts = field.options ?? []
                 const hasAuto = opts.some((o) => o.value === '')
                 // A node saved before Core resolved these still stores "", which matches no option
@@ -376,6 +419,9 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                 // blank select. Display only - the stored value stays empty until the user picks.
                 const fallback = field.default || opts[0]?.value || ''
                 const selected = stored == null || stored === '' ? fallback : stored
+                // A pick the catalog lacks stays in the list, or the select renders blank and the
+                // name the graph arrived with is gone.
+                const shown = optionsWithPick(opts, String(selected))
                 return (
                   <select
                     key={field.key}
@@ -388,7 +434,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                     {!hasAuto && !field.default && (
                       <option value="">{`Select ${field.label}`}</option>
                     )}
-                    {opts.map((o) => (
+                    {shown.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>
@@ -396,12 +442,16 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                   </select>
                 )
               })
-            ) : (
+            ) : fileLabel ? (
               <span
                 className="min-w-0 flex-1 truncate px-1 font-mono text-[10px] text-zinc-400"
                 title={fileLabel}
               >
                 {fileLabel}
+              </span>
+            ) : (
+              <span className="min-w-0 flex-1 truncate px-1 text-[10px] text-zinc-500">
+                {descriptor.title}
               </span>
             )}
             {otherParams.length > 0 && (
@@ -426,16 +476,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   return (
     <>
       {/* The graph's single Run control, floated above this output node while the graph is selected. */}
-      <NodeRunToolbar
-        isTarget={isRunTarget}
-        busy={busy}
-        onRun={() => void runWorkflow(itemId)}
-        onStop={() => void cancel(itemId)}
-        disabled={download !== null}
-        disabledReason="Downloading model…"
-        menuItems={graphMenu.items}
-        menuNote={graphMenu.note}
-      />
+      {runToolbar}
       {/* Floating title badge - matches the fal Generate node. */}
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={coreGlyph(descriptor.icon)}>{descriptor.title}</NodeBadge>
@@ -493,8 +534,8 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
         minHeight={200}
         padded={false}
         subtleSelect
-        running={busy}
-        invalid={missing.length > 0}
+        running={busy || executing}
+        invalid={missing.length > 0 || failed}
       >
         <div className="relative flex h-full w-full flex-col">
           {/* Edge-to-edge output preview. */}
@@ -584,10 +625,11 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       unmeasurable take must not read as a zero-scoring one. */}
                   {o.continuityScore !== undefined && (
                     <span
-                      title={scoreTitle(o.continuityScore)}
+                      title={scoreTitle(o.continuityScore, o.continuityFaceOnly)}
                       className={`pointer-events-none absolute left-0.5 top-0.5 rounded bg-black/85 px-1 text-[8px] leading-tight ${scoreTone(o.continuityScore)}`}
                     >
                       {Math.round(o.continuityScore)}
+                      {scoreSuffix(o.continuityFaceOnly)}
                     </span>
                   )}
                 </button>

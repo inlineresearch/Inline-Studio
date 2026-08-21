@@ -82,6 +82,7 @@ def test_register_adds_both_nodes() -> None:
     descriptor = registry.get("krea/krea-2-turbo")
     assert [p.id for p in descriptor.inputs] == [
         "prompt", "model", "vae", "text_encoder", "lora", "image", "control_image",
+        "character",
     ]
     assert descriptor.input("prompt").required
     assert descriptor.output_kind is not None

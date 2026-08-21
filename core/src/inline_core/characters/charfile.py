@@ -37,7 +37,7 @@ MANIFEST_NAME = "manifest.json"
 #: Fixed so the signature lands at byte 0 and two writes produce identical bytes.
 _KEY_ORDER = (
     "magic", "format_version", "char_id", "name", "created_at", "modified_at", "app",
-    "app_version", "refs", "derived", "text", "payloads", "scoring", "hints", "reserved",
+    "app_version", "refs", "derived", "text", "payloads", "scoring", "hints", "apply", "reserved",
 )
 
 
@@ -58,6 +58,9 @@ class Manifest:
     payloads: dict[str, Any] = field(default_factory=dict)
     scoring: dict[str, Any] = field(default_factory=dict)
     hints: list[str] = field(default_factory=list)
+    #: arch -> "reference" | "lora". Absent means "whatever this model does best", resolved at
+    #: apply time, so an older file needs no migration.
+    apply: dict[str, str] = field(default_factory=dict)
     reserved: dict[str, Any] = field(
         default_factory=lambda: {"adapters": {}, "video_payloads": {}, "members": []}
     )
@@ -78,6 +81,7 @@ class Manifest:
             "payloads": self.payloads,
             "scoring": self.scoring,
             "hints": self.hints,
+            "apply": self.apply,
             "reserved": self.reserved,
         }
 
@@ -95,6 +99,7 @@ class Manifest:
             payloads=dict(raw.get("payloads") or {}),
             scoring=dict(raw.get("scoring") or {}),
             hints=list(raw.get("hints") or []),
+            apply={str(k): str(v) for k, v in (raw.get("apply") or {}).items()},
             reserved=dict(raw.get("reserved") or {}),
         )
 

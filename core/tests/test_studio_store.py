@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -136,3 +137,38 @@ def test_restore_forgets_a_project_that_moved(tmp_path) -> None:
     assert restarted.current_project() is None
     # Forgotten, not retried on every call.
     assert not (tmp_path / "appdata" / "last_project").exists()
+
+
+# --- Hugging Face token ---------------------------------------------------------------------------
+
+
+def test_a_stored_token_reaches_the_environment(tmp_path, monkeypatch) -> None:
+    """The environment is the one place that covers every download path at once."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    store = _store(tmp_path)
+
+    assert store.hf_status()["configured"] is False
+    store.set_hf_key("hf_abc123")
+
+    assert os.environ["HF_TOKEN"] == "hf_abc123"
+    assert store.hf_status()["configured"] is True
+
+
+def test_a_token_survives_a_restart(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    _store(tmp_path).set_hf_key("hf_abc123")
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)  # a fresh process
+    fresh = _store(tmp_path)
+    fresh.apply_hf_token()
+
+    assert os.environ["HF_TOKEN"] == "hf_abc123"
+
+
+def test_clearing_removes_it_from_the_environment(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    store = _store(tmp_path)
+    store.set_hf_key("hf_abc123")
+
+    assert store.clear_hf_key() == {"configured": False, "encrypted": False}
+    assert "HF_TOKEN" not in os.environ

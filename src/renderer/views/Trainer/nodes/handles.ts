@@ -1,7 +1,10 @@
-/** Port ids for the Trainer canvas. `dataset` flows Load Dataset → Caption → Trainer; `run` flows
- * Trainer → Graph. Colours match the handle styling convention (one colour per port kind). */
+/** Port ids for the training nodes. `dataset` flows Load Dataset → Caption → Train LoRA, whose two
+ * outputs are the adapter and its step/loss series. One colour per port kind, as everywhere else. */
 export const DATASET_HANDLE = 'dataset'
-export const RUN_HANDLE = 'run'
+/** The step/loss series the curve plots; named `run` in graphs made before it had its own kind. */
+export const METRICS_HANDLE = 'metrics'
+/** The trained adapter, so Attach Adapter can file it as a character's payload. */
+export const LORA_HANDLE = 'lora'
 
 /** Walk a node's incoming `dataset` edge to the dataset it was wired to, if any. */
 export function wiredDatasetId(

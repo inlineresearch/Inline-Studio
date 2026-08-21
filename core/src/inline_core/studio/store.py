@@ -341,6 +341,53 @@ class StudioStore:
         settings["coreUrl"] = url.strip() or self._default_core_url
         return self._save_settings(settings)
 
+    # --- Hugging Face token (app-global, server-side only) --------------------------------------
+
+    def _hf_token_file(self) -> Path:
+        return self._app_data / "hf_token"
+
+    def hf_token(self) -> str | None:
+        file = self._hf_token_file()
+        if not file.exists():
+            env = os.environ.get("HF_TOKEN", "").strip()
+            return env or None
+        try:
+            return file.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+
+    def hf_status(self) -> dict[str, bool]:
+        # Same frozen `ApiKeyStatus` shape the fal key uses; the renderer reads `configured`.
+        return {"configured": self.hf_token() is not None, "encrypted": False}
+
+    def set_hf_key(self, key: str) -> dict[str, bool]:
+        file = self._hf_token_file()
+        file.write_text(key.strip(), encoding="utf-8")
+        try:
+            file.chmod(0o600)  # owner-only: the token never leaves the server side
+        except OSError:
+            pass
+        self.apply_hf_token()
+        return self.hf_status()
+
+    def clear_hf_key(self) -> dict[str, bool]:
+        try:
+            self._hf_token_file().unlink(missing_ok=True)
+        except OSError:
+            pass
+        os.environ.pop("HF_TOKEN", None)
+        return {"configured": False, "encrypted": False}
+
+    def apply_hf_token(self) -> None:
+        """Publish a stored token as ``HF_TOKEN`` for this process.
+
+        Every download already uses huggingface_hub's ambient token - the model popup, the
+        one-time config assets, the character scoring encoders - so putting it in the environment
+        reaches all three rather than threading a parameter through each."""
+        token = self.hf_token()
+        if token:
+            os.environ["HF_TOKEN"] = token
+
     # --- fal API key (app-global, server-side only) ---------------------------------------------
 
     def _fal_key_file(self) -> Path:

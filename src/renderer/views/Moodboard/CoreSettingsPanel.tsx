@@ -4,6 +4,7 @@ import { useMoodboardStore } from '../../store/moodboardStore'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
 import { useSettingsDraft } from '../../lib/useSettingsDraft'
 import { CoreParamWidget } from './CoreParamWidget'
+import { wiredParams } from './wiredParams'
 import { SettingsHeader } from './SettingsHeader'
 
 /**
@@ -20,6 +21,15 @@ export function CoreSettingsPanel(): React.JSX.Element | null {
   const core = item?.type === 'core' ? item.data.core : undefined
   const descriptor = useCoreNodesStore((s) =>
     core ? s.descriptors.find((d) => d.type === core.type) : undefined,
+  )
+
+  // A param that is also an input port is overridden by whatever is wired to it, so the panel has
+  // to show the value the run will use rather than the one that was typed and will be ignored.
+  const items = useMoodboardStore((s) => s.items)
+  const connectors = useMoodboardStore((s) => s.connectors)
+  const wired = useMemo(
+    () => wiredParams(itemId ?? '', descriptor, items, connectors),
+    [itemId, descriptor, items, connectors],
   )
 
   const defaults = useMemo(
@@ -41,11 +51,16 @@ export function CoreSettingsPanel(): React.JSX.Element | null {
     persist,
   )
 
+  // Armed only while this panel is really on screen: for a node it does not serve (a training one,
+  // whose sidebar is TrainerSettingsPanel) `rootRef` is null, so every click counted as outside and
+  // closed that panel on its first keystroke.
+  const open = Boolean(itemId && item && core && descriptor)
+
   // Close when clicking outside the panel - except the node's adjust (toggle) button, which manages
   // open/close itself (shared attribute with the fal settings panel; only one is open at a time).
   // Flush pending edits before closing so a click-away never drops the last change.
   useEffect(() => {
-    if (!itemId) return
+    if (!open) return
     const onDown = (e: PointerEvent): void => {
       const target = e.target as HTMLElement | null
       if (!target || rootRef.current?.contains(target)) return
@@ -55,7 +70,7 @@ export function CoreSettingsPanel(): React.JSX.Element | null {
     }
     document.addEventListener('pointerdown', onDown)
     return () => document.removeEventListener('pointerdown', onDown)
-  }, [itemId, close, apply])
+  }, [open, close, apply])
 
   if (!itemId || !item || !core || !descriptor) return null
 
@@ -74,6 +89,7 @@ export function CoreSettingsPanel(): React.JSX.Element | null {
               key={field.key}
               field={field}
               value={local[field.key]}
+              wired={wired.get(field.key)}
               onChange={(v) => change(field.key, v)}
               onCommit={(v) => change(field.key, v)}
             />

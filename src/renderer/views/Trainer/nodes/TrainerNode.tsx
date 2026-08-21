@@ -6,13 +6,15 @@
  * `runId` is persisted in the node's data, so the node rebinds to its run after a reload and can
  * still offer Resume. Hyperparameters live in the Adjust sidebar, never on the node face.
  */
-import { useEffect, useRef, useState } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { type NodeProps } from '@xyflow/react'
+import { PortHandle } from '../../Moodboard/nodes/PortHandle'
+import { topStyle } from '../../Moodboard/nodes/nodeSize'
 import type { TrainingRun } from '@shared/types'
 import { useTrainingStore } from '../../../store/trainingStore'
+import { useGenerationStore } from '../../../store/generationStore'
 import { copyText } from '../../../lib/clipboard'
 import { CopyIcon } from '../../../components/icons'
-import { useTrainerBoardStore } from '../../../store/trainerBoardStore'
 import { useCoreNodesStore } from '../../../store/coreNodesStore'
 import { activeDownload, useModelRequirementsStore } from '../../../store/modelRequirementsStore'
 import { NodeFrame } from '../../Moodboard/nodes/NodeFrame'
@@ -24,17 +26,11 @@ import {
   WandIcon,
 } from '../../Moodboard/nodes/NodeBadge'
 import { NodeRunToolbar } from '../../Moodboard/nodes/NodeRunToolbar'
-import { DATASET_HANDLE, RUN_HANDLE, wiredDatasetId } from './handles'
+import { DATASET_HANDLE, LORA_HANDLE, METRICS_HANDLE, wiredDatasetId } from './handles'
+import { useBoardActions } from '../../Moodboard/nodes/boardActions'
 
-/** The training arch + base maps to the generation node type whose weights it trains on, so the
- * Trainer node can reuse that node's requirements check + download flow. */
-function requirementType(arch: string, baseMode: string): string {
-  if (arch === 'krea2')
-    return baseMode === 'turbo_adapter' ? 'krea/krea-2-turbo' : 'krea/krea-2-raw'
-  if (arch === 'flux2') return 'black-forest-labs/flux-2'
-  if (arch === 'minimax-h3') return 'minimax/h3-text-to-video'
-  return 'alibaba/z-image-turbo'
-}
+/** This node's own type, which is what declares the base checkpoint and the training adapter. */
+const TRAIN_NODE = 'train/lora'
 
 const DEFAULT_HP = {
   baseMode: 'deturbo' as const,
@@ -60,16 +56,12 @@ function controlFor(run: TrainingRun | null): Control {
 }
 
 export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
-  const item = useTrainerBoardStore((s) => s.items.find((i) => i.id === id))
-  const items = useTrainerBoardStore((s) => s.items)
-  const connectors = useTrainerBoardStore((s) => s.connectors)
-  const patchData = useTrainerBoardStore((s) => s.patchData)
-  const toggleSettings = useTrainerBoardStore((s) => s.toggleSettings)
-  const settingsItemId = useTrainerBoardStore((s) => s.settingsItemId)
+  const { items, connectors, toggleSettings, settingsItemId } = useBoardActions()
+  const item = items.find((i) => i.id === id)
 
+  const runWorkflow = useGenerationStore((s) => s.runWorkflow)
   const runs = useTrainingStore((s) => s.runs)
   const loadRuns = useTrainingStore((s) => s.loadRuns)
-  const start = useTrainingStore((s) => s.start)
   const cancel = useTrainingStore((s) => s.cancel)
   const resume = useTrainingStore((s) => s.resume)
   const datasets = useTrainingStore((s) => s.datasets)
@@ -83,8 +75,10 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
   const progress = useTrainingStore((s) => (runId ? s.progressByRun[runId] : undefined))
   const logs = useTrainingStore((s) => (runId ? s.logsByRun[runId] : undefined)) ?? []
 
+  // Datasets too: the node can carry its own dataset id with no Load Dataset node on the canvas.
   useEffect(() => {
     void loadRuns()
+    void useTrainingStore.getState().loadDatasets()
   }, [loadRuns])
 
   // Follow the tail, but only while the user is already at the bottom - otherwise scrolling back
@@ -112,18 +106,29 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
   const control = controlFor(run)
   const hp = { ...DEFAULT_HP, ...(item?.data.hyperparams ?? {}) }
 
-  // Same "missing models" hint the Generate / Core nodes show: resolve the base this run needs to
-  // its generation node type, check its requirements, and blink a chip that opens the download popup.
+  // The same "missing models" hint the Generate / Core nodes show, asked of this node rather than
+  // of a generation node standing in for it. Borrowing one checked the wrong list: Turbo mode's
+  // de-distillation adapter belongs to training and no generation node ever loads it.
   const arch = (item?.data.hyperparams as { arch?: string } | undefined)?.arch ?? 'z-image'
-  const reqType = requirementType(arch, hp.baseMode)
+  const reqParams = useMemo(
+    () => ({ hyperparams: { arch, baseMode: hp.baseMode } }),
+    [arch, hp.baseMode],
+  )
+  // Keyed per arch and base, or two Train LoRA nodes would overwrite each other's answer.
+  const reqKey = `${TRAIN_NODE}:${arch}:${hp.baseMode}`
+  useEffect(() => {
+    void useModelRequirementsStore
+      .getState()
+      .checkOnUse(TRAIN_NODE, 'Training needs the base model.', reqParams, reqKey)
+  }, [reqKey, reqParams])
   const registryVersion = useCoreNodesStore((s) => s.registryVersion)
   const loadReqs = useModelRequirementsStore((s) => s.load)
   const openReqs = useModelRequirementsStore((s) => s.open)
-  const reqs = useModelRequirementsStore((s) => s.byType[reqType])
-  const downloadsForType = useModelRequirementsStore((s) => s.downloads[reqType])
+  const reqs = useModelRequirementsStore((s) => s.byType[reqKey])
+  const downloadsForType = useModelRequirementsStore((s) => s.downloads[reqKey])
   useEffect(() => {
-    void loadReqs(reqType)
-  }, [reqType, registryVersion, loadReqs])
+    void loadReqs(TRAIN_NODE, reqParams, reqKey)
+  }, [reqKey, reqParams, registryVersion, loadReqs])
   const modelsMissing = reqs ? !reqs.allPresent : false
   const download = downloadsForType ? activeDownload(downloadsForType, reqs) : null
 
@@ -133,11 +138,12 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
 
   const onControl = async (): Promise<void> => {
     if (control === 'stop' && runId) return void cancel(runId)
+    // Resume picks up one checkpoint, so it goes straight to the service; re-running the graph
+    // would recaption and start over, which is not what Resume means.
     if (control === 'resume' && runId) return void resume(runId)
     if (!datasetId) return
-    const created = await start(datasetId, hp)
-    // Persist the run so this node rebinds to it after a reload (and can offer Resume).
-    if (created) void patchData(id, { runId: created.id })
+    // Everything upstream runs first, in order. The node learns its run id from `trainingNodeBound`.
+    await runWorkflow(id)
   }
 
   const busy = control === 'stop'
@@ -166,7 +172,7 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
         </NodeBadge>
         {(modelsMissing || download) && (
           <button
-            onClick={() => openReqs(reqType)}
+            onClick={() => openReqs(reqKey)}
             title={download ? 'Downloading base model…' : 'Base model missing - click to download'}
             className={`nodrag flex h-6 items-center gap-1 rounded-full border px-2 text-[10px] font-medium shadow-sm backdrop-blur ${
               download
@@ -258,19 +264,21 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
           </div>
         </div>
       </NodeFrame>
-      <Handle
-        type="target"
-        position={Position.Left}
+      <PortHandle
         id={DATASET_HANDLE}
-        className="group !h-3 !w-3 !border-2 !border-surface !bg-sky-400"
-        title="Dataset"
+        label="Dataset"
+        kind="dataset"
+        side="input"
+        style={topStyle(0)}
       />
-      <Handle
-        type="source"
-        position={Position.Right}
-        id={RUN_HANDLE}
-        className="group !h-3 !w-3 !border-2 !border-surface !bg-violet-400"
-        title="Run"
+      {/* The adapter it produces, so a character can file it as its payload for this model. */}
+      <PortHandle id={LORA_HANDLE} label="LoRA" kind="lora" side="output" style={topStyle(0)} />
+      <PortHandle
+        id={METRICS_HANDLE}
+        label="Graph"
+        kind="metrics"
+        side="output"
+        style={topStyle(1)}
       />
     </>
   )

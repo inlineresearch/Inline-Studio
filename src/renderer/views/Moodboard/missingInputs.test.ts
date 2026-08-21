@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { NodeDescriptor } from '@shared/coreNodes'
-import { missingInputs, missingInputsMessage } from './missingInputs'
+import { missingInputs, missingInputsMessage, optionsWithPick } from './missingInputs'
 
 function descriptor(params: NodeDescriptor['params']): NodeDescriptor {
   return {
@@ -48,10 +48,13 @@ describe('missingInputs', () => {
     expect(missingInputs(undefined, { file: 'x.safetensors' })).toEqual([])
   })
 
-  it('says nothing when the catalog list is empty', () => {
-    // An empty option list means the scan has not landed, not that the file is absent.
+  it('flags a pick when the category is empty, which is when it is most certainly absent', () => {
+    // This read as "the scan has not landed" and stayed quiet, so a graph dropped onto a machine
+    // with nothing installed - the case the marking exists for - was the one case it never marked.
     const empty = { ...LORA_FIELD, options: [] }
-    expect(missingInputs(descriptor([empty]), { file: 'x.safetensors' })).toEqual([])
+    expect(missingInputs(descriptor([empty]), { file: 'x.safetensors' })).toEqual([
+      { key: 'file', label: 'LoRA', value: 'x.safetensors' },
+    ])
   })
 
   it('ignores params with no catalog behind them', () => {
@@ -81,5 +84,37 @@ describe('missingInputsMessage', () => {
     ])
     expect(message).toContain('LoRA: a.safetensors')
     expect(message).toContain('VAE: b.safetensors')
+  })
+})
+
+describe('optionsWithPick', () => {
+  const catalog = [
+    { value: 'a.safetensors', label: 'a.safetensors' },
+    { value: 'b.safetensors', label: 'b.safetensors' },
+  ]
+
+  it('keeps a pick the catalog does not have, so the name survives the import', () => {
+    // A native select whose value matches no option renders blank, so the model the graph arrived
+    // with vanished - the one thing needed to go and fetch the right file.
+    const shown = optionsWithPick(catalog, 'gone.safetensors')
+    expect(shown[0]).toEqual({
+      value: 'gone.safetensors',
+      label: 'gone.safetensors (not installed)',
+    })
+    expect(shown).toHaveLength(3)
+  })
+
+  it('leaves an installed pick where the catalog put it', () => {
+    expect(optionsWithPick(catalog, 'b.safetensors')).toEqual(catalog)
+  })
+
+  it('adds nothing for an empty pick, which names no file', () => {
+    expect(optionsWithPick(catalog, '')).toEqual(catalog)
+  })
+
+  it('never mutates the catalog it was given', () => {
+    const original = [...catalog]
+    optionsWithPick(catalog, 'gone.safetensors')
+    expect(catalog).toEqual(original)
   })
 })

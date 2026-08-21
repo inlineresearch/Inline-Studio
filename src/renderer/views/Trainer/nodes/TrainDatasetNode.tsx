@@ -4,18 +4,20 @@
  * opens when the node is selected - keeping heavy editing off the card, like every other node.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
+import { PortHandle } from '../../Moodboard/nodes/PortHandle'
+import { topStyle } from '../../Moodboard/nodes/nodeSize'
 import { PairTile } from '../PairTile'
 import { useAssetStore } from '../../../store/assetStore'
 import { useTrainingStore } from '../../../store/trainingStore'
-import { useTrainerBoardStore } from '../../../store/trainerBoardStore'
 import { NodeFrame } from '../../Moodboard/nodes/NodeFrame'
 import { LayersIcon, NodeBadge, NodeBadgeRow } from '../../Moodboard/nodes/NodeBadge'
 import { DATASET_HANDLE } from './handles'
+import { useBoardActions } from '../../Moodboard/nodes/boardActions'
 
 export function TrainDatasetNode({ id, selected }: NodeProps): React.JSX.Element {
-  const item = useTrainerBoardStore((s) => s.items.find((i) => i.id === id))
-  const patchData = useTrainerBoardStore((s) => s.patchData)
+  const { items: board, patchData } = useBoardActions()
+  const item = board.find((i) => i.id === id)
   const datasets = useTrainingStore((s) => s.datasets)
   const loadDatasets = useTrainingStore((s) => s.loadDatasets)
   const loadItems = useTrainingStore((s) => s.loadItems)
@@ -118,12 +120,12 @@ export function TrainDatasetNode({ id, selected }: NodeProps): React.JSX.Element
           </div>
         </div>
       </NodeFrame>
-      <Handle
-        type="source"
-        position={Position.Right}
+      <PortHandle
         id={DATASET_HANDLE}
-        className="group !h-3 !w-3 !border-2 !border-surface !bg-sky-400"
-        title="Dataset"
+        label="Dataset"
+        kind="dataset"
+        side="output"
+        style={topStyle(0)}
       />
     </>
   )

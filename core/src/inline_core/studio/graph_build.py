@@ -22,6 +22,9 @@ from typing import Any
 from . import frames as fr
 from . import moodboard as mb
 
+#: Item types whose input edges the outer pass resolves. Everything else is a frozen source.
+_WIRED_TYPES = ("core", "train/caption", "train/lora")
+
 
 def _source_output_port(
     source: dict[str, Any] | None,
@@ -130,6 +133,29 @@ def _item_to_node(
             "type": data["core"]["type"],
             "params": data["core"].get("params") or {},
             "inputs": _edges_for(item["id"], connectors, by_id, is_list_port, fanned_out),
+        }
+    # Training nodes carry their selection in item data, not in a core param blob: a dataset is a
+    # project row and the hyperparams are edited in the node's own sidebar.
+    if item["type"] == "train/dataset":
+        return {
+            "id": item["id"],
+            "type": "train/dataset",
+            "params": {"dataset_id": data.get("datasetId") or ""},
+        }
+    if item["type"] == "train/caption":
+        return {
+            "id": item["id"],
+            "type": "train/caption",
+            "params": {
+                "overwrite": bool(data.get("overwrite", False)),
+                "captioner": data.get("captioner") or "",
+            },
+        }
+    if item["type"] == "train/lora":
+        return {
+            "id": item["id"],
+            "type": "train/lora",
+            "params": {"hyperparams": data.get("hyperparams") or {}},
         }
     if item["type"] == "prompt":
         text = data.get("promptText") or ""
@@ -315,7 +341,7 @@ def build_workflow_graph(
     edges_by_node = {
         node_id: _edges_for(node_id, connectors, by_id, listed, fanned_out, source_path)
         for node_id in closure
-        if (by_id.get(node_id) or {}).get("type") == "core"
+        if (by_id.get(node_id) or {}).get("type") in _WIRED_TYPES
     }
 
     nodes: list[dict[str, Any]] = []

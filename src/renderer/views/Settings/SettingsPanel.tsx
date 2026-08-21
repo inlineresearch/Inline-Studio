@@ -1,7 +1,11 @@
+import { useEffect, useState } from 'react'
 import { FalKeyField } from '../../components/FalKeyField'
+import { HfTokenField } from '../../components/HfTokenField'
 import { CloseIcon, SettingsIcon } from '../../components/icons'
 import { useCanvasPrefsStore, type EdgeStyle } from '../../store/canvasPrefsStore'
 import { useExtensionsStore } from '../../store/extensionsStore'
+import { useModelRegistryStore } from '../../store/modelRegistryStore'
+import { ModelsDialog } from '../Models/ModelsDialog'
 
 /**
  * Right-hand Settings sidebar, opened from the workspace header's gear button. Holds
@@ -30,10 +34,16 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
           <FalKeyField />
         </section>
         <section className="rounded-lg border border-border bg-panel/40 p-3">
+          <HfTokenField />
+        </section>
+        <section className="rounded-lg border border-border bg-panel/40 p-3">
           <ConnectionStyleField />
         </section>
         <section className="rounded-lg border border-border bg-panel/40 p-3">
           <ExtensionsField />
+        </section>
+        <section className="rounded-lg border border-border bg-panel/40 p-3">
+          <ModelsField />
         </section>
       </div>
     </div>
@@ -41,6 +51,54 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
 }
 
 /** Opens the Extensions dialog, with a count of what is installed. */
+function ModelsField(): React.JSX.Element {
+  const entries = useModelRegistryStore((s) => s.entries)
+  const load = useModelRegistryStore((s) => s.load)
+  const [open, setOpen] = useState(false)
+  const here = entries.filter((e) => e.present).length
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
+        <span className="text-xs font-medium text-zinc-200">Models</span>
+        <span className="text-[11px] text-zinc-500">
+          {entries.length === 0
+            ? 'Browse and download published models.'
+            : `${here} of ${entries.length} installed.`}
+        </span>
+      </div>
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-[11px] font-medium text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+      >
+        <BoxIcon className="h-3.5 w-3.5" />
+        Manage models
+      </button>
+      <ModelsDialog open={open} onClose={() => setOpen(false)} />
+    </div>
+  )
+}
+
+function BoxIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      className={className}
+    >
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+      <line x1="12" y1="22.08" x2="12" y2="12" />
+    </svg>
+  )
+}
+
 function ExtensionsField(): React.JSX.Element {
   const openDialog = useExtensionsStore((s) => s.openDialog)
   const extensions = useExtensionsStore((s) => s.extensions)

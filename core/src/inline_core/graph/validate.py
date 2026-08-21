@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ..errors import PortTypeError, UnknownNodeType
 from .registry import Registry
-from .schema import Graph, PortKind, port_satisfies
+from .schema import Graph, is_list_kind, port_satisfies
 from .topo import topo_sort, upstream_closure
 
 
@@ -31,7 +31,7 @@ def validate(graph: Graph, target: str, registry: Registry) -> None:
                 raise PortTypeError(
                     f"{node.type!r} has no input port {port_id!r}.", node_id=node.id, port=port_id
                 )
-            if len(edges) > 1 and in_port.kind is not PortKind.IMAGE_LIST:
+            if len(edges) > 1 and not is_list_kind(in_port.kind):
                 raise PortTypeError(
                     f"Input {port_id!r} takes a single edge.", node_id=node.id, port=port_id
                 )

@@ -22,6 +22,11 @@ export type PortKind =
   | 'conditioning'
   | 'latent'
   | 'control'
+  | 'character'
+  | 'payload'
+  | 'payload[]'
+  | 'dataset'
+  | 'metrics'
 
 export interface CorePort {
   id: string
@@ -47,6 +52,10 @@ export interface CoreParamField {
   /** A dynamic catalog Core fills from what is installed (checkpoints, loras, vae, ...). */
   optionsFrom?: string
   advanced?: boolean
+  /** Show on the node face as well as in Adjust. Unset means "selects only", the loader default. */
+  onFace?: boolean
+  /** What this param is, for an exported graph. Served by Core so a reader never guesses. */
+  kind?: 'string' | 'text' | 'number' | 'boolean' | 'enum' | 'seed' | 'model' | 'character' | 'file'
 }
 
 export interface NodeDescriptor {
@@ -162,6 +171,7 @@ export function producesFrame(descriptor: NodeDescriptor): boolean {
 export function portsSatisfy(source: PortKind, target: PortKind): boolean {
   if (source === target) return true
   if (source === 'image' && target === 'image[]') return true
+  if (source === 'payload' && target === 'payload[]') return true
   // A control input accepts any image output (a raw image, a preprocessed control map, or a
   // Control Space render); the control map is just an image.
   return source === 'image' && target === 'control'
@@ -181,6 +191,11 @@ const PORT_COLORS: Record<PortKind, string> = {
   conditioning: '#c084fc',
   latent: '#60a5fa',
   control: '#f9a8d4',
+  character: '#f0abfc',
+  payload: '#93c5fd',
+  'payload[]': '#93c5fd',
+  dataset: '#38bdf8',
+  metrics: '#a3e635',
 }
 
 /** A stable color per port kind, for Comfy-style colored sockets and edges. */

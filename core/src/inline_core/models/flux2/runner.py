@@ -76,6 +76,10 @@ FLUX2 = NodeDescriptor(
         # ControlNet input: the map is appended as a reference, which is what the family's own
         # in-context conditioning is for. Name it in the prompt to steer with it.
         Port("control_image", "Structure map", PortKind.CONTROL, required=False),
+        # A character arrives by wire, never as a name typed into this node, so the graph shows
+        # which identity a render used. Its references are appended to whatever else is wired and
+        # its locked description is prepended to the prompt, naming their positions.
+        Port("character", "Character", PortKind.CHARACTER, required=False),
     ),
     outputs=(Port("image", "Image", PortKind.IMAGE),),
     params=(
@@ -93,9 +97,6 @@ FLUX2 = NodeDescriptor(
         ),
         # FLUX.2 is flow-match, so these tune the FlowMatchEuler scheduler - see models/sampling.py.
         *sampling_param_fields(SamplingFamily.FLOW_MATCH),
-        # A saved character from models/characters/. Its references are appended to whatever is
-        # wired, and its locked description is prepended to the prompt naming their positions.
-        ParamField("character", "Character", Widget.SELECT, "", options_from="characters"),
         # A FLUX.2 ControlNet Union (dev only). Empty = off, and a wired control map is then fed
         # through the reference channel instead, which works on every variant.
         ParamField("controlnet", "ControlNet (dev only)", Widget.SELECT, "",
@@ -207,10 +208,13 @@ class Flux2Runner(NodeRunner):
         # A character's references are appended, never prepended: the numbered strip on the node
         # face is built from wired connectors and cannot see these, so leading them would shift
         # every number the user can see away from the number the prompt resolves.
-        character = _apply_character(params, len(refs))
+        character = _apply_character(inputs, len(refs))
         if character is not None:
             refs.extend(character.refs)
             prompt = character.prefix + prompt
+            if character.lora is not None:
+                # Appended, so a user's own wired LoRAs still apply alongside the character's.
+                loras = (*loras, LoraRef(file=str(character.lora), strength=character.strength))
 
         images = [rt.load_image(ref, _LABEL) for ref in refs]
         control_map = rt.load_image(control, _LABEL) if control_file else None
@@ -422,7 +426,7 @@ class Flux2Runner(NodeRunner):
                 "seed": seed,
                 **({"references": len(images)} if images else {}),
                 # Studio reads this back to decide whether to score the take for continuity.
-                **({"character": str(params["character"])} if character else {}),
+                **({"character": _character_file(inputs)} if character else {}),
                 **(
                     {"controlnet": control_file,
                      "control_strength": float(params.get("control_strength", 0.75))}
@@ -546,28 +550,51 @@ def _resolve_negative(params: dict[str, Any], variant: V.Flux2Variant) -> str | 
 
 
 
+def _character_file(inputs: dict[str, Any]) -> str:
+    """The wired character's filename. Applying resolves payloads through a content-keyed cache, so
+    an identity that has not been written yet cannot be applied."""
+    wired = (inputs.get("character") or [None])[0]
+    if wired is None:
+        return ""
+    name = str(getattr(wired, "file", "") or "")
+    if not name:
+        raise ValueError(
+            "That character has not been saved yet. Wire it through Write .char first."
+        )
+    return name
+
+
 @dataclass(frozen=True)
 class _Character:
     refs: list[Any]
     prefix: str
+    #: The trained adapter, when the character is applied that way instead of by reference.
+    lora: Any = None
+    strength: float = 1.0
 
 
-def _apply_character(params: dict[str, Any], wired: int) -> _Character | None:
-    """A picked character's references and prompt prefix, or None when none is picked.
+def _apply_character(inputs: dict[str, Any], wired: int) -> _Character | None:
+    """A wired character's references and prompt prefix, or None when none is wired.
 
     ``wired`` is how many references the user already supplied, because the prefix has to name the
     positions the character's own references will land on.
     """
-    chosen = str(params.get("character") or "").strip()
+    chosen = _character_file(inputs)
     if not chosen:
         return None
     from ...characters import apply as characters
 
     applied = characters.char_apply(chosen)
-    if applied is None or not applied.refs:
+    if applied is None or (not applied.refs and applied.lora is None):
         return None
-    logger.info("Applying character %s: %d reference(s)", applied.name, len(applied.refs))
-    return _Character(refs=list(applied.refs), prefix=applied.prompt_prefix(wired + 1))
+    how = "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)"
+    logger.info("Applying character %s by %s", applied.name, how)
+    return _Character(
+        refs=list(applied.refs),
+        prefix=applied.prompt_prefix(wired + 1),
+        lora=applied.lora,
+        strength=applied.lora_strength,
+    )
 
 
 def _resolve_controlnet(

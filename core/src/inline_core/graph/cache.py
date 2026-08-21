@@ -113,8 +113,13 @@ def asset_content_hashes(graph: Graph) -> dict[str, str]:
 
 def _character_hash(node: Node) -> str | None:
     """A picked character's byte hash. Editing a character in place leaves the filename it is
-    picked by unchanged, so without this the cache serves a take of the previous face."""
-    chosen = node.params.get("character")
+    picked by unchanged, so without this the cache serves a take of the previous face.
+
+    Read from the node that names one - `character/load` - because a generation node takes its
+    character by wire. A cache key folds in its upstream keys, so hashing it here invalidates
+    everything downstream of it too.
+    """
+    chosen = node.params.get("file") if node.type == "character/load" else None
     if not isinstance(chosen, str) or not chosen.strip():
         return None
     try:

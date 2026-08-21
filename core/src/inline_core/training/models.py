@@ -495,6 +495,17 @@ def load_transformer(
     return loaders.load_diffusion(arch, diffusion, dtype, quant, device=device, loras=loras)
 
 
+def base_name(models_dir: str, arch: str, base_mode: str) -> str:
+    """The base checkpoint's filename, or "" when it cannot be resolved.
+
+    Never raises: this labels a finished adapter, and losing the label must not lose the run.
+    """
+    try:
+        return Path(_base_file(Path(models_dir), arch, base_mode)).name
+    except Exception:  # noqa: BLE001 - a missing label is not a training failure
+        return ""
+
+
 def _base_file(root: Path, arch: str, base_mode: str) -> str:
     """The base checkpoint this run trains against."""
     if arch == archs.LTX25:

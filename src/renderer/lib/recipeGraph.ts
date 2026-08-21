@@ -12,7 +12,7 @@ import type { MoodboardItem } from '@shared/types'
 import { useMoodboardStore } from '../store/moodboardStore'
 import { useGenerationStore } from '../store/generationStore'
 import { useAssetStore } from '../store/assetStore'
-import type { Recipe } from './pngRecipe'
+import { paramValues, type Recipe } from './pngRecipe'
 
 interface Point {
   x: number
@@ -42,13 +42,16 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
     let created: MoodboardItem | null = null
 
     if (it.type === 'core') {
-      const core = data.core as { type?: string; params?: Record<string, unknown> } | undefined
+      const core = data.core as { type?: string; params?: unknown } | undefined
       if (!core?.type) continue
       created = await store.addCoreNode(core.type, x, y)
       if (created) {
+        // Rebuilt as plain values whichever shape the file used; the board stores values, and the
+        // types are the descriptor's to say.
+        const params = paramValues(core.params)
         await store.updateItem(
           created.id,
-          { data: { ...created.data, core: { type: core.type, params: core.params ?? {} } } },
+          { data: { ...created.data, core: { type: core.type, params } } },
           false,
         )
       }
@@ -81,6 +84,19 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
       if (created?.frameId && fal.params) {
         await useGenerationStore.getState().setParams(created.frameId, fal.params)
       }
+    } else if (
+      it.type === 'train/dataset' ||
+      it.type === 'train/caption' ||
+      it.type === 'train/lora' ||
+      it.type === 'train/loss'
+    ) {
+      created = await store.addTrainingNode(it.type, x, y)
+      // Settings travel; the dataset and run they were bound to do not.
+      if (created && Object.keys(data).length) {
+        await store.updateItem(created.id, { data: { ...created.data, ...data } }, false)
+      }
+    } else if (it.type === 'resource') {
+      created = await store.addResource(x, y)
     } else if (it.type === 'asset' || it.type === 'frame') {
       // Media does not travel between projects, but the wiring should. An empty Load Assets node
       // stands in, so the user drops their own clip onto it and the graph is whole again.

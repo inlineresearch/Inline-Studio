@@ -27,10 +27,10 @@ plus closed models via fal.ai.
 >
 > **Hugging Face org: [`inlineresearch`](https://huggingface.co/inlineresearch)** - published models and datasets trained with the app.
 >
-> | Hugging Face repo                                                                                   | What it is                                                   |
-> | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-> | [`inlineresearch/skin-lora-krea-2-raw`](https://huggingface.co/inlineresearch/skin-lora-krea-2-raw) | Skin-texture LoRA for Krea 2 RAW, trained in the Trainer tab |
-> | [`inlineresearch/krea2-skin-lora`](https://huggingface.co/datasets/inlineresearch/krea2-skin-lora)  | The 26 image + caption pairs that LoRA trained on            |
+> | Hugging Face repo                                                                                   | What it is                                              |
+> | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+> | [`inlineresearch/skin-lora-krea-2-raw`](https://huggingface.co/inlineresearch/skin-lora-krea-2-raw) | Skin-texture LoRA for Krea 2 RAW, trained on the canvas |
+> | [`inlineresearch/krea2-skin-lora`](https://huggingface.co/datasets/inlineresearch/krea2-skin-lora)  | The 26 image + caption pairs that LoRA trained on       |
 >
 > Website: [inlinestudio.art](https://inlinestudio.art).
 
@@ -148,10 +148,11 @@ linking. Generation is Core nodes, installed-extension nodes, and fal nodes on t
   (`src/shared/nodes/`); their execution is Core's fal relay.
 - **Files & naming.** Components `PascalCase.tsx`, hooks `useX.ts`, one component per file,
   feature-foldered views. Keep files under ~300 lines without a good reason.
-- **Comments are short.** One or two lines, and only for the **why** a reader can't infer from the
-  code - a non-obvious constraint, a rejected alternative, an ordering that matters. Never narrate
-  what the code does or restate the line below. If the reasoning needs paragraphs, it belongs in a
-  doc, not in the source.
+- **Comments are one line.** Not two, not a paragraph, and only for the **why** a reader can't infer
+  from the code - a non-obvious constraint, a rejected alternative, an ordering that matters. This
+  applies to file and component header comments too: one line, not a block. Never narrate what the
+  code does or restate the line below. If the reasoning needs more, it belongs in a doc, not in the
+  source.
 - **Icons, never emoji.** Never use emoji in the UI (no 🎬/🎵/✂/🔊 as glyphs). Use crisp,
   consistent line SVG icons (Lucide-style: `viewBox="0 0 24 24"`, `fill="none"`,
   `stroke="currentColor"`) that inherit color/size via `currentColor` + a size class. Follow the

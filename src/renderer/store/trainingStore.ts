@@ -1,7 +1,7 @@
 /**
- * State for the LoRA Trainer tab: datasets, their items, training runs, and the live run telemetry.
+ * State for LoRA training: datasets, their items, training runs, and the live run telemetry.
  * Mutations go through `studio().training.*`; live progress/samples/host-stats arrive via the
- * training events (subscribed by `subscribeTrainingEvents`, wired in TrainerPanel) which call the
+ * training events (subscribed by `subscribeTrainingEvents`, wired in App) which call the
  * setters here. Mirrors `generationStore`'s shape.
  */
 import { create } from 'zustand'
@@ -26,6 +26,7 @@ import type {
 import { uploadFiles } from '../lib/importFiles'
 import { useAssetStore } from './assetStore'
 import { studio } from '@/lib/studio'
+import { useMoodboardStore } from './moodboardStore'
 import { ipcErrorMessage } from '../lib/ipcError'
 
 /** Live progress for one run, updated from `onTrainingProgress`. */
@@ -466,6 +467,10 @@ export function subscribeTrainingEvents(): () => void {
     studio().events.onTrainingLog((e) => s.applyLog(e)),
     studio().events.onCaptionProgress((e) => s.applyCaptionProgress(e)),
     studio().events.onTrainingDone((e) => s.applyDone(e)),
+    // A graph-run Train LoRA node learns its run id here; the board holds it so Resume survives.
+    studio().events.onTrainingNodeBound((e) => {
+      void useMoodboardStore.getState().patchItemData(e.itemId, { runId: e.runId })
+    }),
     studio().events.onTrainingError((e) => s.applyError(e)),
     studio().events.onSystemStats((e) => s.applyStats(e)),
   ]

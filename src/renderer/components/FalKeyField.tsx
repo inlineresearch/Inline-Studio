@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { InfoTip } from './InfoTip'
 import { useFalSettingsStore } from '../store/falSettingsStore'
 
 /**
@@ -28,7 +29,14 @@ export function FalKeyField(): React.JSX.Element {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-zinc-200">fal.ai API key</span>
+        <span className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-zinc-200">fal.ai API key</span>
+          <InfoTip label="the fal.ai API key">
+            Bring your own key to run the canvas generation nodes. Get one from
+            fal.ai/dashboard/keys. Stored on the machine running the engine, in a file only your
+            user account can read, and never sent back to the browser.
+          </InfoTip>
+        </span>
         <span className="flex items-center gap-1.5">
           <span className={`h-2 w-2 rounded-full ${configured ? 'bg-green-500' : 'bg-zinc-600'}`} />
           <span className="text-[10px] uppercase tracking-wide text-zinc-500">
@@ -36,12 +44,6 @@ export function FalKeyField(): React.JSX.Element {
           </span>
         </span>
       </div>
-
-      <p className="text-[11px] leading-relaxed text-zinc-500">
-        Bring your own key to run the canvas generation nodes. Inline Core stores it on the machine
-        running the engine, in a file only your user account can read, and never sends it back to
-        the browser. Get one from fal.ai/dashboard/keys.
-      </p>
 
       <input
         type="password"

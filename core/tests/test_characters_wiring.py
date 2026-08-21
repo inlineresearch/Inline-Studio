@@ -8,7 +8,7 @@ import pytest
 
 from inline_core.characters import charfile as cf
 from inline_core.graph.cache import asset_content_hashes
-from inline_core.graph.schema import Graph, Node
+from inline_core.graph.schema import Graph, Node, PortKind
 from inline_core.models.catalog import CATEGORIES, ModelCatalog
 
 
@@ -87,22 +87,37 @@ def test_adding_a_character_moves_the_catalog_fingerprint(tmp_path: Path) -> Non
 # --- the node param ------------------------------------------------------------------------------
 
 
-def test_the_flux2_node_offers_a_character_dropdown() -> None:
+def test_the_flux2_node_takes_a_character_by_wire() -> None:
+    """A wire, not a name typed into the node, so the graph shows which identity a render used."""
     runner = pytest.importorskip("inline_core.models.flux2.runner")
-    field = next(p for p in runner.FLUX2.params if p.key == "character")
-    assert field.options_from == "characters"
-    assert field.default == ""
-    # Not advanced: picking a character is the point of the feature, not a power-user escape hatch.
-    assert field.advanced is False
+    port = next(p for p in runner.FLUX2.inputs if p.id == "character")
+    assert port.kind is PortKind.CHARACTER
+    assert port.required is False, "a character is optional; most renders have none"
+    assert not any(f.key == "character" for f in runner.FLUX2.params), "the dropdown is gone"
+
+
+def test_the_krea2_node_takes_a_character_by_wire() -> None:
+    runner = pytest.importorskip("inline_core.models.krea2.runner")
+    for descriptor in runner.DESCRIPTORS.values():
+        port = next(p for p in descriptor.inputs if p.id == "character")
+        assert port.kind is PortKind.CHARACTER
+        assert not any(f.key == "character" for f in descriptor.params)
 
 
 # --- cache invalidation --------------------------------------------------------------------------
 
 
+class _wired:
+    """Stands in for a wired character: the runner reads only its filename."""
+
+    def __init__(self, file: str) -> None:
+        self.file = file
+
+
 def _graph_with_character(chosen: str) -> Graph:
     return Graph(
         schema_version=1,
-        nodes=[Node(id="gen", type="black-forest-labs/flux-2", params={"character": chosen})],
+        nodes=[Node(id="pick", type="character/load", params={"file": chosen})],
     )
 
 
@@ -120,10 +135,10 @@ def test_editing_a_character_in_place_invalidates_the_node_cache(
     path = root / "characters" / "Ada.char"
     path.write_bytes(_char_bytes("green jacket"))
     graph = _graph_with_character("Ada.char")
-    before = asset_content_hashes(graph)["gen"]
+    before = asset_content_hashes(graph)["pick"]
 
     path.write_bytes(_char_bytes("red jacket"))
-    assert asset_content_hashes(graph)["gen"] != before
+    assert asset_content_hashes(graph)["pick"] != before
 
 
 def test_no_character_contributes_no_hash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,7 +189,7 @@ def test_the_runner_appends_character_refs_after_the_wired_ones(
     _install_character(tmp_path, monkeypatch, refs=2)
 
     # Two references the user wired themselves already hold positions 1 and 2.
-    applied = flux2._apply_character({"character": "Ada.char"}, wired=2)
+    applied = flux2._apply_character({"character": [_wired("Ada.char")]}, wired=2)
     assert applied is not None
     assert len(applied.refs) == 2
     assert applied.prefix.startswith("Images 3 and 4 show Ada")
@@ -187,8 +202,7 @@ def test_the_runner_applies_nothing_when_no_character_is_picked(
     flux2 = pytest.importorskip("inline_core.models.flux2.runner")
     _install_character(tmp_path, monkeypatch, refs=1)
     assert flux2._apply_character({}, wired=0) is None
-    assert flux2._apply_character({"character": ""}, wired=0) is None
-    assert flux2._apply_character({"character": "   "}, wired=0) is None
+    assert flux2._apply_character({"character": []}, wired=0) is None
 
 
 def test_the_runner_refuses_a_character_that_is_gone(
@@ -198,4 +212,26 @@ def test_the_runner_refuses_a_character_that_is_gone(
     flux2 = pytest.importorskip("inline_core.models.flux2.runner")
     _install_character(tmp_path, monkeypatch, refs=1)
     with pytest.raises(FileNotFoundError):
-        flux2._apply_character({"character": "Nobody.char"}, wired=0)
+        flux2._apply_character({"character": [_wired("Nobody.char")]}, wired=0)
+
+
+def test_an_unsaved_character_cannot_be_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Applying resolves payloads through a content-keyed cache, so it needs a file, not a doc."""
+    flux2 = pytest.importorskip("inline_core.models.flux2.runner")
+    _install_character(tmp_path, monkeypatch, refs=1)
+    with pytest.raises(ValueError, match="not been saved"):
+        flux2._apply_character({"character": [_wired("")]}, wired=0)
+
+
+def test_take_metadata_names_the_wired_character(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Studio reads this key back to decide whether to score a take for continuity. It used to come
+    from a `character` param, which no longer exists now that a character arrives by wire."""
+    flux2 = pytest.importorskip("inline_core.models.flux2.runner")
+    _install_character(tmp_path, monkeypatch, refs=1)
+
+    assert "character" not in flux2.FLUX2.defaults()
+    assert flux2._character_file({"character": [_wired("Ada.char")]}) == "Ada.char"

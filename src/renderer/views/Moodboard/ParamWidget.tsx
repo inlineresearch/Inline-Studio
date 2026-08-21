@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ParamField } from '@shared/nodes/types'
+import { useAutoCommit } from '../../lib/useAutoCommit'
 
 /**
  * One editable param widget, driven by a NodeDef's declarative field schema.
@@ -20,13 +21,17 @@ export function ParamWidget({
   const labelCls = 'text-[10px] font-medium uppercase tracking-wide text-zinc-500'
   const inputCls =
     'w-full rounded-md border border-border bg-panel px-2 py-1.5 text-xs text-zinc-100 outline-none transition-colors focus:border-accent'
+  // Declared above the widget branches: a hook cannot sit behind an early return.
+  const { schedule, flush } = useAutoCommit(() => onCommit(String(value ?? '')))
   if (field.widget === 'textarea' || field.widget === 'text') {
     const text = String(value ?? '')
     const common = {
       value: text,
-      onChange: (e: React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) =>
-        onChange(e.target.value),
-      onBlur: () => onCommit(text),
+      onChange: (e: React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+        onChange(e.target.value)
+        schedule()
+      },
+      onBlur: flush,
       placeholder: field.label,
       className: inputCls,
     }

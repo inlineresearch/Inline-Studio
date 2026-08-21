@@ -17,6 +17,7 @@ import { useMenuPlacement } from './useMenuPlacement'
 import { addableCoreNodes, type NodeDescriptor } from '@shared/coreNodes'
 import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
+import { CaptionGlyph, ChartIcon, CpuIcon, LayersIcon, WandIcon } from './nodes/NodeBadge'
 
 /** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
 export type AddNodeKind =
@@ -27,12 +28,18 @@ export type AddNodeKind =
   | 'trim'
   | 'prompt'
   | 'controlSpace'
+  | 'train/dataset'
+  | 'train/caption'
+  | 'train/lora'
+  | 'train/loss'
+  | 'resource'
 
 type Tab = 'core' | 'api'
 
 /** The category Core uses for its `load/*` nodes; Load Assets joins them under one header. */
 const LOADERS = 'Loaders'
 const CANVAS = 'Canvas'
+const TRAINING = 'Training'
 
 /**
  * Section order in the Core tab. Core serves its categories in registration order, which puts
@@ -56,6 +63,13 @@ const ENTRIES: Entry[] = [
   { kind: 'trim', label: 'Edit Video/Audio', icon: <ScissorsIcon />, category: CANVAS },
   { kind: 'prompt', label: 'Prompt', icon: <PromptIcon />, category: CANVAS },
   { kind: 'controlSpace', label: 'Control Space', icon: <PoseIcon />, category: CANVAS },
+  // Training sorts last because it is not in CORE_ORDER, which is where it belongs: reached for
+  // far less often than generating.
+  { kind: 'train/dataset', label: 'Load Dataset', icon: <LayersIcon />, category: TRAINING },
+  { kind: 'train/caption', label: 'Caption', icon: <CaptionGlyph />, category: TRAINING },
+  { kind: 'train/lora', label: 'Train LoRA', icon: <WandIcon />, category: TRAINING },
+  { kind: 'train/loss', label: 'Graph', icon: <ChartIcon />, category: TRAINING },
+  { kind: 'resource', label: 'Resources', icon: <CpuIcon />, category: TRAINING },
 ]
 
 export function AddNodeMenu({
@@ -82,6 +96,7 @@ export function AddNodeMenu({
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('core')
+  const [query, setQuery] = useState('')
   const place = useMenuPlacement<HTMLDivElement>(x, y, above)
 
   // Only high-level model nodes are offered; samplers/inputs are hidden plumbing.
@@ -100,6 +115,35 @@ export function AddNodeMenu({
   // Fal models, grouped by owner (OpenAI, ByteDance, …).
   const falGroups = onPickGen ? groupByOwner(listNodeDefs()) : []
 
+  // Searching crosses the tabs: knowing whether a node is a Core one or a hosted one is exactly
+  // what someone reaching for the search box does not know yet.
+  const needle = query.trim().toLowerCase()
+  const hits = needle
+    ? [
+        ...entryRows(
+          ENTRIES.filter((e) => e.label.toLowerCase().includes(needle)),
+          onPick,
+        ),
+        ...coreRows(
+          all.filter(
+            (n) => n.title.toLowerCase().includes(needle) || n.type.toLowerCase().includes(needle),
+          ),
+          onPickCore,
+        ),
+        ...listNodeDefs()
+          .filter(
+            (d) =>
+              onPickGen &&
+              (d.title.toLowerCase().includes(needle) || d.id.toLowerCase().includes(needle)),
+          )
+          .map((d) => (
+            <Row key={d.id} icon={<SparklesIcon />} accent onClick={() => onPickGen?.(d.id)}>
+              {d.title}
+            </Row>
+          )),
+      ]
+    : []
+
   return (
     <>
       <div className="absolute inset-0 z-20" onClick={onClose} />
@@ -110,19 +154,35 @@ export function AddNodeMenu({
         }`}
         style={place.style}
       >
-        <div className="flex border-b border-border">
-          <TabButton active={tab === 'core'} onClick={() => setTab('core')}>
-            Core
-          </TabButton>
-          <TabButton active={tab === 'api'} onClick={() => setTab('api')}>
-            API
-          </TabButton>
-        </div>
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search nodes…"
+          className="nodrag border-b border-border bg-transparent px-2.5 py-2 text-xs text-zinc-100 outline-none placeholder:text-zinc-600"
+        />
+
+        {!needle && (
+          <div className="flex border-b border-border">
+            <TabButton active={tab === 'core'} onClick={() => setTab('core')}>
+              Core
+            </TabButton>
+            <TabButton active={tab === 'api'} onClick={() => setTab('api')}>
+              API
+            </TabButton>
+          </div>
+        )}
 
         {/* One scroll area for the active tab, not per-section. `nowheel` keeps React Flow from
             swallowing the wheel and zooming the canvas instead of scrolling this list. */}
         <div className="nowheel overflow-y-auto" style={{ maxHeight: place.maxHeight }}>
-          {tab === 'core' ? (
+          {needle ? (
+            hits.length > 0 ? (
+              <Group label={`${hits.length} result${hits.length === 1 ? '' : 's'}`}>{hits}</Group>
+            ) : (
+              <div className="px-2.5 py-3 text-[11px] text-zinc-500">No node matches that.</div>
+            )
+          ) : tab === 'core' ? (
             <>
               {sections.map(([category, rows]) => (
                 <Group key={category} label={category}>

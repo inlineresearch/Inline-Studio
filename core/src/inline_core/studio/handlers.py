@@ -121,11 +121,26 @@ def register_studio_handlers(
 
     # --- model requirements + explicit downloads (the node's "missing models" popup) ------------
     if model_downloads is not None:
-        reg("models:requirements", lambda node_type: model_downloads.requirements(node_type))
-        reg("models:download", lambda node_type, cid: model_downloads.download(node_type, cid))
+        reg("models:requirements",
+            lambda node_type, params=None: model_downloads.requirements(node_type, params))
+        reg("models:download",
+            lambda node_type, cid, params=None: model_downloads.download(node_type, cid, params))
+        reg("models:registry", lambda refresh=False: model_downloads.registry(refresh))
+        reg("models:resolveMissing",
+            lambda wanted, refresh=False: model_downloads.resolve_missing(wanted, refresh))
+        reg("models:downloadRegistry", lambda mid: model_downloads.download_registry(mid))
+        reg("models:cancelRegistryDownload", lambda mid: model_downloads.cancel_registry(mid))
+        reg("models:downloadQueue", lambda: model_downloads.download_queue())
     else:
-        reg("models:requirements", lambda _node_type: {"components": [], "allPresent": True})
+        reg("models:requirements",
+            lambda _node_type, _params=None: {"components": [], "allPresent": True})
         reg("models:download", not_wired("Model downloads"))
+        reg("models:registry", lambda _refresh=False: {"entries": [], "stale": True})
+        reg("models:cancelRegistryDownload", not_wired("Model downloads"))
+        reg("models:downloadQueue", lambda: {"active": None, "queued": []})
+        reg("models:resolveMissing",
+            lambda _wanted, _refresh=False: {"missing": [], "stale": True})
+        reg("models:downloadRegistry", not_wired("Model downloads"))
 
     # Read-only listing of every models root, for the Models side panel.
     reg("models:tree", model_tree if model_tree is not None else lambda: [])
@@ -206,9 +221,7 @@ def register_studio_handlers(
     reg("frames:deleteTake", delete_take)
 
     # --- moodboard ------------------------------------------------------------------------------
-    # `surface` defaults to the Studio moodboard so existing callers are unchanged; the Trainer tab
-    # passes "trainer" to get its own isolated canvas out of the same tables.
-    reg("moodboard:list", lambda surface=mb.STUDIO_SURFACE: mb.list_board(conn(), surface))
+    reg("moodboard:list", lambda: mb.list_board(conn()))
     reg("moodboard:addAsset", lambda aid, x, y: mb.add_asset(conn(), aid, x, y))
     reg("moodboard:addText", lambda x, y: mb.add_text(conn(), x, y))
     reg("moodboard:addFrameFromAsset", lambda aid, x, y: mb.add_frame_from_asset(conn(), aid, x, y))
@@ -250,19 +263,13 @@ def register_studio_handlers(
     reg("moodboard:setConnectorVolume", lambda cid, vol: mb.set_connector_volume(conn(), cid, vol))
     reg(
         "moodboard:replaceBoard",
-        lambda items, connectors, surface=mb.STUDIO_SURFACE: mb.replace_board(
-            conn(), items, connectors, surface
-        ),
+        lambda items, connectors: mb.replace_board(conn(), items, connectors),
     )
-    # Trainer-canvas nodes (plus the shared read-only resource node, which either canvas can host).
     reg("moodboard:addTrainDataset", lambda x, y: mb.add_train_dataset(conn(), x, y))
     reg("moodboard:addCaption", lambda x, y: mb.add_caption(conn(), x, y))
     reg("moodboard:addTrainer", lambda x, y: mb.add_trainer(conn(), x, y))
     reg("moodboard:addLossGraph", lambda x, y: mb.add_loss_graph(conn(), x, y))
-    reg(
-        "moodboard:addResource",
-        lambda x, y, surface=mb.STUDIO_SURFACE: mb.add_resource(conn(), x, y, surface),
-    )
+    reg("moodboard:addResource", lambda x, y: mb.add_resource(conn(), x, y))
 
     # --- generation -----------------------------------------------------------------------------
     if generation is not None:
@@ -298,7 +305,9 @@ def register_studio_handlers(
     # --- activity -------------------------------------------------------------------------------
     if activity is not None:
         reg("activity:list", activity.snapshot)
-        reg("activity:history", lambda limit=50: activity.history(limit))
+        # An omitted optional arrives as null, not as a missing arg, so the default has to be
+        # applied here or it never applies at all.
+        reg("activity:history", lambda limit=None: activity.history(int(limit or 50)))
         reg("activity:cancel", activity.cancel)
         reg("activity:clearHistory", activity.clear_history)
     else:
@@ -307,21 +316,15 @@ def register_studio_handlers(
         reg("activity:cancel", not_wired("Run activity"))
         reg("activity:clearHistory", not_wired("Run activity"))
 
-    # --- Saved characters (the .char library + its editor) ---------------------------------------
+    # --- Saved characters (the .char library) -----------------------------------------------------
+    # Browsing only: creating, editing and building are the character nodes' job, on the canvas.
     if characters is not None:
         reg("characters:list", lambda: characters.list())
-        reg("characters:create", lambda inp: characters.create(inp))
-        reg("characters:get", lambda file: characters.get(file))
-        reg("characters:rename", lambda file, name: characters.rename(file, name))
-        reg("characters:setDescription", lambda file, d: characters.set_description(file, d))
-        reg("characters:addRefs", lambda file, aids: characters.add_refs(file, aids))
-        reg("characters:removeRef", lambda file, index: characters.remove_ref(file, index))
         reg("characters:delete", lambda file: characters.delete(file))
         reg("characters:createFromTake",
             lambda tid, name: characters.create_from_take(tid, name))
     else:
-        for ch in ("list", "create", "get", "rename", "setDescription", "addRefs", "removeRef",
-                   "delete", "createFromTake"):
+        for ch in ("list", "delete", "createFromTake"):
             reg(f"characters:{ch}", not_wired("Characters"))
 
     # --- LoRA training (dataset CRUD + the training run subprocess) ------------------------------
@@ -365,6 +368,10 @@ def register_studio_handlers(
     reg("falSettings:status", store.fal_status)
     reg("falSettings:setApiKey", store.set_fal_key)
     reg("falSettings:clearApiKey", store.clear_fal_key)
+
+    reg("hfSettings:status", store.hf_status)
+    reg("hfSettings:setToken", store.set_hf_key)
+    reg("hfSettings:clearToken", store.clear_hf_key)
     # --- timeline (director/trim/export via ffmpeg) + folder export -----------------------------
     if timeline is not None:
         from .timeline.render import export_frames

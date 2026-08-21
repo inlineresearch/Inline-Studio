@@ -8,8 +8,6 @@
  */
 import { create } from 'zustand'
 
-import type { CanvasSurface } from '@shared/types'
-
 const SEEN_KEY = 'inline-studio.onboarding.starterHints'
 
 function loadSeen(): boolean {
@@ -23,7 +21,6 @@ function loadSeen(): boolean {
 
 export interface HintTarget {
   itemId: string
-  surface: CanvasSurface
 }
 
 interface OnboardingState {

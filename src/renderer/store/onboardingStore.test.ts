@@ -48,7 +48,7 @@ describe('onboardingStore', () => {
   it('will not re-arm once seen', () => {
     useOnboardingStore.getState().armHints(target)
     useOnboardingStore.getState().dismissHints()
-    useOnboardingStore.getState().armHints({ itemId: 'n2', surface: 'studio' })
+    useOnboardingStore.getState().armHints({ itemId: 'n2' })
     expect(useOnboardingStore.getState().hintTarget).toBeNull()
   })
 

@@ -20,7 +20,7 @@ import type {
   TrainingOffload,
 } from '@shared/types'
 import { Modal } from '../../components/Modal'
-import { useTrainerBoardStore } from '../../store/trainerBoardStore'
+import { useBoardActions } from '../Moodboard/nodes/boardActions'
 import { useTrainingStore } from '../../store/trainingStore'
 import { XIcon } from '../Moodboard/nodes/NodeBadge'
 
@@ -137,9 +137,8 @@ function NumberField({
 }
 
 export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.Element | null {
-  const item = useTrainerBoardStore((s) => s.items.find((i) => i.id === itemId))
-  const patchData = useTrainerBoardStore((s) => s.patchData)
-  const toggleSettings = useTrainerBoardStore((s) => s.toggleSettings)
+  const { items, patchData, toggleSettings } = useBoardActions()
+  const item = items.find((i) => i.id === itemId)
   const gpus = useTrainingStore((s) => s.systemStats?.gpus) ?? []
   const runs = useTrainingStore((s) => s.runs)
   const discard = useTrainingStore((s) => s.discard)
@@ -166,7 +165,7 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
   if (!item) return null
   // The sidebar is shared by every Trainer node that has settings, so it dispatches on the item.
   // Everything below this point is training hyperparams and only applies to the Trainer node.
-  if (item.type === 'caption')
+  if (item.type === 'train/caption')
     return <CaptionSettings itemId={itemId} overwrite={Boolean(item.data.overwrite)} />
 
   const arch: TrainingArch = hp.arch ?? 'z-image'
@@ -202,7 +201,7 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
   }
 
   return (
-    <div className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l border-border bg-surface/40 p-4">
+    <div className="absolute right-0 top-0 z-40 flex h-full w-80 flex-col gap-3 overflow-y-auto border-l border-border bg-panel p-4 shadow-2xl">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-zinc-200">Training settings</span>
         <button
@@ -559,10 +558,9 @@ function CaptionSettings({
   itemId: string
   overwrite: boolean
 }): React.JSX.Element {
-  const patchData = useTrainerBoardStore((s) => s.patchData)
-  const toggleSettings = useTrainerBoardStore((s) => s.toggleSettings)
+  const { patchData, toggleSettings } = useBoardActions()
   return (
-    <div className="flex w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l border-border bg-surface/40 p-4">
+    <div className="absolute right-0 top-0 z-40 flex h-full w-80 flex-col gap-3 overflow-y-auto border-l border-border bg-panel p-4 shadow-2xl">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-zinc-200">Caption settings</span>
         <button

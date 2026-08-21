@@ -13,9 +13,10 @@ import type {
   Asset,
   AssetFolder,
   CharacterSummary,
-  CharacterDetail,
+  CharacterProgressEvent,
+  MissingModel,
+  RegistryModel,
   MoodboardItem,
-  CanvasSurface,
   MoodboardConnector,
   MoodboardSnapshot,
   MoodboardItemData,
@@ -55,6 +56,7 @@ import type {
   TrainingSampleEvent,
   TrainingSnapshot,
   TrainingDoneEvent,
+  TrainingNodeBoundEvent,
   TrainingErrorEvent,
   SystemStatsEvent,
   CoreStatus,
@@ -185,6 +187,11 @@ export const IpcChannels = {
     setApiKey: 'falSettings:setApiKey',
     clearApiKey: 'falSettings:clearApiKey',
   },
+  hfSettings: {
+    status: 'hfSettings:status',
+    setToken: 'hfSettings:setToken',
+    clearToken: 'hfSettings:clearToken',
+  },
   settings: {
     get: 'settings:get',
     setCoreUrl: 'settings:setCoreUrl',
@@ -202,6 +209,14 @@ export const IpcChannels = {
     tree: 'models:tree',
     /** Re-read the models roots so files added or removed on disk reach the pickers. */
     rescan: 'models:rescan',
+    /** The published model list, for Settings and for offering a missing file. */
+    registry: 'models:registry',
+    /** Which of these filenames are absent, and what the registry offers for each. */
+    resolveMissing: 'models:resolveMissing',
+    /** Download one registry model by its id. */
+    downloadRegistry: 'models:downloadRegistry',
+    cancelRegistryDownload: 'models:cancelRegistryDownload',
+    downloadQueue: 'models:downloadQueue',
   },
   extensions: {
     /** Installed extensions + whether the machine has the tools to install more. */
@@ -225,16 +240,6 @@ export const IpcChannels = {
   characters: {
     /** Every saved character in `models/characters/`, newest first. */
     list: 'characters:list',
-    /** Compile reference images (library asset ids) into a new `.char`. */
-    create: 'characters:create',
-    /** One character with its reference thumbnails resolved. */
-    get: 'characters:get',
-    rename: 'characters:rename',
-    /** Rewrite the locked description. Refs are untouched, so payloads survive. */
-    setDescription: 'characters:setDescription',
-    /** Add reference images, which recompiles the payload and the centroids. */
-    addRefs: 'characters:addRefs',
-    removeRef: 'characters:removeRef',
     delete: 'characters:delete',
     /** Turn a generated take into a character, so a good render becomes reusable. */
     createFromTake: 'characters:createFromTake',
@@ -317,6 +322,8 @@ export const IpcChannels = {
     modelsChanged: 'events:modelsChanged',
     /** Main → renderer: the character library changed (created, edited, deleted, imported). */
     charactersChanged: 'events:charactersChanged',
+    /** Main → renderer: an encode's phases, streamed while the create/edit call is still open. */
+    characterProgress: 'events:characterProgress',
     /** Main → renderer: explicit model-download lifecycle (the node's model popup). */
     modelDownloadProgress: 'events:modelDownloadProgress',
     modelDownloadDone: 'events:modelDownloadDone',
@@ -329,6 +336,7 @@ export const IpcChannels = {
     trainingLog: 'events:trainingLog',
     captionProgress: 'events:captionProgress',
     trainingDone: 'events:trainingDone',
+    trainingNodeBound: 'events:trainingNodeBound',
     trainingError: 'events:trainingError',
     /** Main → renderer: periodic host + GPU telemetry for the Trainer tab. */
     systemStats: 'events:systemStats',
@@ -366,14 +374,6 @@ export interface CreateTrainingDatasetInput {
   name: string
   /** Optional trigger token injected into every caption. */
   triggerWord?: string
-}
-
-/** A new character: one or more library assets, plus the description locked into the file. */
-export interface CreateCharacterInput {
-  name: string
-  /** Library asset ids to use as references. One is enough; order is the order refs are numbered. */
-  assetIds: string[]
-  description?: string
 }
 
 /** A fal frame's inputs resolved for building its request: media as data URIs + the prompt text. */
@@ -627,6 +627,14 @@ export interface InlineStudioApi {
     /** Forget the stored fal key. */
     clearApiKey(): Promise<Result<ApiKeyStatus>>
   }
+  hfSettings: {
+    /** Is a Hugging Face token saved? Needed for gated repos such as FLUX.2 Klein 9B. */
+    status(): Promise<Result<ApiKeyStatus>>
+    /** Store the token, published as `HF_TOKEN` so every download path picks it up. */
+    setToken(token: string): Promise<Result<ApiKeyStatus>>
+    /** Forget the stored token. */
+    clearToken(): Promise<Result<ApiKeyStatus>>
+  }
   settings: {
     get(): Promise<Result<AppSettings>>
     setCoreUrl(url: string): Promise<Result<AppSettings>>
@@ -636,11 +644,19 @@ export interface InlineStudioApi {
     models(): Promise<Result<CoreModels>>
   }
   models: {
-    /** The model components a node needs + whether each is present under models/. */
-    requirements(nodeType: string): Promise<Result<ModelRequirements>>
+    /** The model components a node needs + whether each is present under models/.
+     * `params` because Train LoRA's base checkpoint follows the architecture its settings pick. */
+    requirements(
+      nodeType: string,
+      params?: Record<string, unknown>,
+    ): Promise<Result<ModelRequirements>>
     /** Download one component (its `id`) or `'all'` missing ones into models/. Fire-and-forget;
      * progress arrives on `events:modelDownload*`. */
-    download(nodeType: string, componentId: string): Promise<Result<void>>
+    download(
+      nodeType: string,
+      componentId: string,
+      params?: Record<string, unknown>,
+    ): Promise<Result<void>>
     /** Every models root on disk as a read-only tree. No file actions. */
     tree(): Promise<Result<ModelTreeRoot[]>>
     /**
@@ -648,6 +664,19 @@ export interface InlineStudioApi {
      * so a weight file dropped in by hand is invisible to the pickers until this runs.
      */
     rescan(): Promise<Result<{ registryVersion: string }>>
+    /** Every published model, and whether the list came from a reachable registry. */
+    registry(refresh?: boolean): Promise<Result<{ entries: RegistryModel[]; stale: boolean }>>
+    /** Absent files and what the registry offers. Items may name the folder they belong in. */
+    resolveMissing(
+      wanted: (string | { filename: string; category?: string })[],
+      refresh?: boolean,
+    ): Promise<Result<{ missing: MissingModel[]; stale: boolean }>>
+    /** Fetch a registry model. Progress arrives on the model-download events. */
+    downloadRegistry(modelId: string): Promise<Result<void>>
+    /** Drop a queued download, or stop the running one at its next chunk. */
+    cancelRegistryDownload(modelId: string): Promise<Result<void>>
+    /** What is downloading and what is waiting, so a reopened popup shows the same thing. */
+    downloadQueue(): Promise<Result<{ active: string | null; queued: string[] }>>
   }
   extensions: {
     /** Installed extensions + whether git/uv are available to install more. */
@@ -683,28 +712,14 @@ export interface InlineStudioApi {
   characters: {
     /** Every saved character, newest first. An unreadable file is listed with `error` set. */
     list(): Promise<Result<CharacterSummary[]>>
-    /**
-     * Compile library assets into a new character. Runs face detection and two embedding passes on
-     * the CPU, so it takes seconds rather than milliseconds.
-     */
-    create(input: CreateCharacterInput): Promise<Result<CharacterSummary>>
-    /** One character, with its reference images resolved to URLs the renderer can show. */
-    get(file: string): Promise<Result<CharacterDetail>>
-    rename(file: string, name: string): Promise<Result<CharacterSummary>>
-    /** Rewrite the locked description. Refs are untouched, so the payload is not recompiled. */
-    setDescription(file: string, description: string): Promise<Result<CharacterSummary>>
-    /** Add references, recompiling the payload and the identity centroids. */
-    addRefs(file: string, assetIds: string[]): Promise<Result<CharacterSummary>>
-    /** Drop one reference by index, recompiling. Removing the last one is refused. */
-    removeRef(file: string, index: number): Promise<Result<CharacterSummary>>
     delete(file: string): Promise<Result<boolean>>
-    /** Save a generated take as a new character. */
+    /** Save a generated take as a new character. Creating, editing and building one otherwise
+     * happen on the canvas, through the character nodes. */
     createFromTake(takeId: string, name: string): Promise<Result<CharacterSummary>>
   }
   moodboard: {
-    /** The full board (items + connectors) for the open project. */
-    /** One canvas's items + connectors (defaults to the Studio moodboard). */
-    list(surface?: CanvasSurface): Promise<Result<MoodboardSnapshot>>
+    /** The board's items + connectors. */
+    list(): Promise<Result<MoodboardSnapshot>>
     /** Place an existing library asset on the board at (x, y). */
     addAsset(assetId: string, x: number, y: number): Promise<Result<MoodboardItem>>
     /** Add a new editable text item at (x, y). */
@@ -732,16 +747,16 @@ export interface InlineStudioApi {
     /** Add a text-prompt node (feeds a Generate node's prompt input) at (x, y). */
     addPrompt(x: number, y: number): Promise<Result<MoodboardItem>>
     addCoreNode(coreType: string, x: number, y: number): Promise<Result<MoodboardItem>>
-    /** Trainer-canvas: pick a training dataset and feed it downstream. */
+    /** Pick a training dataset and feed it downstream. */
     addTrainDataset(x: number, y: number): Promise<Result<MoodboardItem>>
-    /** Trainer-canvas: auto-caption a dataset's images. */
+    /** Auto-caption a dataset's images. */
     addCaption(x: number, y: number): Promise<Result<MoodboardItem>>
-    /** Trainer-canvas: run a LoRA training job (run/stop/resume). */
+    /** Run a LoRA training job (run/stop/resume). */
     addTrainer(x: number, y: number): Promise<Result<MoodboardItem>>
-    /** Trainer-canvas: plot a run's loss curve. */
+    /** Plot a run's loss curve. */
     addLossGraph(x: number, y: number): Promise<Result<MoodboardItem>>
-    /** Utility: read-only host telemetry node. Lives on whichever canvas adds it. */
-    addResource(x: number, y: number, surface?: CanvasSurface): Promise<Result<MoodboardItem>>
+    /** Utility: read-only host telemetry node. */
+    addResource(x: number, y: number): Promise<Result<MoodboardItem>>
     updateItem(id: string, patch: MoodboardItemPatch): Promise<Result<MoodboardItem>>
     deleteItem(id: string): Promise<Result<void>>
     /** Remove one render from a Core node's output history and unlink its file. */
@@ -757,13 +772,8 @@ export interface InlineStudioApi {
     deleteConnector(id: string): Promise<Result<void>>
     /** Set a connector's per-input audio volume (0..1) - director L1 inputs. */
     setConnectorVolume(id: string, volume: number): Promise<Result<void>>
-    /** Replace ONE surface's board (used by canvas undo/redo); scoped so a Studio undo can't wipe
-     * the Trainer canvas. */
-    replaceBoard(
-      items: MoodboardItem[],
-      connectors: MoodboardConnector[],
-      surface?: CanvasSurface,
-    ): Promise<Result<void>>
+    /** Replace the board (used by canvas undo/redo). */
+    replaceBoard(items: MoodboardItem[], connectors: MoodboardConnector[]): Promise<Result<void>>
   }
   timeline: {
     /** The derived timeline (video + L2 audio + volumes) for a director node. */
@@ -823,6 +833,8 @@ export interface InlineStudioApi {
     onModelsChanged(callback: (e: { registryVersion: string }) => void): () => void
     /** Subscribe to "the character library changed" pushes. Returns an unsubscribe fn. */
     onCharactersChanged(callback: () => void): () => void
+    /** Subscribe to encode-progress pushes. Returns an unsubscribe fn. */
+    onCharacterProgress(callback: (e: CharacterProgressEvent) => void): () => void
     /** Subscribe to explicit model-download lifecycle pushes. Each returns an unsubscribe fn. */
     onModelDownloadProgress(callback: (e: ModelDownloadProgressEvent) => void): () => void
     onModelDownloadDone(callback: (e: ModelDownloadDoneEvent) => void): () => void
@@ -836,8 +848,10 @@ export interface InlineStudioApi {
     /** Auto-caption progress for a dataset. */
     onCaptionProgress(callback: (e: CaptionProgressEvent) => void): () => void
     onTrainingDone(callback: (e: TrainingDoneEvent) => void): () => void
+    /** A Train LoRA node bound to the run its graph just started. */
+    onTrainingNodeBound(callback: (e: TrainingNodeBoundEvent) => void): () => void
     onTrainingError(callback: (e: TrainingErrorEvent) => void): () => void
-    /** Subscribe to periodic host + GPU telemetry (Trainer tab). Returns an unsubscribe fn. */
+    /** Subscribe to periodic host + GPU telemetry. Returns an unsubscribe fn. */
     onSystemStats(callback: (e: SystemStatsEvent) => void): () => void
     onExtensionInstallProgress(callback: (e: InstallProgressEvent) => void): () => void
     onExtensionInstallDone(callback: (e: InstallSuccess) => void): () => void

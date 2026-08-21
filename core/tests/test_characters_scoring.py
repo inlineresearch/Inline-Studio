@@ -265,3 +265,85 @@ def test_a_lookalike_scores_far_below_the_real_person() -> None:
     assert lookalike < 50, f"{data['lookalike']} must not pass as {data['target']}: {lookalike}"
     # Measured 80.3 vs 37.4; the margin is the thing worth guarding, not either number alone.
     assert same - lookalike > 25
+
+
+# --- framing coverage -----------------------------------------------------------------------------
+
+
+def _subject_only(subject: list[float], fraction: float | None):
+    """A scorer with no face, a fixed subject embedding, and a controllable framing."""
+    original = (scoring.embed_face, scoring.embed_subject, scoring.face_fraction)
+    scoring.embed_face = lambda _image: None  # type: ignore[assignment]
+    scoring.embed_subject = lambda _image: subject  # type: ignore[assignment]
+    scoring.face_fraction = lambda _image, found=None: fraction  # type: ignore[assignment]
+    return original
+
+
+def _restore(original) -> None:
+    scoring.embed_face, scoring.embed_subject, scoring.face_fraction = original  # type: ignore
+
+
+def test_the_subject_term_is_dropped_when_the_gallery_cannot_reach_the_framing() -> None:
+    """Portrait-only gallery, full-body take: the number would be framing, not identity."""
+    centroids = {scoring.DINOV2_ID: [1.0, 0.0]}
+    original = _subject_only([1.0, 0.0], 0.015)  # a full-body take
+    try:
+        result = scoring.score(object(), centroids, ref_framings=[0.13, 0.14, 0.12])
+    finally:
+        _restore(original)
+
+    assert result is None  # nothing measurable, which is not a zero
+
+
+def test_the_subject_term_counts_once_a_wide_reference_exists() -> None:
+    centroids = {scoring.DINOV2_ID: [1.0, 0.0]}
+    original = _subject_only([1.0, 0.0], 0.015)
+    try:
+        result = scoring.score(object(), centroids, ref_framings=[0.13, 0.14, 0.016])
+    finally:
+        _restore(original)
+
+    assert result is not None
+    assert result["subjectCounted"] is True
+    assert result["score"] == 100.0
+
+
+def test_a_matching_framing_counts_even_without_a_wide_reference() -> None:
+    """The gap breaks it, not the framing itself: a close-up against chest-up refs is fine."""
+    centroids = {scoring.DINOV2_ID: [1.0, 0.0]}
+    original = _subject_only([1.0, 0.0], 0.11)
+    try:
+        result = scoring.score(object(), centroids, ref_framings=[0.13, 0.14, 0.12])
+    finally:
+        _restore(original)
+
+    assert result is not None and result["subjectCounted"] is True
+
+
+def test_unknown_framing_is_not_treated_as_evidence_against() -> None:
+    """Absence of information must not silently disable the term for a caller that passes none."""
+    centroids = {scoring.DINOV2_ID: [1.0, 0.0]}
+    original = _subject_only([1.0, 0.0], None)
+    try:
+        result = scoring.score(object(), centroids)
+    finally:
+        _restore(original)
+
+    assert result is not None and result["subjectCounted"] is True
+
+
+def test_the_subject_term_matches_the_closest_reference_not_their_mean() -> None:
+    """The same fix the face term already had: a mean over views matches none of them."""
+    gallery = [[1.0, 0.0], [0.0, 1.0]]
+    original = _subject_only([1.0, 0.0], 0.11)
+    try:
+        result = scoring.score(
+            object(), {scoring.DINOV2_ID: [0.7071, 0.7071]}, subject_refs=gallery,
+            ref_framings=[0.12],
+        )
+    finally:
+        _restore(original)
+
+    assert result is not None
+    # Against the mean this is ~70; against the closest reference it is a match.
+    assert result["subjectScore"] == 100.0
