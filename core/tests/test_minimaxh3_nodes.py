@@ -63,12 +63,24 @@ COMPONENTS = ["model", "vae", "text_encoder", "lora"]
 
 def test_the_inputs_are_what_each_node_is_for() -> None:
     def media(node_type: str) -> list[str]:
-        return [p.id for p in DESCRIPTORS[node_type].inputs if p.id not in COMPONENTS]
+        # `character` is an identity handle, not media: it is on every node, so it says nothing
+        # about what a given node is for.
+        skip = {*COMPONENTS, "character"}
+        return [p.id for p in DESCRIPTORS[node_type].inputs if p.id not in skip]
 
     assert media(T2V) == ["prompt"]
     assert media(I2V) == ["prompt", "image"]
     assert media(FLF) == ["prompt", "image", "last_image"]
     assert media(REF) == ["prompt", "references", "video", "audio"]
+
+
+@pytest.mark.parametrize("node_type", [T2V, I2V, FLF, REF])
+def test_every_node_takes_a_character(node_type: str) -> None:
+    """The reference partition applies one by compiled references and the rest by its trained
+    adapter, so one `.char` serves the whole family rather than only the node that reads images."""
+    port = {p.id: p for p in DESCRIPTORS[node_type].inputs}.get("character")
+    assert port is not None and port.kind is PortKind.CHARACTER
+    assert not port.required
 
 
 @pytest.mark.parametrize("node_type", [T2V, I2V, FLF, REF])

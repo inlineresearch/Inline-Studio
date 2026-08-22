@@ -37,6 +37,9 @@ logger = logging.getLogger("inline_core.minimaxh3")
 #: Names this node in the error a mis-wired handle raises.
 _LABEL = "MiniMax H3"
 
+#: The key a character files its H3 payloads under, matching `training/arch.py`.
+ARCH = "minimax-h3"
+
 #: 24 fps, decodable in blocks of 17 frames plus 5, between 5 and 15 seconds: 124 to 345 frames.
 GRID = VideoGrid(fps=24.0, grid=17, offset=5, min_seconds=5.0, max_seconds=15.0)
 
@@ -135,6 +138,9 @@ def _inputs(variant: Variant) -> tuple[Port, ...]:
         # Adapters fuse into each block as it streams, before factorisation and quantisation. A
         # LoRA trained on either partition loads on both: they are the same architecture.
         Port("lora", "LoRA", PortKind.LORA, required=False),
+        # Every variant takes one: the reference partition applies it by compiled references, the
+        # rest by its trained adapter, which is the only route on a node with no reference channel.
+        Port("character", "Character", PortKind.CHARACTER, required=False),
     ]
     if variant.first_frame:
         ports.append(Port("image", "First frame", PortKind.IMAGE, required=False))
@@ -186,6 +192,8 @@ class Request:
     seed: int
     partition: str
     references: tuple[Any, ...] = ()
+    #: The wired character's adapter, appended to the user's own LoRAs rather than replacing them.
+    character_loras: tuple[Any, ...] = ()
 
     @property
     def seconds(self) -> float:
@@ -206,14 +214,25 @@ def build_request(
         multiple=CANVAS_MULTIPLE,
         minimum=CANVAS_MULTIPLE,
     )
+    character = _apply_character(inputs, variant)
+    loras: tuple[Any, ...] = ()
     references: tuple[Any, ...] = ()
     if variant.references:
+        wired = list(inputs.get("references") or [])
+        if character is not None and character.refs:
+            # Fed through the collector rather than appended after it, so the character's images are
+            # numbered and limit-checked as images - appending would land them behind the videos.
+            inputs = {**inputs, "references": [*wired, *character.refs]}
         references = collect_references(inputs, limits=REFERENCE_LIMITS)
         if not references:
             raise ComponentError(
                 f"{variant.title} needs at least one reference wired to its References, "
                 "Reference video or Reference audio input."
             )
+    if character is not None:
+        prompt = character.prefix + prompt
+        if character.lora is not None:
+            loras = (character.lora,)
     return Request(
         prompt=prompt,
         num_frames=frames,
@@ -223,6 +242,70 @@ def build_request(
         seed=rt.resolve_seed(params.get("seed")),
         partition=variant.partition,
         references=references,
+        character_loras=loras,
+    )
+
+
+@dataclass(frozen=True)
+class _Character:
+    refs: list[Any]
+    prefix: str
+    lora: Any = None
+
+
+def _character_file(inputs: dict[str, list[Any]]) -> str:
+    """The wired character's filename. Applying resolves payloads through a content-keyed cache, so
+    an identity that has not been written yet cannot be applied."""
+    wired = (inputs.get("character") or [None])[0]
+    if wired is None:
+        return ""
+    name = str(getattr(wired, "file", "") or "")
+    if not name:
+        raise ComponentError(
+            "That character has not been saved yet. Wire it through Write .char first."
+        )
+    return name
+
+
+def _apply_character(inputs: dict[str, list[Any]], variant: Variant) -> _Character | None:
+    """A wired character as references or as its adapter, or None when none is wired."""
+    chosen = _character_file(inputs)
+    if not chosen:
+        return None
+    from ...characters import apply as characters
+    from ...graph.loader_runners import LoraRef
+
+    applied = characters.char_apply(chosen, ARCH)
+    if applied is None:
+        return None
+    if not variant.references:
+        # No reference channel on this partition, so the adapter is the only route it has.
+        if applied.lora is None:
+            raise ComponentError(
+                f"{chosen} has no {ARCH} adapter, and {variant.title} has no reference channel. "
+                "Train one and attach it, or use MiniMax H3 Reference to Video."
+            )
+        logger.info("Applying character %s by adapter", applied.name)
+        return _Character(
+            refs=[],
+            prefix=applied.prompt_prefix(1),
+            lora=LoraRef(file=str(applied.lora), strength=applied.lora_strength),
+        )
+    if not applied.refs and applied.lora is None:
+        return None
+    how = "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)"
+    logger.info("Applying character %s by %s", applied.name, how)
+    # H3 resolves `<Picture N>`, not FLUX.2's ordinal prose, and the character's images land after
+    # whatever the user already wired.
+    wired = len([v for v in (inputs.get("references") or []) if v is not None])
+    return _Character(
+        refs=list(applied.refs),
+        prefix=applied.prompt_prefix(wired + 1, style="token"),
+        lora=(
+            LoraRef(file=str(applied.lora), strength=applied.lora_strength)
+            if applied.lora is not None
+            else None
+        ),
     )
 
 
@@ -320,7 +403,8 @@ class MiniMaxH3Runner(NodeRunner):
             transformer=rt.component_ref(inputs, "model", "diffusion", _LABEL),
             video_vae=rt.component_ref(inputs, "vae", "vae", _LABEL),
             text_encoder=rt.component_ref(inputs, "text_encoder", "text_encoder", _LABEL),
-            loras=rt.lora_stack(inputs, _LABEL),
+            # Appended, so a user's own wired LoRAs still apply alongside the character's.
+            loras=(*rt.lora_stack(inputs, _LABEL), *request.character_loras),
         )
 
         call = call_kwargs(request, self._variant, inputs)

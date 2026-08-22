@@ -252,12 +252,17 @@ class CoreGeneration:
         if result is None:
             # Measured nothing. Record the character anyway so the UI can say which one was used.
             return {"characterId": chosen}
-        return {
+        out = {
             "characterId": chosen,
             "continuityScore": result["score"],
             # False when the number is the face alone, so a dropped term is never hidden.
             "continuityFaceOnly": not result.get("subjectCounted", True),
         }
+        # Only a video carries this: a score from two sampled frames is not the same claim as one
+        # from five, and the reader cannot tell them apart from the number.
+        if result.get("frames"):
+            out["continuityFrames"] = result["frames"]
+        return out
 
     def _save_take(self, item_id: str, take: Any, ref: Any) -> None:
         """Copy a take's bytes into the project's takes/ dir and set its Core node's output. Image
@@ -304,7 +309,8 @@ class CoreGeneration:
                     "createdAt": int(time.time() * 1000),
                     "params": dict(getattr(take, "params", {}) or {}),
                     "prompt": recipe.get("prompt", ""),
-                    **(self._continuity(take, dst) if kind == "image" else {}),
+                    # Video too: a take is scored on sampled frames rather than not at all.
+                    **(self._continuity(take, dst) if kind in ("image", "video") else {}),
                 },
             )
 

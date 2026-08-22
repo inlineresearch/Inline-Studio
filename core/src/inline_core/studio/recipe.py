@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections import Counter
 from typing import Any
 
 from . import frames as fr
@@ -80,12 +81,17 @@ def _typed_params(
         # names its own file, so counting this one too listed the wrong checkpoint beside the right.
         if kinds.get(key) in ("model", "character") and str(value) and key not in wired:
             wanted.setdefault(str(value).replace("\\", "/").rsplit("/", 1)[-1], "")
+    declared = _declared(node_type, params)
+    per_category = Counter(category for _f, category in declared)
     # A node's declared requirements name its *default* build, so a node set to klein-9b would
-    # otherwise export klein-4b beside it. Whatever a param already named speaks for its folder.
-    covered = _folders_of(list(wanted))
-    for filename, category in _declared(node_type, params):
+    # otherwise export klein-4b beside it. Only where the folder holds one required file, though: a
+    # param names one file, so it cannot stand in for both of MiniMax H3's VAEs, and excusing the
+    # folder dropped the audio one from the export entirely.
+    covered = {c for c in _folders_of(list(wanted)) if per_category.get(c) == 1}
+    for filename, category in declared:
         if category in covered:
             continue
+        # Overwrites a param-named file's empty folder with the real one, which is an improvement.
         wanted[filename] = category
     return typed, _coordinates(wanted)
 

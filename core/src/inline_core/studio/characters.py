@@ -25,6 +25,108 @@ ENCODERS_MISSING = (
 CHANGED_EVENT = "events:charactersChanged"
 PROGRESS_EVENT = "events:characterProgress"
 
+#: Takes whose score has to come from frames rather than from the file itself.
+_VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv"}
+
+#: How many frames a video take is measured on. Each one costs a full SFace + DINOv2 pass, and this
+#: runs inline while the take is saved, so it buys robustness rather than precision.
+SCORE_FRAMES = 5
+
+#: Skipped at each end, where a video is least settled and a low score would say more about the
+#: first moments than about the character.
+_EDGE_SECONDS = 0.5
+
+
+def _sample_frames(src: Path, count: int = SCORE_FRAMES) -> list[Any]:
+    """Evenly spaced frames as PIL images, or [] when ffmpeg cannot read the file."""
+    import io
+    import subprocess
+
+    from PIL import Image
+
+    from ..ffmpeg import ffmpeg_exe
+
+    exe = ffmpeg_exe()
+    if exe is None or not src.is_file():
+        return []
+    frames: list[Any] = []
+    duration = _duration_seconds(src)
+    if duration is None or duration <= 0:
+        return []
+    span = max(duration - 2 * _EDGE_SECONDS, 0.0)
+    # One decode per frame: seeking is cheaper than decoding the whole clip for five stills.
+    for index in range(count):
+        offset = _EDGE_SECONDS + (span * (index + 0.5) / count if span else 0.0)
+        try:
+            proc = subprocess.run(
+                [exe, "-v", "quiet", "-ss", f"{offset:.3f}", "-i", str(src),
+                 "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
+                capture_output=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if not proc.stdout:
+            continue
+        try:
+            with Image.open(io.BytesIO(proc.stdout)) as handle:
+                frames.append(handle.convert("RGB"))
+        except Exception:  # noqa: BLE001 - a frame that will not decode is one fewer sample
+            continue
+    return frames
+
+
+def _duration_seconds(src: Path) -> float | None:
+    """The clip's length via ffprobe, or None. ffprobe is often absent, so this is best-effort."""
+    import subprocess
+
+    from ..ffmpeg import ffprobe_exe
+
+    exe = ffprobe_exe()
+    if exe is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [exe, "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(src)],
+            capture_output=True,
+            timeout=30,
+        )
+        return float(proc.stdout.decode().strip())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def _score_video(
+    src: Path,
+    centroids: dict[str, list[float]],
+    face_refs: list[list[float]],
+    subject_refs: list[list[float]],
+    framings: list[float],
+) -> dict[str, Any] | None:
+    """One score for a clip: the median across the frames that measured, never a mean.
+
+    A frame where no face was found returns None from ``score`` and drops out rather than counting
+    as a zero, and the median survives one blurred frame and one lucky one alike. ``frames`` rides
+    along so a number from two samples is not read as a number from five.
+    """
+    from statistics import median
+
+    measured = [
+        result
+        for frame in _sample_frames(src)
+        if (result := scoring.score(frame, centroids, face_refs, subject_refs, framings))
+    ]
+    if not measured:
+        return None
+    out = dict(measured[len(measured) // 2])
+    out["score"] = round(median(float(m["score"]) for m in measured), 1)
+    # Face-only if any sampled frame could not be spoken to by the subject term.
+    out["subjectCounted"] = all(m.get("subjectCounted", True) for m in measured)
+    out["frames"] = len(measured)
+    return out
+
+
 class Characters:
     """The `characters:*` channels, backed by ``models/characters/``."""
 
@@ -102,7 +204,10 @@ class Characters:
             framings = [float(f) for f in (doc.manifest.scoring.get("refFramings") or [])]
             from PIL import Image
 
-            with Image.open(image_path) as handle:
+            path_in = Path(image_path)
+            if path_in.suffix.lower() in _VIDEO_SUFFIXES:
+                return _score_video(path_in, centroids, face_refs, subject_refs, framings)
+            with Image.open(path_in) as handle:
                 return scoring.score(
                     handle.convert("RGB"), centroids, face_refs, subject_refs, framings
                 )

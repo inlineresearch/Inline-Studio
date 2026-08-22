@@ -167,16 +167,26 @@ function coreEntry(
     }
   }
   const registry = useModelRegistryStore.getState().entries
+  const required = (useModelRequirementsStore.getState().byType[type]?.components ?? []).filter(
+    (c) => !c.optional,
+  )
+  const perCategory = new Map<string, number>()
+  for (const c of required) perCategory.set(c.category, (perCategory.get(c.category) ?? 0) + 1)
   // Which folders the params already spoke for. A node's declared requirements name its *default*
-  // build, so a node set to klein-9b would otherwise export klein-4b beside it.
+  // build, so a node set to klein-9b would otherwise export klein-4b beside it. Only where the
+  // folder holds one required file, though: a param names one file, so it cannot stand in for both
+  // of MiniMax H3's VAEs, and excusing the folder dropped the audio one from the export entirely.
   const covered = new Set(
-    [...wanted.keys()].map(
-      (name) => registry.find((e) => e.filename.toLowerCase() === name.toLowerCase())?.category,
-    ),
+    [...wanted.keys()]
+      .map(
+        (name) => registry.find((e) => e.filename.toLowerCase() === name.toLowerCase())?.category,
+      )
+      .filter((category): category is string => !!category && perCategory.get(category) === 1),
   )
   // What the node needs without naming it, which no param can carry.
-  for (const component of useModelRequirementsStore.getState().byType[type]?.components ?? []) {
-    if (component.optional || covered.has(component.category)) continue
+  for (const component of required) {
+    if (covered.has(component.category)) continue
+    // Overwrites a param-named file's empty folder with the real one, which is an improvement.
     wanted.set(component.localPath.split('/').pop() ?? component.localPath, component.category)
   }
   const models = [...wanted].map(([name, directory]) => {

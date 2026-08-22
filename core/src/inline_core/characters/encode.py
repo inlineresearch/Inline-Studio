@@ -41,8 +41,14 @@ PAYLOAD_POLICY: dict[str, Any] = {"max_pixels": 1024 * 1024, "multiple_of": 16}
 #: What each model accepts as a reference. A video model has its own frame grid, so the policy
 #: cannot stay one constant - and it rides in the payload entry, because the fingerprint is taken
 #: against the policy the payload was built with, not against whatever is current.
+#: H3 resizes a reference to a 2048 short edge, upscaling included, rounding each axis to 32 on its
+#: own, with no area cap - so a 4:1 reference is 8192x2048 (vendor/packing_ref2va.py).
+MINIMAX_H3_ARCH = "minimax-h3"
+MINIMAX_H3_POLICY: dict[str, Any] = {"short_edge": 2048, "multiple_of": 32, "max_aspect": 4.0}
+
 REFERENCE_POLICIES: dict[str, dict[str, Any]] = {
     FLUX2_KLEIN_ARCH: PAYLOAD_POLICY,
+    MINIMAX_H3_ARCH: MINIMAX_H3_POLICY,
 }
 
 
@@ -71,16 +77,32 @@ def _png_bytes(image: Any) -> bytes:
 
 
 def normalise_reference(image: Any, policy: dict[str, Any] | None = None) -> Any:
-    """A reference resized into a model's budget, on its grid, preserving aspect."""
+    """A reference resized into a model's budget, on its grid, preserving aspect.
+
+    Two policy shapes, because two models mean two things by "budget": `max_pixels` is an area cap
+    that only ever shrinks, `short_edge` is a target the smaller side is scaled *onto*, up or down.
+    """
     rules = policy or PAYLOAD_POLICY
-    max_pixels = int(rules["max_pixels"])
     grid = int(rules["multiple_of"])
     width, height = image.width, image.height
-    if width * height > max_pixels:
-        scale = (max_pixels / (width * height)) ** 0.5
-        width, height = int(width * scale), int(height * scale)
-    width = max(grid, (width // grid) * grid)
-    height = max(grid, (height // grid) * grid)
+    limit = rules.get("max_aspect")
+    if limit and max(width / height, height / width) > float(limit):
+        raise ValueError(
+            f"A reference must be within 1:{limit:g} and {limit:g}:1 for this model, "
+            f"got {width}x{height}."
+        )
+    if "short_edge" in rules:
+        # Rounded, not floored: flooring a scaled-up edge can land back under the target.
+        scale = int(rules["short_edge"]) / min(width, height)
+        width = max(grid, round(width * scale / grid) * grid)
+        height = max(grid, round(height * scale / grid) * grid)
+    else:
+        max_pixels = int(rules["max_pixels"])
+        if width * height > max_pixels:
+            scale = (max_pixels / (width * height)) ** 0.5
+            width, height = int(width * scale), int(height * scale)
+        width = max(grid, (width // grid) * grid)
+        height = max(grid, (height // grid) * grid)
     if (width, height) == (image.width, image.height):
         return image
     from PIL import Image
