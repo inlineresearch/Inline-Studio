@@ -1,16 +1,32 @@
-<h1 align="center">Inline Studio: AI filmmaking on an infinite node canvas</h1>
+<div align="center">
 
-<p align="center">A free and open-source app for AI filmmaking on a single node canvas. Train your own LoRAs and generate locally on your own GPU, with hosted models when you want them. Every render is kept as a versioned take.</p>
+# Inline Studio
 
-<p align="center">
-  <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge"></a>
-  <a href="https://www.python.org/downloads/"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-blue?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="../../releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/inlineresearch/Inline-Studio?style=for-the-badge&label=Release&color=blue"></a>
-  <a href="https://discord.gg/cSUS88VdY9"><img alt="Join our Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=for-the-badge"></a>
-  <a href="https://www.reddit.com/r/inlinestudio/"><img alt="r/inlinestudio on Reddit" src="https://img.shields.io/badge/Reddit-r%2Finlinestudio-FF4500?logo=reddit&logoColor=white&style=for-the-badge"></a>
-</p>
+**Consistent AI characters on a node canvas.**
 
-![Inline Studio node canvas showing a generative AI film pipeline with frames, takes, and connectors](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/hero.png)
+A free, open-source app for AI generation where your characters stay the same. Build a character once and keep the same face across shots and models, generate locally on your own GPU or with hosted models, train your own LoRAs, and keep every render as a versioned take.
+
+[![License: GPLv3][license-shield]][license-url]
+[![Python 3.11+][python-shield]][python-url]
+[![Latest release][release-shield]][release-url]
+<br>
+[![Discord][discord-shield]][discord-url]
+[![Reddit][reddit-shield]][reddit-url]
+
+<img width="1590" alt="Inline Studio Screenshot" src="https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/hero.png" />
+
+</div>
+
+[license-shield]: https://img.shields.io/badge/License-GPLv3-blue?style=flat
+[license-url]: LICENSE
+[python-shield]: https://img.shields.io/badge/Python-3.11%2B-blue?style=flat&logo=python&logoColor=white
+[python-url]: https://www.python.org/downloads/
+[release-shield]: https://img.shields.io/github/v/release/inlineresearch/Inline-Studio?style=flat&label=Release&color=blue
+[release-url]: ../../releases/latest
+[discord-shield]: https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white&style=flat
+[discord-url]: https://discord.gg/cSUS88VdY9
+[reddit-shield]: https://img.shields.io/badge/Reddit-r%2Finlinestudio-FF4500?logo=reddit&logoColor=white&style=flat
+[reddit-url]: https://www.reddit.com/r/inlinestudio/
 
 [**New here? Start with the getting started guide →**](https://inlinestudio.art/getting-started)
 
