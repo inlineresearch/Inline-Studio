@@ -79,8 +79,8 @@ function clearRow(centre: Point, left: number, right: number, height: number): n
 }
 
 /**
- * The character chain, pre-wired: Load Assets -> Encode Character -> Compile References -> Write.
- * Wired for a reference model; a Krea 2 style character swaps the middle node for Train LoRA +
+ * The character chain, pre-wired: Load Assets -> Encode -> Verify References -> Compile -> Write.
+ * Wired for a reference model; a Krea 2 style character swaps the payload node for Train LoRA +
  * Attach Adapter, which is why the payload step is its own node rather than folded into Encode.
  */
 export async function buildCharacterStarter(
@@ -88,34 +88,39 @@ export async function buildCharacterStarter(
   assetIds: string[] = [],
 ): Promise<string[]> {
   const store = useMoodboardStore.getState()
-  const y = clearRow(centre, centre.x - 700, centre.x + 700, 340)
-  const images = await store.addLoader(centre.x - 700, y)
+  const y = clearRow(centre, centre.x - 780, centre.x + 780, 340)
+  const images = await store.addLoader(centre.x - 780, y)
   if (images && assetIds.length > 0) await store.addLoaderAssets(images.id, assetIds)
-  const encode = images && (await store.addCoreNode('character/encode', centre.x - 340, y))
-  const refs = encode && (await store.addCoreNode('character/references', centre.x + 20, y))
-  const write = refs && (await store.addCoreNode('character/write', centre.x + 380, y))
-  if (!images || !encode || !refs || !write) {
+  const encode = images && (await store.addCoreNode('character/encode', centre.x - 470, y))
+  const verify = encode && (await store.addCoreNode('character/verify-refs', centre.x - 160, y))
+  const refs = verify && (await store.addCoreNode('character/references', centre.x + 150, y))
+  const write = refs && (await store.addCoreNode('character/write', centre.x + 460, y))
+  if (!images || !encode || !verify || !refs || !write) {
     useGenerationStore
       .getState()
       .setError('Could not add the character nodes. Is Inline Core running?')
     return []
   }
   await store.connect(images.id, encode.id, 'image', 'images')
-  await store.connect(encode.id, refs.id, 'character', 'character')
-  await store.connect(encode.id, write.id, 'character', 'character')
+  await store.connect(encode.id, verify.id, 'character', 'character')
+  await store.connect(verify.id, refs.id, 'character', 'character')
+  // Write takes the verified character, never the raw one: a payload node compiles from the doc
+  // Write hands it, so wiring Encode straight here would save the set nothing checked.
+  await store.connect(verify.id, write.id, 'character', 'character')
   await store.connect(refs.id, write.id, 'payload', 'payloads')
   useUiStore.getState().revealAt(centre.x, y + 170)
-  return [images.id, encode.id, refs.id, write.id]
+  return [images.id, encode.id, verify.id, refs.id, write.id]
 }
 
-/** Load Character -> Edit Character -> Write .char, for changing one that is already saved. */
+/** Load -> Edit -> Verify References -> Write .char, for changing one that is already saved. */
 export async function buildCharacterEditChain(file: string, centre: Point): Promise<string[]> {
   const store = useMoodboardStore.getState()
-  const y = clearRow(centre, centre.x - 560, centre.x + 560, 340)
-  const load = await store.addCoreNode('character/load', centre.x - 560, y)
-  const edit = load && (await store.addCoreNode('character/edit', centre.x - 180, y))
-  const write = edit && (await store.addCoreNode('character/write', centre.x + 200, y))
-  if (!load || !edit || !write) {
+  const y = clearRow(centre, centre.x - 620, centre.x + 620, 340)
+  const load = await store.addCoreNode('character/load', centre.x - 620, y)
+  const edit = load && (await store.addCoreNode('character/edit', centre.x - 310, y))
+  const verify = edit && (await store.addCoreNode('character/verify-refs', centre.x, y))
+  const write = verify && (await store.addCoreNode('character/write', centre.x + 310, y))
+  if (!load || !edit || !verify || !write) {
     useGenerationStore
       .getState()
       .setError('Could not add the character nodes. Is Inline Core running?')
@@ -127,9 +132,10 @@ export async function buildCharacterEditChain(file: string, centre: Point): Prom
     false,
   )
   await store.connect(load.id, edit.id, 'character', 'character')
-  await store.connect(edit.id, write.id, 'character', 'character')
+  await store.connect(edit.id, verify.id, 'character', 'character')
+  await store.connect(verify.id, write.id, 'character', 'character')
   useUiStore.getState().revealAt(centre.x - 180, y + 170)
-  return [load.id, edit.id, write.id]
+  return [load.id, edit.id, verify.id, write.id]
 }
 
 /** The training chain, pre-wired: Load Dataset -> Train LoRA -> Graph. Returns [] if any add failed. */

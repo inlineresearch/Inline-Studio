@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import Any
 
@@ -133,3 +134,248 @@ def test_a_clip_that_cannot_be_read_scores_nothing(monkeypatch) -> None:
 
     monkeypatch.setattr(mod, "_sample_frames", lambda *_a, **_k: [])
     assert mod._score_video(Path("clip.mp4"), {}, [], [], []) is None
+
+
+# --- which route a node gets ----------------------------------------------------------------------
+
+
+def test_the_reference_node_asks_for_references_over_an_adapter(tmp_path, monkeypatch) -> None:
+    """A character carrying both defaults to its adapter, which leaves H3's reference partition with
+    nothing to condition on: it refused the run saying no reference was wired, while one was."""
+    from inline_core.characters import apply as characters
+
+    seen: dict[str, object] = {}
+
+    def fake(chosen: str, arch: str = "", prefer: str | None = None):
+        seen["arch"], seen["prefer"] = arch, prefer
+        return None
+
+    monkeypatch.setattr(characters, "char_apply", fake)
+    from inline_core.models.minimaxh3.runner import VARIANTS, _apply_character
+
+    ref = next(v for v in VARIANTS if v.references)
+    _apply_character({"character": [type("I", (), {"file": "x.char"})()]}, ref)
+    assert seen == {"arch": "minimax-h3", "prefer": "reference"}
+
+
+def test_a_node_with_no_reference_channel_takes_whatever_the_character_prefers(monkeypatch) -> None:
+    from inline_core.characters import apply as characters
+
+    seen: dict[str, object] = {}
+
+    def fake(chosen: str, arch: str = "", prefer: str | None = None):
+        seen["prefer"] = prefer
+        return None
+
+    monkeypatch.setattr(characters, "char_apply", fake)
+    from inline_core.models.minimaxh3.runner import VARIANTS, _apply_character
+
+    fl2va = next(v for v in VARIANTS if not v.references)
+    _apply_character({"character": [type("I", (), {"file": "x.char"})()]}, fl2va)
+    assert seen["prefer"] is None
+
+
+def test_prefer_overrides_the_adapter_default() -> None:
+    """`char_apply`'s own rule is adapter-wins; `prefer` is what a node uses to say it cannot."""
+    import inspect
+
+    from inline_core.characters.apply import char_apply
+
+    assert "prefer" in inspect.signature(char_apply).parameters
+
+
+def test_a_character_with_more_references_than_the_model_takes_is_trimmed(monkeypatch) -> None:
+    """H3 takes 9 images; a character built for another model may carry more. Refusing sent a user
+    to unwire images they had not wired, because every one of them came from the character."""
+    from inline_core.characters import apply as characters
+    from inline_core.characters.apply import AppliedCharacter
+    from inline_core.models.minimaxh3.runner import VARIANTS, _apply_character
+
+    monkeypatch.setattr(
+        characters, "char_apply",
+        lambda *_a, **_k: AppliedCharacter("Ada", [f"r{i}" for i in range(10)], "freckles"),
+    )
+    ref = next(v for v in VARIANTS if v.references)
+    out = _apply_character({"character": [type("I", (), {"file": "x.char"})()]}, ref)
+    assert out is not None and len(out.refs) == 9
+
+
+def test_the_prefix_never_names_a_reference_that_was_trimmed(monkeypatch) -> None:
+    """The prefix is what the prompt resolves; naming <Picture 10> when nine were sent addresses a
+    position the model cannot see."""
+    from inline_core.characters import apply as characters
+    from inline_core.characters.apply import AppliedCharacter
+    from inline_core.models.minimaxh3.runner import VARIANTS, _apply_character
+
+    monkeypatch.setattr(
+        characters, "char_apply",
+        lambda *_a, **_k: AppliedCharacter("Ada", [f"r{i}" for i in range(10)], "freckles"),
+    )
+    ref = next(v for v in VARIANTS if v.references)
+    out = _apply_character({"character": [type("I", (), {"file": "x.char"})()]}, ref)
+    assert out is not None
+    assert "<Picture 9>" in out.prefix and "<Picture 10>" not in out.prefix
+
+
+def test_wired_images_keep_priority_over_the_character(monkeypatch) -> None:
+    """What the user wired is explicit; the character fills whatever room is left."""
+    from inline_core.characters import apply as characters
+    from inline_core.characters.apply import AppliedCharacter
+    from inline_core.models.minimaxh3.runner import VARIANTS, _apply_character
+
+    monkeypatch.setattr(
+        characters, "char_apply",
+        lambda *_a, **_k: AppliedCharacter("Ada", [f"r{i}" for i in range(10)], "freckles"),
+    )
+    ref = next(v for v in VARIANTS if v.references)
+    inputs = {
+        "character": [type("I", (), {"file": "x.char"})()],
+        "references": ["mine1", "mine2", "mine3"],
+    }
+    out = _apply_character(inputs, ref)
+    assert out is not None and len(out.refs) == 6, "3 wired + 6 from the character is the 9 cap"
+    assert out.prefix.startswith("<Picture 4>"), "and it is numbered after the wired ones"
+
+
+
+def test_the_resolution_param_is_on_the_node_face_and_defaults_to_capping() -> None:
+    """Default 1024, not uncapped: H3's own policy is 2048, and a character compiled there is what
+    put 36,864 vision tokens on the card."""
+    from inline_core.models.character.runner import COMPILE_REFS
+
+    field = next(p for p in COMPILE_REFS.params if p.key == "ref_resolution")
+    assert field.label == "Resized Reference Resolution"
+    assert field.default == 1024
+    assert field.on_face is True
+    assert field.min == encode.NO_REFERENCE_CAP
+
+
+def test_the_cap_only_ever_lowers_a_model_policy() -> None:
+    """It is a ceiling, not a target: raising H3 past 2048 or FLUX.2 past its area cap would ask
+    each model for a size it does not accept."""
+    h3, flux = encode.MINIMAX_H3_ARCH, encode.FLUX2_KLEIN_ARCH
+    assert encode.capped_policy(h3, 1024)["short_edge"] == 1024
+    assert encode.capped_policy(h3, 4096)["short_edge"] == 2048
+    assert encode.capped_policy(flux, 2048)["max_pixels"] == 1024 * 1024
+    assert encode.capped_policy(flux, 512)["max_pixels"] == 512 * 512
+    # -1 means the model's own policy, which is the only safe reading of "no resize": H3's packer
+    # requires the 32px grid, so a raw source size is not something it can be handed.
+    for arch in (h3, flux):
+        assert encode.capped_policy(arch, -1) == encode.reference_policy(arch)
+        assert encode.capped_policy(arch, None) == encode.reference_policy(arch)
+
+
+def test_a_graph_saved_before_the_param_existed_still_gets_the_cap() -> None:
+    """Reading a missing param as uncapped would silently compile old graphs at 2048."""
+    from inline_core.models.character.runner import _resolution
+
+    assert _resolution(None) == 1024
+    assert _resolution("") == 1024
+    assert _resolution(2048) == 2048
+    assert _resolution(-1) == encode.NO_REFERENCE_CAP
+    assert _resolution(0) == encode.NO_REFERENCE_CAP
+
+
+def test_capping_h3_to_1024_quarters_the_vision_tokens() -> None:
+    """The arithmetic the whole param exists for."""
+    from PIL import Image
+
+    from inline_core.characters import charfile as cf
+
+    manifest = cf.Manifest(char_id="c", name="c", created_at=0, modified_at=0)
+    members: dict[str, bytes] = {}
+    images = [Image.new("RGB", (3840, 2160)) for _ in range(2)]
+    for index, image in enumerate(images):
+        path = f"refs/ref_{index:03d}.png"
+        members[path] = encode._png_bytes(image)
+        manifest.refs.append({"path": path, "sha256": cf.sha256_bytes(members[path])})
+
+    def tokens(cap: int) -> int:
+        arch = encode.MINIMAX_H3_ARCH
+        encode.build_payload(manifest, members, images, arch, encode.capped_policy(arch, cap))
+        total = 0
+        for entry in manifest.payloads[arch]["files"]:
+            width, height = Image.open(io.BytesIO(members[entry["path"]])).size
+            total += (width // 32) * (height // 32)
+        return total
+
+    assert tokens(1024) * 4 == tokens(2048)
+    # A 4K source is not special: the policy resizes onto its target either way.
+    assert tokens(-1) == tokens(2048)
+
+
+
+def test_an_encoder_oom_points_at_the_character_not_the_canvas(monkeypatch) -> None:
+    """The canvas hint sent a user to resize twice for nothing: references are encoded before any
+    frame exists, so a 1344x768 -> 544x768 drop left the failing allocation byte-identical. The
+    size that matters was fixed when the character was compiled, so that is what the error names.
+    """
+    import tempfile
+
+    from PIL import Image
+
+    from inline_core.models import pipeline_runtime as rt
+    from inline_core.models.minimaxh3.runner import Request, _oom
+    from inline_core.models.references import ReferenceKind
+
+    # Stubbed because it reads the live card otherwise, so this asserted on whatever else happened
+    # to be running: it passed on an idle box and failed beside a training run.
+    monkeypatch.setattr(rt, "foreign_vram_bytes", lambda *a, **k: 0)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = []
+        for index in range(9):
+            path = f"{tmp}/ref{index}.png"
+            Image.new("RGB", (2048, 2048)).save(path)
+            paths.append(path)
+        refs = tuple(
+            type("R", (), {"kind": ReferenceKind.IMAGE, "value": type("V", (), {"path": p})()})()
+            for p in paths
+        )
+        request = Request(
+            prompt="", num_frames=144, width=544, height=768, num_inference_steps=50,
+            seed=1, partition="ref2va", references=refs,
+        )
+        message = _oom(request)
+
+    # Measured off the pixels, not off a setting this node no longer carries.
+    assert "36,864 vision tokens" in message
+    assert "Resized Reference Resolution" in message
+    assert "does not affect this step" in message
+    assert "960x544" not in message
+
+    # With no references the canvas really is the lever, so that hint has to survive untouched.
+    plain = Request(
+        prompt="", num_frames=144, width=1344, height=768,
+        num_inference_steps=50, seed=1, partition="fl2va",
+    )
+    assert "960x544" in _oom(plain)
+
+
+def test_a_card_held_by_another_process_is_named_before_anything_on_this_node(monkeypatch) -> None:
+    """A run with 5 references and 5,120 vision tokens was told to lower its reference resolution,
+    while a training run held 29 of the card's 46 GB. Nothing on this node frees that, and every
+    other hint sends the user to change a setting that was never the cause."""
+    from inline_core.models import pipeline_runtime as rt
+    from inline_core.models.minimaxh3.runner import Request, _oom
+    from inline_core.models.references import ReferenceKind
+
+    refs = tuple(type("R", (), {"kind": ReferenceKind.IMAGE})() for _ in range(5))
+    request = Request(
+        prompt="", num_frames=144, width=544, height=768, num_inference_steps=50,
+        seed=1, partition="ref2va", references=refs,
+    )
+
+    monkeypatch.setattr(rt, "foreign_vram_bytes", lambda *a, **k: 29 * 1024**3)
+    busy = _oom(request)
+    assert "29.0 GB" in busy and "another process" in busy
+    assert "Resized Reference Resolution" not in busy, "do not blame the character"
+    assert "960x544" not in busy, "do not blame the canvas"
+
+    # Below the floor it is noise, and the reference hint is the useful one again.
+    monkeypatch.setattr(rt, "foreign_vram_bytes", lambda *a, **k: 200 * 1024**2)
+    assert "Resized Reference Resolution" in _oom(request)
+
+    # A host-RAM exhaustion is never explained by another process's VRAM.
+    monkeypatch.setattr(rt, "foreign_vram_bytes", lambda *a, **k: 29 * 1024**3)
+    assert "another process" not in _oom(request, host=True)

@@ -6,6 +6,7 @@ covers the logic that decides what a render actually sees.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pytest
@@ -355,3 +356,152 @@ def test_a_payload_is_judged_against_the_policy_it_was_built_with(tmp_path: Path
     assert encode.payload_stale(doc.manifest, encode.FLUX2_KLEIN_ARCH) is True, (
         "a payload built under another policy no longer matches this reference set"
     )
+
+
+# --- origins, the harvested pool, and what must survive it ---------------------------------------
+
+
+def _harvest(doc: cf.CharDoc, colour: tuple[int, int, int] = (10, 200, 30)) -> None:
+    """Add a harvested reference without running an encoder: only the bookkeeping is under test."""
+    image = Image.new("RGB", (512, 512), colour)
+    member = cf.member_name("harvested", len(encode.harvested(doc.manifest)), ".png")
+    data = encode._png_bytes(image)
+    doc.members[member] = data
+    doc.manifest.refs.append(
+        {
+            "path": member,
+            "sha256": cf.sha256_bytes(data),
+            "width": image.width,
+            "height": image.height,
+            "origin": cf.ORIGIN_HARVESTED,
+        }
+    )
+
+
+def test_a_reference_with_no_origin_is_an_original() -> None:
+    """Every character written before harvesting existed has references and no origin field."""
+    manifest, _members, _images = _manifest_with_refs(2)
+    assert len(encode.originals(manifest)) == 2
+    assert encode.harvested(manifest) == []
+
+
+def test_harvesting_does_not_invalidate_a_trained_adapter() -> None:
+    """The fingerprint covers originals only. A harvested reference in it would mark the adapter
+    stale, `_extract_lora` drops a stale adapter with an INFO log, and the loop whose whole point
+    is a better adapter would silently switch off the one the user has."""
+    manifest, members, images = _manifest_with_refs(3)
+    encode.build_payload(manifest, members, images)
+    encode.set_lora_payload(
+        manifest, members, b"ADAPTER", base="flux2-klein-4b", rank=16, steps=500, resolution=512
+    )
+    doc = cf.CharDoc(manifest=manifest, members=members)
+    key = encode.payload_key(encode.FLUX2_KLEIN_ARCH, encode.PAYLOAD_LORA)
+    assert cf.payload_valid(manifest, key, encode.LORA_PAYLOAD_VERSION)
+
+    _harvest(doc)
+
+    assert cf.payload_valid(manifest, key, encode.LORA_PAYLOAD_VERSION), "the adapter went stale"
+    assert cf.payload_valid(manifest, encode.FLUX2_KLEIN_ARCH, encode.PAYLOAD_ENCODER_VERSION)
+
+
+def test_dropping_or_adding_an_original_still_invalidates() -> None:
+    manifest, members, images = _manifest_with_refs(3)
+    encode.build_payload(manifest, members, images)
+    doc = cf.CharDoc(manifest=manifest, members=members)
+    encode.drop_ref(doc, 0)
+    assert encode.payload_stale(manifest, encode.FLUX2_KLEIN_ARCH)
+
+
+def test_a_recompile_takes_harvested_references_in_behind_the_originals(tmp_path: Path) -> None:
+    """Position is meaning - FLUX.2 addresses a reference by number - so the ones the user vouched
+    for hold the leading slots however the manifest happens to be ordered."""
+    manifest, members, _images = _manifest_with_refs(2)
+    doc = cf.CharDoc(manifest=manifest, members=members)
+    _harvest(doc)
+    # An original added after the harvest lands at the end of `manifest.refs`, not before it.
+    encode.append_refs(doc, [_image(tmp_path / "late.png", (64, 64), (1, 2, 3))])
+    assert [cf.origin_of(r) for r in manifest.refs] == [
+        cf.ORIGIN_ORIGINAL, cf.ORIGIN_ORIGINAL, cf.ORIGIN_HARVESTED, cf.ORIGIN_ORIGINAL
+    ]
+
+    encode.build_payload(manifest, members, encode.ref_images(doc))
+
+    entry = manifest.payloads[encode.FLUX2_KLEIN_ARCH]
+    assert entry["harvested_count"] == 1
+    assert len(entry["files"]) == 4
+    # The harvested one is last in the payload, whatever position it holds in the manifest.
+    sizes = [Image.open(io.BytesIO(members[f["path"]])).size for f in entry["files"]]
+    assert sizes[3] == (512, 512), "the harvested reference did not land in the last slot"
+
+
+def test_hints_count_the_originals_only() -> None:
+    """Otherwise harvesting silences the very prompts - another angle, a full-body shot - that the
+    pool depends on being met."""
+    manifest, members, _images = _manifest_with_refs(1)
+    doc = cf.CharDoc(manifest=manifest, members=members)
+    assert encode.hints_for(manifest) == ["Add a second angle"]
+    _harvest(doc)
+    _harvest(doc, (200, 10, 30))
+    assert encode.hints_for(manifest) == ["Add a second angle"]
+
+
+def test_the_harvest_cap_never_lets_the_pool_outgrow_the_originals() -> None:
+    manifest, _members, _images = _manifest_with_refs(3)
+    assert encode.harvest_cap(manifest) == 3
+    manifest.refs = manifest.refs[:1]
+    assert encode.harvest_cap(manifest) == 1
+
+
+def test_changing_the_reference_set_marks_scoring_for_a_rebuild() -> None:
+    """`drop_ref` leaves the stored per-reference lists describing a set that no longer exists, so
+    scoring kept best-matching a take against the reference just deleted for being the wrong
+    person. The lists are compacted, so there is no index surgery available - it has to go."""
+    manifest, members, _images = _manifest_with_refs(3)
+    manifest.scoring = {"refFramings": [0.1, 0.1, 0.1], "refCount": 3, "originals": {"refs": []}}
+    members["scoring/embeds_sface.json"] = b'{"vectors":[]}'
+    doc = cf.CharDoc(manifest=manifest, members=members)
+
+    encode.drop_ref(doc, 1)
+
+    assert "refFramings" not in manifest.scoring, "a phantom reference survived in scoring"
+    assert "scoring/embeds_sface.json" not in members
+    # The frozen identity is not derived from the set that changed, so it is not collateral.
+    assert "originals" in manifest.scoring
+
+
+def test_decoding_references_never_returns_a_short_list() -> None:
+    """Every scoring position is an index into `manifest.refs`. A skipped member would shorten the
+    list and shift each position after it onto a different reference, silently."""
+    manifest, members, _images = _manifest_with_refs(3)
+    doc = cf.CharDoc(manifest=manifest, members=members)
+    assert len(encode.ref_images(doc)) == 3
+
+    members.pop(str(manifest.refs[1]["path"]))
+    with pytest.raises(cf.CharFileError, match="missing"):
+        encode.ref_images(doc)
+
+
+def test_pruning_drops_the_harvested_reference_that_adds_least(monkeypatch) -> None:
+    """Coverage, not score: a pool of near-duplicates of the best-scoring angle is worth less to a
+    compile or a train than one spanning the angles the originals miss."""
+    from inline_core.characters import scoring
+
+    manifest, members, _images = _manifest_with_refs(2)
+    doc = cf.CharDoc(manifest=manifest, members=members)
+    # Two originals sitting on one axis; a near-duplicate of them, and a genuinely new angle.
+    frozen = {"refs/000.png": [1.0, 0.0, 0.0], "refs/001.png": [0.99, 0.1, 0.0]}
+    members["scoring/originals_dinov2-base.json"] = scoring.dump_keyed(frozen)
+    manifest.scoring["originals"] = {"refs": [{"path": p, "sha256": ""} for p in frozen]}
+    _harvest(doc, (10, 200, 30))
+    _harvest(doc, (200, 10, 30))
+    members["scoring/harvested_dinov2-base.json"] = scoring.dump_keyed(
+        {"harvested/000.png": [0.98, 0.0, 0.1], "harvested/001.png": [0.0, 0.0, 1.0]}
+    )
+    # A cap of one, so exactly one of the two has to go.
+    monkeypatch.setattr(encode, "MAX_HARVESTED", 1)
+
+    removed = encode.prune_harvested(doc)
+
+    assert removed == ["harvested/000.png"], "the near-duplicate should have gone, not the new angle"
+    assert [r["path"] for r in encode.harvested(manifest)] == ["harvested/001.png"]
+    assert len(encode.originals(manifest)) == 2, "an original was pruned"

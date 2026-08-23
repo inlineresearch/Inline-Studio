@@ -41,6 +41,22 @@ class _TargetOnly:
         return self._target
 
 
+def _with_xet(call: Callable[[], str]) -> str:
+    """Run ``call`` with XET enabled, whatever the process default is.
+
+    ``is_xet_available`` reads the constant on every call rather than at import, so this is a real
+    switch and not a no-op. Restored afterwards so the next download keeps its progress bar.
+    """
+    from huggingface_hub import constants
+
+    previous = constants.HF_HUB_DISABLE_XET
+    constants.HF_HUB_DISABLE_XET = False
+    try:
+        return call()
+    finally:
+        constants.HF_HUB_DISABLE_XET = previous
+
+
 class DownloadCancelled(Exception):
     """Raised out of the progress callback, the only per-chunk seam a download has."""
 
@@ -333,8 +349,10 @@ class ModelDownloads:
         into place under its basename, so a half-finished download never looks installed.
 
         Progress comes from huggingface_hub's own download counter via ``tqdm_class`` - real
-        per-chunk motion, and it still resumes a partial file. (XET is disabled at process start so
-        the plain HTTP path is used; XET reports nothing to tqdm.)"""
+        per-chunk motion, and it still resumes a partial file. XET is disabled at process start for
+        exactly that reason (it reports nothing to tqdm), but plain HTTP refuses any file over 50GB,
+        which is every H3 transformer - so a refusal turns XET back on and retries rather than
+        leaving the only route to those models closed."""
         from huggingface_hub import hf_hub_download, snapshot_download
         from huggingface_hub.utils import HfHubHTTPError
 
@@ -377,8 +395,18 @@ class ModelDownloads:
                 tqdm_class=tqdm_class,
             )
 
+        def _fetch_or_xet(token: bool | None) -> str:
+            """Plain HTTP first for its progress bar, XET only where HTTP will not go at all."""
+            try:
+                return _fetch(token)
+            except ValueError as error:
+                if "too large" not in str(error):
+                    raise
+                on_progress(0.0, f"Downloading {comp.label} over Xet…")
+                return _with_xet(lambda: _fetch(token))
+
         try:
-            path = _fetch(None)  # ambient token, e.g. for a gated repo the user has access to
+            path = _fetch_or_xet(None)  # ambient token, e.g. a gated repo the user has access to
         except HfHubHTTPError as error:
             # A stale/invalid cached HF token 401s even on a public repo (HF masks it as "not
             # found"). Retry anonymously so a bad token never blocks a public model download.
@@ -386,7 +414,7 @@ class ModelDownloads:
                 raise
             shutil.rmtree(staging, ignore_errors=True)
             try:
-                path = _fetch(False)
+                path = _fetch_or_xet(False)
             except HfHubHTTPError as anonymous:
                 # Hugging Face reports a gated or missing repo identically, as 404 "Repository Not
                 # Found", which reads as a broken link rather than a licence the user must accept.

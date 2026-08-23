@@ -28,15 +28,16 @@ beforeEach(() => {
 })
 
 describe('buildCharacterStarter', () => {
-  it('drops the four nodes a reference character needs', async () => {
+  it('drops the five nodes a reference character needs', async () => {
     const ids = await buildCharacterStarter({ x: 0, y: 0 })
     expect(added.map((a) => a.type)).toEqual([
       'loader',
       'character/encode',
+      'character/verify-refs',
       'character/references',
       'character/write',
     ])
-    expect(ids).toHaveLength(4)
+    expect(ids).toHaveLength(5)
   })
 
   it('drops below whatever already occupies the viewport centre', async () => {
@@ -51,13 +52,15 @@ describe('buildCharacterStarter', () => {
     expect(placed[0]).toBeGreaterThanOrEqual(250)
   })
 
-  it('wires the identity to Write directly, not through the payload', async () => {
-    // Payloads are compiled from the identity; Write needs both, so Encode fans out to each.
+  it('gives Write the verified identity, not the raw one', async () => {
+    // A payload node compiles from the doc Write hands it, not from its own input, so wiring
+    // Encode straight to Write would save the reference set nothing checked.
     await buildCharacterStarter({ x: 0, y: 0 })
     expect(wires).toEqual([
       'loader:image -> character/encode:images',
-      'character/encode:character -> character/references:character',
-      'character/encode:character -> character/write:character',
+      'character/encode:character -> character/verify-refs:character',
+      'character/verify-refs:character -> character/references:character',
+      'character/verify-refs:character -> character/write:character',
       'character/references:payload -> character/write:payloads',
     ])
   })

@@ -180,6 +180,8 @@ class Characters:
             if path is None:
                 return None
             doc = cf.read(path)
+            # Before anything reads a version: a node's encoder pick must not decide this.
+            scoring.use_encoders_from(doc.manifest.scoring)
             # Refs are truth and scoring is cache, so a character written before the current
             # encoders is rebuilt here rather than scoring against a centroid nothing can compare.
             if self._scoring_stale(doc.manifest):
@@ -229,36 +231,24 @@ class Characters:
                 manifest, encoder_id, version
             ):
                 return True
-        return bool(manifest.refs) and not manifest.scoring.get("refFramings")
+        # A reference was added or dropped since, so every stored per-reference list is misaligned.
+        recorded = manifest.scoring.get("refCount")
+        if recorded is not None and int(recorded) != len(manifest.refs):
+            return True
+        # Key presence, not truthiness: a character whose references carry no detectable face has
+        # an honestly empty list, and reading that as stale rescored it on every take forever.
+        return bool(manifest.refs) and "refFramings" not in manifest.scoring
 
     def _rescore(self, path: Path, previous: cf.CharDoc) -> cf.CharDoc:
-        """Re-encode from its own refs, keeping char_id and filename so nothing unpicks."""
-        doc = encode.char_encode(
-            self._ref_files(previous),
-            name=previous.manifest.name,
-            description=self._description(previous),
-            char_id=previous.manifest.char_id,
-            created_at=previous.manifest.created_at,
-            on_progress=self._progress(previous.manifest.name),
-        )
-        cf.write(path, doc)
+        """Recompute scoring from the character's own refs, in place.
+
+        Never through `char_encode`: that builds a fresh manifest, so the write below would put the
+        loss of the trained adapter and every non-flux payload on disk.
+        """
+        encode.rescore(previous, self._progress(previous.manifest.name))
+        cf.write(path, previous)
         self._changed()
-        return doc
-
-    def _ref_files(self, doc: cf.CharDoc) -> list[Path]:
-        """The character's own refs written out, so a rebuild reads truth not the user's library."""
-        import tempfile
-
-        root = Path(tempfile.mkdtemp(prefix="inline-char-refs-"))
-        out: list[Path] = []
-        for index, ref in enumerate(doc.manifest.refs):
-            data = doc.members.get(str(ref.get("path")))
-            if data is None:
-                continue
-            target = root / f"{index:03d}.png"
-            target.write_bytes(data)
-            out.append(target)
-        return out
+        return previous
 
     def _require(self, file: str) -> Path:
         path = library.resolve(file)
@@ -280,7 +270,9 @@ class Characters:
             "file": path.name,
             "charId": manifest.char_id,
             "name": manifest.name or path.stem,
-            "refs": len(manifest.refs),
+            "refs": len(encode.originals(manifest)),
+            "harvested": len(encode.harvested(manifest)),
+            "flagged": list(manifest.scoring.get("flaggedRefs") or []),
             "createdAt": manifest.created_at,
             "modifiedAt": manifest.modified_at,
             "description": self._description(doc),

@@ -77,7 +77,9 @@ def _cache_root() -> Path:
     return data_dir() / "characters"
 
 
-def char_apply(chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH) -> AppliedCharacter | None:
+def char_apply(
+    chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH, prefer: str | None = None
+) -> AppliedCharacter | None:
     """How a character applies on ``arch``, or None when none is picked. An unreadable pick raises
     rather than silently generating the wrong person.
 
@@ -105,8 +107,9 @@ def char_apply(chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH) -> AppliedChara
     lora = _extract_lora(doc, digest, arch)
     strength = encode.lora_strength(doc.manifest, arch)
     # A trained adapter wins unless the character says otherwise: the user asked for it explicitly,
-    # and loading both would apply the identity twice.
-    mode = doc.manifest.apply.get(arch) or ("lora" if lora else "reference")
+    # and loading both would apply the identity twice. `prefer` overrides both, for a node that can
+    # only run one way: H3's reference partition needs a reference and cannot use an adapter alone.
+    mode = prefer or doc.manifest.apply.get(arch) or ("lora" if lora else "reference")
     # No reference channel on this arch, so the adapter is the only way it can apply at all.
     if not references:
         mode = "lora"

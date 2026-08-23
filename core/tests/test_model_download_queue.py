@@ -163,3 +163,43 @@ def test_named_files_and_a_named_subfolder_are_separate_cases(
     assert landed.is_dir(), "the folder is what the node loads from"
     assert (landed / "model.safetensors").is_file()
     assert seen["allow_patterns"] == ["config.json", "model.safetensors"]
+
+
+def test_xet_is_turned_back_on_only_for_the_call_that_needs_it() -> None:
+    """The server disables Xet at start so a download reports per-chunk progress, but plain HTTP
+    refuses anything over 50GB - every H3 transformer. The switch has to be per call, and it has to
+    be a real one: `is_xet_available` reads the constant on each call rather than at import."""
+    from huggingface_hub import constants
+    from huggingface_hub.utils._runtime import is_xet_available
+
+    from inline_core.studio.models import _with_xet
+
+    previous = constants.HF_HUB_DISABLE_XET
+    constants.HF_HUB_DISABLE_XET = True
+    try:
+        assert is_xet_available() is False, "disabled outside the call"
+        seen: list[bool] = []
+        _with_xet(lambda: (seen.append(is_xet_available()), "path")[1])
+        assert seen == [True], "enabled inside it"
+        assert is_xet_available() is False, "and restored after, so the next download keeps its bar"
+    finally:
+        constants.HF_HUB_DISABLE_XET = previous
+
+
+def test_the_flag_is_restored_even_when_the_download_raises() -> None:
+    from huggingface_hub import constants
+
+    from inline_core.studio.models import _with_xet
+
+    previous = constants.HF_HUB_DISABLE_XET
+    constants.HF_HUB_DISABLE_XET = True
+    try:
+        def boom() -> str:
+            raise RuntimeError("network died")
+
+        with pytest.raises(RuntimeError):
+            _with_xet(boom)
+        assert constants.HF_HUB_DISABLE_XET is True
+    finally:
+        constants.HF_HUB_DISABLE_XET = previous
+

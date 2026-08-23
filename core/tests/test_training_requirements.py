@@ -115,3 +115,22 @@ def test_the_recipe_puts_them_on_the_training_node() -> None:
     assert data["hyperparams"]["arch"] == "krea2"
     names = [m["name"] for m in data["models"]]
     assert "krea2_raw_bf16.safetensors" in names
+
+
+def test_an_fp8_build_never_stands_in_for_training(tmp_path, monkeypatch) -> None:
+    """It substitutes for generation and not for training: the label says "generation only", and a
+    pruned fp8 checkpoint fine-tunes into nonsense. Relaxing the pair for both dropped the
+    transformer out of training's pre-flight entirely, because _required() keeps only the
+    non-optional ones."""
+    from inline_core.models.minimaxh3 import requirements as reqs
+
+    monkeypatch.setenv("INLINE_MODELS_DIR", str(tmp_path))
+    (tmp_path / "diffusion_models").mkdir(parents=True)
+    (tmp_path / "diffusion_models" / reqs.FL2VA_FP8_FILE).write_bytes(b"x")
+
+    assert ("diffusion_models", reqs.FL2VA_FILE) in _files("minimax-h3")
+    # Generation is happy with what is on disk; training still names the full-precision build.
+    generation = {c.id: c for c in reqs.components("fl2va")}
+    assert generation["h3-fl2va"].optional
+    training = {c.id: c for c in reqs.components("fl2va", fp8_substitutes=False)}
+    assert not training["h3-fl2va"].optional

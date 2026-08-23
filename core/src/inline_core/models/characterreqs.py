@@ -15,7 +15,9 @@ from ..config import models_dir
 from .requirements import ModelComponent
 
 #: Every node that runs an encoder. The rest of the character family only moves bytes around.
-ENCODER_NODES = ("character/encode", "character/edit")
+ENCODER_NODES = (
+    "character/encode", "character/edit", "character/verify-refs", "character/ingest-approved",
+)
 
 
 def _component(

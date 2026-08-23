@@ -86,7 +86,11 @@ def summaries() -> list[dict[str, Any]]:
                 "file": path.name,
                 "charId": manifest.char_id,
                 "name": manifest.name or path.stem,
-                "refs": len(manifest.refs),
+                # The references the user curated. Harvested ones are counted separately, or a
+                # character reads as stronger than it is because it absorbed its own output.
+                "refs": len(encode.originals(manifest)),
+                "harvested": len(encode.harvested(manifest)),
+                "flagged": list(manifest.scoring.get("flaggedRefs") or []),
                 "createdAt": manifest.created_at,
                 "modifiedAt": manifest.modified_at,
                 "hints": encode.hints_for(manifest),

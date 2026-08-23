@@ -80,6 +80,7 @@ import { MissingModelsDialog } from '../Models/MissingModelsDialog'
 import { checkGraphModels } from '../../lib/checkModels'
 import { CanvasToolbar } from './CanvasToolbar'
 import { AddNodeMenu, type AddNodeKind } from './AddNodeMenu'
+import { BY_ID_TYPES } from './nodeKinds'
 import { FirstRunHints } from './GettingStarted/FirstRunHints'
 import { StarterCards } from './GettingStarted/StarterCards'
 import { useStarterGraph } from './GettingStarted/useStarterGraph'
@@ -127,7 +128,6 @@ function writeViewport(id: string, v: { x: number; y: number; zoom: number }): v
 }
 
 /** Item types the Training category adds; they map straight through to their own components. */
-const TRAINING_TYPES = new Set(['train/dataset', 'train/caption', 'train/lora', 'train/loss'])
 
 const nodeTypes: NodeTypes = {
   image: ImageNode,
@@ -1371,9 +1371,7 @@ function itemToNode(
   if (item.type === 'text') {
     return { ...common, type: 'text', data: { text: item.data.text ?? FALLBACK_TEXT } }
   }
-  // Training nodes read everything from the board context by id, like the Core node does. Without
-  // this they fall through to the asset branch below and render as a blank image.
-  if (TRAINING_TYPES.has(item.type)) {
+  if (BY_ID_TYPES.has(item.type)) {
     return { ...common, type: item.type, data: { itemId: item.id } }
   }
   const asset = item.assetId ? assetsById.get(item.assetId) : undefined

@@ -102,13 +102,6 @@ def _params(variant: Variant) -> tuple[ParamField, ...]:
         ParamField("num_inference_steps", "Steps", Widget.NUMBER, 50, min=1, max=200, step=1),
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
     ]
-    if variant.references:
-        fields.append(
-            ParamField(
-                "ref_image_size", "Reference detail", Widget.SELECT, "match",
-                options_from=None, advanced=True,
-            )
-        )
     fields.append(
         ParamField(
             "model", "Diffusion model", Widget.SELECT, "",
@@ -218,10 +211,11 @@ def build_request(
     loras: tuple[Any, ...] = ()
     references: tuple[Any, ...] = ()
     if variant.references:
-        wired = list(inputs.get("references") or [])
+        wired = [v for v in (inputs.get("references") or []) if v is not None]
         if character is not None and character.refs:
             # Fed through the collector rather than appended after it, so the character's images are
             # numbered and limit-checked as images - appending would land them behind the videos.
+            # Already trimmed to fit by `_apply_character`, which owns the numbering.
             inputs = {**inputs, "references": [*wired, *character.refs]}
         references = collect_references(inputs, limits=REFERENCE_LIMITS)
         if not references:
@@ -275,7 +269,11 @@ def _apply_character(inputs: dict[str, list[Any]], variant: Variant) -> _Charact
     from ...characters import apply as characters
     from ...graph.loader_runners import LoraRef
 
-    applied = characters.char_apply(chosen, ARCH)
+    # The reference partition cannot run on an adapter alone, so it asks for references outright
+    # rather than taking the adapter a character prefers by default.
+    applied = characters.char_apply(
+        chosen, ARCH, prefer="reference" if variant.references else None
+    )
     if applied is None:
         return None
     if not variant.references:
@@ -291,15 +289,28 @@ def _apply_character(inputs: dict[str, list[Any]], variant: Variant) -> _Charact
             prefix=applied.prompt_prefix(1),
             lora=LoraRef(file=str(applied.lora), strength=applied.lora_strength),
         )
-    if not applied.refs and applied.lora is None:
-        return None
+    if not applied.refs:
+        raise ComponentError(
+            f"{chosen} has no {ARCH} references, so {variant.title} has nothing to condition on. "
+            "Wire it through Compile References with Model set to minimax-h3 and write it again, "
+            "or wire images into this node's References input."
+        )
     how = "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)"
     logger.info("Applying character %s by %s", applied.name, how)
     # H3 resolves `<Picture N>`, not FLUX.2's ordinal prose, and the character's images land after
     # whatever the user already wired.
     wired = len([v for v in (inputs.get("references") or []) if v is not None])
+    # Trimmed here rather than by the caller, so the prefix can never name a position that was
+    # dropped: a character is a library artefact and H3's 9 images is not every model's limit.
+    keep = list(applied.refs)[: max(0, REFERENCE_LIMITS.max_images - wired)]
+    if len(keep) < len(applied.refs):
+        logger.info(
+            "%s: using %d of %s's %d references, the most it takes beside %d wired",
+            variant.title, len(keep), chosen, len(applied.refs), wired,
+        )
+        applied.refs = keep
     return _Character(
-        refs=list(applied.refs),
+        refs=keep,
         prefix=applied.prompt_prefix(wired + 1, style="token"),
         lora=(
             LoraRef(file=str(applied.lora), strength=applied.lora_strength)
@@ -408,6 +419,7 @@ class MiniMaxH3Runner(NodeRunner):
         )
 
         call = call_kwargs(request, self._variant, inputs)
+
         call["generator"] = torch.Generator(device="cpu").manual_seed(request.seed)
 
         def on_step(done: int, total: int) -> None:
@@ -490,12 +502,56 @@ class MiniMaxH3Runner(NodeRunner):
         return NodeResult(outputs=outputs, takes=takes)
 
 
+def _reference_tokens(request: Request) -> tuple[int, int]:
+    """Wired image references and what they cost the vision tower, measured from the pixels.
+
+    Read off the files rather than a setting, because the size that matters was decided when the
+    character was compiled and nothing on this node records it.
+    """
+    images = [r for r in request.references if getattr(r, "kind", None) == ReferenceKind.IMAGE]
+    tokens = 0
+    for ref in images:
+        try:
+            from PIL import Image
+
+            with Image.open(getattr(ref.value, "path", ref.value)) as handle:
+                width, height = handle.size
+        except Exception:  # noqa: BLE001 - an error path must not raise a second error
+            continue
+        tokens += (width // 32) * (height // 32)
+    return len(images), tokens
+
+
+#: Below this, another process on the card is noise; above it, it is the whole story.
+_FOREIGN_VRAM_FLOOR = 2 * 1024**3
+
+
 def _oom(request: Request, *, host: bool = False) -> str:
     where = "System RAM" if host else "VRAM"
-    return (
+    # Asked first, because when it is true nothing on this node is the cause and every other hint
+    # below sends the user to change a setting that was never the problem.
+    foreign = 0 if host else rt.foreign_vram_bytes()
+    if foreign >= _FOREIGN_VRAM_FLOOR:
+        return (
+            f"{where} ran out, but {foreign / 1024**3:.1f} GB of this card is held by another "
+            "process - a training run, another render, or another app. Wait for it to finish or "
+            "stop it, then run this again. Nothing on this node will free that memory."
+        )
+    canvas = (
         f"{where} ran out at {request.width}x{request.height} for {request.seconds:.1f}s. "
         "Canvas is the biggest lever: 960x544 needs far less than 1344x768 and renders about "
         "2.3x faster per step. A shorter duration helps too."
+    )
+    images, tokens = _reference_tokens(request)
+    if not images:
+        return canvas
+    cost = f", which is {tokens:,} vision tokens" if tokens else ""
+    # Named alone because references are encoded before a frame exists: the canvas cannot move this
+    # step at all, and a hint that leads with it sends the user to resize for nothing.
+    return (
+        f"{where} ran out encoding {images} reference(s){cost}. The canvas does not affect this "
+        "step. Lower Resized Reference Resolution on the Compile References node and write the "
+        "character again - halving it quarters the tokens - or wire fewer references."
     )
 
 

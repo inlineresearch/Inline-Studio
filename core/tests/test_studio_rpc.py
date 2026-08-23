@@ -83,6 +83,8 @@ def test_full_project_and_canvas_flow(client) -> None:
         "control/apply",
         "character/encode",
         "character/edit",
+        "character/verify-refs",
+        "character/ingest-approved",
         "character/load",
         "character/dataset",
         "character/references",
