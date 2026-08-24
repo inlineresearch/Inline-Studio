@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from inline_core.studio.dataset_import import read_metadata
+from inline_core.studio.dataset_import import inspect_folder, media_files, read_metadata
 from inline_core.training.dataset import is_reference_name, reference_for_name
 
 
@@ -39,6 +39,48 @@ def test_hugging_face_metadata_jsonl_finds_a_prefixed_caption_key(tmp_path: Path
     entries = read_metadata(tmp_path)
     assert entries["0001.mp4"].caption == "a pixel scene"
     assert entries["0001.mp4"].reference is None
+
+
+def test_a_split_subfolder_is_read_and_keyed_from_the_root(tmp_path: Path) -> None:
+    """The videofolder convention: clips in `train/`, a sidecar beside them, `file_name` relative.
+
+    Reading only the root is what made a pulled pixel-art dataset import as "No images or clips".
+    """
+    train = tmp_path / "train"
+    train.mkdir()
+    (train / "metadata.jsonl").write_text(
+        '{"file_name": "0001.mp4", "caption-nvila15b": "a pixel scene"}\n'
+    )
+    (train / "0001.mp4").write_bytes(b"clip")
+    (tmp_path / "README.md").write_text("# a dataset")
+
+    entries = read_metadata(tmp_path)
+    assert set(entries) == {"train/0001.mp4"}
+    assert entries["train/0001.mp4"].caption == "a pixel scene"
+    assert [p.name for p in media_files(tmp_path)] == ["0001.mp4"]
+    preview = inspect_folder(str(tmp_path))
+    assert (preview.items, preview.problem) == (1, None)
+
+
+def test_a_nested_pair_stays_inside_its_own_split(tmp_path: Path) -> None:
+    """Pairing is by relative path, so `train/bear.mp4` cannot claim `test/bear_reference.mp4`."""
+    for split in ("train", "test"):
+        (tmp_path / split).mkdir()
+        (tmp_path / split / "bear.mp4").write_bytes(b"clip")
+    (tmp_path / "test" / "bear_reference.mp4").write_bytes(b"clip")
+
+    preview = inspect_folder(str(tmp_path))
+    assert (preview.items, preview.pairs) == (2, 1)
+
+
+def test_the_hugging_face_download_cache_is_not_imported(tmp_path: Path) -> None:
+    """`local_dir` snapshots leave a `.cache/huggingface/` mirror beside the real files."""
+    cache = tmp_path / ".cache" / "huggingface" / "download" / "train"
+    cache.mkdir(parents=True)
+    (cache / "0001.mp4").write_bytes(b"not the real clip")
+    (tmp_path / "0001.mp4").write_bytes(b"clip")
+    assert [p.name for p in media_files(tmp_path)] == ["0001.mp4"]
+    assert media_files(tmp_path)[0].parent == tmp_path
 
 
 def test_a_malformed_sidecar_falls_back_rather_than_failing_the_import(tmp_path: Path) -> None:

@@ -370,9 +370,15 @@ if [[ "$RUN_INSTALL" -eq 1 ]]; then
     uv pip install --python "$TARGET_PY" --index-url "$TORCH_URL" --reinstall "${TORCH_PINS[@]}"
   fi
   # Pull the prebuilt web UI so there's no Node build (best-effort - it may not be published yet).
-  uv pip install --python "$TARGET_PY" inline-studio-frontend >/dev/null 2>&1 \
-    && echo "Installed the prebuilt web UI (inline-studio-frontend)." \
-    || echo "Note: inline-studio-frontend not installed; the UI will build from source or run API-only."
+  # --upgrade, because uv leaves an already-satisfied requirement alone: without it a re-run of
+  # --install kept whatever UI was first installed while the engine moved on underneath it.
+  if uv pip install --python "$TARGET_PY" --upgrade inline-studio-frontend >/dev/null 2>&1; then
+    FRONTEND_VERSION="$("$TARGET_PY" -c 'from importlib.metadata import version
+print(version("inline-studio-frontend"))' 2>/dev/null || true)"
+    echo "Installed the prebuilt web UI (inline-studio-frontend ${FRONTEND_VERSION:-unknown})."
+  else
+    echo "Note: inline-studio-frontend not installed; the UI will build from source or run API-only."
+  fi
   # A CPU-only wheel on a GPU box is silent at runtime and ~100x slower, so say it here rather than
   # let the resolve fail quietly - it can still happen if PyPI outranks the CUDA index on version.
   if [[ "$TORCH_CHOICE" != "cpu" ]] && ! "$TARGET_PY" -c 'import importlib.util, sys
@@ -409,7 +415,9 @@ rec = {
 with open(os.environ["INLINE_RECORD"], "w", encoding="utf-8") as fh:
     json.dump(rec, fh, indent=2)
 ' 2>/dev/null || true
-  echo "Installed extras: $EXTRAS. Start with: ./webui.sh"
+  CORE_VERSION="$("$TARGET_PY" -c 'from importlib.metadata import version
+print(version("inline-core"))' 2>/dev/null || true)"
+  echo "Installed inline-core ${CORE_VERSION:-unknown} with extras: $EXTRAS. Start with: ./webui.sh"
   exit 0
 fi
 

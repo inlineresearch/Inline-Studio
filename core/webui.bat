@@ -223,7 +223,14 @@ if "!TORCH_FORCE!"=="1" if defined TORCH_CHOICE (
   echo + uv pip install --python "!TARGET_PY!" --index-url !TORCH_URL! --reinstall !TORCH_PINS!
   uv pip install --python "!TARGET_PY!" --index-url !TORCH_URL! --reinstall !TORCH_PINS! || goto fail
 )
-uv pip install --python "!TARGET_PY!" inline-studio-frontend >nul 2>nul && echo Installed the prebuilt web UI (inline-studio-frontend). || echo Note: inline-studio-frontend not installed; the UI will build from source or run API-only.
+rem --upgrade, because uv leaves an already-satisfied requirement alone: without it a re-run of
+rem --install kept whatever UI was first installed while the engine moved on underneath it.
+set "FRONTEND_VERSION="
+uv pip install --python "!TARGET_PY!" --upgrade inline-studio-frontend >nul 2>nul && (
+  for /f "usebackq delims=" %%v in (`"!TARGET_PY!" -c "from importlib.metadata import version; print(version('inline-studio-frontend'))" 2^>nul`) do set "FRONTEND_VERSION=%%v"
+  if not defined FRONTEND_VERSION set "FRONTEND_VERSION=unknown"
+  echo Installed the prebuilt web UI ^(inline-studio-frontend !FRONTEND_VERSION!^).
+) || echo Note: inline-studio-frontend not installed; the UI will build from source or run API-only.
 call :write_install_record
 rem A CPU-only wheel on a GPU box is silent at runtime and ~100x slower, so say it here rather than
 rem let it through: it can still happen if PyPI ever outranks the CUDA index on version.
@@ -234,7 +241,9 @@ echo          CPU, roughly 100x slower. Re-run with an explicit index, e.g.
 echo          .\webui.bat --install --torch-index !TORCH_CHOICE! --recreate
 
 :install_done
-echo Installed extras: !EXTRAS!. Start with: .\webui.bat
+set "CORE_VERSION=unknown"
+for /f "usebackq delims=" %%v in (`"!TARGET_PY!" -c "from importlib.metadata import version; print(version('inline-core'))" 2^>nul`) do set "CORE_VERSION=%%v"
+echo Installed inline-core !CORE_VERSION! with extras: !EXTRAS!. Start with: .\webui.bat
 exit /b 0
 
 rem One query for both, keeping the highest capability. set /a not a findstr guard: `if LSS` would

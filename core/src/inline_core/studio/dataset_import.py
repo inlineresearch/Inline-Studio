@@ -9,11 +9,18 @@ names it ``caption-nvila15b``.
 
 Filenames remain the fallback: ``bear.mp4`` pairs with ``bear_reference.mp4`` with no sidecar at
 all, which is what ``training/dataset.py`` already reads at train time.
+
+Nesting is read too. The Hugging Face ``videofolder`` convention puts the clips in ``train/`` beside
+a ``metadata.jsonl`` whose ``file_name`` is relative to that split, so a reader that only looked at
+the root of a pulled repo found no media at all and every path here is relative to the root instead
+of a bare name.
 """
 
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,9 +45,39 @@ class DatasetEntry:
 
 
 def read_metadata(root: Path) -> dict[str, DatasetEntry]:
-    """Every metadata row, keyed by target filename. Empty when the folder carries none."""
+    """Every metadata row, keyed by path relative to `root`. Empty when the folder carries none."""
+    entries: dict[str, DatasetEntry] = {}
+    for folder in sorted({root, *(f.parent for f in walk_files(root))}):
+        entries.update(_read_folder(root, folder))
+    return entries
+
+
+def walk_files(root: Path) -> list[Path]:
+    """Every file under `root`, sorted, skipping dot-dirs - `.cache/` mirrors the whole snapshot."""
+    return sorted(_walk(root))
+
+
+def media_files(root: Path) -> list[Path]:
+    return [p for p in walk_files(root) if p.suffix.lower() in _MEDIA_SUFFIXES]
+
+
+def _walk(root: Path) -> Iterator[Path]:
+    try:
+        entries = sorted(root.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if entry.name.startswith("."):
+            continue
+        if entry.is_dir():
+            yield from _walk(entry)
+        elif entry.is_file():
+            yield entry
+
+
+def _read_folder(root: Path, folder: Path) -> dict[str, DatasetEntry]:
     for name in _METADATA_FILES:
-        path = root / name
+        path = folder / name
         if not path.is_file():
             continue
         try:
@@ -52,14 +89,21 @@ def read_metadata(root: Path) -> dict[str, DatasetEntry]:
             target = _first(row, _TARGET_KEYS)
             if not target:
                 continue
-            entries[Path(target).name] = DatasetEntry(
-                target=Path(target).name,
+            reference = _first(row, _REFERENCE_KEYS)
+            key = _relative(root, folder, target)
+            entries[key] = DatasetEntry(
+                target=key,
                 caption=_caption(row),
-                reference=(lambda r: Path(r).name if r else None)(_first(row, _REFERENCE_KEYS)),
+                reference=_relative(root, folder, reference) if reference else None,
             )
         if entries:
             return entries
     return {}
+
+
+def _relative(root: Path, folder: Path, value: str) -> str:
+    """A sidecar names its files relative to itself, so a split's rows key on `train/0001.mp4`."""
+    return Path(os.path.normpath(folder.relative_to(root) / value)).as_posix()
 
 
 def _rows(path: Path) -> list[dict[str, Any]]:
@@ -134,14 +178,16 @@ def inspect_repo(repo: str, token: str | None = None) -> RepoPreview:
             return RepoPreview(repo, 0, 0, 0, None, f"No dataset repo called {repo!r}.")
         return RepoPreview(repo, 0, 0, 0, None, str(exc).splitlines()[0])
 
-    names, total = [], 0
-    metadata_file = None
+    names: list[str] = []
+    total, metadata_file = 0, None
     for sibling in info.siblings or []:
-        name = Path(sibling.rfilename).name
-        if sibling.rfilename in _METADATA_FILES or name in _METADATA_FILES:
-            metadata_file = name
-        if Path(name).suffix.lower() in _MEDIA_SUFFIXES:
-            names.append(name)
+        # The repo path, not its basename: the preview counted `train/0001.mp4` while the import
+        # read only the root, so it promised 173 clips and then found none.
+        rel = Path(str(sibling.rfilename))
+        if rel.name in _METADATA_FILES:
+            metadata_file = rel.name
+        if rel.suffix.lower() in _MEDIA_SUFFIXES:
+            names.append(rel.as_posix())
             total += int(getattr(sibling, "size", 0) or 0)
 
     return _preview(repo, names, total, metadata_file)
@@ -152,15 +198,13 @@ def inspect_folder(path: str) -> RepoPreview:
     folder = Path(path).expanduser()
     if not folder.is_dir():
         return RepoPreview(path, 0, 0, 0, None, f"No folder at {path!r}.")
-    names, total = [], 0
-    metadata_file = None
-    for entry in sorted(folder.iterdir()):
-        if not entry.is_file():
-            continue
+    names: list[str] = []
+    total, metadata_file = 0, None
+    for entry in walk_files(folder):
         if entry.name in _METADATA_FILES:
             metadata_file = entry.name
         if entry.suffix.lower() in _MEDIA_SUFFIXES:
-            names.append(entry.name)
+            names.append(entry.relative_to(folder).as_posix())
             total += entry.stat().st_size
     return _preview(path, names, total, metadata_file)
 
@@ -185,7 +229,8 @@ def _looks_like_reference(name: str) -> bool:
 def _reference_name_for(name: str, present: set[str]) -> str | None:
     path = Path(name)
     for suffix in (".ref", "_reference"):
-        candidate = f"{path.stem}{suffix}{path.suffix.lower()}"
+        # with_name, so a nested pair stays in its own split rather than matching across folders.
+        candidate = path.with_name(f"{path.stem}{suffix}{path.suffix.lower()}").as_posix()
         if candidate in present:
             return candidate
     return None

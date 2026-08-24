@@ -82,7 +82,20 @@ rem If the CUDA build is wrong for your card, name the index yourself:
 
 On NVIDIA, `--install` reads your GPU's compute capability and pulls the matching CUDA build of
 PyTorch, RTX 50-series included. Everything lands in `core/.venv`, which Inline Studio owns; an
-environment already activated in your shell is never touched. Re-running `--install` is safe.
+environment already activated in your shell is never touched. Re-running `--install` is safe, and
+it is also how you update: it upgrades the prebuilt web UI package, so `git pull` followed by
+`--install` moves both halves forward.
+
+Both versions are printed at launch, and Inline Studio checks PyPI once a day in the background and
+says so when either half is behind:
+
+```
+Versions: inline-core 1.3.0, inline-studio-frontend 1.2.52
+UPDATE AVAILABLE: inline-studio-frontend 1.2.52 -> 1.3.0
+  Update with: ./webui.sh --install  (or: pip install -U inline-studio-frontend)
+```
+
+Set `INLINE_NO_UPDATE_CHECK=1` to skip the check.
 
 Prefer pip? `pip install -r requirements.txt` from the repo root installs the whole app from PyPI,
 then run `inline-studio`.

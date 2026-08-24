@@ -56,7 +56,8 @@ def reference_for_name(target: Path, names: set[str]) -> str | None:
     out. Same two spellings, matched against what is actually being imported.
     """
     for suffix in (_REFERENCE_INFIX, _REFERENCE_SUFFIX):
-        candidate = f"{target.stem}{suffix}{target.suffix.lower()}"
+        # with_name keeps a nested target in its own folder; a bare name is unchanged by it.
+        candidate = target.with_name(f"{target.stem}{suffix}{target.suffix.lower()}").as_posix()
         if candidate in names:
             return candidate
     return None

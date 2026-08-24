@@ -32,7 +32,7 @@ from ..training.dataset import (
 )
 from . import training_store as ts
 from .activity import ActivityRun
-from .dataset_import import read_metadata
+from .dataset_import import read_metadata, walk_files
 
 _CAPTION_EXT = ".txt"
 
@@ -168,38 +168,39 @@ class Training:
         if not folder.is_dir():
             raise ValueError(f"Not a folder: {path}")
         conn, project = self._conn(), self._store.folder()
-        media = [
-            p
-            for p in sorted(folder.iterdir())
-            if p.is_file() and ax.kind_for_file(str(p)) in ("image", "video")
-        ]
+        # Nested, because a pulled Hugging Face dataset keeps its clips in `train/`, not the root.
+        media = [p for p in walk_files(folder) if ax.kind_for_file(str(p)) in ("image", "video")]
         if not media:
             raise ValueError(f"No images or clips in {path}")
 
+        def relative(source: Path) -> str:
+            return source.relative_to(folder).as_posix()
+
         metadata = read_metadata(folder)
+        names = {relative(p) for p in media}
         references = {e.reference for e in metadata.values() if e.reference} | {
-            p.name for p in media if is_reference_name(p)
+            n for n in names if is_reference_name(Path(n))
         }
         imported = [(p, ax.import_file(conn, project, str(p), None)) for p in media]
-        by_name = {p.name: a["id"] for p, a in imported if a}
-        names = {p.name for p in media}
+        by_name = {relative(p): a["id"] for p, a in imported if a}
 
         staged: list[dict[str, Any]] = []
         for source, asset in imported:
-            if asset is None or source.name in references:
+            name = relative(source)
+            if asset is None or name in references:
                 continue
-            entry = metadata.get(source.name)
+            entry = metadata.get(name)
             sidecar = source.with_suffix(_CAPTION_EXT)
             caption = ""
             if sidecar.is_file():
                 caption = sidecar.read_text(encoding="utf-8").strip()
             elif entry is not None:
                 caption = entry.caption
-            reference_name = entry.reference if entry else reference_for_name(source, names)
+            reference_name = entry.reference if entry else reference_for_name(Path(name), names)
             staged.append(
                 {
                     "assetId": asset["id"],
-                    "name": source.name,
+                    "name": name,
                     "caption": caption,
                     "referenceAssetId": by_name.get(reference_name) if reference_name else None,
                 }

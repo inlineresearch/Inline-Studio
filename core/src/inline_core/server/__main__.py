@@ -34,6 +34,7 @@ from .bootstrap import register_models
 from .frontend import resolve_frontend_root
 from .rpc import EventBroadcaster, RpcRouter
 from .run_store import SqliteRunStore
+from .version import report_versions
 
 
 def _quiet_dependency_noise() -> None:
@@ -50,6 +51,10 @@ def _quiet_dependency_noise() -> None:
 
 def main() -> None:
     _quiet_dependency_noise()  # before register_models, which is what pulls diffusers/torchao in
+    # Resolved and reported first: model registration is slow and can crash, and the two version
+    # numbers are the first thing a bug report needs.
+    frontend_root = resolve_frontend_root()
+    report_versions(frontend_root)
     policy = MemoryPolicy()
     registry = build_default_registry()
     data = data_dir()
@@ -71,7 +76,6 @@ def main() -> None:
     torch_warning = cpu_only_torch_warning() or unsupported_arch_warning()
     if torch_warning:
         print(f"WARNING: {torch_warning}")
-    frontend_root = resolve_frontend_root()
     # The Studio app-backend: Core is the sole native backend (projects, frames, moodboard, assets,
     # generation, fal, timeline). Every InlineStudioApi channel is handled here.
     store = StudioStore(
