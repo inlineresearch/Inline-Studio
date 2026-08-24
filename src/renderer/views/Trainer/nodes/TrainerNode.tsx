@@ -26,6 +26,7 @@ import {
   WandIcon,
 } from '../../Moodboard/nodes/NodeBadge'
 import { NodeRunToolbar } from '../../Moodboard/nodes/NodeRunToolbar'
+import { useGraphMenu } from '../../Moodboard/nodes/useGraphMenu'
 import { DATASET_HANDLE, LORA_HANDLE, METRICS_HANDLE, wiredDatasetId } from './handles'
 import { useBoardActions } from '../../Moodboard/nodes/boardActions'
 
@@ -148,6 +149,9 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
 
   const busy = control === 'stop'
   const statusLabel = run ? run.status : 'idle'
+  // A training graph exports and re-imports like any other: `train/*` are all in REBUILDABLE, so
+  // a recipe is the way a dataset-and-hyperparameters setup travels to another project.
+  const graphMenu = useGraphMenu(id, 'training')
 
   return (
     <>
@@ -164,6 +168,8 @@ export function TrainerNode({ id, selected }: NodeProps): React.JSX.Element {
         }
         runLabel={control === 'resume' ? 'Resume Training' : 'Start Training'}
         stopLabel="Stop Training"
+        menuItems={graphMenu.items}
+        menuNote={graphMenu.note}
       />
       <NodeBadgeRow dragNodeId={id}>
         <NodeBadge icon={<WandIcon />}>Train LoRA</NodeBadge>

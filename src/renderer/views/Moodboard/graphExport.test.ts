@@ -166,6 +166,24 @@ describe('unsupportedTypes', () => {
     })
     expect(unsupportedTypes('core1')).toEqual(['director'])
   })
+
+  it('is empty for a training graph, so Train LoRA can offer the same menu', () => {
+    // The Trainer was the one node whose Run control carried no graph menu, on the grounds that
+    // copying a training job made no sense. Every `train/*` type is rebuildable, so it did.
+    const dataset = item('ds1', 'train/dataset', { datasetId: 'd1' })
+    const caption = item('cap1', 'train/caption')
+    const trainer = item('tr1', 'train/lora')
+    useMoodboardStore.setState({
+      items: [dataset, caption, trainer],
+      connectors: [connector('ds1', 'cap1'), connector('cap1', 'tr1')],
+    })
+    expect(unsupportedTypes('tr1')).toEqual([])
+    expect(graphSlice('tr1').items.map((i) => i.type)).toEqual([
+      'train/dataset',
+      'train/caption',
+      'train/lora',
+    ])
+  })
 })
 
 describe('duplicateGraph', () => {

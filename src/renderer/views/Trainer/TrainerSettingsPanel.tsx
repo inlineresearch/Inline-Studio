@@ -320,7 +320,7 @@ export function TrainerSettingsPanel({ itemId }: { itemId: string }): React.JSX.
           )}
 
           <label className="flex flex-col gap-1 text-[11px] text-zinc-400">
-            Clip length (seconds)
+            Max clip length (seconds)
             <NumberField
               label=""
               value={hp.clipSeconds ?? 1}

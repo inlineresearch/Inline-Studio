@@ -13,8 +13,8 @@ export interface RunMenuItem {
  * graph's run target; becomes Stop while the graph is generating. Each node type wires its own run /
  * cancel action (a Core node → runWorkflow, a fal frame → run), so this stays presentational.
  *
- * `menuItems` adds a caret beside Run for graph-level actions. It is optional because the Trainer
- * reuses this control for a training job, where copying a graph makes no sense.
+ * `menuItems` adds a caret beside Run for graph-level actions. Optional only because a node may
+ * have none to offer; every node whose graph the importer can rebuild should pass them.
  */
 export function NodeRunToolbar({
   isTarget,
