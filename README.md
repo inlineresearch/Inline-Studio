@@ -90,8 +90,8 @@ Both versions are printed at launch, and Inline Studio checks PyPI once a day in
 says so when either half is behind:
 
 ```
-Versions: inline-core 1.3.0, inline-studio-frontend 1.2.52
-UPDATE AVAILABLE: inline-studio-frontend 1.2.52 -> 1.3.0
+Versions: inline-core 1.3.11, inline-studio-frontend 1.3.10
+UPDATE AVAILABLE: inline-studio-frontend 1.3.10 -> 1.3.11
   Update with: ./webui.sh --install  (or: pip install -U inline-studio-frontend)
 ```
 
@@ -199,12 +199,15 @@ dropdown.
 
 Drop in a photo or two and Inline Studio compiles a **`.char`**: one portable file holding your
 references and an identity fingerprint. Describe the scene, and the references carry the likeness.
-Every take comes back with a continuity score out of 100, so drift is visible rather than felt.
+On MiniMax H3 the same person moves and speaks, in video with sound. Every take comes back with a
+continuity score out of 100, so drift is visible rather than felt.
 
 - **FLUX.2** applies a character with no training at all. The references ride in the prompt's token
   sequence, so picking one costs nothing but the render.
 - **Krea 2** has no reference channel, so it trains a small adapter for the character once,
   then reuses it on every render.
+- **MiniMax H3** does both. Reference to Video reads the references directly, and its other three
+  nodes have no reference channel, so they take a trained adapter instead.
 
 [**How characters work, in detail →**](https://inlinestudio.art/characters)
 
