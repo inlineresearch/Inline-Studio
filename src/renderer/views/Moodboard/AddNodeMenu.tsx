@@ -19,20 +19,9 @@ import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
 import { CaptionGlyph, ChartIcon, CpuIcon, LayersIcon, WandIcon } from './nodes/NodeBadge'
 
-/** The node kinds the Add menu can create (Text has its own toolbar tool, so it's not here). */
-export type AddNodeKind =
-  | 'load'
-  | 'layer'
-  | 'preview'
-  | 'director'
-  | 'trim'
-  | 'prompt'
-  | 'controlSpace'
-  | 'train/dataset'
-  | 'train/caption'
-  | 'train/lora'
-  | 'train/loss'
-  | 'resource'
+import type { AddNodeKind } from './nodeKinds'
+
+export type { AddNodeKind }
 
 type Tab = 'core' | 'api'
 

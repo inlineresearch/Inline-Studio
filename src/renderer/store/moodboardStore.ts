@@ -185,6 +185,21 @@ async function copyOne(
     case 'controlSpace':
       res = await m.addControlSpace(x, y)
       break
+    case 'train/dataset':
+      res = await m.addTrainDataset(x, y)
+      break
+    case 'train/caption':
+      res = await m.addCaption(x, y)
+      break
+    case 'train/lora':
+      res = await m.addTrainer(x, y)
+      break
+    case 'train/loss':
+      res = await m.addLossGraph(x, y)
+      break
+    case 'resource':
+      res = await m.addResource(x, y)
+      break
     default:
       return null
   }
@@ -207,6 +222,19 @@ async function copyOne(
     patch.data = { ...res.value.data, promptText: data.promptText ?? '' }
   } else if (item.type === 'loader') {
     patch.data = { ...res.value.data, assetIds: data.assetIds ?? [] }
+  } else if (item.type === 'train/lora') {
+    // Settings only, never `runId`: the copy is a fresh slot, the same rule a core node's takes
+    // follow. Claiming the original's run would give two nodes one log and one Resume.
+    patch.data = { ...res.value.data, hyperparams: data.hyperparams ?? {} }
+  } else if (item.type === 'train/caption') {
+    patch.data = {
+      ...res.value.data,
+      overwrite: data.overwrite ?? false,
+      captioner: data.captioner ?? '',
+    }
+  } else if (item.type === 'train/dataset') {
+    // Kept, unlike an export: a duplicate lands in the same project, so the dataset row is there.
+    patch.data = { ...res.value.data, datasetId: data.datasetId ?? null }
   } else if (item.type === 'controlSpace') {
     patch.data = {
       ...res.value.data,

@@ -41,6 +41,18 @@ _KEY_ORDER = (
 )
 
 
+#: Where a reference came from. Nested inside `refs` rather than a new top-level key on purpose:
+#: `from_json` models only the keys it knows, so a top-level addition is destroyed by any older
+#: build that rewrites the file, and three code paths rewrite one routinely.
+ORIGIN_ORIGINAL = "original"
+ORIGIN_HARVESTED = "harvested"
+
+
+def origin_of(ref: dict[str, Any]) -> str:
+    """Absent means original: every reference written before harvesting existed is one."""
+    return str(ref.get("origin") or ORIGIN_ORIGINAL)
+
+
 class CharFileError(Exception):
     """A ``.char`` that cannot be trusted. The message is shown to the user."""
 
@@ -190,9 +202,26 @@ def write(path: Path | str, doc: CharDoc) -> Path:
 
 
 def refs_fingerprint(manifest: Manifest, policy: dict[str, Any]) -> str:
-    """Ordered ref hashes plus policy, so a reorder or a resize-budget change both invalidate."""
-    parts = [str(ref.get("sha256", "")) for ref in manifest.refs]
+    """Ordered ref hashes plus policy, so a reorder or a resize-budget change both invalidate.
+
+    Originals only. A harvested reference in here would mark the trained adapter stale the moment
+    one was taken, and `_extract_lora` drops a stale adapter with an INFO log - so the loop whose
+    whole point is a better adapter would silently switch off the adapter the user already has.
+    """
+    kept = [ref for ref in manifest.refs if origin_of(ref) == ORIGIN_ORIGINAL]
+    parts = [str(ref.get("sha256", "")) for ref in kept]
     parts.append(json.dumps(policy, sort_keys=True, separators=(",", ":")))
+    return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
+
+
+def refs_identity(manifest: Manifest) -> str:
+    """Which reference set this is, order included and policy excluded.
+
+    Separate from `refs_fingerprint`, which answers "is this payload still valid" and so covers
+    only the originals and the policy. This answers "were two nodes handed the same character",
+    which a payload node needs because it compiles from a doc it is not the one holding.
+    """
+    parts = [f"{ref.get('sha256', '')}:{origin_of(ref)}" for ref in manifest.refs]
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 

@@ -32,7 +32,12 @@ FL2VA_FILE = "minimax_h3_fl2va_bf16.safetensors"
 #: pruned build does not ship, and it saves nothing in VRAM because the base is quantised anyway.
 FL2VA_FP8_FILE = "minimax_h3_fl2va_pruned_fp8_scaled.safetensors"
 REF2VA_FILE = "minimax_h3_ref2va_bf16.safetensors"
+REF2VA_FP8_FILE = "minimax_h3_ref2va_pruned_fp8_scaled.safetensors"
 TEXT_ENCODER_DIR = "FL2VA/text_encoder"
+#: Single-file conditioners. nvfp4 is 4-bit on disk and the default: the folder is quantised to NF4
+#: on load anyway, so this lands at the same resident size for a quarter of the download.
+ENCODER_NVFP4_FILE = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+ENCODER_BF16_FILE = "qwen3vl_32b_minimax_h3_bf16.safetensors"
 VIDEO_VAE_FILE = "minimax_h3_video_vae_fp16.safetensors"
 AUDIO_VAE_FILE = "minimax_h3_audio_vae_fp32.safetensors"
 
@@ -245,28 +250,79 @@ def record_provenance(partition: str, filename: str) -> None:
     path.write_text(json.dumps(current, indent=2))
 
 
-def components(partition: str = "fl2va") -> list[ModelComponent]:
+def components(partition: str = "fl2va", *, fp8_substitutes: bool = True) -> list[ModelComponent]:
     """What this node needs, with live presence. Sizes in the labels because the totals are large
     enough that a user deserves to know before pressing Download."""
     ref2va_required = partition == "ref2va"
+
+    def pair(needed: bool) -> tuple[bool, bool]:
+        """``(bf16 optional, fp8 optional)`` for a partition this node does or does not use.
+
+        The pruned fp8 build is what generation asks for: same render, 21 GB against 66.3, and it
+        fits cards that cannot hold the bf16 at all. Training inverts it - fp8 renders but does not
+        fine-tune - which is what ``fp8_substitutes=False`` selects.
+        """
+        if not needed:
+            return True, True
+        return fp8_substitutes, not fp8_substitutes
+
+    fl2va_bf16, fl2va_fp8 = pair(not ref2va_required)
+    ref2va_bf16, ref2va_fp8 = pair(ref2va_required)
     entries: list[ModelComponent] = [
-        _file("h3-fl2va", "FL2VA transformer (66.3 GB)", "diffusion_models", FL2VA_FILE,
-              COMFY_REPO, f"diffusion_models/{FL2VA_FILE}", optional=ref2va_required),
-        _folder("h3-text-encoder", "Text encoder, Qwen3-VL-32B (66.7 GB)", "text_encoders",
-                "MiniMax-H3-text-encoder", MINIMAX_REPO, TEXT_ENCODER_DIR),
+        _file("h3-fl2va", "FL2VA transformer, bf16 (66.3 GB, needed to train)",
+              "diffusion_models", FL2VA_FILE,
+              COMFY_REPO, f"diffusion_models/{FL2VA_FILE}", optional=fl2va_bf16),
+        _file("h3-text-encoder-nvfp4", "Text encoder, Qwen3-VL-32B nvfp4 (15.7 GB)",
+              "text_encoders", ENCODER_NVFP4_FILE,
+              COMFY_REPO, f"text_encoders/{ENCODER_NVFP4_FILE}"),
+        _folder("h3-text-encoder", "Text encoder, Qwen3-VL-32B folder (66.7 GB)", "text_encoders",
+                "MiniMax-H3-text-encoder", MINIMAX_REPO, TEXT_ENCODER_DIR, optional=True),
+        _file("h3-text-encoder-bf16", "Text encoder, Qwen3-VL-32B bf16 single file (51.5 GB)",
+              "text_encoders", ENCODER_BF16_FILE,
+              COMFY_REPO, f"text_encoders/{ENCODER_BF16_FILE}", optional=True),
         _file("h3-video-vae", "Video VAE (5.2 GB)", "vae", VIDEO_VAE_FILE,
               COMFY_REPO, f"vae/{VIDEO_VAE_FILE}"),
         _file("h3-audio-vae", "Audio VAE (0.6 GB)", "vae", AUDIO_VAE_FILE,
               COMFY_REPO, f"vae/{AUDIO_VAE_FILE}"),
         _folder("h3-processor", "Tokenizer and processor (12 MB)", "text_encoders",
                 "MiniMax-H3-processor", MINIMAX_REPO, "FL2VA/processor"),
-        _file("h3-ref2va", "Ref2VA transformer (66.3 GB)", "diffusion_models", REF2VA_FILE,
-              COMFY_REPO, f"diffusion_models/{REF2VA_FILE}", optional=not ref2va_required),
+        _file("h3-ref2va", "Ref2VA transformer, bf16 (66.3 GB, needed to train)",
+              "diffusion_models", REF2VA_FILE,
+              COMFY_REPO, f"diffusion_models/{REF2VA_FILE}", optional=ref2va_bf16),
         _file("h3-fl2va-fp8", "FL2VA transformer, fp8 (21.0 GB, generation only)",
               "diffusion_models", FL2VA_FP8_FILE,
-              COMFY_REPO, f"diffusion_models/{FL2VA_FP8_FILE}", optional=True),
+              COMFY_REPO, f"diffusion_models/{FL2VA_FP8_FILE}", optional=fl2va_fp8),
+        _file("h3-ref2va-fp8", "Ref2VA transformer, fp8 (21.0 GB, generation only)",
+              "diffusion_models", REF2VA_FP8_FILE,
+              COMFY_REPO, f"diffusion_models/{REF2VA_FP8_FILE}", optional=ref2va_fp8),
     ]
-    return entries
+    # A partition needs *a* transformer, not a particular one. Without this a box holding only the
+    # fp8 build - the one that fits most cards - was told its 66.3 GB bf16 twin was missing. Off for
+    # training, where a pruned fp8 build is not a substitute: it generates, it does not fine-tune.
+    if not fp8_substitutes:
+        return entries
+    pairs = (
+        ("h3-fl2va", "h3-fl2va-fp8"),
+        ("h3-ref2va", "h3-ref2va-fp8"),
+        ("h3-text-encoder-nvfp4", "h3-text-encoder", "h3-text-encoder-bf16"),
+    )
+    return _satisfy_alternatives(entries, pairs)
+
+
+def _satisfy_alternatives(
+    entries: list[ModelComponent], pairs: tuple[tuple[str, ...], ...]
+) -> list[ModelComponent]:
+    """Mark both members of an either-or pair optional once either one is on disk."""
+    from dataclasses import replace
+
+    by_id = {entry.id: entry for entry in entries}
+    relaxed = {
+        component_id
+        for pair in pairs
+        if any(by_id.get(other) and by_id[other].present for other in pair)
+        for component_id in pair
+    }
+    return [replace(e, optional=True) if e.id in relaxed and not e.optional else e for e in entries]
 
 
 def _file(
@@ -281,12 +337,13 @@ def _file(
 
 
 def _folder(
-    component_id: str, label: str, category: str, folder: str, repo: str, repo_folder: str
+    component_id: str, label: str, category: str, folder: str, repo: str, repo_folder: str,
+    *, optional: bool = False,
 ) -> ModelComponent:
     return ModelComponent(
         id=component_id, label=label, category=category, filename=folder,
         present=(models_dir() / category / folder).is_dir(),
-        repo=repo, repo_file="", repo_folder=repo_folder,
+        repo=repo, repo_file="", repo_folder=repo_folder, optional=optional,
     )
 
 
@@ -323,12 +380,43 @@ def resident_bytes(path: Path) -> int:
     return total
 
 
+def resolve_encoder(pick: str | None = None) -> Path | None:
+    """The conditioner this node would load: an explicit pick, else the smallest build present."""
+    if pick:
+        return resolve("text_encoders", pick)
+    for name in (ENCODER_NVFP4_FILE, "MiniMax-H3-text-encoder", ENCODER_BF16_FILE):
+        found = resolve("text_encoders", name)
+        if found is not None:
+            return found
+    return None
+
+
+def encoder_resident_bytes(path: Path | None) -> int:
+    """What the conditioner occupies once placed.
+
+    An nvfp4 build is the one case where resident is about what it weighs: its linears are never
+    unpacked, so sizing it like a bf16 file that will be quantised on load doubles it and refuses
+    machines it runs on. Everything else is sized from its bytes, as before.
+    """
+    if path is None:
+        return 0
+    if path.is_dir():
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return 0
+    # The packed file plus the one table it does unpack; measured at 16.46 GB against 15.69 on disk.
+    return int(size * 1.05) if "nvfp4" in path.name else size
+
+
 def footprint_bytes(
     partition: str = "fl2va",
     *,
     factorised: bool = True,
     transformer: Path | None = None,
     video_vae: Path | None = None,
+    text_encoder: Path | None = None,
 ) -> dict[str, int]:
     """Sizes for the fit estimate: what will actually be placed, not what is on disk.
 
@@ -343,10 +431,7 @@ def footprint_bytes(
         except OSError:
             return 0
 
-    encoder = models_dir() / "text_encoders" / "MiniMax-H3-text-encoder"
-    encoder_bytes = sum(f.stat().st_size for f in encoder.rglob("*") if f.is_file()) if (
-        encoder.is_dir()
-    ) else 0
+    encoder_bytes = encoder_resident_bytes(text_encoder or resolve_encoder())
     chosen = transformer if transformer is not None else resolve_transformer(partition)
     diffusion = size(chosen)
     if chosen is not None and (candidate := inspect_file(chosen)).is_h3:

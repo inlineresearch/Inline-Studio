@@ -42,17 +42,27 @@ class AppliedCharacter:
         #: turned down and the character wire carries no controls of its own.
         self.lora_strength = lora_strength
 
-    def prompt_prefix(self, first_position: int) -> str:
-        """Text naming the positions the character lands on, so ordinal prompting resolves."""
+    def prompt_prefix(self, first_position: int, style: str = "ordinal") -> str:
+        """Text naming the positions the character lands on, so positional prompting resolves.
+
+        ``style`` because a model only resolves the form it was trained on: FLUX.2 reads the ordinal
+        prose below, MiniMax H3 reads ``<Picture N>`` tokens (``models/references.py``), and handing
+        either the other one names positions it cannot see.
+        """
         if not self.refs:
             # A LoRA carries the likeness, so the description is all the prompt needs.
             detail = " ".join(self.description.split())
             return f"{detail} " if detail else ""
-        positions = [str(first_position + i) for i in range(len(self.refs))]
-        if len(positions) == 1:
+        positions = [first_position + i for i in range(len(self.refs))]
+        if style == "token":
+            tokens = " ".join(f"<Picture {n}>" for n in positions)
+            plural = "" if len(positions) == 1 else "each"
+            which = f"{tokens} {'shows' if not plural else 'show'}"
+        elif len(positions) == 1:
             which = f"Image {positions[0]} shows"
         else:
-            which = f"Images {', '.join(positions[:-1])} and {positions[-1]} show"
+            ordinals = [str(n) for n in positions]
+            which = f"Images {', '.join(ordinals[:-1])} and {ordinals[-1]} show"
         line = f"{which} {self.name}, the same character in every image."
         detail = " ".join(self.description.split())
         if not detail:
@@ -67,7 +77,9 @@ def _cache_root() -> Path:
     return data_dir() / "characters"
 
 
-def char_apply(chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH) -> AppliedCharacter | None:
+def char_apply(
+    chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH, prefer: str | None = None
+) -> AppliedCharacter | None:
     """How a character applies on ``arch``, or None when none is picked. An unreadable pick raises
     rather than silently generating the wrong person.
 
@@ -84,18 +96,20 @@ def char_apply(chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH) -> AppliedChara
 
     doc = cf.read(path)
     digest = library.content_hash(path)
-    references = arch == encode.FLUX2_KLEIN_ARCH
+    # Whether this arch reads references at all, which is exactly the archs with a policy for them.
+    references = arch in encode.REFERENCE_POLICIES
 
     if references and not cf.payload_valid(doc.manifest, arch, encode.PAYLOAD_ENCODER_VERSION):
-        doc = _recompile(doc, path)
+        doc = _recompile(doc, path, arch)
         digest = library.content_hash(path)
 
     description = _description(doc)
     lora = _extract_lora(doc, digest, arch)
     strength = encode.lora_strength(doc.manifest, arch)
     # A trained adapter wins unless the character says otherwise: the user asked for it explicitly,
-    # and loading both would apply the identity twice.
-    mode = doc.manifest.apply.get(arch) or ("lora" if lora else "reference")
+    # and loading both would apply the identity twice. `prefer` overrides both, for a node that can
+    # only run one way: H3's reference partition needs a reference and cannot use an adapter alone.
+    mode = prefer or doc.manifest.apply.get(arch) or ("lora" if lora else "reference")
     # No reference channel on this arch, so the adapter is the only way it can apply at all.
     if not references:
         mode = "lora"
@@ -137,9 +151,9 @@ def _description(doc: cf.CharDoc) -> str:
     return raw.decode("utf-8", errors="replace") if raw else ""
 
 
-def _recompile(doc: cf.CharDoc, path: Path) -> cf.CharDoc:
+def _recompile(doc: cf.CharDoc, path: Path, arch: str = encode.FLUX2_KLEIN_ARCH) -> cf.CharDoc:
     """Rebuild a stale payload from ``refs/``. Payloads are cache, so this always works."""
-    logger.info("Recompiling the %s payload for %s", encode.FLUX2_KLEIN_ARCH, path.name)
+    logger.info("Recompiling the %s payload for %s", arch, path.name)
     import io
 
     from PIL import Image
@@ -153,7 +167,7 @@ def _recompile(doc: cf.CharDoc, path: Path) -> cf.CharDoc:
             )
         images.append(Image.open(io.BytesIO(raw)).convert("RGB"))
 
-    encode.build_payload(doc.manifest, doc.members, images)
+    encode.build_payload(doc.manifest, doc.members, images, arch)
     cf.write(path, doc)
     return doc
 

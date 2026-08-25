@@ -37,6 +37,9 @@ logger = logging.getLogger("inline_core.minimaxh3")
 #: Names this node in the error a mis-wired handle raises.
 _LABEL = "MiniMax H3"
 
+#: The key a character files its H3 payloads under, matching `training/arch.py`.
+ARCH = "minimax-h3"
+
 #: 24 fps, decodable in blocks of 17 frames plus 5, between 5 and 15 seconds: 124 to 345 frames.
 GRID = VideoGrid(fps=24.0, grid=17, offset=5, min_seconds=5.0, max_seconds=15.0)
 
@@ -99,13 +102,6 @@ def _params(variant: Variant) -> tuple[ParamField, ...]:
         ParamField("num_inference_steps", "Steps", Widget.NUMBER, 50, min=1, max=200, step=1),
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
     ]
-    if variant.references:
-        fields.append(
-            ParamField(
-                "ref_image_size", "Reference detail", Widget.SELECT, "match",
-                options_from=None, advanced=True,
-            )
-        )
     fields.append(
         ParamField(
             "model", "Diffusion model", Widget.SELECT, "",
@@ -135,6 +131,9 @@ def _inputs(variant: Variant) -> tuple[Port, ...]:
         # Adapters fuse into each block as it streams, before factorisation and quantisation. A
         # LoRA trained on either partition loads on both: they are the same architecture.
         Port("lora", "LoRA", PortKind.LORA, required=False),
+        # Every variant takes one: the reference partition applies it by compiled references, the
+        # rest by its trained adapter, which is the only route on a node with no reference channel.
+        Port("character", "Character", PortKind.CHARACTER, required=False),
     ]
     if variant.first_frame:
         ports.append(Port("image", "First frame", PortKind.IMAGE, required=False))
@@ -186,6 +185,8 @@ class Request:
     seed: int
     partition: str
     references: tuple[Any, ...] = ()
+    #: The wired character's adapter, appended to the user's own LoRAs rather than replacing them.
+    character_loras: tuple[Any, ...] = ()
 
     @property
     def seconds(self) -> float:
@@ -206,14 +207,26 @@ def build_request(
         multiple=CANVAS_MULTIPLE,
         minimum=CANVAS_MULTIPLE,
     )
+    character = _apply_character(inputs, variant)
+    loras: tuple[Any, ...] = ()
     references: tuple[Any, ...] = ()
     if variant.references:
+        wired = [v for v in (inputs.get("references") or []) if v is not None]
+        if character is not None and character.refs:
+            # Fed through the collector rather than appended after it, so the character's images are
+            # numbered and limit-checked as images - appending would land them behind the videos.
+            # Already trimmed to fit by `_apply_character`, which owns the numbering.
+            inputs = {**inputs, "references": [*wired, *character.refs]}
         references = collect_references(inputs, limits=REFERENCE_LIMITS)
         if not references:
             raise ComponentError(
                 f"{variant.title} needs at least one reference wired to its References, "
                 "Reference video or Reference audio input."
             )
+    if character is not None:
+        prompt = character.prefix + prompt
+        if character.lora is not None:
+            loras = (character.lora,)
     return Request(
         prompt=prompt,
         num_frames=frames,
@@ -223,6 +236,87 @@ def build_request(
         seed=rt.resolve_seed(params.get("seed")),
         partition=variant.partition,
         references=references,
+        character_loras=loras,
+    )
+
+
+@dataclass(frozen=True)
+class _Character:
+    refs: list[Any]
+    prefix: str
+    lora: Any = None
+
+
+def _character_file(inputs: dict[str, list[Any]]) -> str:
+    """The wired character's filename. Applying resolves payloads through a content-keyed cache, so
+    an identity that has not been written yet cannot be applied."""
+    wired = (inputs.get("character") or [None])[0]
+    if wired is None:
+        return ""
+    name = str(getattr(wired, "file", "") or "")
+    if not name:
+        raise ComponentError(
+            "That character has not been saved yet. Wire it through Write .char first."
+        )
+    return name
+
+
+def _apply_character(inputs: dict[str, list[Any]], variant: Variant) -> _Character | None:
+    """A wired character as references or as its adapter, or None when none is wired."""
+    chosen = _character_file(inputs)
+    if not chosen:
+        return None
+    from ...characters import apply as characters
+    from ...graph.loader_runners import LoraRef
+
+    # The reference partition cannot run on an adapter alone, so it asks for references outright
+    # rather than taking the adapter a character prefers by default.
+    applied = characters.char_apply(
+        chosen, ARCH, prefer="reference" if variant.references else None
+    )
+    if applied is None:
+        return None
+    if not variant.references:
+        # No reference channel on this partition, so the adapter is the only route it has.
+        if applied.lora is None:
+            raise ComponentError(
+                f"{chosen} has no {ARCH} adapter, and {variant.title} has no reference channel. "
+                "Train one and attach it, or use MiniMax H3 Reference to Video."
+            )
+        logger.info("Applying character %s by adapter", applied.name)
+        return _Character(
+            refs=[],
+            prefix=applied.prompt_prefix(1),
+            lora=LoraRef(file=str(applied.lora), strength=applied.lora_strength),
+        )
+    if not applied.refs:
+        raise ComponentError(
+            f"{chosen} has no {ARCH} references, so {variant.title} has nothing to condition on. "
+            "Wire it through Compile References with Model set to minimax-h3 and write it again, "
+            "or wire images into this node's References input."
+        )
+    how = "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)"
+    logger.info("Applying character %s by %s", applied.name, how)
+    # H3 resolves `<Picture N>`, not FLUX.2's ordinal prose, and the character's images land after
+    # whatever the user already wired.
+    wired = len([v for v in (inputs.get("references") or []) if v is not None])
+    # Trimmed here rather than by the caller, so the prefix can never name a position that was
+    # dropped: a character is a library artefact and H3's 9 images is not every model's limit.
+    keep = list(applied.refs)[: max(0, REFERENCE_LIMITS.max_images - wired)]
+    if len(keep) < len(applied.refs):
+        logger.info(
+            "%s: using %d of %s's %d references, the most it takes beside %d wired",
+            variant.title, len(keep), chosen, len(applied.refs), wired,
+        )
+        applied.refs = keep
+    return _Character(
+        refs=keep,
+        prefix=applied.prompt_prefix(wired + 1, style="token"),
+        lora=(
+            LoraRef(file=str(applied.lora), strength=applied.lora_strength)
+            if applied.lora is not None
+            else None
+        ),
     )
 
 
@@ -320,10 +414,12 @@ class MiniMaxH3Runner(NodeRunner):
             transformer=rt.component_ref(inputs, "model", "diffusion", _LABEL),
             video_vae=rt.component_ref(inputs, "vae", "vae", _LABEL),
             text_encoder=rt.component_ref(inputs, "text_encoder", "text_encoder", _LABEL),
-            loras=rt.lora_stack(inputs, _LABEL),
+            # Appended, so a user's own wired LoRAs still apply alongside the character's.
+            loras=(*rt.lora_stack(inputs, _LABEL), *request.character_loras),
         )
 
         call = call_kwargs(request, self._variant, inputs)
+
         call["generator"] = torch.Generator(device="cpu").manual_seed(request.seed)
 
         def on_step(done: int, total: int) -> None:
@@ -351,8 +447,18 @@ class MiniMaxH3Runner(NodeRunner):
             rt.free_vram()
             raise
         except torch.cuda.OutOfMemoryError as error:
-            rt.free_vram()
-            raise ComponentError(_oom(request)) from error
+            # Evicted, not merely emptied: `free_vram` releases unused blocks and leaves the
+            # pipeline resident, so the failed run kept ~43 GB and every retry started from a full
+            # card. That reads as the same error forever, whatever the user changes.
+            held = rt.own_vram_bytes()
+            # Dropped before the clear, not after: `raise ... from error` keeps the traceback, the
+            # traceback keeps this frame, and this frame's locals still name the pipeline - so
+            # evicting the cache alone leaves it alive and the card still full.
+            pipe = None
+            call = {}
+            rt.PIPELINES.clear()
+            logger.info("MiniMax H3 released %.1f GB after an out-of-memory run", held / 1e9)
+            raise ComponentError(_oom(request, held=held)) from error
         except MemoryError as error:
             rt.free_vram()
             raise ComponentError(_oom(request, host=True)) from error
@@ -406,12 +512,64 @@ class MiniMaxH3Runner(NodeRunner):
         return NodeResult(outputs=outputs, takes=takes)
 
 
-def _oom(request: Request, *, host: bool = False) -> str:
+def _reference_tokens(request: Request) -> tuple[int, int]:
+    """Wired image references and what they cost the vision tower, measured from the pixels.
+
+    Read off the files rather than a setting, because the size that matters was decided when the
+    character was compiled and nothing on this node records it.
+    """
+    images = [r for r in request.references if getattr(r, "kind", None) == ReferenceKind.IMAGE]
+    tokens = 0
+    for ref in images:
+        try:
+            from PIL import Image
+
+            with Image.open(getattr(ref.value, "path", ref.value)) as handle:
+                width, height = handle.size
+        except Exception:  # noqa: BLE001 - an error path must not raise a second error
+            continue
+        tokens += (width // 32) * (height // 32)
+    return len(images), tokens
+
+
+#: Below this, another process on the card is noise; above it, it is the whole story.
+_FOREIGN_VRAM_FLOOR = 2 * 1024**3
+#: What counts as "the last run was still holding the card" rather than a genuinely tight fit.
+_HELD_VRAM_FLOOR = 8 * 1024**3
+
+
+def _oom(request: Request, *, host: bool = False, held: int = 0) -> str:
     where = "System RAM" if host else "VRAM"
-    return (
+    # Asked first, because when either is true nothing on this node is the cause and every other
+    # hint below sends the user to change a setting that was never the problem.
+    foreign = 0 if host else rt.foreign_vram_bytes()
+    if foreign >= _FOREIGN_VRAM_FLOOR:
+        return (
+            f"{where} ran out, but {foreign / 1024**3:.1f} GB of this card is held by another "
+            "process - a training run, another render, or another app. Wait for it to finish or "
+            "stop it, then run this again. Nothing on this node will free that memory."
+        )
+    if not host and held >= _HELD_VRAM_FLOOR:
+        return (
+            f"{where} ran out with {held / 1024**3:.1f} GB already held by this render. That has "
+            "now been released, so run it again - the retry starts from an empty card. If it "
+            "fails the same way twice in a row, the model genuinely does not fit these settings."
+        )
+    canvas = (
         f"{where} ran out at {request.width}x{request.height} for {request.seconds:.1f}s. "
         "Canvas is the biggest lever: 960x544 needs far less than 1344x768 and renders about "
         "2.3x faster per step. A shorter duration helps too."
+    )
+    images, tokens = _reference_tokens(request)
+    if not images:
+        return canvas
+    cost = f", which is {tokens:,} vision tokens" if tokens else ""
+    # Named alone because references are encoded before a frame exists: the canvas cannot move this
+    # step at all, and a hint that leads with it sends the user to resize for nothing.
+    return (
+        f"{where} ran out encoding {images} reference(s){cost}. The canvas does not affect this "
+        "step. Lower Resized Reference Resolution on the Compile References node and write the "
+        "character again - halving it quarters the tokens - or wire fewer references."
     )
 
 

@@ -404,3 +404,70 @@ def test_a_path_shaped_pick_exports_under_its_bare_name(tmp_path) -> None:
     names = [m["name"] for m in built["graph"]["items"][0]["data"]["core"]["models"]]
     assert names == ["krea2_turbo_bf16.safetensors"]
 
+
+def test_two_required_files_in_one_folder_both_reach_the_export(tmp_path) -> None:
+    """MiniMax H3 needs a video VAE and an audio VAE, both under `vae/`, and has one `vae` param.
+    Excusing the whole folder because a param named one of them dropped the other, and the graph
+    then rebuilt on another machine without a file it cannot run without."""
+    from inline_core.studio import recipe as studio_recipe
+
+    store = _store(tmp_path)
+    conn = store.conn()
+    node = mb.add_core_node(conn, "minimax/h3-reference-to-video", 400, 200)
+    mb.update_item(conn, node["id"], {"data": {"core": {
+        "type": "minimax/h3-reference-to-video",
+        "params": {"vae": "minimax_h3_video_vae_fp16.safetensors"},
+    }}})
+
+    studio_recipe.set_kind_resolver(lambda _t: {"vae": "model"})
+    studio_recipe.set_model_resolver(
+        lambda _t, _p=None: [
+            ("minimax_h3_video_vae_fp16.safetensors", "vae"),
+            ("minimax_h3_audio_vae_fp32.safetensors", "vae"),
+            ("MiniMax-H3-text-encoder", "text_encoders"),
+        ]
+    )
+    try:
+        built = studio_recipe.build_recipe(conn, node["id"])
+    finally:
+        studio_recipe.set_kind_resolver(None)
+        studio_recipe.set_model_resolver(None)
+
+    models = built["graph"]["items"][0]["data"]["core"]["models"]
+    names = sorted(m["name"] for m in models)
+    assert names == [
+        "MiniMax-H3-text-encoder",
+        "minimax_h3_audio_vae_fp32.safetensors",
+        "minimax_h3_video_vae_fp16.safetensors",
+    ]
+    # And the param-named file still gets its folder rather than an empty one.
+    by_name = {m["name"]: m for m in models}
+    assert by_name["minimax_h3_video_vae_fp16.safetensors"]["directory"] == "vae"
+
+
+def test_a_folder_with_one_required_file_is_still_excused_by_a_param(tmp_path) -> None:
+    """The rule this replaces existed for a reason: a node set to klein-9b must not export the
+    klein-4b default beside it."""
+    from inline_core.studio import recipe as studio_recipe
+
+    store = _store(tmp_path)
+    conn = store.conn()
+    node = mb.add_core_node(conn, "black-forest-labs/flux-2", 400, 200)
+    mb.update_item(conn, node["id"], {"data": {"core": {
+        "type": "black-forest-labs/flux-2",
+        "params": {"model": "flux-2-klein-9b.safetensors"},
+    }}})
+
+    studio_recipe.set_kind_resolver(lambda _t: {"model": "model"})
+    studio_recipe.set_model_resolver(
+        lambda _t, _p=None: [("flux-2-klein-4b.safetensors", "diffusion_models")]
+    )
+    try:
+        built = studio_recipe.build_recipe(conn, node["id"])
+    finally:
+        studio_recipe.set_kind_resolver(None)
+        studio_recipe.set_model_resolver(None)
+
+    names = [m["name"] for m in built["graph"]["items"][0]["data"]["core"]["models"]]
+    assert names == ["flux-2-klein-9b.safetensors"], "the default build is not exported beside it"
+

@@ -74,6 +74,27 @@ def use_encoders(
     )
 
 
+def use_encoders_from(scoring_block: dict[str, Any]) -> None:
+    """Pin the encoders to the ones a character was scored with.
+
+    `_chosen` is module state that nothing resets, so without this one Encode Character node run
+    with a picked annotator marks every other character's centroid stale for the rest of the
+    process - and each one is then rewritten on the next take it is scored against.
+    """
+    picked: dict[str, str] = {}
+    for entry in scoring_block.get("encoders") or []:
+        if not isinstance(entry, dict):
+            continue
+        version = str(entry.get("version") or "")
+        name = version.split(":", 1)[1] if ":" in version else ""
+        if str(entry.get("id")) == SFACE_ID:
+            picked["sface"] = name
+        elif str(entry.get("id")) == DINOV2_ID:
+            picked["dinov2"] = name
+    # The detector is not version-tracked, so it can only go back to the shipped default here.
+    use_encoders(face_embedder=picked.get("sface", ""), subject_embedder=picked.get("dinov2", ""))
+
+
 def chosen(kind: str, default: str) -> str:
     """The picked filename for an encoder, or the shipped one."""
     return _chosen.get(kind) or default
@@ -349,13 +370,22 @@ def score(
     }
 
 
-def reference_agreement(face_refs: list[list[float]]) -> list[float]:
-    """Each reference's mean SFace similarity to the others, 0-100."""
-    if len(face_refs) < 2:
-        return [100.0] * len(face_refs)
-    out: list[float] = []
+def reference_agreement(face_refs: list[list[float]]) -> list[float | None]:
+    """Each reference's mean SFace similarity to the others, 0-100, aligned with the input.
+
+    `None` is a reference with no face to compare, which is not a low score. `cosine` against an
+    empty vector is 0.0, so letting one into the average drags every genuine reference's mean
+    toward the floor - four references with two wide shots among them would all fall under it.
+    """
+    measured = [i for i, vector in enumerate(face_refs) if vector]
+    if len(measured) < 2:
+        return [100.0 if vector else None for vector in face_refs]
+    out: list[float | None] = []
     for i, vector in enumerate(face_refs):
-        others = [v for j, v in enumerate(face_refs) if j != i]
+        if not vector:
+            out.append(None)
+            continue
+        others = [face_refs[j] for j in measured if j != i]
         out.append(round(sum(to_percent(cosine(vector, o)) for o in others) / len(others), 1))
     return out
 
@@ -363,10 +393,42 @@ def reference_agreement(face_refs: list[list[float]]) -> list[float]:
 def flagged_references(face_refs: list[list[float]]) -> list[int]:
     """Indices of references that may not be the same person. Face identity only - a different
     outfit or setting is exactly what the user was asked for and must not trip this."""
-    if len(face_refs) < MIN_REFS_TO_FLAG:
+    if sum(1 for vector in face_refs if vector) < MIN_REFS_TO_FLAG:
         return []
     scores = reference_agreement(face_refs)
-    return [i for i, s in enumerate(scores) if s < REFERENCE_AGREEMENT_FLOOR]
+    return [i for i, s in enumerate(scores) if s is not None and s < REFERENCE_AGREEMENT_FLOOR]
+
+
+def agreement_against(candidate: list[float], gallery: list[list[float]]) -> float | None:
+    """A candidate's mean SFace similarity to a fixed gallery, or None when it cannot be measured.
+
+    Separate from `reference_agreement` because the candidate is not a member of the gallery, so
+    there is nothing to leave out. Below `MIN_REFS_TO_FLAG` genuine faces it declines to answer:
+    against one or two references this is a pairwise number, and the floor is a mean over a set.
+    """
+    usable = [vector for vector in gallery if vector]
+    if not candidate or len(usable) < MIN_REFS_TO_FLAG:
+        return None
+    return round(sum(to_percent(cosine(candidate, v)) for v in usable) / len(usable), 1)
+
+
+def coverage_values(subject_refs: list[list[float]]) -> list[float | None]:
+    """How much each reference shows that the others do not: 1 minus its closest cosine to them.
+
+    DINOv2, never SFace: this measures framing and setting, which is the axis a gallery needs to
+    span, and is exactly the axis that must never decide identity.
+    """
+    measured = [i for i, vector in enumerate(subject_refs) if vector]
+    if len(measured) < 2:
+        return [1.0 if vector else None for vector in subject_refs]
+    out: list[float | None] = []
+    for i, vector in enumerate(subject_refs):
+        if not vector:
+            out.append(None)
+            continue
+        others = [subject_refs[j] for j in measured if j != i]
+        out.append(round(1.0 - max(cosine(vector, o) for o in others), 4))
+    return out
 
 
 def load_centroids(members: dict[str, bytes], paths: dict[str, Any]) -> dict[str, list[float]]:
@@ -392,6 +454,26 @@ def dump_centroid(vector: list[float], count: int) -> bytes:
     import json
 
     return json.dumps({"vector": vector, "count": count}, separators=(",", ":")).encode()
+
+
+def dump_keyed(vectors: dict[str, list[float]]) -> bytes:
+    import json
+
+    return json.dumps({"vectors": vectors}, separators=(",", ":")).encode()
+
+
+def load_keyed(members: dict[str, bytes], path: str) -> dict[str, list[float]]:
+    """Vectors keyed by member name, for a pool where a position is not a stable identifier."""
+    import json
+
+    raw = members.get(str(path))
+    if not raw:
+        return {}
+    try:
+        parsed = (json.loads(raw).get("vectors") or {}).items()
+    except (ValueError, TypeError, AttributeError):
+        return {}
+    return {str(k): [float(x) for x in v] for k, v in parsed}
 
 
 def dump_embeds(vectors: list[list[float]]) -> bytes:

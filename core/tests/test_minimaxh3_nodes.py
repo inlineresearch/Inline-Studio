@@ -63,12 +63,24 @@ COMPONENTS = ["model", "vae", "text_encoder", "lora"]
 
 def test_the_inputs_are_what_each_node_is_for() -> None:
     def media(node_type: str) -> list[str]:
-        return [p.id for p in DESCRIPTORS[node_type].inputs if p.id not in COMPONENTS]
+        # `character` is an identity handle, not media: it is on every node, so it says nothing
+        # about what a given node is for.
+        skip = {*COMPONENTS, "character"}
+        return [p.id for p in DESCRIPTORS[node_type].inputs if p.id not in skip]
 
     assert media(T2V) == ["prompt"]
     assert media(I2V) == ["prompt", "image"]
     assert media(FLF) == ["prompt", "image", "last_image"]
     assert media(REF) == ["prompt", "references", "video", "audio"]
+
+
+@pytest.mark.parametrize("node_type", [T2V, I2V, FLF, REF])
+def test_every_node_takes_a_character(node_type: str) -> None:
+    """The reference partition applies one by compiled references and the rest by its trained
+    adapter, so one `.char` serves the whole family rather than only the node that reads images."""
+    port = {p.id: p for p in DESCRIPTORS[node_type].inputs}.get("character")
+    assert port is not None and port.kind is PortKind.CHARACTER
+    assert not port.required
 
 
 @pytest.mark.parametrize("node_type", [T2V, I2V, FLF, REF])
@@ -108,9 +120,11 @@ def test_fps_is_not_editable(node_type: str) -> None:
     assert "fps" not in {p.key for p in DESCRIPTORS[node_type].params}
 
 
-def test_only_the_reference_node_offers_reference_detail() -> None:
-    assert "ref_image_size" in {p.key for p in DESCRIPTORS[REF].params}
-    assert "ref_image_size" not in {p.key for p in DESCRIPTORS[T2V].params}
+def test_no_node_carries_a_reference_size_of_its_own() -> None:
+    """One number, one place. Reference size is fixed when the character is compiled, so a second
+    control here would let a node promise a size the stored payload does not have."""
+    for descriptor in DESCRIPTORS.values():
+        assert "ref_image_size" not in {p.key for p in descriptor.params}
 
 
 def test_the_default_duration_is_a_real_grid_point() -> None:
@@ -395,10 +409,14 @@ def test_header_reads_are_cached_against_size_and_mtime(models_root: Path) -> No
 
 
 def test_the_reference_node_requires_the_other_partition(models_root: Path) -> None:
+    """Each partition asks only for its own transformer, and asks for the fp8 build by default."""
     fl2va = {c.id: c for c in MiniMaxH3Provider("fl2va").components()}
     ref2va = {c.id: c for c in MiniMaxH3Provider("ref2va").components()}
-    assert fl2va["h3-ref2va"].optional and not fl2va["h3-fl2va"].optional
-    assert ref2va["h3-fl2va"].optional and not ref2va["h3-ref2va"].optional
+    assert not fl2va["h3-fl2va-fp8"].optional and fl2va["h3-ref2va-fp8"].optional
+    assert not ref2va["h3-ref2va-fp8"].optional and ref2va["h3-fl2va-fp8"].optional
+    # The bf16 builds are the training route, never a second thing to download to render.
+    for entries in (fl2va, ref2va):
+        assert entries["h3-fl2va"].optional and entries["h3-ref2va"].optional
 
 
 def test_the_folder_components_declare_a_repo_folder(models_root: Path) -> None:
@@ -497,14 +515,19 @@ class _NullPolicy:
     def fit_estimate(self) -> None: return None
 
 
-def test_the_fp8_build_is_offered_as_an_optional_download(models_root: Path) -> None:
-    """A third the download for the same model, so it belongs in the popup. Optional, because the
-    trainer cannot use it and the bf16 file stays the one a full install needs."""
+def test_generation_asks_for_the_fp8_build_and_training_for_bf16(models_root: Path) -> None:
+    """A third of the download for the same render, and it fits cards that cannot hold the 66.3 GB
+    bf16 at all - so a fresh install should not be told to fetch the big one first. Training still
+    names bf16: fp8 renders, it does not fine-tune."""
     entries = {c.id: c for c in reqs.components("fl2va")}
     fp8 = entries["h3-fl2va-fp8"]
-    assert fp8.optional and fp8.filename == reqs.FL2VA_FP8_FILE
+    assert not fp8.optional and fp8.filename == reqs.FL2VA_FP8_FILE
     assert "generation only" in fp8.label
-    assert not entries["h3-fl2va"].optional
+    assert entries["h3-fl2va"].optional
+    assert "needed to train" in entries["h3-fl2va"].label
+
+    training = {c.id: c for c in reqs.components("fl2va", fp8_substitutes=False)}
+    assert not training["h3-fl2va"].optional and training["h3-fl2va-fp8"].optional
 
 
 def test_training_refuses_a_pruned_build_by_name(models_root: Path) -> None:
@@ -672,3 +695,29 @@ def test_a_cancelled_run_does_not_poison_the_next_one() -> None:
 
     with loop.progress_bar(total=1) as bar:
         bar.update()  # must not raise: the cancelled run's callback is no longer installed
+
+
+def test_an_fp8_transformer_satisfies_the_partition_on_its_own(models_root: Path) -> None:
+    """A box holding only the fp8 build was told its 66.3 GB bf16 twin was missing: the ref2va fp8
+    file was declared nowhere at all, so the only reference transformer on offer was one most
+    cards cannot hold. A partition needs *a* transformer, not a particular one."""
+    fresh = {c.id: c for c in MiniMaxH3Provider("ref2va").components()}
+    assert not fresh["h3-ref2va-fp8"].optional, "with nothing on disk the partition still needs one"
+
+    (models_root / "diffusion_models" / reqs.REF2VA_FILE).write_bytes(b"x")
+    held = {c.id: c for c in MiniMaxH3Provider("ref2va").components()}
+    assert held["h3-ref2va"].present
+    assert held["h3-ref2va-fp8"].optional, "holding bf16 is not missing the fp8 build"
+    # The other partition is unaffected: its own pair is still unsatisfied.
+    assert not {c.id: c for c in MiniMaxH3Provider("fl2va").components()}["h3-fl2va-fp8"].optional
+
+
+def test_both_partitions_offer_an_fp8_build(models_root: Path) -> None:
+    """FL2VA had one and ref2va did not, which is the asymmetry that hid the smaller build."""
+    by_id = {c.id: c for c in MiniMaxH3Provider().components()}
+    for component_id, filename in (
+        ("h3-fl2va-fp8", reqs.FL2VA_FP8_FILE),
+        ("h3-ref2va-fp8", reqs.REF2VA_FP8_FILE),
+    ):
+        assert by_id[component_id].filename == filename
+        assert by_id[component_id].repo_file.endswith(filename)

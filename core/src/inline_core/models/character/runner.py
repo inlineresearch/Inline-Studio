@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ...characters import charfile as cf
-from ...characters import encode, library, scoring, weights
+from ...characters import encode, library, scoring, verify, weights
 from ...graph.descriptor import NodeDescriptor, Option, ParamField, Port, Widget
 from ...graph.runners import NodeResult, NodeRunner
 from ...graph.schema import Node, PortKind
@@ -47,6 +47,10 @@ class Payload:
     arch: str
     kind: str
     apply: Any
+    #: The reference set this was compiled against. A payload node uses its `character` input only
+    #: to read settings - the doc it compiles from is the one Write hands it - so without this a
+    #: graph that wires Write ahead of the verify node compiles the unverified set and says nothing.
+    source_sha256: str = ""
 
 
 ENCODE = NodeDescriptor(
@@ -93,6 +97,83 @@ COMPILE_REFS = NodeDescriptor(
         ParamField(
             "arch", "Model", Widget.SELECT, encode.FLUX2_KLEIN_ARCH,
             options=tuple(Option(value=a, label=a) for a in encode.REFERENCE_POLICIES),
+        ),
+        # On the face: it decides both the file size and, for H3, whether the run fits the card.
+        ParamField(
+            "ref_resolution", "Resized Reference Resolution", Widget.NUMBER, 1024,
+            min=encode.NO_REFERENCE_CAP, max=8192, step=64, on_face=True,
+        ),
+    ),
+)
+
+VERIFY_REFS = NodeDescriptor(
+    type="character/verify-refs",
+    title="Verify References",
+    category="Character",
+    icon="sparkles",
+    output_kind=None,
+    inputs=(Port("character", "Character", PortKind.CHARACTER, required=True),),
+    outputs=(Port("character", "Character", PortKind.CHARACTER),),
+    params=(
+        # On the face: whether a flagged reference is removed is the whole behaviour of the node.
+        ParamField(
+            "on_outlier", "When a reference looks wrong", Widget.SELECT, "flag", on_face=True,
+            options=(
+                Option(value="flag", label="Flag it (keep it)"),
+                Option(value="quarantine", label="Take it out (reversible)"),
+            ),
+        ),
+        # Surfaced, because it is measured rather than chosen and a set may sit close to it.
+        ParamField(
+            "floor", "Agreement floor", Widget.NUMBER, scoring.REFERENCE_AGREEMENT_FLOOR,
+            min=0.0, max=100.0, step=0.5,
+        ),
+        # The encoders are pickable, not just visible: a node that silently uses a file the user
+        # cannot see or change is the reason none of them showed up as missing.
+        ParamField(
+            "face_detector", "Face detector", Widget.SELECT, weights.YUNET_FILE,
+            options_from="annotators",
+        ),
+        ParamField(
+            "face_embedder", "Face embedder", Widget.SELECT, weights.SFACE_FILE,
+            options_from="annotators",
+        ),
+        ParamField(
+            "subject_embedder", "Subject embedder", Widget.SELECT, weights.DINOV2_DIR,
+            options_from="annotators",
+        ),
+    ),
+)
+
+INGEST = NodeDescriptor(
+    type="character/ingest-approved",
+    title="Harvest Approved Take",
+    category="Character",
+    icon="sparkles",
+    output_kind=None,
+    inputs=(
+        Port("character", "Character", PortKind.CHARACTER, required=True),
+        Port("image", "Approved take", PortKind.IMAGE, required=True),
+    ),
+    outputs=(Port("character", "Character", PortKind.CHARACTER),),
+    params=(
+        # Provisional: the continuity numbers this is compared against were measured on real
+        # photographs, and nothing has yet measured a generated take against a frozen gallery.
+        ParamField(
+            "min_score", "Minimum continuity", Widget.NUMBER, 70.0,
+            min=0.0, max=100.0, step=1.0, on_face=True,
+        ),
+        ParamField(
+            "face_detector", "Face detector", Widget.SELECT, weights.YUNET_FILE,
+            options_from="annotators",
+        ),
+        ParamField(
+            "face_embedder", "Face embedder", Widget.SELECT, weights.SFACE_FILE,
+            options_from="annotators",
+        ),
+        ParamField(
+            "subject_embedder", "Subject embedder", Widget.SELECT, weights.DINOV2_DIR,
+            options_from="annotators",
         ),
     ),
 )
@@ -235,6 +316,8 @@ def register_character_nodes(registry: Any) -> None:
     _dataset_runner = CharacterDatasetRunner()
     registry.register(DATASET, _dataset_runner)
     registry.register(EDIT, EditCharacterRunner())
+    registry.register(VERIFY_REFS, VerifyReferencesRunner())
+    registry.register(INGEST, IngestApprovedRunner())
     registry.register(COMPILE_REFS, CompileReferencesRunner())
     registry.register(ATTACH, AttachAdapterRunner())
     registry.register(WRITE, WriteCharacterRunner())
@@ -248,14 +331,7 @@ class EncodeCharacterRunner(NodeRunner):
     """References plus a description into an identity: crops, embeddings, framings, hints."""
 
     def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
-        from ...characters import weights
-
-        if not weights.present():
-            raise ValueError(
-                "The character encoders are not downloaded yet: "
-                "face_detection_yunet_2023mar.onnx, face_recognition_sface_2021dec.onnx and "
-                "dinov2-base, about 385MB in models/annotators."
-            )
+        _require_encoders()
         refs = list(inputs.get("images") or [])
         if not refs:
             raise ValueError("A character needs at least one reference image.")
@@ -339,6 +415,133 @@ def _set_description(doc: cf.CharDoc, description: str) -> None:
     doc.manifest.text = {"path": member, "sha256": cf.sha256_bytes(data)}
 
 
+def _resolution(raw: Any) -> int:
+    """The resolution param, defaulting to the cap rather than to uncapped: a graph saved before
+    this param existed carries no value, and silently compiling those at 2048 is what OOMs."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 1024
+    return value if value > 0 else encode.NO_REFERENCE_CAP
+
+
+def _describe_policy(policy: dict[str, Any]) -> str:
+    """What the setting resolved to, which is not what was typed: a policy states a short edge or
+    an area cap, never both."""
+    if "short_edge" in policy:
+        return f"a {policy['short_edge']}px short edge"
+    pixels = int(policy.get("max_pixels", 0))
+    return f"at most {pixels:,} pixels (about {int(pixels ** 0.5)}px square)"
+
+
+class VerifyReferencesRunner(NodeRunner):
+    """Check the reference set before a payload or a training set is built from it.
+
+    Sits in front of both consumers because both read `manifest.refs` and neither looks: a
+    reference of the wrong person drags a reference payload, and a LoRA bakes it in.
+    """
+
+    def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
+        identity = _first(inputs.get("character"))
+        if not isinstance(identity, Identity):
+            raise ValueError("Verify References needs a character.")
+        _require_encoders()
+        _use_encoders(node)
+        # Copied, because the upstream node's output is cached and every other reader shares it.
+        doc = copy.deepcopy(identity.doc)
+        floor = _as_float(node.params.get("floor"), scoring.REFERENCE_AGREEMENT_FLOOR)
+
+        def report(fraction: float, status: str) -> None:
+            ctx.emitter.emit(progress_event(ctx, node, Phase.ENCODE, fraction, status=status))
+
+        verdict = verify.verify(doc, floor=floor, on_progress=report)
+        for index, value in enumerate(verdict.agreement):
+            if value is not None:
+                mark = " - flagged" if index in verdict.flagged else ""
+                report(0.75, f"Reference {index + 1}: {value}% agreement{mark}")
+        quarantine = str(node.params.get("on_outlier") or "flag") == "quarantine"
+        removed = verify.apply_verdict(doc, verdict, quarantine=quarantine)
+
+        # Frozen from what survived, and only once: a set nothing has checked is not an identity.
+        if verdict.mode == verify.MODE_BOOTSTRAP and encode.can_freeze(doc.manifest):
+            report(0.9, "Freezing the original references…")
+            encode.freeze_originals(doc)
+        logger.info(
+            "Verified %s (%s): %d flagged, %d duplicate(s), %d unchecked, %d removed. %s",
+            doc.manifest.name, verdict.mode, len(verdict.flagged), len(verdict.duplicates),
+            len(verdict.unchecked), sum(len(v) for v in removed.values()), verdict.note,
+        )
+        report(1.0, "Done")
+        return NodeResult(outputs={"character": Identity(doc=doc, file=identity.file)})
+
+
+class IngestApprovedRunner(NodeRunner):
+    """Add an approved take to the harvested pool, scored against the frozen originals.
+
+    Never wired into the compile or train chain: harvesting is its own small graph, and the two
+    meet at the `.char` file rather than at a wire.
+    """
+
+    def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
+        identity = _first(inputs.get("character"))
+        if not isinstance(identity, Identity):
+            raise ValueError("Harvest Approved Take needs a character.")
+        take = _first(inputs.get("image"))
+        if take is None:
+            raise ValueError("Harvest Approved Take needs an image.")
+        _require_encoders()
+        _use_encoders(node)
+        doc = copy.deepcopy(identity.doc)
+        if not encode.originals_frozen(doc.manifest):
+            raise ValueError(
+                "Run Verify References on this character first: harvesting is measured against "
+                "its frozen original references, and it has none yet."
+            )
+
+        from PIL import Image, ImageOps
+
+        with Image.open(_image_path(take)) as handle:
+            image = ImageOps.exif_transpose(handle).convert("RGB")
+
+        face_gallery, subject_gallery = encode.frozen_originals(doc)
+        centroids = scoring.load_centroids(doc.members, doc.manifest.scoring.get("centroids") or {})
+        framings = [float(f) for f in (doc.manifest.scoring.get("refFramings") or [])]
+        result = scoring.score(image, centroids, face_gallery, subject_gallery, framings)
+        if result is None or not result.get("faceBearing"):
+            raise ValueError(
+                "That take has no face this character's encoders can measure, so there is nothing "
+                "to check it against. Only the originals are taken on trust."
+            )
+        minimum = _as_float(node.params.get("min_score"), 70.0)
+        score = float(result["score"])
+        if score < minimum:
+            raise ValueError(
+                f"That take scores {score} against {doc.manifest.name}'s original references, "
+                f"under the {minimum} this node asks for. Harvesting it would teach the drift."
+            )
+
+        agreement = scoring.agreement_against(scoring.embed_face(image) or [], face_gallery)
+        encode.add_harvested(
+            doc, image, agreement=agreement, score=score, source_take=str(getattr(take, "ref", ""))
+        )
+        dropped = encode.prune_harvested(doc)
+        logger.info(
+            "Harvested a take into %s at %s: %d in the pool, cap %d, %d pruned",
+            doc.manifest.name, score, len(encode.harvested(doc.manifest)),
+            encode.harvest_cap(doc.manifest), len(dropped),
+        )
+        return NodeResult(outputs={"character": Identity(doc=doc, file=identity.file)})
+
+
+def _require_encoders() -> None:
+    if not weights.present():
+        raise ValueError(
+            "The character encoders are not downloaded yet: "
+            "face_detection_yunet_2023mar.onnx, face_recognition_sface_2021dec.onnx and "
+            "dinov2-base, about 385MB in models/annotators."
+        )
+
+
 class CompileReferencesRunner(NodeRunner):
     """One model's reference set: each reference resized to what that model accepts."""
 
@@ -347,11 +550,20 @@ class CompileReferencesRunner(NodeRunner):
         if not isinstance(identity, Identity):
             raise ValueError("Compile References needs a character.")
         arch = str(node.params.get("arch") or encode.FLUX2_KLEIN_ARCH)
+        policy = encode.capped_policy(arch, _resolution(node.params.get("ref_resolution")))
+        logger.info(
+            "Compiling %s references at %s", arch, _describe_policy(policy)
+        )
 
         def apply(doc: cf.CharDoc) -> None:
-            encode.build_payload(doc.manifest, doc.members, _ref_images(doc), arch=arch)
+            encode.build_payload(doc.manifest, doc.members, _ref_images(doc), arch, policy)
 
-        payload = Payload(arch=arch, kind=encode.PAYLOAD_REF, apply=apply)
+        payload = Payload(
+            arch=arch,
+            kind=encode.PAYLOAD_REF,
+            apply=apply,
+            source_sha256=cf.refs_identity(identity.doc.manifest),
+        )
         return NodeResult(outputs={"payload": payload})
 
 
@@ -364,8 +576,17 @@ class WriteCharacterRunner(NodeRunner):
             raise ValueError("Write .char needs a character.")
         doc = identity.doc
         for payload in inputs.get("payloads") or []:
-            if isinstance(payload, Payload):
-                payload.apply(doc)
+            if not isinstance(payload, Payload):
+                continue
+            # A payload node compiles from the doc Write hands it, not from its own input, so
+            # wiring Write ahead of a verify node would silently save the unchecked set.
+            if payload.source_sha256 and payload.source_sha256 != cf.refs_identity(doc.manifest):
+                raise ValueError(
+                    f"The {payload.arch} payload was built from a different version of "
+                    f"{doc.manifest.name or 'this character'}. Wire Write .char to the same node "
+                    "the payload node reads from."
+                )
+            payload.apply(doc)
         _apply_mode(doc, str(node.params.get("apply") or "auto"))
         # A typed name wins over the file it was loaded from: that is what Save as means.
         path = library.save(doc, _target_name(node.params.get("filename")) or identity.file or None)
@@ -397,19 +618,8 @@ def _apply_mode(doc: cf.CharDoc, mode: str) -> None:
             doc.manifest.apply[key] = mode
 
 
-def _ref_images(doc: cf.CharDoc) -> list[Any]:
-    """The character's own references decoded, so a payload compiles from truth not the library."""
-    import io
-
-    from PIL import Image
-
-    images = []
-    for ref in doc.manifest.refs:
-        data = doc.members.get(str(ref.get("path") or ""))
-        if data:
-            with Image.open(io.BytesIO(data)) as handle:
-                images.append(handle.convert("RGB").copy())
-    return images
+#: The character's own references decoded, so a payload compiles from truth not the library.
+_ref_images = encode.ref_images
 
 
 def _image_path(ref: Any) -> Any:
@@ -568,7 +778,9 @@ def _materialise(doc: cf.CharDoc) -> list[Path]:
 
     folder = Path(tempfile.mkdtemp(prefix="char-dataset-"))
     written: list[Path] = []
-    for index, ref in enumerate(doc.manifest.refs):
+    # Originals first, so a capped or truncated training set keeps the ones the user vouched for.
+    ordered = encode.originals(doc.manifest) + encode.harvested(doc.manifest)
+    for index, ref in enumerate(ordered):
         data = doc.members.get(str(ref.get("path") or ""))
         if data:
             out = folder / f"{index:04d}.png"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,7 @@ def _ctx() -> object:
 
 
 def _image(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (768, 1024), (180, 150, 140)).save(path)
     return path
 
@@ -577,3 +579,306 @@ def test_save_as_keeps_the_character_inside_the_library(tmp_path: Path, encoders
     assert _target_name("../../escape.char") == "escape.char"
     assert _target_name("") is None
 
+
+
+# --- verify-refs ---------------------------------------------------------------------------------
+
+
+def _fake_faces(monkeypatch: pytest.MonkeyPatch, vectors: list[list[float]]) -> None:
+    """Deterministic identity, so the node's own logic is what is under test and not a detector.
+
+    Keyed on the reference's own pixels, not call order: freezing re-decodes the members it froze
+    over, so an order-keyed stub would hand those a different vector than the pass that flagged.
+    """
+    from inline_core.characters import scoring, weights
+
+    monkeypatch.setattr(weights, "present", lambda: True)
+    by_colour = {_REF_COLOURS[i]: v for i, v in enumerate(vectors)}
+
+    def face(image: object) -> list[float] | None:
+        return by_colour.get(image.getpixel((0, 0))) or None  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(scoring, "embed_face", face)
+    monkeypatch.setattr(scoring, "embed_subject", lambda _image: [1.0, 0.0, 0.0])
+
+
+#: One flat colour per reference slot, so a stub can identify a reference by its own pixels.
+_REF_COLOURS = [(index * 30 + 10, 90, 140) for index in range(12)]
+
+
+def _character(tmp_path: Path, count: int, name: str = "Ada") -> Identity:
+    from inline_core.characters import charfile as cf
+    from inline_core.characters import encode
+
+    manifest = cf.Manifest(char_id="c", name=name, created_at=0, modified_at=0)
+    members: dict[str, bytes] = {}
+    for index in range(count):
+        image = Image.new("RGB", (320, 320), _REF_COLOURS[index])
+        member = cf.member_name("refs", index, ".png")
+        data = encode._png_bytes(image)
+        members[member] = data
+        manifest.refs.append(
+            {"path": member, "sha256": cf.sha256_bytes(data), "width": 320, "height": 320,
+             "origin": cf.ORIGIN_ORIGINAL}
+        )
+    return Identity(doc=cf.CharDoc(manifest=manifest, members=members))
+
+
+def _verify(identity: Identity, **params: object):
+    from inline_core.graph.schema import Node
+    from inline_core.models.character.runner import VerifyReferencesRunner
+
+    merged: dict[str, object] = {"on_outlier": "flag", "floor": 25.0}
+    merged.update(params)
+    return VerifyReferencesRunner().run(
+        Node(id="v", type="character/verify-refs", params=merged), {"character": [identity]}, _ctx()
+    ).outputs["character"]
+
+
+_SAME = [[1.0, 0.0, 0.0], [0.99, 0.1, 0.0], [0.98, 0.0, 0.1], [0.99, 0.05, 0.05]]
+_OTHER = [0.0, 1.0, 0.0]
+
+
+def test_verify_flags_a_reference_of_someone_else(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Best-match scoring means one wrong reference is a backdoor into every take."""
+    _fake_faces(monkeypatch, [*_SAME[:3], _OTHER])
+    out = _verify(_character(tmp_path, 4))
+
+    verdict = out.doc.manifest.scoring["verification"]
+    assert verdict["mode"] == "bootstrap"
+    assert verdict["flagged"] == [3]
+    assert len(out.doc.manifest.refs) == 4, "flag is the default and must remove nothing"
+
+
+def test_verify_freezes_the_originals_once_it_has_checked_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from inline_core.characters import encode
+
+    _fake_faces(monkeypatch, [*_SAME[:3], _OTHER])
+    first = _verify(_character(tmp_path, 4))
+    assert encode.originals_frozen(first.doc.manifest)
+    frozen = dict(first.doc.manifest.scoring["originals"])
+
+    _fake_faces(monkeypatch, [*_SAME[:3], _OTHER])
+    again = _verify(Identity(doc=first.doc))
+    assert again.doc.manifest.scoring["verification"]["mode"] == "existing"
+    assert again.doc.manifest.scoring["originals"] == frozen, "the identity target moved"
+
+
+def test_verify_quarantines_rather_than_deletes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refs are truth and the file one came from may be long gone, so removal stays reversible."""
+    _fake_faces(monkeypatch, [*_SAME[:3], _OTHER])
+    out = _verify(_character(tmp_path, 4), on_outlier="quarantine")
+
+    assert len(out.doc.manifest.refs) == 3
+    kept = [m for m in out.doc.members if m.startswith("quarantined/")]
+    assert len(kept) == 1, "the removed reference's bytes were not kept"
+
+
+def test_verify_never_removes_a_reference_with_no_face(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Those are the wide and full-body shots the hints ask for, and the only ones that let the
+    subject term speak to a wide take at all."""
+    _fake_faces(monkeypatch, [*_SAME[:3], []])
+    out = _verify(_character(tmp_path, 4), on_outlier="quarantine")
+
+    verdict = out.doc.manifest.scoring["verification"]
+    assert verdict["unchecked"] == [3]
+    assert verdict["flagged"] == []
+    assert len(out.doc.manifest.refs) == 4
+
+
+def test_verify_declines_to_flag_a_set_too_small_to_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With two, "agreement with the others" is one pairwise number and cannot say which is odd."""
+    _fake_faces(monkeypatch, [_SAME[0], _OTHER])
+    out = _verify(_character(tmp_path, 2), on_outlier="quarantine")
+
+    verdict = out.doc.manifest.scoring["verification"]
+    assert verdict["flagged"] == []
+    assert "odd one out" in verdict["note"]
+    assert len(out.doc.manifest.refs) == 2
+
+
+def test_verify_removes_a_byte_identical_duplicate_even_in_flag_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A duplicate is not a judgement call: it doubles that image's weight in a training mix and
+    spends a reference slot the model addresses by position."""
+    from inline_core.characters import charfile as cf
+
+    # Three vectors for three colours: the twin shares reference 0's pixels, so it shares its face.
+    _fake_faces(monkeypatch, _SAME[:3])
+    identity = _character(tmp_path, 3)
+    doc = identity.doc
+    twin = dict(doc.manifest.refs[0])
+    twin["path"] = cf.member_name("refs", 9, ".png")
+    doc.members[twin["path"]] = doc.members[doc.manifest.refs[0]["path"]]
+    doc.manifest.refs.append(twin)
+
+    out = _verify(identity)
+
+    verdict = out.doc.manifest.scoring["verification"]
+    assert verdict["removed"]["duplicates"] == ["refs/009.png"]
+    # Emptied, not left at [3]: the positions describe the set that survived, not the one checked.
+    assert verdict["duplicates"] == []
+    assert len(out.doc.manifest.refs) == 3
+
+
+def test_a_stored_verdict_names_positions_in_the_set_that_survived(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every list in the verdict is a position into `manifest.refs`, and removing one shifts each
+    position after it - so a report stored as found would ring a reference that is now another."""
+    _fake_faces(monkeypatch, [_SAME[0], _SAME[1], _SAME[2], _OTHER])
+    identity = _character(tmp_path, 4)
+    doc = identity.doc
+    # A duplicate of reference 0 in the middle, so removing it shifts the flagged impostor down.
+    twin = dict(doc.manifest.refs[0])
+    twin["path"] = cf.member_name("refs", 9, ".png")
+    doc.members[twin["path"]] = doc.members[doc.manifest.refs[0]["path"]]
+    doc.manifest.refs.insert(1, twin)
+
+    verdict = _verify(identity).doc.manifest.scoring["verification"]
+
+    assert len(verdict["agreement"]) == 4, "the report still describes five references"
+    assert verdict["flagged"] == [3], "the impostor kept the position it held before the dedup"
+
+
+def test_write_refuses_a_payload_built_from_a_different_reference_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compile References uses its `character` input only to read settings - it compiles from the
+    doc Write hands it - so wiring Write ahead of the verify node would save the unchecked set."""
+    from inline_core.graph.schema import Node
+    from inline_core.models.character.runner import CompileReferencesRunner, WriteCharacterRunner
+
+    _fake_faces(monkeypatch, [*_SAME[:3], _OTHER])
+    unchecked = _character(tmp_path, 4)
+    verified = _verify(Identity(doc=copy.deepcopy(unchecked.doc)), on_outlier="quarantine")
+
+    payload = CompileReferencesRunner().run(
+        Node(id="p", type="character/references", params={}), {"character": [verified]}, _ctx()
+    ).outputs["payload"]
+
+    with pytest.raises(ValueError, match="different version"):
+        WriteCharacterRunner().run(
+            Node(id="w", type="character/write", params={"filename": "Ada"}),
+            {"character": [unchecked], "payloads": [payload]},
+            _ctx(),
+        )
+
+
+def test_a_verified_drop_reaches_the_training_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The LoRA path matters more than the reference path: a bad reference bakes into the weights.
+
+    `commit_staged` reconciles the dataset against exactly what was staged, so a reference the
+    verify node took out is a row the next run removes rather than one left behind.
+    """
+    from inline_core.models.character.runner import CharacterDatasetRunner
+    from inline_core.models.training.runner import TrainingBridge
+
+    _fake_faces(monkeypatch, [*_SAME[:3], _OTHER])
+    identity = _character(tmp_path, 4)
+    identity.doc.members["text/description.md"] = b"green jacket"
+    identity.doc.manifest.text = {"path": "text/description.md", "sha256": ""}
+    verified = _verify(identity, on_outlier="quarantine")
+
+    staged: dict[str, object] = {}
+
+    class _Training:
+        def list_datasets(self) -> list[dict[str, object]]:
+            return []
+
+        def create_dataset(self, inp: dict[str, object]) -> dict[str, object]:
+            return {"id": "d1", "name": inp["name"]}
+
+        def stage_from_path(self, path: str) -> list[dict[str, object]]:
+            staged["files"] = sorted(p.name for p in Path(path).iterdir())
+            return [{"assetId": f"a{n}"} for n, _ in enumerate(staged["files"])]  # type: ignore[arg-type]
+
+        def commit_staged(self, _did: str, rows: list[dict[str, object]]) -> list[dict[str, str]]:
+            return [{"id": f"i{n}"} for n, _ in enumerate(rows)]
+
+        def set_caption(self, item_id: str, caption: str) -> None:
+            return None
+
+    CharacterDatasetRunner(TrainingBridge(_Training())).run(
+        _node({}), {"character": [verified]}, _ctx(),  # type: ignore[arg-type]
+    )
+
+    assert staged["files"] == ["0000.png", "0001.png", "0002.png"], "the dropped ref still trained"
+
+
+def test_a_character_that_never_harvested_is_unchanged_by_the_feature(tmp_path: Path) -> None:
+    """The loop is opt-in and additive: a character built without it must compile the same bytes
+    and stage the same training rows as one built before it existed."""
+    manifest = cf.Manifest(char_id="c", name="Ada", created_at=0, modified_at=0)
+    members: dict[str, bytes] = {}
+    for index in range(3):
+        image = Image.new("RGB", (320, 320), (index * 30 + 10, 90, 140))
+        member = cf.member_name("refs", index, ".png")
+        data = encode._png_bytes(image)
+        members[member] = data
+        # No origin field at all, the way every character written before this was.
+        manifest.refs.append({"path": member, "sha256": cf.sha256_bytes(data)})
+    doc = cf.CharDoc(manifest=manifest, members=members)
+
+    encode.build_payload(manifest, members, encode.ref_images(doc))
+    entry = manifest.payloads[encode.FLUX2_KLEIN_ARCH]
+
+    assert entry["harvested_count"] == 0
+    assert [f["path"] for f in entry["files"]] == [
+        f"payloads/flux2-klein/ref_{i:03d}.png" for i in range(3)
+    ]
+    assert encode.harvested(manifest) == []
+    assert len(encode.originals(manifest)) == 3
+
+
+def test_the_harvest_canvas_graph_validates_against_the_registered_descriptors(
+    tmp_path: Path,
+) -> None:
+    """The harvest chain is only real if the port ids the canvas emits are the ones the nodes
+    declare. A mismatch is a run that dies at submit, and neither side's unit tests would see it."""
+    import sqlite3
+
+    from inline_core.graph.registry import build_default_registry
+    from inline_core.graph.schema import parse_graph
+    from inline_core.graph.validate import validate
+    from inline_core.models.character.runner import register_character_nodes
+    from inline_core.studio import moodboard as mb
+    from inline_core.studio.graph_build import build_workflow_graph
+    from inline_core.studio.schema import apply_schema
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+    conn.execute("INSERT INTO project (id, name, created_at, updated_at) VALUES ('p','P',0,0)")
+
+    conn.execute(
+        "INSERT INTO assets (id, project_id, name, file_path, kind, created_at) "
+        "VALUES ('take', 'p', 'take', 'assets/take.png', 'image', 0)"
+    )
+    _image(tmp_path / "assets" / "take.png")
+    asset = mb.add_asset(conn, "take", 0, 0)
+    load = mb.add_core_node(conn, "character/load", 0, 0)
+    ingest = mb.add_core_node(conn, "character/ingest-approved", 0, 0)
+    write = mb.add_core_node(conn, "character/write", 0, 0)
+    mb.create_connector(conn, load["id"], ingest["id"], "character", "character")
+    mb.create_connector(conn, asset["id"], ingest["id"], "image", "image")
+    mb.create_connector(conn, ingest["id"], write["id"], "character", "character")
+
+    # The default registry, because the take reaches the node as an `input/image` source node.
+    registry = build_default_registry()
+    register_character_nodes(registry)
+    graph_dict, target = build_workflow_graph(conn, tmp_path, write["id"], lambda _t, _p: False)
+    validate(parse_graph(graph_dict), target, registry)

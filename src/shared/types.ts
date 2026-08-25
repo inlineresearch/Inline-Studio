@@ -300,6 +300,8 @@ export interface MoodboardItemData {
   datasetId?: string | null
   /** `caption` node: re-caption images that already have a caption. */
   overwrite?: boolean
+  /** `caption` node: which captioner to run. Read by `graph_build`, so it belongs on the wire. */
+  captioner?: string
   /** Training nodes: the training run they're bound to. Persisted so the node
    * rebinds after a reload and can still offer Resume on an interrupted run. */
   runId?: string | null
@@ -344,7 +346,12 @@ export interface CharacterSummary {
   file: string
   charId?: string
   name: string
+  /** The references the user curated. Harvested takes are counted separately on purpose. */
   refs: number
+  /** Approved takes taken into the pool. Absent or 0 on a character that never harvested one. */
+  harvested?: number
+  /** Reference positions whose face agrees least with the rest, by `character/verify-refs`. */
+  flagged?: number[]
   createdAt?: number
   modifiedAt?: number
   description?: string

@@ -235,3 +235,54 @@ def test_a_character_written_before_the_current_encoders_rebuilds_when_applied(
     rebuilt = cf.read(path)
     assert not cf.centroid_valid(rebuilt.manifest, "dinov2-base", "0"), "stale version survived"
     assert "refFramings" in rebuilt.manifest.scoring, "framings were not recomputed"
+
+
+def test_rescoring_a_stale_character_keeps_its_trained_adapter(
+    client: TestClient, project: dict
+) -> None:
+    """Rebuilding scoring must not rebuild the character.
+
+    `char_encode` builds a fresh manifest and a fresh members dict, so rescoring through it dropped
+    the trained adapter, every payload but flux2-klein and the apply override - and the write that
+    follows put that on disk, from a path a render reaches on every take it scores.
+    """
+    from inline_core.characters import charfile as cf
+    from inline_core.characters import encode, library
+    from inline_core.studio.characters import Characters
+
+    _make_character()
+    path = library.resolve("Ada.char")
+    assert path is not None
+
+    doc = cf.read(path)
+    encode.set_lora_payload(
+        doc.manifest,
+        doc.members,
+        b"adapter-bytes",
+        arch=encode.FLUX2_KLEIN_ARCH,
+        base="flux2-klein-4b",
+        rank=16,
+        steps=500,
+        resolution=512,
+    )
+    doc.manifest.payloads["minimax-h3"] = {"payload_version": 1, "type": "ref", "files": []}
+    doc.manifest.apply[encode.FLUX2_KLEIN_ARCH] = "lora"
+    doc.manifest.reserved = {"adapters": {}, "video_payloads": {}, "members": ["keep-me"]}
+    # The state a shipped encoder bump puts every character on disk into.
+    doc.manifest.scoring = {
+        **doc.manifest.scoring,
+        "encoders": [{"id": "dinov2-base", "version": "0", "dim": 768}],
+    }
+    cf.write(path, doc)
+
+    Characters(object(), _NullEvents()).score_take(path, "Ada.char")
+
+    rebuilt = cf.read(path)
+    key = encode.payload_key(encode.FLUX2_KLEIN_ARCH, encode.PAYLOAD_LORA)
+    assert key in rebuilt.manifest.payloads, "the trained adapter was destroyed"
+    assert rebuilt.members[f"payloads/{key}/adapter.safetensors"] == b"adapter-bytes"
+    assert "minimax-h3" in rebuilt.manifest.payloads, "another model's payload was destroyed"
+    assert rebuilt.manifest.apply.get(encode.FLUX2_KLEIN_ARCH) == "lora"
+    assert rebuilt.manifest.reserved.get("members") == ["keep-me"]
+    # And it did actually rescore, or the assertions above pass on a file nothing touched.
+    assert cf.centroid_valid(rebuilt.manifest, "dinov2-base", "2"), "scoring was not rebuilt"

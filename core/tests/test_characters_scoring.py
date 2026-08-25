@@ -242,6 +242,59 @@ def test_a_single_reference_agrees_with_itself() -> None:
     assert scoring.flagged_references([[1.0, 0.0]]) == []
 
 
+# --- references with no face ---------------------------------------------------------------------
+
+
+def test_a_reference_with_no_face_does_not_drag_the_others_down() -> None:
+    """`cosine` against an empty vector is 0.0, so counting one as a score is a hard zero in the
+    mean. A four-reference set with two wide shots would put every genuine reference under the
+    floor, and in a mode that removes them it would delete the good ones."""
+    refs = _same_person(4)
+    clean = scoring.reference_agreement(refs)
+    with_gaps = scoring.reference_agreement([refs[0], [], refs[1], [], refs[2], refs[3]])
+
+    assert with_gaps[1] is None and with_gaps[3] is None, "a missing face is not a low score"
+    assert [with_gaps[i] for i in (0, 2, 4, 5)] == clean
+    assert scoring.flagged_references([refs[0], [], refs[1], [], refs[2], refs[3]]) == []
+
+
+def test_flagged_positions_are_reference_positions_not_gallery_positions() -> None:
+    """The index is shown to the user as "reference N", so it has to survive a gap before it."""
+    refs = _same_person(3) + [_different_person()]
+    assert scoring.flagged_references([[], refs[0], refs[1], refs[2], refs[3]]) == [4]
+
+
+def test_empty_slots_do_not_count_toward_the_minimum_to_flag() -> None:
+    """Two real faces and a gap is still two, which cannot say which of the two is the odd one."""
+    refs = _same_person(1) + [_different_person()]
+    assert scoring.flagged_references([refs[0], [], refs[1]]) == []
+
+
+# --- the harvest arm -----------------------------------------------------------------------------
+
+
+def test_a_candidate_is_measured_against_the_gallery_it_is_not_in() -> None:
+    gallery = _same_person(4)
+    assert (scoring.agreement_against(gallery[0], gallery) or 0) > 90.0
+    assert (scoring.agreement_against(_different_person(), gallery) or 0) < 10.0
+
+
+def test_a_candidate_is_not_scored_against_too_small_a_gallery() -> None:
+    """The floor is a mean over a set; against one or two references it is a pairwise number, and
+    same-person pairs run as low as 23.0 - under the floor."""
+    gallery = _same_person(4)
+    assert scoring.agreement_against(gallery[0], gallery[:2]) is None
+    assert scoring.agreement_against([], gallery) is None
+
+
+def test_coverage_is_highest_for_the_reference_least_like_the_others() -> None:
+    """What decides which harvested reference survives the cap: a near-duplicate of an angle the
+    pool already holds is worth less than one that spans an angle it misses."""
+    values = scoring.coverage_values(_same_person(3) + [_different_person()])
+    assert values[3] is not None
+    assert all(v is not None and v < values[3] for v in values[:3])
+
+
 # --- lookalike discrimination ------------------------------------------------------------------
 
 

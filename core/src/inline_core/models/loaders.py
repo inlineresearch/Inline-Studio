@@ -181,12 +181,33 @@ _FLUX2_DEV = ArchSpec(
     ),
 )
 
+#: MiniMax H3's conditioner. The repo lays its encoder out under `FL2VA/text_encoder/`, so each
+#: file is re-homed to the `text_encoder/` subfolder the staged dir loads from.
+_MINIMAX_H3 = ArchSpec(
+    key="minimax-h3",
+    assets_repo="MiniMaxAI/MiniMax-H3",
+    asset_files=tuple(
+        AssetFile(f"FL2VA/text_encoder/{name}", local=f"text_encoder/{name}")
+        for name in (
+            "config.json",
+            "chat_template.json",
+            "preprocessor_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "video_preprocessor_config.json",
+            "merges.txt",
+            "vocab.json",
+        )
+    ),
+)
+
 SPECS: dict[str, ArchSpec] = {
     _ZIMAGE.key: _ZIMAGE,
     _KREA2.key: _KREA2,
     _FLUX2_KLEIN_4B.key: _FLUX2_KLEIN_4B,
     _FLUX2_KLEIN_9B.key: _FLUX2_KLEIN_9B,
     _FLUX2_DEV.key: _FLUX2_DEV,
+    _MINIMAX_H3.key: _MINIMAX_H3,
 }
 
 

@@ -489,6 +489,33 @@ def free_vram() -> None:
         pass
 
 
+def own_vram_bytes() -> int:
+    """What this process holds on the card, weights included - not just the allocator's cache."""
+    try:
+        if not torch.cuda.is_available():
+            return 0
+        return int(torch.cuda.memory_reserved())
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def foreign_vram_bytes(device: Any = None) -> int:
+    """VRAM held on this card by anyone but us - another render, a training run, another app.
+
+    An OOM message that only knows its own allocation blames whatever the user last changed. On a
+    box that trains and generates at once the honest answer is usually that the card is already
+    two-thirds spoken for, and no setting on this node will fix that.
+    """
+    try:
+        if not torch.cuda.is_available():
+            return 0
+        target = torch.device(str(device)) if device else None
+        free, total = torch.cuda.mem_get_info(target)
+        return max(0, int(total) - int(free) - int(torch.cuda.memory_reserved(target)))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def free_vram_bytes(device: Any = None) -> int:
     """What the driver says is unallocated right now, which is the only honest number once another
     model is already placed. 0 when there is no CUDA device to ask."""

@@ -35,6 +35,7 @@ from ..offload import (
 )
 from . import requirements as reqs
 from .load import load_transformer
+from .vendor.packing import MINIMAX_H3_TEXT_ENCODER_LAYER
 
 logger = logging.getLogger("inline_core.minimaxh3")
 
@@ -290,16 +291,22 @@ def _build(
     encoder_quant = _encoder_config(recipe)
     _placement_kwargs = _encoder_placement(placement) if encoder_quant is not None else {}
     _encoder_on_card = _placement_kwargs.get("device_map", {}).get("") not in (None, "cpu")
-    text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
-        str(encoder_dir),
-        dtype=dtype,
-        local_files_only=True,
-        **(
-            {"quantization_config": encoder_quant, **_placement_kwargs}
-            if encoder_quant is not None
-            else {}
-        ),
-    )
+    if _is_nvfp4(encoder_dir):
+        # Already 4-bit on disk, so the NF4 rung would be quantising a quantised file - the same
+        # rule that turns quantization off for any prequantized source.
+        _encoder_on_card = False
+        text_encoder = _load_nvfp4_encoder(encoder_dir, dtype)
+    else:
+        text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
+            str(_encoder_source(encoder_dir)),
+            dtype=dtype,
+            local_files_only=True,
+            **(
+                {"quantization_config": encoder_quant, **_placement_kwargs}
+                if encoder_quant is not None
+                else {}
+            ),
+        )
 
     # The conditioner's shards stage through ~21 GB of shared memory that is not reclaimed on its
     # own, and the denoiser needs that space. Forcing a collection here is what actually frees it.
@@ -381,7 +388,11 @@ def _build(
     # the card is full, and badly wrong when it is not: at 960x544 it turned a 6 minute render into
     # 32. Staged, the conditioner is on the CPU by decode time, so if the measured free VRAM covers
     # the VAE plus a working margin it stays resident instead.
-    vae_resident = staged and _vae_fits(video_vae, placement.device)
+    vae_resident = staged and _vae_fits(
+        video_vae,
+        placement.device,
+        _denoiser_card_bytes(transformer, recipe, resident_blocks),
+    )
     if vae_resident:
         recipe = _replace(recipe, vae_offload=None)
 
@@ -421,24 +432,51 @@ def _build(
     return pipe
 
 
-#: Left free beside a resident VAE: the denoiser is already placed, so this only has to cover the
-#: decode's own activations, which are the largest single allocation of the render.
+#: Left free beside a resident VAE, to cover the decode's own activations - the largest single
+#: allocation of the render.
 _VAE_RESIDENT_MARGIN_GB = 12.0
 
 
-def _vae_fits(path: Path, device: Any) -> bool:
+def _denoiser_card_bytes(transformer: Any, recipe: Any, resident_blocks: int) -> int:
+    """What the denoiser will claim on the card once ``apply_offload`` places it.
+
+    It is loaded but still on the CPU when the VAE decision is taken, so the card reads empty and
+    every later placement is invisible to anything measuring free VRAM at that moment.
+    """
+    from ..offload import block_stack
+
+    total = sum(t.numel() * t.element_size() for t in transformer.parameters())
+    total += sum(t.numel() * t.element_size() for t in transformer.buffers())
+    if recipe.denoiser_offload is None:
+        return total
+    blocks = len(list(block_stack(transformer)))
+    if not blocks:
+        return total
+    # Streaming leaves only the placed head blocks resident; the rest arrives and leaves per step.
+    return int(total * min(1.0, max(0, resident_blocks) / blocks))
+
+
+def _vae_fits(path: Path, device: Any, denoiser_bytes: int = 0) -> bool:
     """Whether the video VAE can stay on the card rather than streaming leaf by leaf.
 
     fp32 doubles what the file weighs, and that is what actually has to fit.
+
+    ``denoiser_bytes`` is what the denoiser will take once it is placed, which happens *after* this
+    runs: measured free VRAM here is an empty card, and reserving against it put a 10.4 GB VAE and
+    a 33 GB denoiser onto 44 GB. The same correction `_plan_residency` already makes for host RAM.
     """
-    free = rt.free_vram_bytes(device)
-    if not free:
+    free = rt.free_vram_bytes(device) - denoiser_bytes
+    if free <= 0:
+        logger.info(
+            "MiniMax H3 video VAE: streamed leaf by leaf (the denoiser claims the card first)"
+        )
         return False
     needed = path.stat().st_size * 2 + int(_VAE_RESIDENT_MARGIN_GB * 1e9)
     fits = free > needed
     logger.info(
-        "MiniMax H3 video VAE: %s (%.1f GB free, needs %.1f GB with margin)",
-        "resident" if fits else "streamed leaf by leaf", free / 1e9, needed / 1e9,
+        "MiniMax H3 video VAE: %s (%.1f GB free after the denoiser's %.1f GB, needs %.1f GB)",
+        "resident" if fits else "streamed leaf by leaf",
+        free / 1e9, denoiser_bytes / 1e9, needed / 1e9,
     )
     return fits
 
@@ -542,6 +580,220 @@ def _encoder_placement(placement: Any) -> dict[str, Any]:
 
 #: What the 4-bit conditioner occupies once placed, measured on an L40S.
 _ENCODER_RESIDENT_GB = 20.5
+
+
+#: The `models/loaders.py` spec key for this family's one-time config assets.
+ASSETS_ARCH = "minimax-h3"
+
+#: Encoder builds we cannot read, with the reason, rather than failing deep inside transformers.
+_ENCODER_REFUSED = {
+    "int8_convrot": "an int8 rotation repack this loader cannot undo",
+    "nvfp4_awq": "",
+}
+
+
+def _is_nvfp4(path: Path) -> bool:
+    """Whether a single-file encoder carries ComfyUI's nvfp4 marker."""
+    if path.is_dir() or path.suffix.lower() not in (".safetensors", ".sft"):
+        return False
+    from ..checkpoint import prequantized_kind
+
+    return prequantized_kind(path) is not None and _nvfp4_marked(path)
+
+
+def _nvfp4_marked(path: Path) -> bool:
+    from safetensors import safe_open
+
+    with safe_open(str(path), framework="pt") as handle:
+        keys: list[str] = list(handle.keys())
+    return any(key.endswith("comfy_quant") for key in keys)
+
+
+def _encoder_source(path: Path) -> Path:
+    """A folder as-is, or a single file staged into a tiny dir transformers can load.
+
+    Streaming from a directory is what keeps peak host RAM at about one tensor; handing
+    ``from_pretrained`` a materialised state dict would pull the whole encoder into RAM first.
+    """
+    if path.is_dir():
+        return path
+    for marker, reason in _ENCODER_REFUSED.items():
+        if reason and marker in path.name:
+            raise ComponentError(f"{path.name} is {reason}. Use the bf16 or nvfp4 build instead.")
+    from ..loaders import _staged_encoder_dir
+
+    return _staged_encoder_dir(ASSETS_ARCH, str(path))
+
+
+def _nvfp4_key(key: str) -> str:
+    """The file's flat layout to the module tree transformers builds.
+
+    ComfyUI writes the pre-Qwen3VL-split names (`model.layers.*`, `visual.*`); transformers nests
+    both under `model.` with the language stack under `language_model`.
+    """
+    if key.startswith("visual."):
+        return f"model.{key}"
+    if key.startswith("model."):
+        return f"model.language_model.{key[len('model.'):]}"
+    return key
+
+
+def _nvfp4_layers(keys: set[str]) -> int:
+    import re
+
+    found = {int(m.group(1)) for k in keys if (m := re.match(r"model\.layers\.(\d+)\.", k))}
+    return max(found) + 1 if found else 0
+
+
+def _load_nvfp4_encoder(path: Path, dtype: Any) -> Any:
+    """Qwen3-VL from an NVFP4 file, with every quantised Linear left packed.
+
+    Built on ``meta`` and populated by hand because transformers has no reader for this format;
+    materialising it first would want the 51 GB the packed file exists to avoid. The build is
+    truncated to the layers H3 actually reads (``hidden_states[50]``) and carries no language-model
+    head, which the vendored encoder never calls - so the config is cut to match the file rather
+    than the file being padded to match the config.
+    """
+    from accelerate import init_empty_weights
+    from safetensors import safe_open
+    from transformers import AutoConfig, Qwen3VLForConditionalGeneration
+
+    from ..loaders import ensure_assets
+
+    with safe_open(str(path), framework="pt") as handle:
+        keys: set[str] = set(handle.keys())
+    layers = _nvfp4_layers(keys)
+    if layers < MINIMAX_H3_TEXT_ENCODER_LAYER:
+        raise ComponentError(
+            f"{path.name} carries {layers} encoder layers, and MiniMax H3 reads hidden state "
+            f"{MINIMAX_H3_TEXT_ENCODER_LAYER}. This is not the H3 conditioner."
+        )
+
+    config = AutoConfig.from_pretrained(str(ensure_assets(ASSETS_ARCH) / "text_encoder"))
+    text_config = getattr(config, "text_config", config)
+    full_depth = int(text_config.num_hidden_layers)
+    # Built at the file's depth so only the layers it carries are instantiated.
+    text_config.num_hidden_layers = layers
+    with init_empty_weights():
+        model = Qwen3VLForConditionalGeneration._from_config(config, dtype=dtype)
+    # The trailing norm is absent from this build on purpose. At full depth H3 reads the *un-normed*
+    # state after layer 50, because the norm only lands at the final index; cut to 50 layers that
+    # index becomes the normed one, so keeping a real norm here would change the conditioning.
+    if "model.norm.weight" not in keys:
+        model.model.language_model.norm = torch.nn.Identity()
+    # Restored to the architecture this build was cut from. `encoders.py` refuses a conditioner
+    # whose config says 50 layers, because a naive truncation makes `hidden_states[50]` post-norm -
+    # true, and defeated above by the Identity. Transformers reads this only when constructing the
+    # stack, and iterates the real module list at inference, so the 50 layers still run.
+    text_config.num_hidden_layers = full_depth
+
+    with safe_open(str(path), framework="pt") as handle:
+        formats = _packed_formats(handle, keys)
+        linears = {n for n, fmt in formats.items() if fmt == "nvfp4"}
+        plain = {n for n, fmt in formats.items() if fmt == "int8_tensorwise"}
+        unknown = set(formats) - linears - plain
+        if unknown:
+            raise ComponentError(
+                f"{path.name} quantises {len(unknown)} layers as "
+                f"{formats[sorted(unknown)[0]]!r}, which this loader cannot read."
+            )
+        _swap_packed_linears(model, linears, dtype)
+        # Tensor-wise int8 is the embedding, read once per prompt: keeping it packed would trade
+        # about a gigabyte for dequantising the whole vocabulary on every forward.
+        for name in plain:
+            _unpack_int8(model, handle, name, dtype)
+        missing = _load_into(model, handle, keys, skip={f"{n}.weight" for n in plain})
+    available_keys = {_nvfp4_key(key) for key in keys}
+    if missing:
+        raise ComponentError(
+            f"{path.name} is missing {len(missing)} tensors this encoder needs, "
+            f"starting with {sorted(missing)[0]}."
+        )
+    # Dropped rather than left on meta: this build ships no head, and any `.to(device)` over a meta
+    # parameter raises rather than being skipped. The vendored encoder calls `.model` directly.
+    if "lm_head.weight" not in available_keys:
+        model.lm_head = torch.nn.Identity()
+    logger.info(
+        "MiniMax H3 conditioner: %d layers, %d nvfp4 linears, %d int8 tables, from %s",
+        layers, len(linears), len(plain), path.name,
+    )
+    return model
+
+
+def _swap_packed_linears(model: Any, packed: set[str], dtype: Any) -> None:
+    """Replace each quantised ``nn.Linear`` with its packed counterpart, in place."""
+    from .nvfp4 import NVFP4Linear
+
+    for name in packed:
+        parent = model.get_submodule(name.rsplit(".", 1)[0])
+        attr = name.rsplit(".", 1)[-1]
+        old = getattr(parent, attr)
+        setattr(
+            parent,
+            attr,
+            NVFP4Linear(old.in_features, old.out_features, old.bias is not None, dtype),
+        )
+
+
+def _packed_formats(handle: Any, keys: set[str]) -> dict[str, str]:
+    """Each quantised module mapped to the format its own ``comfy_quant`` marker names.
+
+    Read per layer rather than assumed for the file: this one mixes nvfp4 linears with a
+    tensor-wise int8 embedding, and guessing from the module type would have silently mis-read it.
+    """
+    import json
+
+    out: dict[str, str] = {}
+    for key in keys:
+        if not key.endswith(".comfy_quant"):
+            continue
+        raw = bytes(handle.get_tensor(key).tolist()).decode("utf-8", errors="replace")
+        try:
+            marker = json.loads(raw)
+        except ValueError:
+            marker = {}
+        out[_nvfp4_key(key[: -len(".comfy_quant")])] = str(marker.get("format") or raw)
+    return out
+
+
+def _unpack_int8(model: Any, handle: Any, name: str, dtype: Any) -> None:
+    """A tensor-wise int8 weight back to ``dtype``, in place: ``int8 * per-row scale``."""
+    import torch
+
+    module = model.get_submodule(name)
+    source = name.replace("model.language_model.", "model.", 1)
+    weight = handle.get_tensor(f"{source}.weight").to(torch.float32)
+    weight = weight * handle.get_tensor(f"{source}.weight_scale").to(torch.float32)
+    module.weight = torch.nn.Parameter(weight.to(dtype), requires_grad=False)
+
+
+def _load_into(model: Any, handle: Any, keys: set[str], *, skip: set[str]) -> set[str]:
+    """Copy every tensor in, materialising the meta parameters. Returns what the file lacked."""
+    import torch
+
+    available = {_nvfp4_key(key): key for key in keys}
+    wanted: set[str] = {str(name) for name in model.state_dict()}
+    missing: set[str] = set()
+    for name in sorted(wanted - skip):
+        source = available.get(name)
+        if source is None:
+            # The head is the one correct absence: H3 reads a hidden state and never runs it.
+            if not name.startswith("lm_head."):
+                missing.add(name)
+            continue
+        parent = model.get_submodule(name.rsplit(".", 1)[0]) if "." in name else model
+        attr = name.rsplit(".", 1)[-1]
+        value = handle.get_tensor(source)
+        if isinstance(getattr(parent, attr, None), torch.nn.Parameter):
+            setattr(parent, attr, torch.nn.Parameter(value, requires_grad=False))
+        else:
+            parent.register_buffer(attr, value, persistent=True)
+    # AWQ smoothing is not in `state_dict` until it exists, so attach it from the file directly.
+    for mapped, source in available.items():
+        if source.endswith(".pre_quant_scale"):
+            module = model.get_submodule(mapped[: -len(".pre_quant_scale")])
+            module.pre_quant_scale = handle.get_tensor(source)
+    return missing
 
 
 def _encoder_config(recipe: Any) -> Any:
