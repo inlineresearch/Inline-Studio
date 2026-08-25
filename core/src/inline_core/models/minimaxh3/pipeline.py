@@ -388,7 +388,11 @@ def _build(
     # the card is full, and badly wrong when it is not: at 960x544 it turned a 6 minute render into
     # 32. Staged, the conditioner is on the CPU by decode time, so if the measured free VRAM covers
     # the VAE plus a working margin it stays resident instead.
-    vae_resident = staged and _vae_fits(video_vae, placement.device)
+    vae_resident = staged and _vae_fits(
+        video_vae,
+        placement.device,
+        _denoiser_card_bytes(transformer, recipe, resident_blocks),
+    )
     if vae_resident:
         recipe = _replace(recipe, vae_offload=None)
 
@@ -428,24 +432,51 @@ def _build(
     return pipe
 
 
-#: Left free beside a resident VAE: the denoiser is already placed, so this only has to cover the
-#: decode's own activations, which are the largest single allocation of the render.
+#: Left free beside a resident VAE, to cover the decode's own activations - the largest single
+#: allocation of the render.
 _VAE_RESIDENT_MARGIN_GB = 12.0
 
 
-def _vae_fits(path: Path, device: Any) -> bool:
+def _denoiser_card_bytes(transformer: Any, recipe: Any, resident_blocks: int) -> int:
+    """What the denoiser will claim on the card once ``apply_offload`` places it.
+
+    It is loaded but still on the CPU when the VAE decision is taken, so the card reads empty and
+    every later placement is invisible to anything measuring free VRAM at that moment.
+    """
+    from ..offload import block_stack
+
+    total = sum(t.numel() * t.element_size() for t in transformer.parameters())
+    total += sum(t.numel() * t.element_size() for t in transformer.buffers())
+    if recipe.denoiser_offload is None:
+        return total
+    blocks = len(list(block_stack(transformer)))
+    if not blocks:
+        return total
+    # Streaming leaves only the placed head blocks resident; the rest arrives and leaves per step.
+    return int(total * min(1.0, max(0, resident_blocks) / blocks))
+
+
+def _vae_fits(path: Path, device: Any, denoiser_bytes: int = 0) -> bool:
     """Whether the video VAE can stay on the card rather than streaming leaf by leaf.
 
     fp32 doubles what the file weighs, and that is what actually has to fit.
+
+    ``denoiser_bytes`` is what the denoiser will take once it is placed, which happens *after* this
+    runs: measured free VRAM here is an empty card, and reserving against it put a 10.4 GB VAE and
+    a 33 GB denoiser onto 44 GB. The same correction `_plan_residency` already makes for host RAM.
     """
-    free = rt.free_vram_bytes(device)
-    if not free:
+    free = rt.free_vram_bytes(device) - denoiser_bytes
+    if free <= 0:
+        logger.info(
+            "MiniMax H3 video VAE: streamed leaf by leaf (the denoiser claims the card first)"
+        )
         return False
     needed = path.stat().st_size * 2 + int(_VAE_RESIDENT_MARGIN_GB * 1e9)
     fits = free > needed
     logger.info(
-        "MiniMax H3 video VAE: %s (%.1f GB free, needs %.1f GB with margin)",
-        "resident" if fits else "streamed leaf by leaf", free / 1e9, needed / 1e9,
+        "MiniMax H3 video VAE: %s (%.1f GB free after the denoiser's %.1f GB, needs %.1f GB)",
+        "resident" if fits else "streamed leaf by leaf",
+        free / 1e9, denoiser_bytes / 1e9, needed / 1e9,
     )
     return fits
 
@@ -640,6 +671,8 @@ def _load_nvfp4_encoder(path: Path, dtype: Any) -> Any:
 
     config = AutoConfig.from_pretrained(str(ensure_assets(ASSETS_ARCH) / "text_encoder"))
     text_config = getattr(config, "text_config", config)
+    full_depth = int(text_config.num_hidden_layers)
+    # Built at the file's depth so only the layers it carries are instantiated.
     text_config.num_hidden_layers = layers
     with init_empty_weights():
         model = Qwen3VLForConditionalGeneration._from_config(config, dtype=dtype)
@@ -648,6 +681,11 @@ def _load_nvfp4_encoder(path: Path, dtype: Any) -> Any:
     # index becomes the normed one, so keeping a real norm here would change the conditioning.
     if "model.norm.weight" not in keys:
         model.model.language_model.norm = torch.nn.Identity()
+    # Restored to the architecture this build was cut from. `encoders.py` refuses a conditioner
+    # whose config says 50 layers, because a naive truncation makes `hidden_states[50]` post-norm -
+    # true, and defeated above by the Identity. Transformers reads this only when constructing the
+    # stack, and iterates the real module list at inference, so the 50 layers still run.
+    text_config.num_hidden_layers = full_depth
 
     with safe_open(str(path), framework="pt") as handle:
         formats = _packed_formats(handle, keys)

@@ -33,10 +33,16 @@ def unpack_fp4(packed: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
     """``[..., n/2]`` uint8 to ``[..., n]`` values. High nibble first, then low, interleaved.
 
     The other three orderings score ~0 against the reference, so this is not a coin flip.
+
+    Indexing needs int64, which is eight bytes per weight against the packed half-byte - so the
+    shift and the mask are taken one at a time and freed, never held together.
     """
-    codes = packed.to(torch.int64)
-    pairs = torch.stack((table[codes >> 4], table[codes & 0xF]), dim=-1)
-    return pairs.reshape(*packed.shape[:-1], packed.shape[-1] * 2)
+    out = torch.empty(
+        (*packed.shape[:-1], packed.shape[-1] * 2), dtype=table.dtype, device=packed.device
+    )
+    out[..., 0::2] = table[(packed >> 4).long()]
+    out[..., 1::2] = table[(packed & 0xF).long()]
+    return out
 
 
 def from_blocked(stored: torch.Tensor, rows: int, cols: int) -> torch.Tensor:
@@ -77,14 +83,36 @@ def dequantize(
     dtype: torch.dtype = torch.bfloat16,
 ) -> torch.Tensor:
     """One NVFP4 weight back to ``dtype``: ``fp4 * block_scale * global_scale``."""
+    rows, cols = packed.shape[0], packed.shape[1] * 2
+    scales = from_blocked(block_scale.to(torch.float32), rows, cols // BLOCK)
+    out = torch.empty((rows, cols), dtype=dtype, device=packed.device)
+    for start, stop in _row_chunks(rows, cols):
+        out[start:stop] = _dequantize_rows(
+            packed[start:stop], scales[start:stop], float(global_scale), dtype
+        )
+    # Padded up to a multiple of 16 on the way in, so trim back to the layer's real shape.
+    return out[:out_features, :in_features]
+
+
+#: Roughly how much scratch one chunk may take. The intermediates are fp32 and int64 while the
+#: weight is half a byte, so a whole 25600x5120 layer at once wants gigabytes to produce megabytes.
+_CHUNK_BYTES = 32 * 1024**2
+
+
+def _row_chunks(rows: int, cols: int) -> list[tuple[int, int]]:
+    step = max(BLOCK, min(rows, _CHUNK_BYTES // max(1, cols * 4)))
+    return [(start, min(start + step, rows)) for start in range(0, rows, step)]
+
+
+def _dequantize_rows(
+    packed: torch.Tensor, scales: torch.Tensor, global_scale: float, dtype: torch.dtype
+) -> torch.Tensor:
+    """One row block, in fp32 so an fp8 scale times a 4-bit value keeps its bits until the cast."""
     table = e2m1_table(packed.device, torch.float32)
     values = unpack_fp4(packed, table)
-    rows, blocks = values.shape[0], values.shape[1] // BLOCK
-    scales = from_blocked(block_scale.to(torch.float32), rows, blocks)
-    weight = (values.reshape(rows, blocks, BLOCK) * scales.unsqueeze(-1)).reshape(values.shape)
-    weight = weight * float(global_scale)
-    # Padded up to a multiple of 16 on the way in, so trim back to the layer's real shape.
-    return weight[:out_features, :in_features].to(dtype)
+    rows, cols = values.shape
+    values = values.reshape(rows, cols // BLOCK, BLOCK) * scales.unsqueeze(-1)
+    return (values.reshape(rows, cols) * global_scale).to(dtype)
 
 
 class NVFP4Linear(nn.Module):
@@ -132,15 +160,22 @@ class NVFP4Linear(nn.Module):
         smooth = self.pre_quant_scale
         if smooth is not None:
             x = x * smooth.to(x.dtype)
-        weight = dequantize(
-            self.weight,
-            self.weight_scale,
-            self.weight_scale_2,
-            out_features=self.out_features,
-            in_features=self.in_features,
-            dtype=x.dtype,
-        )
-        return torch.nn.functional.linear(x, weight, self.bias)
+        rows, cols = self.weight.shape[0], self.weight.shape[1] * 2
+        scales = from_blocked(self.weight_scale.to(torch.float32), rows, cols // BLOCK)
+        global_scale = float(self.weight_scale_2)
+        # Row-chunked so the whole weight never exists: the conditioner runs on one short prompt, so
+        # the output is a few kilobytes while the dequantised weight would be hundreds of megabytes.
+        parts: list[torch.Tensor] = []
+        for start, stop in _row_chunks(rows, cols):
+            if start >= self.out_features:
+                break
+            block = _dequantize_rows(
+                self.weight[start:stop], scales[start:stop], global_scale, x.dtype
+            )
+            block = block[: self.out_features - start, : self.in_features]
+            bias = None if self.bias is None else self.bias[start : start + block.shape[0]]
+            parts.append(torch.nn.functional.linear(x, block, bias))
+        return torch.cat(parts, dim=-1)
 
     def extra_repr(self) -> str:
         return f"in_features={self.in_features}, out_features={self.out_features}, nvfp4"

@@ -447,8 +447,18 @@ class MiniMaxH3Runner(NodeRunner):
             rt.free_vram()
             raise
         except torch.cuda.OutOfMemoryError as error:
-            rt.free_vram()
-            raise ComponentError(_oom(request)) from error
+            # Evicted, not merely emptied: `free_vram` releases unused blocks and leaves the
+            # pipeline resident, so the failed run kept ~43 GB and every retry started from a full
+            # card. That reads as the same error forever, whatever the user changes.
+            held = rt.own_vram_bytes()
+            # Dropped before the clear, not after: `raise ... from error` keeps the traceback, the
+            # traceback keeps this frame, and this frame's locals still name the pipeline - so
+            # evicting the cache alone leaves it alive and the card still full.
+            pipe = None
+            call = {}
+            rt.PIPELINES.clear()
+            logger.info("MiniMax H3 released %.1f GB after an out-of-memory run", held / 1e9)
+            raise ComponentError(_oom(request, held=held)) from error
         except MemoryError as error:
             rt.free_vram()
             raise ComponentError(_oom(request, host=True)) from error
@@ -524,18 +534,26 @@ def _reference_tokens(request: Request) -> tuple[int, int]:
 
 #: Below this, another process on the card is noise; above it, it is the whole story.
 _FOREIGN_VRAM_FLOOR = 2 * 1024**3
+#: What counts as "the last run was still holding the card" rather than a genuinely tight fit.
+_HELD_VRAM_FLOOR = 8 * 1024**3
 
 
-def _oom(request: Request, *, host: bool = False) -> str:
+def _oom(request: Request, *, host: bool = False, held: int = 0) -> str:
     where = "System RAM" if host else "VRAM"
-    # Asked first, because when it is true nothing on this node is the cause and every other hint
-    # below sends the user to change a setting that was never the problem.
+    # Asked first, because when either is true nothing on this node is the cause and every other
+    # hint below sends the user to change a setting that was never the problem.
     foreign = 0 if host else rt.foreign_vram_bytes()
     if foreign >= _FOREIGN_VRAM_FLOOR:
         return (
             f"{where} ran out, but {foreign / 1024**3:.1f} GB of this card is held by another "
             "process - a training run, another render, or another app. Wait for it to finish or "
             "stop it, then run this again. Nothing on this node will free that memory."
+        )
+    if not host and held >= _HELD_VRAM_FLOOR:
+        return (
+            f"{where} ran out with {held / 1024**3:.1f} GB already held by this render. That has "
+            "now been released, so run it again - the retry starts from an empty card. If it "
+            "fails the same way twice in a row, the model genuinely does not fit these settings."
         )
     canvas = (
         f"{where} ran out at {request.width}x{request.height} for {request.seconds:.1f}s. "

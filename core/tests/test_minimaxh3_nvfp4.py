@@ -122,3 +122,69 @@ def test_awq_smoothing_is_applied_to_the_input() -> None:
     got = layer(x)
     want = torch.nn.functional.linear(x, weight)
     assert torch.nn.functional.cosine_similarity(got.flatten(), want.flatten(), dim=0) > 0.99
+
+
+def test_the_build_satisfies_the_vendored_depth_guard() -> None:
+    """`encoders.py` refuses a conditioner whose config reports 50 layers, because a stack naively
+    truncated there makes `hidden_states[50]` post-norm. This build carries exactly 50 and defeats
+    that by swapping the trailing norm for Identity, so the state stays pre-norm - and the config
+    has to report the depth it was cut from or the guard rejects a correct encoder."""
+    import pathlib
+
+    from inline_core.models.minimaxh3.vendor.packing import MINIMAX_H3_TEXT_ENCODER_LAYER
+
+    weights = pathlib.Path("models/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors")
+    if not weights.is_file():
+        pytest.skip("nvfp4 conditioner not present")
+
+    from inline_core.models.minimaxh3.pipeline import _load_nvfp4_encoder
+
+    model = _load_nvfp4_encoder(weights, torch.bfloat16)
+    depth = model.config.text_config.num_hidden_layers
+    assert depth > MINIMAX_H3_TEXT_ENCODER_LAYER, "the vendored guard would reject this"
+    # The stack really is the file's, whatever the config says: transformers reads the config only
+    # when constructing and iterates the module list at inference.
+    assert len(model.model.language_model.layers) == MINIMAX_H3_TEXT_ENCODER_LAYER
+    assert isinstance(model.model.language_model.norm, torch.nn.Identity)
+    assert isinstance(model.lm_head, torch.nn.Identity), "this build ships no head"
+
+
+def test_the_vae_budget_counts_the_denoiser_that_lands_after_it(monkeypatch) -> None:
+    """`_vae_fits` runs three lines before `apply_offload`, so the card it measures is empty and
+    every later placement is invisible. Reserving against that put a 10.4 GB fp32 VAE beside a
+    33 GB denoiser on a 44 GB card, and the render peaked at 43.4 GB and died."""
+    import pathlib
+
+    from inline_core.models import pipeline_runtime as rt
+    from inline_core.models.minimaxh3 import pipeline as pl
+
+    vae = pathlib.Path("models/vae/minimax_h3_video_vae_fp16.safetensors")
+    if not vae.is_file():
+        pytest.skip("video VAE not present")
+
+    monkeypatch.setattr(rt, "free_vram_bytes", lambda *a, **k: int(46.6e9))
+    assert pl._vae_fits(vae, None, 0), "an empty card looks like room, which is the old bug"
+    assert not pl._vae_fits(vae, None, int(33e9)), "counting the denoiser has to flip it"
+
+    # The fast path survives where the card genuinely has room: leaf offload turned a 6 minute
+    # render into 32, so this must not become "always stream".
+    monkeypatch.setattr(rt, "free_vram_bytes", lambda *a, **k: int(80e9))
+    assert pl._vae_fits(vae, None, int(33e9))
+
+    # A denoiser larger than the whole card is a decision, not a crash.
+    monkeypatch.setattr(rt, "free_vram_bytes", lambda *a, **k: int(40e9))
+    assert not pl._vae_fits(vae, None, int(80e9))
+
+
+def test_a_resident_denoiser_is_sized_whole() -> None:
+    """With no offload every byte of it lands on the card, so that is what the VAE must budget."""
+    from dataclasses import dataclass
+
+    from inline_core.models.minimaxh3.pipeline import _denoiser_card_bytes
+
+    @dataclass
+    class _Recipe:
+        denoiser_offload: object = None
+
+    model = torch.nn.Linear(64, 32, bias=False, dtype=torch.float32)
+    assert _denoiser_card_bytes(model, _Recipe(), 0) == 64 * 32 * 4

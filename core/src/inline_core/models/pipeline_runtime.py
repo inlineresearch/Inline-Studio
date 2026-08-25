@@ -489,6 +489,16 @@ def free_vram() -> None:
         pass
 
 
+def own_vram_bytes() -> int:
+    """What this process holds on the card, weights included - not just the allocator's cache."""
+    try:
+        if not torch.cuda.is_available():
+            return 0
+        return int(torch.cuda.memory_reserved())
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def foreign_vram_bytes(device: Any = None) -> int:
     """VRAM held on this card by anyone but us - another render, a training run, another app.
 

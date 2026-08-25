@@ -379,3 +379,46 @@ def test_a_card_held_by_another_process_is_named_before_anything_on_this_node(mo
     # A host-RAM exhaustion is never explained by another process's VRAM.
     monkeypatch.setattr(rt, "foreign_vram_bytes", lambda *a, **k: 29 * 1024**3)
     assert "another process" not in _oom(request, host=True)
+
+
+def test_a_failed_run_releases_the_card_instead_of_poisoning_the_next(monkeypatch) -> None:
+    """`free_vram` drops unused blocks and leaves the pipeline resident, so one OOM left ~43 GB
+    held and every retry started from a full card - the same error forever, whatever was changed.
+    A VRAM failure has to evict, and say so, rather than blame the character again."""
+    from inline_core.models import pipeline_runtime as rt
+    from inline_core.models.minimaxh3.runner import Request, _oom
+    from inline_core.models.references import ReferenceKind
+
+    monkeypatch.setattr(rt, "foreign_vram_bytes", lambda *a, **k: 0)
+    refs = tuple(type("R", (), {"kind": ReferenceKind.IMAGE})() for _ in range(5))
+    request = Request(
+        prompt="", num_frames=141, width=544, height=768, num_inference_steps=50,
+        seed=1, partition="ref2va", references=refs,
+    )
+
+    held = _oom(request, held=int(43.5 * 1024**3))
+    assert "43.5 GB already held by this render" in held
+    assert "released" in held and "run it again" in held
+    assert "Resized Reference Resolution" not in held, "do not blame the character"
+
+    # An empty card is the case where the reference hint is the useful one.
+    assert "Resized Reference Resolution" in _oom(request, held=0)
+    # And host exhaustion is never explained by VRAM the render was holding.
+    assert "already held" not in _oom(request, host=True, held=int(43.5 * 1024**3))
+
+
+def test_the_runner_clears_the_pipeline_cache_on_a_vram_failure() -> None:
+    """Emptying the allocator is not enough: the cached pipeline pins the weights themselves."""
+    import inspect
+
+    from inline_core.models.minimaxh3 import runner
+
+    source = inspect.getsource(runner.MiniMaxH3Runner.run)
+    handler = source[source.index("except torch.cuda.OutOfMemoryError") :]
+    handler = handler.split("except MemoryError")[0]
+    assert "PIPELINES.clear()" in handler
+    # And the frame has to stop naming the pipeline first: `raise ... from error` keeps the
+    # traceback, which keeps these locals, so evicting the cache alone frees nothing. Measured:
+    # the card still held 43.5 GB after a failed run that did call clear().
+    assert "pipe = None" in handler
+    assert handler.index("pipe = None") < handler.index("PIPELINES.clear()")
