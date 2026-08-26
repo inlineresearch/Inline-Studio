@@ -41,6 +41,19 @@ def test_dataset_and_item_crud(conn: sqlite3.Connection) -> None:
     assert len(ts.list_items(conn, ds["id"])) == 2
 
 
+def test_update_dataset_renames_and_retriggers(conn: sqlite3.Connection) -> None:
+    ds = ts.create_dataset(conn, "Hero", "ohwx")
+    renamed = ts.update_dataset(conn, ds["id"], name="  Villain  ")
+    assert renamed["name"] == "Villain"
+    assert renamed["triggerWord"] == "ohwx"  # an omitted field is left alone
+    retriggered = ts.update_dataset(conn, ds["id"], trigger_word=" sks ")
+    assert (retriggered["name"], retriggered["triggerWord"]) == ("Villain", "sks")
+    # Clearing the trigger is a legal edit; an empty name is not.
+    assert ts.update_dataset(conn, ds["id"], trigger_word="")["triggerWord"] == ""
+    with pytest.raises(ValueError):
+        ts.update_dataset(conn, ds["id"], name="   ")
+
+
 def test_run_create_and_update(conn: sqlite3.Connection) -> None:
     ds = ts.create_dataset(conn, "Hero", "")
     run = ts.create_run(conn, ds["id"], "Hero LoRA", {"rank": 8, "steps": 1200, "gpuIds": [0, 1]})

@@ -101,6 +101,14 @@ class Training:
     def create_dataset(self, inp: dict[str, Any]) -> dict[str, Any]:
         return ts.create_dataset(self._conn(), inp["name"], inp.get("triggerWord") or "")
 
+    def update_dataset(self, dataset_id: str, inp: dict[str, Any]) -> dict[str, Any]:
+        return ts.update_dataset(
+            self._conn(),
+            dataset_id,
+            name=inp.get("name"),
+            trigger_word=inp.get("triggerWord"),
+        )
+
     def list_items(self, dataset_id: str) -> list[dict[str, Any]]:
         return ts.list_items(self._conn(), dataset_id)
 

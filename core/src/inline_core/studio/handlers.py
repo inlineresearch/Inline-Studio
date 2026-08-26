@@ -346,6 +346,7 @@ def register_studio_handlers(
         reg("training:setItemReference",
             lambda iid, aid: training.set_item_reference(iid, aid))
         reg("training:setDatasetMode", lambda did, mode: training.set_dataset_mode(did, mode))
+        reg("training:updateDataset", lambda did, inp: training.update_dataset(did, inp))
         reg("training:autoCaption",
             lambda did, overwrite, model=None: training.auto_caption(did, overwrite, model))
         reg("training:captioners", lambda: training.captioners())
@@ -358,9 +359,9 @@ def register_studio_handlers(
         reg("training:snapshots", lambda rid: training.snapshots(rid))
         reg("training:exportSnapshot", lambda rid, step: training.export_snapshot(rid, step))
     else:
-        for ch in ("listDatasets", "createDataset", "listItems", "addItems", "removeItem",
-                   "setCaption", "setItemReference", "setDatasetMode", "autoCaption",
-                   "captioners", "listRuns", "start", "resume",
+        for ch in ("listDatasets", "createDataset", "updateDataset", "listItems", "addItems",
+                   "removeItem", "setCaption", "setItemReference", "setDatasetMode",
+                   "autoCaption", "captioners", "listRuns", "start", "resume",
                    "cancel", "discard", "status", "snapshots", "exportSnapshot"):
             reg(f"training:{ch}", not_wired("LoRA training"))
 

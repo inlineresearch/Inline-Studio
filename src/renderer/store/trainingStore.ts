@@ -59,6 +59,8 @@ interface TrainingState {
 
   loadDatasets: () => Promise<void>
   createDataset: (name: string, triggerWord: string) => Promise<TrainingDataset | null>
+  /** Rename a dataset or change its trigger word; the trigger lands on the next run's captions. */
+  updateDataset: (datasetId: string, name: string, triggerWord: string) => Promise<void>
   selectDataset: (datasetId: string | null) => void
   loadItems: (datasetId: string) => Promise<void>
   /** Returns the created items, so a caller can pair captions to the assets it just added. */
@@ -145,6 +147,12 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     }
     set((s) => ({ datasets: [res.value, ...s.datasets], activeDatasetId: res.value.id }))
     return res.value
+  },
+
+  updateDataset: async (datasetId, name, triggerWord) => {
+    const res = await studio().training.updateDataset(datasetId, { name, triggerWord })
+    if (!res.ok) return set({ error: res.error })
+    set((s) => ({ datasets: s.datasets.map((d) => (d.id === datasetId ? res.value : d)) }))
   },
 
   selectDataset: (activeDatasetId) => {

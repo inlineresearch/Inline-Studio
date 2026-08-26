@@ -8,6 +8,7 @@ describe('training wire contract', () => {
       expect.arrayContaining([
         'listDatasets',
         'createDataset',
+        'updateDataset',
         'listItems',
         'addItems',
         'removeItem',

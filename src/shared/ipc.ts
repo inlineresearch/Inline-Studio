@@ -153,6 +153,7 @@ export const IpcChannels = {
   training: {
     listDatasets: 'training:listDatasets',
     createDataset: 'training:createDataset',
+    updateDataset: 'training:updateDataset',
     listItems: 'training:listItems',
     addItems: 'training:addItems',
     addFromPath: 'training:addFromPath',
@@ -376,6 +377,12 @@ export interface CreateTrainingDatasetInput {
   triggerWord?: string
 }
 
+/** A rename, a new trigger word, or both. An omitted field is left as it is. */
+export interface UpdateTrainingDatasetInput {
+  name?: string
+  triggerWord?: string
+}
+
 /** A fal frame's inputs resolved for building its request: media as data URIs + the prompt text. */
 export interface ResolvedFalInputs {
   images: string[]
@@ -534,6 +541,15 @@ export interface InlineStudioApi {
     /** All training datasets in the open project. */
     listDatasets(): Promise<Result<TrainingDataset[]>>
     createDataset(input: CreateTrainingDatasetInput): Promise<Result<TrainingDataset>>
+    /**
+     * Rename a dataset or change its trigger word. The trigger is prepended to every caption when
+     * a run exports its dataset, not stored on the items, so a change here lands on the next run
+     * and leaves finished ones alone.
+     */
+    updateDataset(
+      datasetId: string,
+      input: UpdateTrainingDatasetInput,
+    ): Promise<Result<TrainingDataset>>
     /** A dataset's items (images + captions), in order. */
     listItems(datasetId: string): Promise<Result<TrainingDatasetItem[]>>
     /**

@@ -305,6 +305,34 @@ def set_item_reference(
     return _row_to_item(updated)
 
 
+def update_dataset(
+    conn: sqlite3.Connection,
+    dataset_id: str,
+    *,
+    name: str | None = None,
+    trigger_word: str | None = None,
+) -> dict[str, Any]:
+    """Rename a dataset or change its trigger word; an omitted field is left alone."""
+    get_dataset(conn, dataset_id)  # validate
+    sets: list[str] = []
+    values: list[Any] = []
+    if name is not None:
+        trimmed = name.strip()
+        if not trimmed:
+            raise ValueError("Dataset name is required.")
+        sets.append("name = ?")
+        values.append(trimmed)
+    if trigger_word is not None:
+        sets.append("trigger_word = ?")
+        values.append(trigger_word.strip())
+    if sets:
+        sets.append("updated_at = ?")
+        values.extend([_now(), dataset_id])
+        conn.execute(f"UPDATE training_datasets SET {', '.join(sets)} WHERE id = ?", values)
+        conn.commit()
+    return get_dataset(conn, dataset_id)
+
+
 def set_dataset_mode(conn: sqlite3.Connection, dataset_id: str, mode: str) -> dict[str, Any]:
     """Switch a dataset between clip and control training."""
     if mode not in ("clip", "control"):
