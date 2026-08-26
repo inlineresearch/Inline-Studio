@@ -1,14 +1,8 @@
 # Train a LoRA locally on your own GPU
 
-The full reference for Inline Studio's **Trainer**: which base to train on, what it costs in VRAM
-on a real card, and every setting that shapes the result. For the short version and a screenshot of
-the canvas, see [LoRA training in the README](README.md#lora-training).
-
-Inline Studio trains LoRAs for **Z-Image**, **Krea 2**, **FLUX.2**, **MiniMax H3** and **LTX-2.5**
-on your own GPU, with no cloud step and nothing uploaded. Training is cheaper than generating: a
-16GB card trains all three image models at 512px, and MiniMax H3 as well if it has 64GB of system
-RAM behind it. A LoRA trained at 512 applies at any generation resolution. LTX-2.5 is the one
-exception and wants a 48GB card.
+The full reference for Inline Studio's **Trainer**: which base to train on, what it costs in VRAM on
+a real card, and every setting that shapes the result. For the short version and a screenshot of the
+canvas, see [Train a LoRA in the README](README.md#train-a-lora).
 
 **Contents:** [The graph](#the-graph) · [Datasets and outputs](#datasets-and-outputs) ·
 [Stop and resume](#stop-and-resume) · [Trigger words](#trigger-words) ·
@@ -58,9 +52,9 @@ The Trainer's Adjust panel picks the **architecture** first (Z-Image, Krea 2, FL
 
 **MiniMax H3** is the video model, and it trains on **still images**:
 
-- **FL2VA** is the only base, and it is undistilled, so there is no adapter and nothing to drift. Put `minimax_h3_fl2va_bf16.safetensors` in `models/diffusion_models/`, train on stills, then wire the LoRA into any of the four H3 nodes. **It has to be the bf16 file.** The smaller `pruned` and `pruned_fp8_scaled` builds generate but cannot train: they ship no timestep path for the modulation basis to be derived from, and they would save nothing anyway, because the base trains at 4-bit whichever file it starts from. The trainer says so rather than failing part way in. It loads on the Reference to Video node too, which uses a different checkpoint file: the two partitions are the same architecture.
+- **FL2VA** is the only base, and it is undistilled, so there is no adapter and nothing to drift. Put `minimax_h3_fl2va_bf16.safetensors` in `models/diffusion_models/`, train on stills, then wire the LoRA into any of the four H3 nodes. **It has to be the bf16 file.** The smaller `pruned` and `pruned_fp8_scaled` builds generate but cannot train: they ship no timestep path for the modulation basis to be derived from, and they would save nothing anyway, because the base trains at 4-bit whichever file it starts from. The trainer says so up front instead of failing part way in. It loads on the Reference to Video node too, which uses a different checkpoint file: the two partitions are the same architecture.
 - **Stills or short clips.** Drop images and it learns appearance: look, style, character, lighting. Drop video and it learns motion too. Sound is never learned either way, because the audio rows are empty. See [Training on clips](#training-on-clips).
-- **The base is 4-bit, always.** H3 is 40GB after the AdaLN factorisation and 11.7GB after quantisation, so full precision is refused rather than offered and then failing. There is no base-precision control for H3 for the same reason.
+- **The base is 4-bit, always.** H3 is 40GB after the AdaLN factorisation and 11.7GB after quantisation, so full precision is refused outright instead of being offered and then failing. There is no base-precision control for H3 for the same reason.
 - **A 24GB card is comfortable and a 16GB card works, slowly.** The run encodes latents and captions in two passes that never overlap, because H3's fp32 video VAE and its 32B conditioner cannot be resident together. On a card that holds the conditioner it peaks at 20.6GB; on one that does not, the conditioner runs on the CPU and the peak drops to 12.7GB while a step goes from 0.6s to 16s. Either way there is about seven minutes of startup, and 64GB of system RAM for the smaller card. See [Benchmark results](#benchmark-results) for the split. The download is about 139GB before any of that.
 
 **Z-Image** is distilled either way:
@@ -89,14 +83,14 @@ Both video architectures take clips. Drop them into a dataset the same way, set 
 the Adjust panel, and each clip trains as a short piece of motion rather than a frame. For H3 mixed
 datasets are fine, since a still is simply a one-frame clip.
 
-**The length you type is not always the length you get.** A video VAE only encodes certain frame
-counts - `17n + 5` for H3, `8n + 1` for LTX-2.5, both at 24fps - and the trainer snaps **down** onto
-that grid, because a clip does not have frames the file never held. The panel shows the resolved
+**Clip length is rounded down onto a frame grid.** A video VAE only encodes certain frame counts,
+`17n + 5` for H3 and `8n + 1` for LTX-2.5, both at 24fps, and the trainer snaps onto that grid
+because a clip does not have frames the file never held. The panel shows the resolved
 number next to the field so this is never silent. Generation rounds the other way, up and then
 clamped, because there a request should be honoured wherever it is legal.
 
 **It costs no extra VRAM.** Measured on an L4, every clip length peaks at the same 20.4GB as a
-still, because the high-water mark is the caption pass rather than the training:
+still, because the caption pass sets the high-water mark:
 
 | Clip length | Frames | Latent frames | Packed rows at 512px | Peak VRAM |
 | ----------- | ------ | ------------- | -------------------- | --------- |
@@ -105,19 +99,19 @@ still, because the high-water mark is the caption pass rather than the training:
 | 1.6s        | 39     | 12            | 3,112                | 20.4GB    |
 | 4.5s        | 107    | 32            | 8,232                | 20.4GB    |
 
-Rows are what a longer clip actually buys you, and they cost time rather than memory. That only
-holds while the conditioner is resident; on a card too small for it the peak is the training phase
-instead, and a long clip will push that up.
+A longer clip buys more rows, and rows cost time. That only holds while the conditioner is
+resident; on a card too small for it the peak is the training phase instead, and a long clip will
+push that up.
 
 **Lengths snap to H3's frame grid.** The VAE encodes `17n + 5` frames at 24fps, so a request lands
 on the nearest grid point at or below it. The floor is a whole chunk plus the five-frame head: 22
-frames, **0.92 seconds**. Asking for less rounds up rather than being refused, because the VAE has
-no way to encode a shorter clip.
+frames, **0.92 seconds**. Asking for less rounds up instead, because the VAE has no way to encode
+a shorter clip.
 
 **Each clip is trimmed from its start, once.** The window is fixed at precache time so every clip is
 encoded exactly once. Sampling a different window each step would mean re-encoding through the VAE
 every step, which is the thing the precache exists to avoid. A clip shorter than the grid floor is
-refused by name rather than silently padded.
+refused by name, never silently padded.
 
 **Captions work the same.** A clip is auto-captioned from its middle frame, which describes the shot
 better than the first frame usually does. Write them by hand if you would rather.
@@ -127,7 +121,7 @@ audio rows, so an adapter changes what a clip looks like and never what it sound
 
 ## Install
 
-If you installed with `--extra all` from [Get Started](README.md#get-started), the trainer is already set up - nothing more to do. To add it to a leaner install, its dependencies (PEFT, 8-bit Adam, the captioner) sit behind the `training` extra:
+If you installed with `--extra all` from [Install](README.md#install), the trainer is already set up - nothing more to do. To add it to a leaner install, its dependencies (PEFT, 8-bit Adam, the captioner) sit behind the `training` extra:
 
 ```bash
 cd core
@@ -184,7 +178,7 @@ well as its own `0001.ref.mp4`, so a downloaded set can be trained on directly.
 
 ## Benchmark results
 
-> **LTX-2.5 training is measured on an L40S only.** The T4 column stays empty for it rather than
+> **LTX-2.5 training is measured on an L40S only.** The T4 column stays empty for it instead of
 > guessing: LTX needs Ampere or newer for the same reason generation does (see the runbook below),
 > and a 42GB bf16 base does not fit a 15GB card in any case.
 
@@ -216,7 +210,7 @@ well as its own `0001.ref.mp4`, so a downloaded set can be trained on directly.
 | MiniMax H3 | FL2VA, clips    | 512  | **4-bit**      | **20.4GB**    | not measured  |
 | LTX-2.5    | dev, clips      | 512  | bf16           | **42.0GB**    | not supported |
 
-**MiniMax H3 costs less on a smaller card, which is not a typo.** The run has three phases that never overlap, and the tallest is not the one doing the learning:
+**H3 peaks lower on a 16GB card than it does on a 48GB one.** The run has three phases that never overlap, and on a big card the tallest is the caption pass:
 
 | Phase                      | Peak on an L40S | What is resident                               |
 | -------------------------- | --------------- | ---------------------------------------------- |
@@ -224,11 +218,11 @@ well as its own `0001.ref.mp4`, so a downloaded set can be trained on directly.
 | Caption caching (Qwen3-VL) | 20.5GB          | The 32B conditioner at 4-bit, then dropped     |
 | Training                   | 11.7GB          | The 4-bit base, 62GB on disk, plus activations |
 
-The caption pass sets the peak, so on a card that can hold the conditioner the answer is 20.6GB whatever the resolution: 512, 768 and 1024 all read the same, because a 512px still is 310 rows of packed sequence against 630 at 768px and the weights are the cost, not the activations. The AdaLN factorisation is what makes the base figure possible at all, taking the transformer from 62GB on disk to 40GB before quantisation and 11.7GB after. Host RAM stays near 1.1GB during that load, because each block is shrunk as its tensors land.
+On a card that can hold the conditioner the answer is 20.6GB whatever the resolution: 512, 768 and 1024 all read the same, because a 512px still is 310 rows of packed sequence against 630 at 768px and the weights are the cost, not the activations. The AdaLN factorisation is what makes the base figure possible at all, taking the transformer from 62GB on disk to 40GB before quantisation and 11.7GB after. Host RAM stays near 1.1GB during that load, because each block is shrunk as its tensors land.
 
 On a card too small for the conditioner it never goes there at all, so the peak drops to the training phase: **12.7GB, measured on a Tesla T4**. A 16GB card therefore trains H3 where a 24GB card is merely comfortable.
 
-**The bill arrives as time instead.** The conditioner runs on the CPU, and bitsandbytes only quantises on the move to CUDA, so it runs unquantised:
+**The cost shows up as time.** The conditioner runs on the CPU, and bitsandbytes only quantises on the move to CUDA, so it runs unquantised:
 
 |                         | L40S (48GB) | L4 (24GB) | T4 (16GB, 64GB RAM) |
 | ----------------------- | ----------- | --------- | ------------------- |
@@ -245,10 +239,10 @@ Narrowing the LoRA will not buy the difference: at rank 16 the whole adapter is 
 
 A training adapter is free: it is fused into the base before training starts, so Turbo-plus-adapter and the undistilled base peak identically.
 
-**LTX-2.5 is the opposite case: the base is nearly the whole bill, and it barely fits.** The 22B dev
-transformer lands at 38.0GB allocated before a step runs, and training peaks at 42.0GB allocated
-against 43.4GB reserved on an L40S. That leaves under 3GB of headroom, so a 48GB card is the
-floor rather than a comfort. There is no 4-bit rung to fall back on: the loader refuses to quantise
+**LTX-2.5 is dominated by its base, and it barely fits.** The 22B dev transformer lands at 38.0GB
+allocated before a step runs, and training peaks at 42.0GB allocated against 43.4GB reserved on an
+L40S. That leaves under 3GB of headroom, so 48GB is the floor and not much of a cushion. There is
+no 4-bit rung to fall back on: the loader refuses to quantise
 this architecture, and the trainer now says so instead of dropping the setting silently.
 
 |                            | L40S (48GB) |
@@ -257,13 +251,13 @@ this architecture, and the trainer now says so instead of dropping the setting s
 | Seconds per step, 512px    | 0.67        |
 | Precache, 25 clips of 0.7s | 13 min      |
 
-The step is cheap and the startup is not, which inverts the usual advice about run length. A
-300-step run spends 3 minutes training and 13 minutes getting ready; a 3000-step run spends 34
-minutes training against the same 13. Precache is keyed and reused, so a second run over the same
+Startup dominates a short run, which inverts the usual advice about run length. A 300-step run
+spends 3 minutes training and 13 minutes getting ready; a 3000-step run spends 34 minutes training
+against the same 13. Precache is keyed and reused, so a second run over the same
 dataset, resolution and clip length skips most of it. Prefer long runs, and expect a short one to be
 dominated by setup.
 
-**FLUX.2 is the cheapest of the three to train, and 4-bit does nothing for it.** Both precisions peak at the same number because the peak is not the transformer: klein's base is 7.4GB while its Qwen3-4B text encoder is 7.5GB, so the caption and latent caching pass at the start of the run costs more than training itself does. Dropping the frozen base to 4-bit shrinks a part of the run that was never the high-water mark, and the step gets slower for nothing. Leave base precision on Auto for FLUX.2, which is what it already picks. The rows above are klein Base 4B, the only checkpoint the trainer accepts for this architecture.
+**FLUX.2 is the cheapest of the three to train, and 4-bit does nothing for it.** Both precisions peak at the same number, because klein's base is 7.4GB against a 7.5GB Qwen3-4B text encoder, so the caption and latent caching pass at the start of the run costs more than the training does. Dropping the frozen base to 4-bit shrinks a part of the run that was never the high-water mark, and the step gets slower for nothing. Leave base precision on Auto for FLUX.2, which is what it already picks. The rows above are klein Base 4B, the only checkpoint the trainer accepts for this architecture.
 
 Which card fits what (24GB and 32GB are interpolated, not measured, as are the FLUX.2 columns on 16GB: those peaks were measured on an L40S and leave room on a smaller card, but no 16GB run has been done):
 
@@ -276,7 +270,7 @@ Which card fits what (24GB and 32GB are interpolated, not measured, as are the F
 
 H3 has one column because resolution barely moves it. The 16GB entry is measured on a T4 with 64GB of RAM, where the conditioner spills to the CPU: it fits in 12.7GB of VRAM but costs 16.2s a step and a 19 minute caption pass. The 24GB entry is interpolated from the 20.6GB peak, not measured on a 24GB card. A 16GB card with only 16GB of RAM is refused up front.
 
-Fitting and being usable are different questions. Turing has no native bf16, so a T4 runs the same work about 4x slower:
+Turing has no native bf16, so a T4 fits the same runs and takes about 4x as long:
 
 | Configuration                     | L40S | T4   |
 | --------------------------------- | ---- | ---- |
@@ -306,9 +300,8 @@ after the first.
 | Transformer resident     | 538.7s      | 534.2s        | 21.90 GiB |
 | + shared weight registry | **465.4s**  | **229.2s**    | 32.19 GiB |
 
-Three fixes got from the first row to the third, and each needed the one before it. The full
-write-up is in [docs/ltx-2-5.md](docs/ltx-2-5.md#performance-measured). The remaining cost is the
-prompt encoder, reloaded on every render.
+Three fixes got from the first row to the third, and each needed the one before it. The remaining
+cost is the prompt encoder, reloaded on every render.
 
 ## Dataset and adapter options
 

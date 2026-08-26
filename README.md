@@ -47,9 +47,9 @@ A free, open-source app for AI generation where your characters stay the same. B
 | Hosted models (API Nodes)                                                | no    | yes      | no GPU needed           |
 
 Those are training peaks at 512px. Training is cheaper than generating, and a LoRA trained at 512
-applies at any generation resolution. H3 is the odd one: on a 16GB card its text encoder moves to the
-CPU, which is why it costs the least VRAM and the most time, and it wants 64GB of system RAM to do
-it. Not every row has been run on a 16GB card, and
+applies at any generation resolution. On a 16GB card H3 moves its text encoder to the CPU, which is
+why it costs the least VRAM and the most time, and it wants 64GB of system RAM to do that. Not every
+row has been run on a 16GB card, and
 [Benchmark results](TRAINING.md#benchmark-results) says which were measured and which are
 interpolated, alongside the full per-card matrix and timings.
 
@@ -105,7 +105,7 @@ then run `inline-studio`.
 <details>
 <summary><b>Hardware support, RTX 50-series, AMD ROCm, Apple Silicon</b></summary>
 
-Honest status, what has actually been run versus what has a code path nobody has verified:
+What has been run, and what has a code path nobody has verified:
 
 | Hardware                | Status                                                                                           | Extra steps                                                                                    |
 | ----------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
@@ -200,7 +200,7 @@ dropdown.
 Drop in a photo or two and Inline Studio compiles a **`.char`**: one portable file holding your
 references and an identity fingerprint. Describe the scene, and the references carry the likeness.
 On MiniMax H3 the same person moves and speaks, in video with sound. Every take comes back with a
-continuity score out of 100, so drift is visible rather than felt.
+continuity score out of 100, so drift shows up as a number.
 
 - **FLUX.2** applies a character with no training at all. The references ride in the prompt's token
   sequence, so picking one costs nothing but the render.
@@ -256,8 +256,8 @@ diffusion model, VAE and text encoder with visible progress. Nothing is fetched 
 ![Z-Image Turbo generating locally on the Inline Core engine](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/zit.png)
 
 - **Z-Image Turbo** is the low-VRAM starting point, distilled to run CFG-free.
-- **[Krea 2](https://www.krea.ai/)** is a 12.9B MMDiT in two halves: train on **RAW**, generate with
-  **Turbo**. A LoRA trained on RAW applies to Turbo unchanged.
+- **[Krea 2](https://www.krea.ai/)** is a 12.9B MMDiT, published as an undistilled RAW base
+  alongside an 8-step distilled Turbo build.
 - **[FLUX.2](https://bfl.ai/blog/flux-2)** is natively multi-reference: wire several images and the
   prompt addresses them by position. One node covers klein 4B and 9B, their Base builds, and dev.
 - **[MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3)** generates video **and its
@@ -275,11 +275,11 @@ diffusion model, VAE and text encoder with visible progress. Nothing is fetched 
 Most builds load. For MiniMax H3 that means the full **bf16** file, the **pruned** build, and the
 **fp8_scaled** build, which is the same model at 21.0GB instead of 66.3GB. The `int8_convrot`,
 `mxfp8` and `nvfp4` files do not: their weights are stored rotated, and that is a transform only
-ComfyUI can undo. A build the node cannot read is listed with the reason rather than hidden, and a
-quantisation it does not recognise is refused rather than guessed at.
+ComfyUI can undo. A build the node cannot read is listed along with the reason, and a quantisation
+it does not recognise is refused rather than guessed at.
 
-A smaller file is a smaller download, not a smaller model in memory. Fitting the model to your card
-is the device policy's job either way.
+A smaller file downloads faster, but it does not use less VRAM. Fitting the model to your card is
+the device policy's job whichever build you start from.
 
 ```
 core/models/
@@ -317,8 +317,8 @@ clip at 960x544 takes about 7.2 minutes, peaking at 38.9GB VRAM and 46.7GB of sy
 
 **LTX-2.5 is gated and big:** 71GB for fast mode, 122GB with quality mode. Accept the LTX-2 Community
 License on the model page first, with the account your Hugging Face token belongs to, or every
-download returns a permission error. It streams its own weights, so a card that cannot hold the model
-is slow rather than excluded.
+download returns a permission error. It streams its own weights, so a card that cannot hold the
+whole model still runs, just slowly.
 
 **FLUX.2 dev on a 24GB card:** take the ungated
 [`diffusers/FLUX.2-dev-bnb-4bit`](https://huggingface.co/diffusers/FLUX.2-dev-bnb-4bit) folder rather
@@ -340,7 +340,7 @@ Seedance, MiniMax H3, LTX, Sonilo and more. Add your [key](https://fal.ai/dashbo
 Settings. MiniMax H3 and LTX are on the canvas both ways, as API nodes and as local nodes with no
 per-render cost.
 
-Local and hosted mix freely in one film, and either way the frame keeps its full take history.
+Local and hosted mix freely in one project, and either way the frame keeps its full take history.
 
 </details>
 
@@ -348,44 +348,32 @@ Local and hosted mix freely in one film, and either way the frame keeps its full
 <summary><b>Multi-GPU: split one image across GPUs</b></summary>
 
 With two or more GPUs, Inline Core can cut a single image's latency by running its denoise loop
-collectively across them. This is not one image per GPU; it is one image whose sampling is shared, so
-a single render finishes faster.
+collectively across them. The GPUs share the sampling of one image, so a single render finishes
+faster. This is different from running one image per GPU.
 
 Built on [xDiT](https://github.com/xdit-project/xDiT) in an isolated worker group, one process per
 GPU. The split method follows the interconnect Core detects: PipeFusion over PCIe, Ulysses with
-NVLink. Turn it on with `./webui.sh --multi-gpu` after `uv pip install -e ".[parallel]"`.
+NVLink. Turn it on with `./webui.sh --multi-gpu` after `uv pip install -e ".[runtime,parallel]"`.
+The split methods and the `INLINE_PARALLEL` syntax are in
+[core/README.md](core/README.md#multi-gpu-split-one-image-across-gpus).
 
 </details>
 
-## Features
-
-- Free-form node canvas with versioned, non-destructive takes
-- Consistent characters from one portable `.char` file
-- Train your own LoRAs locally, on images or on video clips
-- Local generation built in, with the Inline Core engine
-- Multi-reference composition, and video with sound
-- Every locally generated image embeds the graph that made it: drop the file back on the canvas to
-  rebuild the pipeline
-- Video Director, Trim Video and Trim Audio nodes
-- Export and import the whole project as one archive
-- Community extensions, and API Nodes for hosted models
-
-[**Follow the Animated Short Film tutorial →**](https://inlinestudio.art/projects/circuit-race)
-
 ## How it works
 
-Generating one frame is the easy part. The work that makes a film is what comes after: exploring
-options, keeping what is good, and shaping a repeatable process out of it.
+A **frame** holds every **take** you have generated for it. Generating again adds a take rather than
+overwriting the last one, so you can always go back to an earlier attempt. **Export** zips a project
+into one archive: inputs, outputs and the graph that turned one into the other, so whoever opens it
+can re-run the pipeline exactly. Video Director, Trim Video and Trim Audio nodes cut the result into
+a sequence.
 
-A **frame** is a slot with a history of **takes**, never a single file. Generating again adds a take
-and nothing is overwritten. **Export** zips a project into one archive, inputs, outputs and the graph
-that turned one into the other, so whoever opens it can re-run the pipeline exactly.
-
-![Inline Studio dashboard with recent AI film projects](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/screenshot-dashboard.png)
+![Inline Studio dashboard with recent projects](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/screenshot-dashboard.png)
 
 It runs as a single process on one port: the Inline Core engine (Python) serves the web UI and does
 the generation. No desktop install, no separate backend. For the engineering story see
 [core/README.md](core/README.md) and [core/CLAUDE.md](core/CLAUDE.md).
+
+[**Follow the Animated Short Film tutorial →**](https://inlinestudio.art/projects/circuit-race)
 
 ## Extensions
 

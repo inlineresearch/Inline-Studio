@@ -8,8 +8,9 @@ xDiT). It is Inline Studio's built-in render backend.
 Models today, all running locally on your own GPU: **Z-Image** (Alibaba Tongyi), a 6B rectified-flow
 diffusion transformer and the model xDiT already supports, so the multi-GPU split works on it from the
 start; **Krea 2** (Krea AI), a 12.9B single-stream MMDiT released as an undistilled RAW base plus an
-8-step distilled Turbo; **FLUX.2** (Black Forest Labs); and **MiniMax H3**, which generates video and
-its soundtrack in a single pass.
+8-step distilled Turbo; **FLUX.2** (Black Forest Labs), natively multi-reference; **MiniMax H3**
+(MiniMax), which generates video and its soundtrack in a single pass; and **LTX-2.5** (Lightricks), a
+22B video model, also with sound.
 
 Core also runs the **LoRA trainer** behind Inline Studio's Trainer canvas, so the same engine that
 generates can fine-tune Z-Image, Krea 2, FLUX.2, MiniMax H3 and LTX-2.5 on your own images without a cloud
@@ -19,10 +20,10 @@ dependencies sit behind the `training` extra. See the
 
 > Status: the graph engine, the typed `/v1` HTTP + websocket API (durable runs, streamed progress,
 > coalescing), the model-dir scan, the device + memory policy (profiles, dtype, offload, int8), the
-> low-level primitive node vocabulary, the model runners above, and the LoRA trainer all run on real
-> hardware. Cross-request batching, single-image multi-GPU (an xDiT worker group behind the sampler
-> seam, with the policy and IPC round-trip tested), and out-of-process custom nodes are built as
-> seams but are not yet exercised on real hardware.
+> low-level primitive node vocabulary, the model runners above, single-image multi-GPU (an xDiT
+> worker group behind the sampler seam), and the LoRA trainer all run on real hardware. Cross-request
+> batching and out-of-process custom nodes are built as seams but are not yet exercised on real
+> hardware.
 
 ## Engine design
 
@@ -61,18 +62,17 @@ Or let the launcher do it: `./webui.sh --install --extra runtime` (Windows: `.\w
 ## Models
 
 Drop files into the models dir (default `./models`, override with `INLINE_MODELS_DIR`), ComfyUI-style,
-by category:
+by category. One example per category below; the per-model file list for all five architectures is in
+the [Inline Studio README](../README.md#generate).
 
 ```
 models/
-  diffusion_models/   z_image_turbo_bf16.safetensors        <- Z-Image
-                      krea2_turbo_bf16.safetensors          <- Krea 2 Turbo (generate)
-                      krea2_raw_bf16.safetensors            <- Krea 2 RAW (fine-tune)
-  vae/                ae.safetensors                        <- Z-Image
-                      qwen_image_vae_diffusers.safetensors  <- Krea 2
-  text_encoders/      qwen_3_4b.safetensors                 <- Z-Image
-                      qwen3vl_4b_bf16.safetensors           <- Krea 2
-  loras/  controlnet/  checkpoints/  ...
+  diffusion_models/   z_image_turbo_bf16.safetensors        <- transformers, one file per model
+  vae/                qwen_image_vae_diffusers.safetensors  <- Krea 2, diffusers format
+  text_encoders/      qwen_3_4b.safetensors                 <- Z-Image and FLUX.2 klein 4B
+                      MiniMax-H3-text-encoder/              <- a folder, not a single file
+  loras/              trained adapters and control LoRAs
+  controlnet/  checkpoints/  ...
 ```
 
 **Z-Image loads from a single diffusion `.safetensors`.** Drop that one ComfyUI-style file in
@@ -81,8 +81,8 @@ a VAE + text-encoder + tokenizer, resolved from **local files** - `vae/*.safeten
 HF-format `text_encoders/` dir.
 
 **Nothing is ever downloaded as a side effect of a render.** Every load runs `local_files_only=True`,
-so a missing model is a clear, fast error, not a silent multi-GB fetch. Models arrive by exactly two
-paths:
+so a missing model fails immediately with a clear error and never triggers a silent multi-GB fetch.
+Models arrive by exactly two paths:
 
 1. **You place files** under `models/` (bring-your-own / fully offline); or
 2. **You download them explicitly** from the Z-Image node's model popup in the UI - it lists the
@@ -108,9 +108,9 @@ streamed tensor by tensor onto the GPU.
 renders any node generically - adding a node type needs no UI release.
 
 **High-level model nodes are what the user sees.** Generation is one-click: you drop a single
-**Z-Image Turbo**, **Krea 2 Turbo** or **Krea 2 RAW** node, wire a Prompt into it, and hit Run. The
-node hooks up the diffusion model, VAE, and text-encoder behind the scenes - no loader/sampler
-wiring.
+**Z-Image Turbo**, **Krea 2**, **FLUX.2**, **MiniMax H3** or **LTX-2.5** node, wire a Prompt into
+it, and hit Run. The node hooks up the diffusion model, VAE, and text-encoder behind the scenes - no
+loader/sampler wiring.
 
 Underneath, a **low-level primitive vocabulary** exists (`load/diffusion-model`, `load/vae`,
 `load/text-encoder`, `encode/text`, `latent/empty`, `sample`, `vae/decode`, `vae/encode`) - the
@@ -122,8 +122,7 @@ and never appear in the add-node menu. Engine handles (`model`, `vae`, `text-enc
 
 Cut a single image's latency by running its denoise across several GPUs. The denoise loop (the
 iterative sampling step) is the expensive part of a render; with two or more GPUs, Inline Core runs
-each step's transformer forward collectively across them so one image finishes faster. This is not
-"one image per GPU" (independent renders); it is one image whose sampling is shared by all the GPUs.
+each step's transformer forward collectively across them so one image finishes faster.
 
 It is done with xDiT (`xfuser`), which parallelizes diffusion-transformer inference. xfuser runs in
 an isolated worker group the engine spawns (one process per GPU via `torchrun`) and talks to over
@@ -156,14 +155,11 @@ Enabling it:
    ```
    The degrees multiply to the world size, which must equal the number of GPUs.
 
-The device policy and the worker-group IPC are in place and tested with a stub worker; the real
-xfuser denoise lands with the GPU-side Z-Image runner.
-
 ## Memory: fit a big model onto a small GPU
 
 When a model is too large to hold full-precision on your GPU - or larger than your system RAM - Inline
 Core fits it to the machine automatically, **with no flags**. This is the low-VRAM path, and it aims to
-"just run" instead of making you tune profiles.
+just run, with no profiles to tune.
 
 - **Weights stream straight to the GPU.** Each component loads directly onto the GPU from its
   memory-mapped `.safetensors` - the engine never materializes a full copy in system RAM first. So you
@@ -172,7 +168,7 @@ Core fits it to the machine automatically, **with no flags**. This is the low-VR
 - **Auto-fit picks the lightest plan that fits.** The policy sizes the model against your VRAM and
   chooses, in order: full-precision **resident** → **int8 resident** (weight-only quantization halves the
   big weights so they fit on the GPU) → **CPU-offload streaming** (submodules move on/off the GPU). A card
-  that can't hold the model full-precision quantizes to int8 on its own - no need to know a flag.
+  that cannot hold the model at full precision quantizes to int8 on its own, with no flag to set.
 - **Load-time fit check.** A model too large for VRAM + RAM fails fast with a clear message on the node,
   instead of crashing mid-load. The model popup also shows the estimate up front (fits / will run int8 /
   won't fit).
