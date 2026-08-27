@@ -31,6 +31,10 @@ class Verdict:
     flagged: list[int] = field(default_factory=list)
     duplicates: list[int] = field(default_factory=list)
     unchecked: list[int] = field(default_factory=list)
+    #: Body and clothing references. Held out of scoring entirely rather than scored and excused:
+    #: SFace measures faces, and a body shot that happens to show one would be judged on the wrong
+    #: thing and could be flagged as an outlier for it.
+    unscored: list[int] = field(default_factory=list)
     note: str = ""
 
     def to_json(self) -> dict[str, Any]:
@@ -41,6 +45,7 @@ class Verdict:
             "flagged": self.flagged,
             "duplicates": self.duplicates,
             "unchecked": self.unchecked,
+            "unscored": self.unscored,
             "note": self.note,
         }
 
@@ -76,13 +81,20 @@ def verify(
 
     images = encode.ref_images(doc)
     total = len(images)
+    faces = {
+        i for i, ref in enumerate(doc.manifest.refs) if cf.role_of(ref) == cf.ROLE_FACE
+    }
+    verdict.unscored = [i for i in range(len(images)) if i not in faces]
     slots: list[list[float]] = []
     for index, image in enumerate(images):
+        if index not in faces:
+            slots.append([])
+            continue
         report(0.1 + 0.6 * index / max(1, total), f"Checking reference {index + 1} of {total}…")
         slots.append(scoring.embed_face(image) or [])
-    verdict.unchecked = [i for i, vector in enumerate(slots) if not vector]
+    verdict.unchecked = [i for i, v in enumerate(slots) if not v and i in faces]
 
-    live = [i for i in range(len(slots)) if i not in set(duplicates)]
+    live = [i for i in range(len(slots)) if i not in set(duplicates) and i in faces]
     if existing:
         verdict.agreement = _against_frozen(doc, slots, live)
     else:
@@ -92,6 +104,9 @@ def verify(
         for index in duplicates:
             verdict.agreement[index] = None
 
+    for index in verdict.unscored:
+        if index < len(verdict.agreement):
+            verdict.agreement[index] = None
     measured = [i for i, value in enumerate(verdict.agreement) if value is not None]
     if len(measured) < scoring.MIN_REFS_TO_FLAG:
         verdict.note = (
@@ -100,6 +115,12 @@ def verify(
         )
         return verdict
     verdict.flagged = [i for i in measured if (verdict.agreement[i] or 0.0) < floor]
+    if verdict.unscored and not verdict.note:
+        verdict.note = (
+            f"{len(verdict.unscored)} body or clothing reference(s) are used but not scored: "
+            "the face measure does not apply to them, and the subject measure conflates a body "
+            "with its clothing and background."
+        )
     return verdict
 
 
@@ -170,3 +191,4 @@ def _reindex(verdict: Verdict, before: list[str], after: list[str]) -> None:
     verdict.flagged = sorted(moved[i] for i in verdict.flagged if i in moved)
     verdict.unchecked = sorted(moved[i] for i in verdict.unchecked if i in moved)
     verdict.duplicates = sorted(moved[i] for i in verdict.duplicates if i in moved)
+    verdict.unscored = sorted(moved[i] for i in verdict.unscored if i in moved)

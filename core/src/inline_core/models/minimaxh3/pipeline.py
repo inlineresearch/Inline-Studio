@@ -434,6 +434,16 @@ def _build(
 
 #: Left free beside a resident VAE, to cover the decode's own activations - the largest single
 #: allocation of the render.
+#:
+#: 12.0 is not the measured cost. A 141 frame 768x544 decode peaks at 1.43 GB above the 10.42 GB of
+#: weights, so this reserves about eight times what it needs and is what keeps the VAE streaming.
+#: Lowering it to 4.0 was tried and reverted: the run that OOM'd at 43.39 GB was the one with the
+#: VAE resident, and the run that completed had it streaming at 37.2 GB. The peak this has to cover
+#: is not the decode alone, it is the decode beside whatever else is still on the card.
+#:
+#: Tiling is not the lever it looks like either. `AutoencoderKLMiniMaxH3` sets `use_tiling` in its
+#: own constructor, so the decode is already tiled at 256x256; and `use_slicing` splits the *batch*,
+#: which is 1 for a single video, so enabling it changes nothing.
 _VAE_RESIDENT_MARGIN_GB = 12.0
 
 
@@ -522,10 +532,20 @@ def render_staged(pipe: Any, device: Any, cancel_check: Any = None, **call: Any)
     # longer pays ~40 GB of restore traffic before the exception surfaces, which read as the cancel
     # being ignored for half a minute. A `.to()` onto the device a module already sits on is free.
     check()
+    before = rt.own_vram_bytes()
     if resident:
         denoiser.to("cpu")
+        rt.free_vram()
+    parked = rt.own_vram_bytes()
     pipe.text_encoder.to(device)
     rt.free_vram()
+    # Logged because the swap is the difference between the conditioner having the card and sharing
+    # it, and a `.to("cpu")` that does not actually release is invisible from the outside.
+    logger.info(
+        "MiniMax H3 phase swap: %.1f GB -> %.1f GB after parking the denoiser -> %.1f GB with the "
+        "conditioner placed",
+        before / 1e9, parked / 1e9, rt.own_vram_bytes() / 1e9,
+    )
 
     # Every kwarg goes to BOTH halves, not just the first. `set_timesteps` lives in the tail, so a
     # head-only handoff left it reading the descriptor default: a render that asked for 8 steps

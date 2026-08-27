@@ -58,20 +58,56 @@ REFERENCE_POLICIES: dict[str, dict[str, Any]] = {
 }
 
 
+#: How the slots divide when there are more references than a model takes: face gets half, body and
+#: cloth a quarter each. Face is weighted because it is what identity is actually carried by; the
+#: other two are conditioning on top of it.
+ROLE_RATIO: dict[str, int] = {cf.ROLE_FACE: 2, cf.ROLE_BODY: 1, cf.ROLE_CLOTH: 1}
+
+
+def allocate_roles(counts: dict[str, int], cap: int) -> dict[str, int]:
+    """How many of each role to send, capped at ``cap`` total.
+
+    Under the cap everything goes. Over it, the split is `ROLE_RATIO` by largest remainder, and
+    then any slot a role cannot fill is handed to the roles that still have references waiting -
+    a character with no body shots should not lose those slots to nothing.
+    """
+    wanted = {role: max(0, int(counts.get(role, 0))) for role in cf.ROLES}
+    if sum(wanted.values()) <= cap:
+        return wanted
+
+    total_weight = sum(ROLE_RATIO.values())
+    exact = {role: cap * ROLE_RATIO[role] / total_weight for role in cf.ROLES}
+    share = {role: min(wanted[role], int(exact[role])) for role in cf.ROLES}
+
+    # Largest remainder first, then whoever still has references left, so no slot goes unused.
+    spare = cap - sum(share.values())
+    order = sorted(cf.ROLES, key=lambda r: (-(exact[r] - int(exact[r])), -ROLE_RATIO[r], r))
+    while spare > 0:
+        moved = False
+        for role in order:
+            if spare and share[role] < wanted[role]:
+                share[role] += 1
+                spare -= 1
+                moved = True
+        if not moved:
+            break
+    return share
+
+
 def reference_policy(arch: str) -> dict[str, Any]:
     return REFERENCE_POLICIES.get(arch, PAYLOAD_POLICY)
 
 
-#: What "Resized Reference Resolution" means when left at -1: the model's own policy, uncapped.
+#: What "Stored Reference Resolution" means when left at -1: the model's own policy, uncapped.
 NO_REFERENCE_CAP = -1
 
 
 def capped_policy(arch: str, resolution: int | None) -> dict[str, Any]:
     """A model's reference policy, with its target lowered to ``resolution``.
 
-    Capping the source image instead would do nothing for a model whose policy scales *up*: H3
-    takes a 2048 short edge whatever it is handed, so a 4K reference and a 512 one cost the same
-    36,864 vision tokens. The lever has to be the target the policy resizes onto.
+    This sets what the `.char` stores, not what a render costs. H3's pipeline calls
+    `resolve_reference_image_size` on the way in and puts every reference back onto a 2048 short
+    edge, upscaling included, so lowering this saves disk and compile time and no VRAM at all.
     """
     policy = dict(reference_policy(arch))
     if resolution is None or int(resolution) <= 0:
@@ -239,6 +275,7 @@ def char_encode(
     refs: list[Path | str],
     *,
     name: str,
+    roles: list[str] | None = None,
     description: str = "",
     app_version: str = "",
     char_id: str | None = None,
@@ -251,6 +288,9 @@ def char_encode(
     downloads ~370MB of encoder weights, which without a signal is indistinguishable from a hang."""
     report = on_progress or (lambda _fraction, _status: None)
     paths = [Path(p) for p in refs]
+    # Face when unsaid, so a caller that predates roles writes exactly what it always did.
+    tags = list(roles or [cf.ROLE_FACE] * len(paths))
+    tags += [cf.ROLE_FACE] * (len(paths) - len(tags))
     if not paths:
         raise ValueError("A character needs at least one reference image.")
     missing = [p.name for p in paths if not p.is_file()]
@@ -281,6 +321,7 @@ def char_encode(
                 "height": image.height,
                 "source_name": path.name,
                 "origin": cf.ORIGIN_ORIGINAL,
+                "role": tags[index],
             }
         )
 
@@ -436,7 +477,10 @@ def build_payload(
         member = f"payloads/{arch}/ref_{slot:03d}.png"
         data = _png_bytes(normalise_reference(images[index], policy))
         members[member] = data
-        files.append({"path": member, "sha256": cf.sha256_bytes(data)})
+        # The role rides with the compiled file: `apply` needs it to number the prompt, and
+        # recomputing the manifest order there would be the same rule written twice.
+        role = cf.role_of(manifest.refs[index]) if index < len(manifest.refs) else cf.ROLE_FACE
+        files.append({"path": member, "sha256": cf.sha256_bytes(data), "role": role})
     manifest.payloads[arch] = {
         "payload_version": 1,
         "type": PAYLOAD_REF,

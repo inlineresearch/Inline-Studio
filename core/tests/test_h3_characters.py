@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from inline_core.characters import charfile as cf
 from inline_core.characters import encode
 from inline_core.characters.apply import AppliedCharacter
 
@@ -146,8 +147,8 @@ def test_the_reference_node_asks_for_references_over_an_adapter(tmp_path, monkey
 
     seen: dict[str, object] = {}
 
-    def fake(chosen: str, arch: str = "", prefer: str | None = None):
-        seen["arch"], seen["prefer"] = arch, prefer
+    def fake(chosen: str, arch: str = "", prefer: str | None = None, limit: int | None = None):
+        seen["arch"], seen["prefer"], seen["limit"] = arch, prefer, limit
         return None
 
     monkeypatch.setattr(characters, "char_apply", fake)
@@ -155,7 +156,9 @@ def test_the_reference_node_asks_for_references_over_an_adapter(tmp_path, monkey
 
     ref = next(v for v in VARIANTS if v.references)
     _apply_character({"character": [type("I", (), {"file": "x.char"})()]}, ref)
-    assert seen == {"arch": "minimax-h3", "prefer": "reference"}
+    # The cap travels with the call: `char_apply` divides the slots by role, which trimming the
+    # returned list could not do without knowing what each reference is of.
+    assert seen == {"arch": "minimax-h3", "prefer": "reference", "limit": 9}
 
 
 def test_a_node_with_no_reference_channel_takes_whatever_the_character_prefers(monkeypatch) -> None:
@@ -163,8 +166,8 @@ def test_a_node_with_no_reference_channel_takes_whatever_the_character_prefers(m
 
     seen: dict[str, object] = {}
 
-    def fake(chosen: str, arch: str = "", prefer: str | None = None):
-        seen["prefer"] = prefer
+    def fake(chosen: str, arch: str = "", prefer: str | None = None, limit: int | None = None):
+        seen["prefer"], seen["limit"] = prefer, limit
         return None
 
     monkeypatch.setattr(characters, "char_apply", fake)
@@ -173,6 +176,8 @@ def test_a_node_with_no_reference_channel_takes_whatever_the_character_prefers(m
     fl2va = next(v for v in VARIANTS if not v.references)
     _apply_character({"character": [type("I", (), {"file": "x.char"})()]}, fl2va)
     assert seen["prefer"] is None
+    # No reference channel, so no cap to state.
+    assert seen["limit"] is None
 
 
 def test_prefer_overrides_the_adapter_default() -> None:
@@ -184,37 +189,40 @@ def test_prefer_overrides_the_adapter_default() -> None:
     assert "prefer" in inspect.signature(char_apply).parameters
 
 
-def test_a_character_with_more_references_than_the_model_takes_is_trimmed(monkeypatch) -> None:
+def test_a_character_with_more_references_than_the_model_takes_is_trimmed() -> None:
     """H3 takes 9 images; a character built for another model may carry more. Refusing sent a user
     to unwire images they had not wired, because every one of them came from the character."""
-    from inline_core.characters import apply as characters
-    from inline_core.characters.apply import AppliedCharacter
-    from inline_core.models.minimaxh3.runner import VARIANTS, _apply_character
+    from inline_core.characters.apply import _fit_roles
 
-    monkeypatch.setattr(
-        characters, "char_apply",
-        lambda *_a, **_k: AppliedCharacter("Ada", [f"r{i}" for i in range(10)], "freckles"),
-    )
-    ref = next(v for v in VARIANTS if v.references)
-    out = _apply_character({"character": [type("I", (), {"file": "x.char"})()]}, ref)
-    assert out is not None and len(out.refs) == 9
+    refs = [f"r{i}" for i in range(12)]
+    roles = [cf.ROLE_FACE] * 12
+    kept, kept_roles = _fit_roles(refs, roles, 9)
+    assert len(kept) == len(kept_roles) == 9
+    assert kept == refs[:9], "order is the prompt's numbering, so it has to be preserved"
 
 
-def test_the_prefix_never_names_a_reference_that_was_trimmed(monkeypatch) -> None:
+def test_trimming_divides_the_slots_by_role() -> None:
+    """Cutting the tail dropped whichever role happened to be last: a character with wardrobe lost
+    its cloth references on every model that takes fewer than it holds."""
+    from inline_core.characters.apply import _fit_roles
+
+    roles = [cf.ROLE_FACE] * 6 + [cf.ROLE_BODY] * 4 + [cf.ROLE_CLOTH] * 3
+    refs = [f"{r}{i}" for i, r in enumerate(roles)]
+    _kept, kept_roles = _fit_roles(refs, roles, 9)
+    counts = {role: kept_roles.count(role) for role in cf.ROLES}
+    assert sum(counts.values()) == 9
+    assert counts[cf.ROLE_CLOTH] > 0, "the last role must survive the cut"
+    assert counts[cf.ROLE_FACE] >= counts[cf.ROLE_BODY] >= counts[cf.ROLE_CLOTH]
+
+
+def test_the_prefix_never_names_a_reference_that_was_trimmed() -> None:
     """The prefix is what the prompt resolves; naming <Picture 10> when nine were sent addresses a
-    position the model cannot see."""
-    from inline_core.characters import apply as characters
-    from inline_core.characters.apply import AppliedCharacter
-    from inline_core.models.minimaxh3.runner import VARIANTS, _apply_character
+    position the model cannot see. Refs and roles are cut together, so it cannot drift."""
+    from inline_core.characters.apply import AppliedCharacter, _fit_roles
 
-    monkeypatch.setattr(
-        characters, "char_apply",
-        lambda *_a, **_k: AppliedCharacter("Ada", [f"r{i}" for i in range(10)], "freckles"),
-    )
-    ref = next(v for v in VARIANTS if v.references)
-    out = _apply_character({"character": [type("I", (), {"file": "x.char"})()]}, ref)
-    assert out is not None
-    assert "<Picture 9>" in out.prefix and "<Picture 10>" not in out.prefix
+    refs, roles = _fit_roles([f"r{i}" for i in range(12)], [cf.ROLE_FACE] * 12, 9)
+    prefix = AppliedCharacter("Ada", refs, "freckles", roles=roles).prompt_prefix(1, style="token")
+    assert "<Picture 9>" in prefix and "<Picture 10>" not in prefix
 
 
 def test_wired_images_keep_priority_over_the_character(monkeypatch) -> None:
@@ -223,28 +231,32 @@ def test_wired_images_keep_priority_over_the_character(monkeypatch) -> None:
     from inline_core.characters.apply import AppliedCharacter
     from inline_core.models.minimaxh3.runner import VARIANTS, _apply_character
 
-    monkeypatch.setattr(
-        characters, "char_apply",
-        lambda *_a, **_k: AppliedCharacter("Ada", [f"r{i}" for i in range(10)], "freckles"),
-    )
+    seen: dict[str, Any] = {}
+
+    def fake(chosen: str, arch: str = "", prefer: str | None = None, limit: int | None = None):
+        seen["limit"] = limit
+        return AppliedCharacter("Ada", [f"r{i}" for i in range(limit or 0)], "freckles")
+
+    monkeypatch.setattr(characters, "char_apply", fake)
     ref = next(v for v in VARIANTS if v.references)
     inputs = {
         "character": [type("I", (), {"file": "x.char"})()],
         "references": ["mine1", "mine2", "mine3"],
     }
     out = _apply_character(inputs, ref)
-    assert out is not None and len(out.refs) == 6, "3 wired + 6 from the character is the 9 cap"
+    assert seen["limit"] == 6, "3 wired leaves 6 of H3's 9 for the character"
+    assert out is not None and len(out.refs) == 6
     assert out.prefix.startswith("<Picture 4>"), "and it is numbered after the wired ones"
 
 
 
 def test_the_resolution_param_is_on_the_node_face_and_defaults_to_capping() -> None:
-    """Default 1024, not uncapped: H3's own policy is 2048, and a character compiled there is what
-    put 36,864 vision tokens on the card."""
+    """Default 1024, not uncapped, and named for what it does. It sets what the `.char` stores;
+    H3 re-resizes every reference onto 2048 on the way in, so it buys disk and never VRAM."""
     from inline_core.models.character.runner import COMPILE_REFS
 
     field = next(p for p in COMPILE_REFS.params if p.key == "ref_resolution")
-    assert field.label == "Resized Reference Resolution"
+    assert field.label == "Stored Reference Resolution"
     assert field.default == 1024
     assert field.on_face is True
     assert field.min == encode.NO_REFERENCE_CAP
@@ -305,51 +317,48 @@ def test_capping_h3_to_1024_quarters_the_vision_tokens() -> None:
 
 
 
-def test_an_encoder_oom_points_at_the_character_not_the_canvas(monkeypatch) -> None:
-    """The canvas hint sent a user to resize twice for nothing: references are encoded before any
-    frame exists, so a 1344x768 -> 544x768 drop left the failing allocation byte-identical. The
-    size that matters was fixed when the character was compiled, so that is what the error names.
-    """
+def test_an_encoder_oom_counts_what_the_model_sees_not_what_was_stored(monkeypatch) -> None:
+    """The pipeline calls `resolve_reference_image_size` and puts every reference back onto a 2048
+    short edge. Counting the stored pixels instead reported 1,280 tokens for a set that really cost
+    20,480, and told the user to lower a setting that could not have helped."""
     import tempfile
 
     from PIL import Image
 
     from inline_core.models import pipeline_runtime as rt
-    from inline_core.models.minimaxh3.runner import Request, _oom
+    from inline_core.models.minimaxh3.runner import Request, _oom, _reference_tokens
     from inline_core.models.references import ReferenceKind
 
-    # Stubbed because it reads the live card otherwise, so this asserted on whatever else happened
-    # to be running: it passed on an idle box and failed beside a training run.
     monkeypatch.setattr(rt, "foreign_vram_bytes", lambda *a, **k: 0)
 
     with tempfile.TemporaryDirectory() as tmp:
-        paths = []
-        for index in range(9):
-            path = f"{tmp}/ref{index}.png"
-            Image.new("RGB", (2048, 2048)).save(path)
-            paths.append(path)
-        refs = tuple(
-            type("R", (), {"kind": ReferenceKind.IMAGE, "value": type("V", (), {"path": p})()})()
-            for p in paths
-        )
-        request = Request(
-            prompt="", num_frames=144, width=544, height=768, num_inference_steps=50,
-            seed=1, partition="ref2va", references=refs,
-        )
+        counts = {}
+        for stored in (512, 2048):
+            paths = []
+            for index in range(5):
+                path = f"{tmp}/{stored}_{index}.png"
+                Image.new("RGB", (stored, stored)).save(path)
+                paths.append(path)
+            refs = tuple(
+                type("R", (), {"kind": ReferenceKind.IMAGE,
+                               "value": type("V", (), {"path": p})()})()
+                for p in paths
+            )
+            request = Request(
+                prompt="", num_frames=124, width=544, height=768, num_inference_steps=20,
+                seed=1, partition="ref2va", references=refs,
+            )
+            counts[stored] = _reference_tokens(request)[1]
+
+        # The stored size is irrelevant: both are five references at an enforced 2048.
+        assert counts[512] == counts[2048] == 5 * 64 * 64
+
         message = _oom(request)
-
-    # Measured off the pixels, not off a setting this node no longer carries.
-    assert "36,864 vision tokens" in message
-    assert "Resized Reference Resolution" in message
-    assert "does not affect this step" in message
-    assert "960x544" not in message
-
-    # With no references the canvas really is the lever, so that hint has to survive untouched.
-    plain = Request(
-        prompt="", num_frames=144, width=1344, height=768,
-        num_inference_steps=50, seed=1, partition="fl2va",
-    )
-    assert "960x544" in _oom(plain)
+        assert "20,480 vision tokens" in message
+        assert "wire fewer references" in message
+        # The two levers that cannot move this must not be offered as though they can.
+        assert "960x544" not in message
+        assert "Lower Resized Reference Resolution" not in message
 
 
 def test_a_card_held_by_another_process_is_named_before_anything_on_this_node(monkeypatch) -> None:
@@ -422,3 +431,66 @@ def test_the_runner_clears_the_pipeline_cache_on_a_vram_failure() -> None:
     # the card still held 43.5 GB after a failed run that did call clear().
     assert "pipe = None" in handler
     assert handler.index("pipe = None") < handler.index("PIPELINES.clear()")
+
+
+def test_body_and_clothing_references_are_never_scored_against_the_face() -> None:
+    """SFace measures faces. A body shot that happens to show one would be judged on the wrong
+    thing and could be flagged as an outlier for it, so it is held out of scoring entirely."""
+    from inline_core.characters import verify
+
+    manifest = cf.Manifest(char_id="c", name="Ada", created_at=0, modified_at=0)
+    manifest.refs = [
+        {"path": f"refs/{i:03d}.png", "sha256": f"h{i}", "role": role}
+        for i, role in enumerate([cf.ROLE_FACE] * 3 + [cf.ROLE_BODY, cf.ROLE_CLOTH])
+    ]
+    doc = cf.CharDoc(manifest=manifest, members={})
+
+    scored: list[int] = []
+
+    def fake_images(_doc):
+        return [object()] * len(manifest.refs)
+
+    def fake_embed(image):
+        scored.append(id(image))
+        return [1.0, 0.0]
+
+    import inline_core.characters.encode as enc
+    import inline_core.characters.scoring as sc
+
+    original_images, original_embed = enc.ref_images, sc.embed_face
+    enc.ref_images, sc.embed_face = fake_images, fake_embed
+    try:
+        verdict = verify.verify(doc)
+    finally:
+        enc.ref_images, sc.embed_face = original_images, original_embed
+
+    assert verdict.unscored == [3, 4], "the body and cloth refs, by position"
+    assert len(scored) == 3, "only the three face refs reached the face encoder"
+    assert 3 not in verdict.flagged and 4 not in verdict.flagged
+    assert "not scored" in verdict.note
+
+
+def test_the_verdict_says_body_references_are_unscored() -> None:
+    """The UI has to be able to say it: a reference that is used but not measured is not the same
+    as one that passed, and showing it as passing would be a claim nothing checked."""
+    from inline_core.characters import verify
+
+    verdict = verify.Verdict(mode=verify.MODE_BOOTSTRAP, floor=50.0, unscored=[2, 3])
+    assert verdict.to_json()["unscored"] == [2, 3]
+
+
+def test_removing_a_reference_keeps_the_unscored_positions_pointing_at_the_right_images() -> None:
+    """Every list in a verdict is a position into `manifest.refs`, so a removal shifts them all.
+    Remapping three of the four would leave `unscored` ringing whatever moved into its slot."""
+    from inline_core.characters import verify
+
+    verdict = verify.Verdict(
+        mode=verify.MODE_BOOTSTRAP, floor=50.0,
+        agreement=[90.0, 80.0, None, None],
+        flagged=[1], unchecked=[], duplicates=[], unscored=[2, 3],
+    )
+    before = ["a.png", "b.png", "c.png", "d.png"]
+    after = ["a.png", "c.png", "d.png"]  # "b.png" removed
+    verify._reindex(verdict, before, after)
+    assert verdict.unscored == [1, 2], "c and d kept their identity, one slot earlier"
+    assert verdict.flagged == [], "the flagged reference is the one that went"

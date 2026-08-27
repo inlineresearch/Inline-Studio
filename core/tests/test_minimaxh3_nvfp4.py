@@ -188,3 +188,48 @@ def test_a_resident_denoiser_is_sized_whole() -> None:
 
     model = torch.nn.Linear(64, 32, bias=False, dtype=torch.float32)
     assert _denoiser_card_bytes(model, _Recipe(), 0) == 64 * 32 * 4
+
+
+def test_the_forward_is_correct_at_a_reference_length_sequence() -> None:
+    """The chunked matmul writes into a preallocated output, so a wrong slice bound would corrupt
+    part of it rather than raising. Five references put ~20k tokens through this, and the short
+    prompt the earlier tests use would not catch an off-by-one in the row bounds."""
+    weight = _weight(96, 64)
+    packed, block_scale, global_scale = nvfp4.quantize_reference(weight)
+
+    layer = nvfp4.NVFP4Linear(64, 96, bias=True, dtype=torch.float32)
+    layer.weight.copy_(packed)
+    layer.weight_scale.copy_(block_scale)
+    layer.weight_scale_2.copy_(global_scale)
+    bias = torch.randn(96, dtype=torch.float32) * 0.01
+    with torch.no_grad():
+        layer.bias.copy_(bias)
+
+    x = torch.randn(1, 512, 64, dtype=torch.float32)
+    got = layer(x)
+    want = torch.nn.functional.linear(x, weight, bias)
+    assert got.shape == want.shape == (1, 512, 96)
+    # Every column must be right, not just the aggregate: a bad chunk bound leaves a correct-looking
+    # tensor with one band of zeros, which a whole-tensor cosine hides.
+    per_column = torch.nn.functional.cosine_similarity(got, want, dim=1)
+    assert float(per_column.min()) > 0.99, float(per_column.min())
+
+
+def test_the_output_is_allocated_once_not_concatenated(monkeypatch) -> None:
+    """`torch.cat` holds every chunk and the result at the same time. At 20k tokens that is an
+    extra gigabyte, which is what it ran out of. Asserted by watching for the call rather than
+    grepping the source, which matched the comment explaining why it is gone."""
+    weight = _weight(96, 64)
+    packed, block_scale, global_scale = nvfp4.quantize_reference(weight)
+    layer = nvfp4.NVFP4Linear(64, 96, bias=False, dtype=torch.float32)
+    layer.weight.copy_(packed)
+    layer.weight_scale.copy_(block_scale)
+    layer.weight_scale_2.copy_(global_scale)
+
+    calls: list[int] = []
+    real_cat = torch.cat
+    monkeypatch.setattr(torch, "cat", lambda *a, **k: (calls.append(1), real_cat(*a, **k))[1])
+
+    out = layer(torch.randn(1, 256, 64, dtype=torch.float32))
+    assert out.shape == (1, 256, 96)
+    assert not calls, "the chunks are written into one output, never concatenated"

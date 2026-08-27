@@ -496,8 +496,17 @@ def test_write_can_force_references_over_an_adapter(tmp_path: Path, encoders: No
 
 
 def test_encoding_refuses_with_no_references(tmp_path: Path, encoders: None) -> None:
-    with pytest.raises(ValueError, match="at least one reference"):
+    with pytest.raises(ValueError, match="at least one face reference"):
         EncodeCharacterRunner().run(_node({"name": "Ada"}), {"images": []}, _ctx())  # type: ignore[arg-type]
+
+
+def test_body_and_clothing_alone_are_not_a_character(tmp_path: Path, encoders: None) -> None:
+    """They condition on top of an identity. Encoding from them would produce a character whose
+    likeness nothing carries, and the face is what every model's identity signal comes from."""
+    with pytest.raises(ValueError, match="at least one face reference"):
+        EncodeCharacterRunner().run(  # type: ignore[arg-type]
+            _node({"name": "Ada"}), {"images": [], "body": ["b"], "cloth": ["c"]}, _ctx()
+        )
 
 
 def test_the_last_reference_cannot_be_dropped(tmp_path: Path, encoders: None) -> None:

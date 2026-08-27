@@ -267,12 +267,19 @@ def _apply_character(inputs: dict[str, list[Any]], variant: Variant) -> _Charact
     if not chosen:
         return None
     from ...characters import apply as characters
+    from ...characters import charfile as cf
     from ...graph.loader_runners import LoraRef
 
     # The reference partition cannot run on an adapter alone, so it asks for references outright
     # rather than taking the adapter a character prefers by default.
+    # The cap is applied inside `char_apply` so the slots divide by role: trimming the tail here
+    # dropped whichever role happened to be last, which for a character with wardrobe is its cloth.
+    wired = len([v for v in (inputs.get("references") or []) if v is not None])
     applied = characters.char_apply(
-        chosen, ARCH, prefer="reference" if variant.references else None
+        chosen,
+        ARCH,
+        prefer="reference" if variant.references else None,
+        limit=max(0, REFERENCE_LIMITS.max_images - wired) if variant.references else None,
     )
     if applied is None:
         return None
@@ -295,22 +302,16 @@ def _apply_character(inputs: dict[str, list[Any]], variant: Variant) -> _Charact
             "Wire it through Compile References with Model set to minimax-h3 and write it again, "
             "or wire images into this node's References input."
         )
-    how = "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)"
-    logger.info("Applying character %s by %s", applied.name, how)
-    # H3 resolves `<Picture N>`, not FLUX.2's ordinal prose, and the character's images land after
-    # whatever the user already wired.
-    wired = len([v for v in (inputs.get("references") or []) if v is not None])
-    # Trimmed here rather than by the caller, so the prefix can never name a position that was
-    # dropped: a character is a library artefact and H3's 9 images is not every model's limit.
-    keep = list(applied.refs)[: max(0, REFERENCE_LIMITS.max_images - wired)]
-    if len(keep) < len(applied.refs):
-        logger.info(
-            "%s: using %d of %s's %d references, the most it takes beside %d wired",
-            variant.title, len(keep), chosen, len(applied.refs), wired,
-        )
-        applied.refs = keep
+    counts = {role: applied.roles.count(role) for role in cf.ROLES if applied.roles.count(role)}
+    logger.info(
+        "Applying character %s by %s (%s), beside %d wired",
+        applied.name,
+        "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)",
+        ", ".join(f"{n} {role}" for role, n in counts.items()) or "no references",
+        wired,
+    )
     return _Character(
-        refs=keep,
+        refs=applied.refs,
         prefix=applied.prompt_prefix(wired + 1, style="token"),
         lora=(
             LoraRef(file=str(applied.lora), strength=applied.lora_strength)
@@ -513,11 +514,15 @@ class MiniMaxH3Runner(NodeRunner):
 
 
 def _reference_tokens(request: Request) -> tuple[int, int]:
-    """Wired image references and what they cost the vision tower, measured from the pixels.
+    """Wired image references and what they cost the vision tower.
 
-    Read off the files rather than a setting, because the size that matters was decided when the
-    character was compiled and nothing on this node records it.
+    Counted through `resolve_reference_image_size`, which is what actually decides it: the pipeline
+    re-resizes every reference onto a 2048 short edge on the way in, upscaling included. Reading the
+    stored pixels instead under-reports a downscaled reference by 16x and sent a user to change a
+    setting that could not have helped.
     """
+    from .vendor.packing_ref2va import resolve_reference_image_size
+
     images = [r for r in request.references if getattr(r, "kind", None) == ReferenceKind.IMAGE]
     tokens = 0
     for ref in images:
@@ -526,9 +531,10 @@ def _reference_tokens(request: Request) -> tuple[int, int]:
 
             with Image.open(getattr(ref.value, "path", ref.value)) as handle:
                 width, height = handle.size
+            resolved_h, resolved_w = resolve_reference_image_size(width, height)
         except Exception:  # noqa: BLE001 - an error path must not raise a second error
             continue
-        tokens += (width // 32) * (height // 32)
+        tokens += (resolved_w // 32) * (resolved_h // 32)
     return len(images), tokens
 
 
@@ -564,12 +570,13 @@ def _oom(request: Request, *, host: bool = False, held: int = 0) -> str:
     if not images:
         return canvas
     cost = f", which is {tokens:,} vision tokens" if tokens else ""
-    # Named alone because references are encoded before a frame exists: the canvas cannot move this
-    # step at all, and a hint that leads with it sends the user to resize for nothing.
+    # Fewer references is the only lever here. Every one is resized onto a 2048 short edge inside
+    # the pipeline whatever it was stored at, so the resolution setting cannot reduce this, and the
+    # canvas cannot either: references are encoded before a frame exists.
     return (
-        f"{where} ran out encoding {images} reference(s){cost}. The canvas does not affect this "
-        "step. Lower Resized Reference Resolution on the Compile References node and write the "
-        "character again - halving it quarters the tokens - or wire fewer references."
+        f"{where} ran out encoding {images} reference(s){cost}. Each one costs about 4,000 tokens "
+        "whatever resolution it was stored at, so wire fewer references. Neither the canvas nor "
+        "Resized Reference Resolution affects this step."
     )
 
 

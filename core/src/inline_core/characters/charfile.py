@@ -53,6 +53,26 @@ def origin_of(ref: dict[str, Any]) -> str:
     return str(ref.get("origin") or ORIGIN_ORIGINAL)
 
 
+#: What a reference is *of*. Sits beside `origin` for the same reason, and absent means face, so
+#: every character written before roles existed keeps behaving exactly as it did.
+ROLE_FACE = "face"
+ROLE_BODY = "body"
+ROLE_CLOTH = "cloth"
+ROLES = (ROLE_FACE, ROLE_BODY, ROLE_CLOTH)
+
+
+def role_of(ref: dict[str, Any]) -> str:
+    """A reference's role, defaulting to face. An unknown value reads as face rather than raising:
+    a manifest is user data, and refusing to open a character over one bad string helps nobody."""
+    role = str(ref.get("role") or ROLE_FACE)
+    return role if role in ROLES else ROLE_FACE
+
+
+def by_role(refs: list[dict[str, Any]], role: str) -> list[dict[str, Any]]:
+    """The references carrying one role, in manifest order."""
+    return [ref for ref in refs if role_of(ref) == role]
+
+
 class CharFileError(Exception):
     """A ``.char`` that cannot be trusted. The message is shown to the user."""
 
