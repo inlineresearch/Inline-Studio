@@ -365,6 +365,32 @@ export function SparkleIcon({ className }: { className?: string }): React.JSX.El
   )
 }
 
+/** The fal wordmark in a bordered chip - marks a node that runs on fal, not locally. */
+export function FalIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className ?? 'h-3.5 w-3.5 shrink-0'}
+      aria-hidden="true"
+    >
+      <rect x="1" y="4" width="22" height="16" rx="3" stroke="currentColor" strokeWidth="2" />
+      <text
+        x="12"
+        y="12.6"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill="currentColor"
+        fontSize="10"
+        fontWeight="700"
+        letterSpacing="-0.4"
+      >
+        FAL
+      </text>
+    </svg>
+  )
+}
+
 /** Box - a loader-style node (`icon:"box"`). */
 export function BoxIcon({ className }: { className?: string }): React.JSX.Element {
   return (

@@ -71,11 +71,20 @@ def is_resident(policy: DevicePolicy) -> bool:
 _ENCODER_RESIDENT_HEADROOM_MB = 8 * 1024
 
 
+def tensor_bytes(tensor: Any) -> int:
+    """What a tensor occupies, following quantised subclasses down to their real storage."""
+    # `element_size()` reports the dtype a torchao tensor was quantised *from*: int8 reads 2x.
+    names = getattr(tensor, "__tensor_flatten__", None)
+    if names is None:
+        return tensor.numel() * tensor.element_size()
+    return sum(tensor_bytes(getattr(tensor, name)) for name in names()[0])
+
+
 def module_bytes(module: Any) -> int:
     """On-device size of a module's parameters and buffers."""
     try:
-        params = sum(p.numel() * p.element_size() for p in module.parameters())
-        buffers = sum(b.numel() * b.element_size() for b in module.buffers())
+        params = sum(tensor_bytes(p) for p in module.parameters())
+        buffers = sum(tensor_bytes(b) for b in module.buffers())
         return params + buffers
     except Exception:  # noqa: BLE001 - a size estimate must never break a run
         return 0

@@ -102,6 +102,16 @@ def _params(variant: Variant) -> tuple[ParamField, ...]:
         ParamField("num_inference_steps", "Steps", Widget.NUMBER, 50, min=1, max=200, step=1),
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
     ]
+    if variant.references:
+        # Off by default: one render had the model replay the references as its opening frames with
+        # these on, and none has yet shown them helping. Off, a character's roles still decide which
+        # references are sent, they just stop being named in the prompt.
+        fields.append(
+            ParamField(
+                "character_role_lines", "Name character reference roles in the prompt",
+                Widget.BOOLEAN, False,
+            )
+        )
     fields.append(
         ParamField(
             "model", "Diffusion model", Widget.SELECT, "",
@@ -207,7 +217,7 @@ def build_request(
         multiple=CANVAS_MULTIPLE,
         minimum=CANVAS_MULTIPLE,
     )
-    character = _apply_character(inputs, variant)
+    character = _apply_character(inputs, variant, params)
     loras: tuple[Any, ...] = ()
     references: tuple[Any, ...] = ()
     if variant.references:
@@ -261,7 +271,9 @@ def _character_file(inputs: dict[str, list[Any]]) -> str:
     return name
 
 
-def _apply_character(inputs: dict[str, list[Any]], variant: Variant) -> _Character | None:
+def _apply_character(
+    inputs: dict[str, list[Any]], variant: Variant, params: dict[str, Any]
+) -> _Character | None:
     """A wired character as references or as its adapter, or None when none is wired."""
     chosen = _character_file(inputs)
     if not chosen:
@@ -312,7 +324,9 @@ def _apply_character(inputs: dict[str, list[Any]], variant: Variant) -> _Charact
     )
     return _Character(
         refs=applied.refs,
-        prefix=applied.prompt_prefix(wired + 1, style="token"),
+        prefix=applied.prompt_prefix(
+            wired + 1, style="token", role_lines=bool(params.get("character_role_lines"))
+        ),
         lora=(
             LoraRef(file=str(applied.lora), strength=applied.lora_strength)
             if applied.lora is not None

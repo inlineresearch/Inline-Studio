@@ -388,11 +388,7 @@ def _build(
     # the card is full, and badly wrong when it is not: at 960x544 it turned a 6 minute render into
     # 32. Staged, the conditioner is on the CPU by decode time, so if the measured free VRAM covers
     # the VAE plus a working margin it stays resident instead.
-    vae_resident = staged and _vae_fits(
-        video_vae,
-        placement.device,
-        _denoiser_card_bytes(transformer, recipe, resident_blocks),
-    )
+    vae_resident = staged and _vae_fits(video_vae, placement.device)
     if vae_resident:
         recipe = _replace(recipe, vae_offload=None)
 
@@ -406,22 +402,25 @@ def _build(
         vae=getattr(pipe, "vae", None),
         device=placement.device,
     )
-    if vae_resident:
-        pipe.vae.to(rt.torch_device(placement))
+    # False means the VAE carries streaming hooks instead, which a `.to()` would fight.
+    pipe._inline_staged_vae = bool(vae_resident)  # noqa: SLF001
     pipe._inline_denoiser = denoiser_name  # noqa: SLF001 - our own attribute on our own pipeline
     # Whether the phase swap may hand the denoiser the whole card. False on the offload plan, where
     # it carries streaming hooks and is far larger than the card: moving it wholesale is an OOM.
     pipe._inline_resident_denoiser = recipe.denoiser_offload is None  # noqa: SLF001
     if staged:
-        # Split once, at build time: the halves share every component object, so this costs nothing
-        # but the block graph. `render_staged` below does the swapping.
+        # Split once at build time: the parts share every component, so only the block graph costs.
+        owners, parts = _staged_phases(blocks)
         pipe._inline_phases = tuple(  # noqa: SLF001 - our own attribute on our own pipeline
-            pipeline_class(blocks=half)
-            for half in rt.split_blocks(blocks, through="text_encoder")
+            pipeline_class(blocks=part) for part in parts
         )
-        for half in pipe._inline_phases:  # noqa: SLF001
-            half.update_components(**dict(pipe.components))
+        pipe._inline_phase_owners = owners  # noqa: SLF001
+        for part in pipe._inline_phases:  # noqa: SLF001
+            part.update_components(**dict(pipe.components))
         transformer.to("cpu")  # the conditioner has the card until the prompt is encoded
+        if vae_resident:
+            # `render_staged` places it for the two phases that read it, not for the whole run.
+            pipe.vae.to("cpu")
         rt.free_vram()
     elif not recipe.denoiser_offload:
         pipe.to(device)
@@ -432,61 +431,30 @@ def _build(
     return pipe
 
 
-#: Left free beside a resident VAE, to cover the decode's own activations - the largest single
-#: allocation of the render.
-#:
-#: 12.0 is not the measured cost. A 141 frame 768x544 decode peaks at 1.43 GB above the 10.42 GB of
-#: weights, so this reserves about eight times what it needs and is what keeps the VAE streaming.
-#: Lowering it to 4.0 was tried and reverted: the run that OOM'd at 43.39 GB was the one with the
-#: VAE resident, and the run that completed had it streaming at 37.2 GB. The peak this has to cover
-#: is not the decode alone, it is the decode beside whatever else is still on the card.
-#:
-#: Tiling is not the lever it looks like either. `AutoencoderKLMiniMaxH3` sets `use_tiling` in its
-#: own constructor, so the decode is already tiled at 256x256; and `use_slicing` splits the *batch*,
-#: which is 1 for a single video, so enabling it changes nothing.
-_VAE_RESIDENT_MARGIN_GB = 12.0
+def _staged_phases(blocks: Any) -> tuple[tuple[str, ...], tuple[Any, ...]]:
+    """The staged render in four parts, each labelled with the one large component it reads."""
+    head, rest = rt.split_blocks(blocks, through="text_encoder")
+    # Taken positionally: ref2va calls it `reference_encoder` and fl2va `vae_encoder`.
+    encode_refs, rest = rt.split_blocks(rest, through=next(iter(rest.sub_blocks)))
+    denoise, decode = rt.split_blocks(rest, through="denoise")
+    return ("encoder", "vae", "denoiser", "vae"), (head, encode_refs, denoise, decode)
 
 
-def _denoiser_card_bytes(transformer: Any, recipe: Any, resident_blocks: int) -> int:
-    """What the denoiser will claim on the card once ``apply_offload`` places it.
-
-    It is loaded but still on the CPU when the VAE decision is taken, so the card reads empty and
-    every later placement is invisible to anything measuring free VRAM at that moment.
-    """
-    from ..offload import block_stack
-
-    total = sum(t.numel() * t.element_size() for t in transformer.parameters())
-    total += sum(t.numel() * t.element_size() for t in transformer.buffers())
-    if recipe.denoiser_offload is None:
-        return total
-    blocks = len(list(block_stack(transformer)))
-    if not blocks:
-        return total
-    # Streaming leaves only the placed head blocks resident; the rest arrives and leaves per step.
-    return int(total * min(1.0, max(0, resident_blocks) / blocks))
+#: Beside a resident VAE, covering its decode: measured at 1.43 GB above weights, see docs.
+_VAE_RESIDENT_MARGIN_GB = 4.0
 
 
-def _vae_fits(path: Path, device: Any, denoiser_bytes: int = 0) -> bool:
-    """Whether the video VAE can stay on the card rather than streaming leaf by leaf.
-
-    fp32 doubles what the file weighs, and that is what actually has to fit.
-
-    ``denoiser_bytes`` is what the denoiser will take once it is placed, which happens *after* this
-    runs: measured free VRAM here is an empty card, and reserving against it put a 10.4 GB VAE and
-    a 33 GB denoiser onto 44 GB. The same correction `_plan_residency` already makes for host RAM.
-    """
-    free = rt.free_vram_bytes(device) - denoiser_bytes
-    if free <= 0:
-        logger.info(
-            "MiniMax H3 video VAE: streamed leaf by leaf (the denoiser claims the card first)"
-        )
-        return False
+def _vae_fits(path: Path, device: Any) -> bool:
+    """Whether the video VAE can stay on the card rather than streaming leaf by leaf."""
+    # Nothing subtracted for the denoiser: `render_staged` parks it for both phases that read this.
+    free = rt.free_vram_bytes(device)
+    # fp32 doubles what the file weighs, and that is what has to fit.
     needed = path.stat().st_size * 2 + int(_VAE_RESIDENT_MARGIN_GB * 1e9)
     fits = free > needed
     logger.info(
-        "MiniMax H3 video VAE: %s (%.1f GB free after the denoiser's %.1f GB, needs %.1f GB)",
-        "resident" if fits else "streamed leaf by leaf",
-        free / 1e9, denoiser_bytes / 1e9, needed / 1e9,
+        "MiniMax H3 video VAE: %s (%.1f GB free, needs %.1f GB)",
+        "resident, placed per phase" if fits else "streamed leaf by leaf",
+        free / 1e9, needed / 1e9,
     )
     return fits
 
@@ -501,16 +469,7 @@ def _denoiser_name(blocks: Any) -> str:
 
 
 def render_staged(pipe: Any, device: Any, cancel_check: Any = None, **call: Any) -> Any:
-    """Encode the prompt, get the conditioner off the card, then denoise with the card to itself.
-
-    H3's conditioner is a 32B model that rivals its denoiser, and holding both means the denoiser
-    streams every block of every step. Encoding is one pass per prompt, so the two never actually
-    need the card at the same time - but the convenience call runs all eight blocks together, which
-    is what makes it look as though they do.
-
-    Falls back to the single call when the pipeline was not built staged, so a caller never has to
-    ask which kind it holds.
-    """
+    """Run the render a phase at a time, each holding only the weights it reads."""
     def check() -> None:
         if cancel_check is not None:
             cancel_check()
@@ -519,50 +478,46 @@ def render_staged(pipe: Any, device: Any, cancel_check: Any = None, **call: Any)
     if phases is None:
         check()
         return pipe(**call)
-    head, tail = phases
     device = str(device)
+    owners: tuple[str, ...] = pipe._inline_phase_owners  # noqa: SLF001
 
-    # Parked, not released: the next render needs it again, and 19.5 GB across the bus is seconds
-    # against the minutes of streaming it buys back.
-    denoiser = getattr(pipe, getattr(pipe, "_inline_denoiser", "transformer"))
-    resident = getattr(pipe, "_inline_resident_denoiser", True)
+    # Parked, never released: the next render needs them, and the bus costs seconds against minutes.
+    movable: dict[str, Any] = {"encoder": pipe.text_encoder}
+    # Absent on the offload plan: it carries streaming hooks, so moving it wholesale is an OOM.
+    if getattr(pipe, "_inline_resident_denoiser", True):
+        movable["denoiser"] = getattr(pipe, getattr(pipe, "_inline_denoiser", "transformer"))
+    if getattr(pipe, "_inline_staged_vae", False):
+        movable["vae"] = pipe.vae
 
-    # Each half claims the card *before* it runs rather than the previous one restoring the layout
-    # on its way out. Same two transfers per render in the steady state, but a cancelled denoise no
-    # longer pays ~40 GB of restore traffic before the exception surfaces, which read as the cancel
-    # being ignored for half a minute. A `.to()` onto the device a module already sits on is free.
-    check()
-    before = rt.own_vram_bytes()
-    if resident:
-        denoiser.to("cpu")
-        rt.free_vram()
-    parked = rt.own_vram_bytes()
-    pipe.text_encoder.to(device)
-    rt.free_vram()
-    # Logged because the swap is the difference between the conditioner having the card and sharing
-    # it, and a `.to("cpu")` that does not actually release is invisible from the outside.
-    logger.info(
-        "MiniMax H3 phase swap: %.1f GB -> %.1f GB after parking the denoiser -> %.1f GB with the "
-        "conditioner placed",
-        before / 1e9, parked / 1e9, rt.own_vram_bytes() / 1e9,
-    )
+    # A no-op `.to()` still walks every parameter, which the VAE would pay four times a render.
+    placed: dict[str, str] = {}
 
-    # Every kwarg goes to BOTH halves, not just the first. `set_timesteps` lives in the tail, so a
-    # head-only handoff left it reading the descriptor default: a render that asked for 8 steps
-    # silently took 49. The halves ignore what their own blocks do not declare, so this is safe.
-    state = head(**call)
-    # The conditioner is a 32B model, so the encode alone runs for a while with no step hook to
-    # cancel from; without this a cancel there waits for the whole denoise as well.
-    check()
-
-    # Parking the conditioner is worth doing either way: it frees the card for activations even when
-    # the denoiser is too big to take it. Moving the denoiser across is only right when it fits.
-    pipe.text_encoder.to("cpu")
-    rt.free_vram()
-    if resident:
-        denoiser.to(device)
+    state: Any = None
     try:
-        return tail(state, **call)
+        for index, (owner, phase) in enumerate(zip(owners, phases, strict=True)):
+            # Claimed before the phase runs, not restored after: a cancel then costs no transfers.
+            check()
+            before = rt.own_vram_bytes()
+            for name, module in movable.items():
+                if name != owner and placed.get(name) != "cpu":
+                    module.to("cpu")
+                    placed[name] = "cpu"
+            rt.free_vram()
+            parked = rt.own_vram_bytes()
+            held = movable.get(owner)
+            if held is not None and placed.get(owner) != device:
+                held.to(device)
+                placed[owner] = device
+                rt.free_vram()
+            # Logged because a `.to("cpu")` that does not actually release is invisible otherwise.
+            logger.info(
+                "MiniMax H3 phase %d/%d holds the %s: %.1f GB -> %.1f GB parked -> %.1f GB placed",
+                index + 1, len(phases), owner,
+                before / 1e9, parked / 1e9, rt.own_vram_bytes() / 1e9,
+            )
+            # Every kwarg to every phase: `set_timesteps` reading a default took 49 steps for 8.
+            state = phase(**call) if index == 0 else phase(state, **call)
+        return state
     finally:
         rt.free_vram()
 

@@ -131,6 +131,7 @@ class _Phase:
 class _StagedPipe:
     def __init__(self, head: _Phase, tail: _Phase) -> None:
         self._inline_phases = (head, tail)
+        self._inline_phase_owners = ("encoder", "denoiser")
         self.text_encoder = _Module()
         self.transformer = _Module()
 
@@ -191,3 +192,65 @@ def test_cancelling_after_the_encode_skips_the_denoise() -> None:
     with pytest.raises(CancelledError):
         _render(_StagedPipe(head, tail), cancel_check=cancel_check)
     assert head.calls == 1 and tail.calls == 0
+
+
+# --- the phase split ------------------------------------------------------------------------------
+
+
+def test_no_staged_phase_holds_a_component_it_never_reads() -> None:
+    """Held as one tail, the vision tower encode carried a 10.4 GB VAE it never touches, which on a
+    45 GB card was the difference between rendering and an OOM. Derived from `expected_components`
+    so it keeps holding if the blockset is reordered."""
+    pytest.importorskip("diffusers")
+    from inline_core.models.minimaxh3.pipeline import _denoiser_name, _staged_phases
+    from inline_core.models.minimaxh3.vendor import MiniMaxH3Blocks, MiniMaxH3Ref2VABlocks
+
+    for blocks in (MiniMaxH3Ref2VABlocks(), MiniMaxH3Blocks()):
+        # `transformer_ref` on ref2va, `transformer` on fl2va.
+        big = {"encoder": "text_encoder", "vae": "vae", "denoiser": _denoiser_name(blocks)}
+        owners, parts = _staged_phases(blocks)
+        assert len(parts) == 4
+        for owner, part in zip(owners, parts, strict=True):
+            declared: set[str] = set()
+            for block in part.sub_blocks.values():
+                declared |= {
+                    getattr(spec, "name", spec) for spec in (block.expected_components or [])
+                }
+            for role, component in big.items():
+                held = component in declared
+                if role == owner:
+                    assert held, f"the {owner} phase does not read {component}"
+                else:
+                    assert not held, f"the {owner} phase would hold {component} unused"
+
+
+class _StagedPipeVAE:
+    """A four phase pipe whose three large components each record where they are moved."""
+
+    def __init__(self, phases: tuple[_Phase, ...]) -> None:
+        self._inline_phases = phases
+        self._inline_phase_owners = ("encoder", "vae", "denoiser", "vae")
+        self._inline_staged_vae = True
+        self.text_encoder = _Module()
+        self.transformer = _Module()
+        self.vae = _Module()
+
+
+def test_the_vae_is_off_the_card_for_the_encode_and_the_denoise() -> None:
+    """Exactly the two phases that do not read it, and the two that do get it back."""
+    pipe = _StagedPipeVAE(tuple(_Phase(result=f"s{i}") for i in range(4)))
+    assert _render(pipe) == "s3"
+
+    # Parked for phase 1, placed for 2, parked for 3, placed again for 4.
+    assert pipe.vae.moves == ["cpu", "cuda:0", "cpu", "cuda:0"]
+    # The conditioner goes up once and never comes back; the denoiser only for its own phase.
+    assert pipe.text_encoder.moves == ["cuda:0", "cpu"]
+    assert pipe.transformer.moves == ["cpu", "cuda:0", "cpu"]
+
+
+def test_a_streamed_vae_is_never_moved_by_the_phase_loop() -> None:
+    """Without `_inline_staged_vae` it carries offload hooks, and a `.to()` fights them."""
+    pipe = _StagedPipeVAE(tuple(_Phase() for _ in range(4)))
+    pipe._inline_staged_vae = False
+    _render(pipe)
+    assert pipe.vae.moves == []

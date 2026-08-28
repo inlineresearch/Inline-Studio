@@ -17,7 +17,7 @@ import { useMenuPlacement } from './useMenuPlacement'
 import { addableCoreNodes, type NodeDescriptor } from '@shared/coreNodes'
 import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
-import { CaptionGlyph, ChartIcon, CpuIcon, LayersIcon, WandIcon } from './nodes/NodeBadge'
+import { CaptionGlyph, ChartIcon, CpuIcon, FalIcon, LayersIcon, WandIcon } from './nodes/NodeBadge'
 
 import type { AddNodeKind } from './nodeKinds'
 
@@ -126,7 +126,12 @@ export function AddNodeMenu({
               (d.title.toLowerCase().includes(needle) || d.id.toLowerCase().includes(needle)),
           )
           .map((d) => (
-            <Row key={d.id} icon={<SparklesIcon />} accent onClick={() => onPickGen?.(d.id)}>
+            <Row
+              key={d.id}
+              icon={<FalIcon className="h-4 w-4" />}
+              accent
+              onClick={() => onPickGen?.(d.id)}
+            >
               {d.title}
             </Row>
           )),
@@ -200,7 +205,7 @@ export function AddNodeMenu({
                 {group.defs.map((def) => (
                   <Row
                     key={def.id}
-                    icon={<SparklesIcon />}
+                    icon={<FalIcon className="h-4 w-4" />}
                     accent
                     onClick={() => onPickGen?.(def.id)}
                   >
@@ -422,15 +427,6 @@ function ScissorsIcon(): React.JSX.Element {
       <circle cx="6" cy="6" r="3" />
       <circle cx="6" cy="18" r="3" />
       <path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12" />
-    </Svg>
-  )
-}
-
-function SparklesIcon(): React.JSX.Element {
-  return (
-    <Svg>
-      <path d="M12 3l1.9 4.8L18.6 9.7 13.9 11.6 12 16.4 10.1 11.6 5.4 9.7 10.1 7.8Z" />
-      <path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9Z" />
     </Svg>
   )
 }

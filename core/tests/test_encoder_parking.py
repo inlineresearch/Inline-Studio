@@ -75,3 +75,20 @@ def test_module_bytes_counts_parameters() -> None:
 def test_module_bytes_never_raises_on_an_odd_object() -> None:
     # It only feeds a heuristic, so a module that does not behave must not break a run.
     assert module_bytes(object()) == 0
+
+
+def test_a_quantised_weight_is_sized_by_its_real_storage() -> None:
+    """Believing `element_size()` read H3's int8 denoiser as 40.2 GB against a real 20, and that
+    figure is what the video VAE's residency was decided against."""
+    import torch
+
+    torchao = pytest.importorskip("torchao.quantization")
+    linear = torch.nn.Linear(512, 512, bias=False, dtype=torch.bfloat16)
+    bf16 = module_bytes(linear)
+
+    torchao.quantize_(linear, torchao.Int8WeightOnlyConfig())
+    assert type(linear.weight).__name__ != "Parameter", "quantisation did not take"
+    # The naive sum still reports the bf16 figure, which is the whole bug.
+    assert sum(p.numel() * p.element_size() for p in linear.parameters()) == bf16
+    # Int8 weights plus a small per-row scale: about half, never the same.
+    assert module_bytes(linear) < bf16 * 0.6

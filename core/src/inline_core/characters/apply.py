@@ -64,12 +64,16 @@ class AppliedCharacter:
                 out += f" {_positions(style, numbers)} show {self.name}'s {_ROLE_BINDINGS[role]}."
         return out
 
-    def prompt_prefix(self, first_position: int, style: str = "ordinal") -> str:
+    def prompt_prefix(
+        self, first_position: int, style: str = "ordinal", role_lines: bool = False
+    ) -> str:
         """Text naming the positions the character lands on, so positional prompting resolves.
 
         ``style`` because a model only resolves the form it was trained on: FLUX.2 reads the ordinal
         prose below, MiniMax H3 reads ``<Picture N>`` tokens (``models/references.py``), and handing
         either the other one names positions it cannot see.
+
+        ``role_lines`` defaults off: the bindings are unvalidated, see docs/characters.md.
         """
         if not self.refs:
             # A LoRA carries the likeness, so the description is all the prompt needs.
@@ -86,7 +90,8 @@ class AppliedCharacter:
             ordinals = [str(n) for n in positions]
             which = f"Images {', '.join(ordinals[:-1])} and {ordinals[-1]} show"
         line = f"{which} {self.name}, the same character in every image."
-        line += self._role_lines(first_position, style)
+        if role_lines:
+            line += self._role_lines(first_position, style)
         detail = " ".join(self.description.split())
         if not detail:
             return f"{line} "
@@ -97,11 +102,12 @@ class AppliedCharacter:
 
 
 def _positions(style: str, numbers: list[int]) -> str:
-    if style == "token":
-        return " ".join(f"<Picture {n}>" for n in numbers)
+    """How a role line refers *back* to positions, in prose, never re-declaring them."""
+    # Never `<Picture N>`: that is H3's reserved label and repeating it replayed the references.
+    noun = "Picture" if style == "token" else "Image"
     if len(numbers) == 1:
-        return f"Image {numbers[0]}"
-    return f"Images {', '.join(str(n) for n in numbers[:-1])} and {numbers[-1]}"
+        return f"{noun} {numbers[0]}"
+    return f"{noun}s {', '.join(str(n) for n in numbers[:-1])} and {numbers[-1]}"
 
 
 #: What each role binds to. Naming only, never describing: "slim build" or "red jacket" would be

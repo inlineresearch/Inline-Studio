@@ -155,7 +155,9 @@ def test_the_reference_node_asks_for_references_over_an_adapter(tmp_path, monkey
     from inline_core.models.minimaxh3.runner import VARIANTS, _apply_character
 
     ref = next(v for v in VARIANTS if v.references)
-    _apply_character({"character": [type("I", (), {"file": "x.char"})()]}, ref)
+    _apply_character(
+        {"character": [type("I", (), {"file": "x.char"})()]}, ref, {}
+    )
     # The cap travels with the call: `char_apply` divides the slots by role, which trimming the
     # returned list could not do without knowing what each reference is of.
     assert seen == {"arch": "minimax-h3", "prefer": "reference", "limit": 9}
@@ -174,7 +176,9 @@ def test_a_node_with_no_reference_channel_takes_whatever_the_character_prefers(m
     from inline_core.models.minimaxh3.runner import VARIANTS, _apply_character
 
     fl2va = next(v for v in VARIANTS if not v.references)
-    _apply_character({"character": [type("I", (), {"file": "x.char"})()]}, fl2va)
+    _apply_character(
+        {"character": [type("I", (), {"file": "x.char"})()]}, fl2va, {}
+    )
     assert seen["prefer"] is None
     # No reference channel, so no cap to state.
     assert seen["limit"] is None
@@ -243,7 +247,7 @@ def test_wired_images_keep_priority_over_the_character(monkeypatch) -> None:
         "character": [type("I", (), {"file": "x.char"})()],
         "references": ["mine1", "mine2", "mine3"],
     }
-    out = _apply_character(inputs, ref)
+    out = _apply_character(inputs, ref, {})
     assert seen["limit"] == 6, "3 wired leaves 6 of H3's 9 for the character"
     assert out is not None and len(out.refs) == 6
     assert out.prefix.startswith("<Picture 4>"), "and it is numbered after the wired ones"
@@ -494,3 +498,49 @@ def test_removing_a_reference_keeps_the_unscored_positions_pointing_at_the_right
     verify._reindex(verdict, before, after)
     assert verdict.unscored == [1, 2], "c and d kept their identity, one slot earlier"
     assert verdict.flagged == [], "the flagged reference is the one that went"
+
+
+def test_a_role_line_refers_back_to_a_picture_without_re_declaring_it() -> None:
+    """`<Picture N>` is H3's reserved label, emitted before each vision block. The role lines used
+    to repeat it with nothing behind the second, and the model replayed the references as the
+    opening frames of the video. Each label must be declared exactly once."""
+    from inline_core.characters.apply import AppliedCharacter
+
+    roles = [cf.ROLE_FACE] * 4 + [cf.ROLE_BODY] * 2 + [cf.ROLE_CLOTH] * 2
+    refs = [f"r{i}" for i in range(len(roles))]
+    character = AppliedCharacter("Ada", refs, "", roles=roles)
+    prefix = character.prompt_prefix(1, style="token", role_lines=True)
+
+    for n in range(1, len(roles) + 1):
+        assert prefix.count(f"<Picture {n}>") == 1, f"<Picture {n}> is declared more than once"
+    # The roles still have to be bound, just in prose that cannot be mistaken for a label.
+    assert "Pictures 5 and 6 show Ada's full body and build." in prefix
+    assert "Pictures 7 and 8 show Ada's outfit." in prefix
+
+
+def test_the_role_line_switch_restores_the_prompt_a_character_had_before_roles() -> None:
+    """Off, the bindings go and nothing else does, so the switch isolates one variable: the roles
+    still decide which references are sent."""
+    from inline_core.characters.apply import AppliedCharacter
+
+    roles = [cf.ROLE_FACE] * 4 + [cf.ROLE_BODY] * 2 + [cf.ROLE_CLOTH] * 2
+    refs = [f"r{i}" for i in range(len(roles))]
+    with_roles = AppliedCharacter("Ada", refs, "freckles", roles=roles)
+    # The same references with no roles recorded at all: a character written before the feature.
+    without = AppliedCharacter("Ada", refs, "freckles")
+
+    off = with_roles.prompt_prefix(1, style="token", role_lines=False)
+    assert off == without.prompt_prefix(1, style="token")
+    assert "full body and build" not in off
+    assert "full body and build" in with_roles.prompt_prefix(1, style="token", role_lines=True)
+
+
+def test_the_h3_node_leaves_the_role_lines_off_unless_asked() -> None:
+    """A param that defaults on would ship the behaviour that replayed the references."""
+    from inline_core.models.minimaxh3.runner import DESCRIPTORS, VARIANTS
+
+    ref = next(v for v in VARIANTS if v.references)
+    field = next(
+        f for f in DESCRIPTORS[ref.node_type].params if f.key == "character_role_lines"
+    )
+    assert field.default is False
