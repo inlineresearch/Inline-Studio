@@ -342,8 +342,10 @@ export interface CoreTakeRef {
   kind: 'image' | 'video' | 'audio'
   /** Stamped at generation (ms); absent on renders made before it was tracked. */
   createdAt?: number
-  /** The settings this take was generated with, so switching to it restores the node's params. */
+  /** The runner's resolved settings. Not the node's: different keys, and `model` is a runner id. */
   params?: Record<string, unknown>
+  /** The node's own params at render time, which is the only sound baseline for "has this changed". */
+  nodeParams?: Record<string, unknown>
   /** The prompt this take used (from the upstream prompt node), for display + restore. */
   prompt?: string
   /** The character file applied to this take, when one was. */

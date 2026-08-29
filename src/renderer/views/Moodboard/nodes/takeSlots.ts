@@ -29,22 +29,40 @@ export interface Slot {
 export function buildSlots(core: SlotSource, busy: boolean, edited = false): Slot[] {
   const takes = core.outputs ?? (core.output ? [core.output] : [])
   const history = takes.map((t) => ({ id: t.takeId, take: t, state: 'take' as const }))
-  // Read from the takes rather than cleared by the completion event. Clearing meant writing the
-  // node back from the client's copy, which at that moment predated the take Core had just
-  // appended - so the write dropped it, and the render was lost with only its file left on disk.
-  const pending = landed(core, takes) ? undefined : core.pending
-  const status = pending?.status
-  const state: Slot['state'] | null =
-    busy || status === 'running'
-      ? 'running'
-      : status === 'cancelled' || status === 'failed'
-        ? status
-        : // Settings changed since the last render and not yet run. The same slot becomes the
-          // running one on Generate, so an edit and its render are one entry, not two.
-          edited || status === 'draft'
-          ? 'draft'
-          : null
+  // Derived, never cleared by the completion event. Clearing meant writing the node back from the
+  // client's copy, which at that moment predated the take Core had just appended, so the write
+  // dropped it and the render was lost with only its file left on disk.
+  const state = slotState(activePending(core)?.status, busy, edited)
   return state ? [{ id: 'current', state }, ...history] : history
+}
+
+/** What the one non-take slot reads as, most recent fact first.
+ *
+ * A render in flight outranks everything, since its progress is the live fact. An edit outranks a
+ * stopped run because you made it afterwards: a cancelled run whose settings you have since changed
+ * is a draft, not a cancelled run. */
+function slotState(
+  status: CorePendingRun['status'] | undefined,
+  busy: boolean,
+  edited: boolean,
+): Exclude<Slot['state'], 'take'> | null {
+  if (busy || status === 'running') return 'running'
+  if (edited || status === 'draft') return 'draft'
+  if (status === 'cancelled' || status === 'failed') return status
+  return null
+}
+
+/** The snapshot that still describes something unfinished, or nothing once its run has landed.
+ *
+ * Every reader must go through this. The snapshot is deliberately never cleared - clearing it meant
+ * writing the node back from a stale client copy, which destroyed the take that had just landed -
+ * so a finished run leaves `status: 'running'` behind in the data forever. Masking that in the strip
+ * alone was not enough: the draft capture read the raw status and so refused to snapshot anything
+ * for the rest of the node's life, which is how an edit could still be lost on a node that had run
+ * once. */
+export function activePending(core: SlotSource): CorePendingRun | undefined {
+  const takes = core.outputs ?? (core.output ? [core.output] : [])
+  return landed(core, takes) ? undefined : core.pending
 }
 
 /** Whether the snapshotted run already produced one of these takes, making its slot obsolete. */
@@ -55,16 +73,34 @@ function landed(core: SlotSource, takes: CoreTakeRef[]): boolean {
   return takes.some((t) => t.createdAt !== undefined && t.createdAt >= started)
 }
 
-/** Whether the node's live recipe has moved away from its newest take.
+/** Whether the node's live recipe has moved away from the last thing it rendered or submitted.
  *
- * Compared without the seed, which `applyableParams` withholds on restore: counting it would make
- * every node read as edited the moment it was restored from history. */
+ * Both baselines are the node's own params, which is the only sound comparison. A take's `params`
+ * are the *runner's* resolved ones - different keys, and `model` holds a runner id rather than the
+ * checkpoint filename - so measuring against those answered wrongly in both directions: nodes that
+ * had never been touched read as edited, and real edits to keys the runner does not take read as
+ * clean, which is what let a click destroy them.
+ *
+ * `nodeParams` is absent on takes rendered before it was recorded; those cannot answer the question
+ * and say so, rather than guessing. */
 export function hasEdits(core: SlotSource, livePrompt?: string): boolean {
+  const baseline = activePending(core) ?? takeBaseline(core)
+  if (!baseline) return false
+  if ((baseline.prompt ?? '') !== (livePrompt ?? '')) return true
+  return !sameParams(withoutSeed(core.params), withoutSeed(baseline.params))
+}
+
+function takeBaseline(
+  core: SlotSource,
+): { params?: Record<string, unknown>; prompt?: string } | undefined {
   const newest = (core.outputs ?? [])[0]
-  // Nothing to have moved away from yet, so a node's first run is not an "edit".
-  if (!newest) return false
-  if ((newest.prompt ?? '') !== (livePrompt ?? '')) return true
-  return !sameParams(applyableParams({ params: core.params }), applyableParams(newest))
+  return newest?.nodeParams ? { params: newest.nodeParams, prompt: newest.prompt } : undefined
+}
+
+function withoutSeed(params: Record<string, unknown> | undefined): Record<string, unknown> {
+  const out = { ...(params ?? {}) }
+  delete out.seed
+  return out
 }
 
 function sameParams(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
@@ -78,7 +114,7 @@ export function slotRecipe(
   slot: SlotId,
 ): { params?: Record<string, unknown>; prompt?: string } | undefined {
   if (slot !== 'current') return (core.outputs ?? []).find((t) => t.takeId === slot)
-  return core.pending
+  return activePending(core)
 }
 
 /** The prompt to show under the strip: the browsed take's, or the live one when Current is shown.
@@ -100,14 +136,31 @@ export function slotMedia(core: SlotSource, slot: SlotId): CoreTakeRef | undefin
   return (core.outputs ?? []).find((t) => t.takeId === slot) ?? core.output
 }
 
-/** Settings to push onto the node, seed withheld.
+/** Settings to push onto the node: the seed withheld, and anything the node cannot accept dropped.
  *
  * A pinned seed makes every re-generation identical and turns on the node cache, so connection and
- * control changes stop taking effect until it is reset. Reusing one is a separate deliberate act. */
-export function applyableParams(recipe: {
-  params?: Record<string, unknown>
-}): Record<string, unknown> {
-  const out = { ...(recipe.params ?? {}) }
-  delete out.seed
+ * control changes stop taking effect until it is reset. Reusing one is a separate deliberate act.
+ *
+ * `restorable` is the node's own param keys, minus the ones filled from an installed-files catalog.
+ * A take records the *runner's* params, where `model` is a runner id like `minimax-h3-ref2va` and
+ * not the checkpoint filename the node's dropdown holds - so merging it in blindly left the node
+ * reporting its diffusion model missing. A take cannot say which file was used, so it does not. */
+export function applyableParams(
+  recipe: { params?: Record<string, unknown> },
+  restorable?: ReadonlySet<string>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(recipe.params ?? {})) {
+    if (key === 'seed') continue
+    if (restorable && !restorable.has(key)) continue
+    out[key] = value
+  }
   return out
+}
+
+/** Which of a node's params a take may write back: everything but the installed-files dropdowns. */
+export function restorableKeys(
+  params: readonly { key: string; optionsFrom?: string }[] | undefined,
+): ReadonlySet<string> {
+  return new Set((params ?? []).filter((p) => !p.optionsFrom).map((p) => p.key))
 }

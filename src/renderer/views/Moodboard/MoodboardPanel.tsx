@@ -305,7 +305,7 @@ function Board(): React.JSX.Element {
   const { items, connectors, error, load, updateItem, deleteItem, connect, disconnect } =
     useMoodboardStore()
   const addTextAt = useMoodboardStore((s) => s.addTextAt)
-  const addFrameFromAssetInLayer = useMoodboardStore((s) => s.addFrameFromAssetInLayer)
+  const addLoaderFromAssetInLayer = useMoodboardStore((s) => s.addLoaderFromAssetInLayer)
   const addFrameItemInLayer = useMoodboardStore((s) => s.addFrameItemInLayer)
   const addPreview = useMoodboardStore((s) => s.addPreview)
   const addLayer = useMoodboardStore((s) => s.addLayer)
@@ -931,7 +931,7 @@ function Board(): React.JSX.Element {
 
     const ids = getAssetDragIds(e.dataTransfer)
     if (ids.length === 0) {
-      // Files dropped from the OS → import into the library, then place as frames. A shared Inline
+      // Files dropped from the OS → import into the library, then place them. A shared Inline
       // PNG carries its recipe, so offer to rebuild the graph instead of just importing it.
       const files = Array.from(e.dataTransfer.files ?? [])
       if (files.length === 0) return
@@ -992,7 +992,7 @@ function Board(): React.JSX.Element {
     else onAsset()
   }
 
-  /** Place existing library assets as frames at/near a drop point (cascaded). */
+  /** Place existing library assets as Load Assets nodes at/near a drop point (cascaded). */
   const placeAssetsAt = (assetIds: string[], drop: { x: number; y: number }): void => {
     assetIds.forEach((assetId, i) => {
       const abs = { x: drop.x + i * 24, y: drop.y + i * 24 }
@@ -1000,11 +1000,11 @@ function Board(): React.JSX.Element {
       // Children store positions relative to their layer.
       const x = layer ? abs.x - layer.x : abs.x
       const y = layer ? abs.y - layer.y : abs.y
-      void addFrameFromAssetInLayer(assetId, x, y, layer?.id ?? null)
+      void addLoaderFromAssetInLayer(assetId, x, y, layer?.id ?? null)
     })
   }
 
-  /** Import dropped OS files (paths under Electron, upload in the browser), then place as frames. */
+  /** Import dropped OS files (paths under Electron, upload in the browser), then place them. */
   const placeDroppedFiles = async (
     files: File[],
     drop: { x: number; y: number },

@@ -13,6 +13,7 @@ export function VideoPreview({
   poster,
   className,
   onLoadedMetadata,
+  onLoadedData,
   onContextMenu,
   onDoubleClick,
 }: {
@@ -20,6 +21,7 @@ export function VideoPreview({
   poster?: string
   className?: string
   onLoadedMetadata?: React.ReactEventHandler<HTMLVideoElement>
+  onLoadedData?: React.ReactEventHandler<HTMLVideoElement>
   onContextMenu?: React.MouseEventHandler<HTMLVideoElement>
   onDoubleClick?: React.MouseEventHandler<HTMLVideoElement>
 }): React.JSX.Element {
@@ -58,6 +60,7 @@ export function VideoPreview({
       onEnded={onEnded}
       onMouseEnter={onMouseEnter}
       onLoadedMetadata={onLoadedMetadata}
+      onLoadedData={onLoadedData}
       onContextMenu={onContextMenu}
       onDoubleClick={onDoubleClick}
       className={className}

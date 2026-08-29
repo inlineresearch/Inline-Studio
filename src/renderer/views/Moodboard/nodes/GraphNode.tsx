@@ -18,7 +18,9 @@ import type { SlotId } from './takeSlots'
 import {
   applyableParams,
   buildSlots,
+  activePending,
   hasEdits,
+  restorableKeys,
   slotMedia,
   slotPrompt,
   slotRecipe,
@@ -46,6 +48,7 @@ import {
   WandIcon,
   RunningDots,
   StopIcon,
+  PencilIcon,
 } from './NodeBadge'
 import { resolveMedia } from '@/lib/media'
 
@@ -97,6 +100,13 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // Which slot the strip shows. Deliberately not persisted: a saved browse position means reopening
   // a project to a node quietly displaying history instead of what it will render.
   const [slot, setSlot] = useState<SlotId>('current')
+  // Follow each render as it lands. Core promotes a finished take to the node's active output, so
+  // this fires exactly once per render - and once per deliberate take click, which selects the id
+  // it is already on. Selecting Current leaves the output alone, so it does not fight this.
+  const activeTakeId = item?.data.core?.output?.takeId
+  useEffect(() => {
+    if (activeTakeId) setSlot(activeTakeId)
+  }, [activeTakeId])
   // The live prompt, so the Current slot shows what Generate will actually send rather than the
   // text of whichever take happens to be active.
   const livePrompt = useMoodboardStore((s) => {
@@ -201,11 +211,15 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   // Take history for the on-node output strip (newest first). Older items predate history and only
   // carry a single `output` - treat that as a one-entry history. `output` marks the active take.
+  // The node's own params, minus the dropdowns Core fills from installed files: a take records the
+  // runner's `model`, not the checkpoint filename, so writing it back broke the node's model pick.
+  const restorable = restorableKeys(descriptor?.params)
   const edited = hasEdits(core, livePrompt)
   const slots = buildSlots(core, busy || executing, edited)
   // A slot that has gone falls back to the active output: when a render lands it replaces Current in
   // the first position, and the selection should follow it there rather than highlighting nothing.
   const shown = slots.some((e) => e.id === slot) ? slot : (core.output?.takeId ?? 'current')
+
   const shownPrompt = slotPrompt(core, shown, livePrompt)
   const shownMedia = slotMedia(core, shown)
   const rendering = (busy || executing) && shown === 'current'
@@ -219,7 +233,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
     output?: CoreTakeRef,
     pending?: CorePendingRun,
   ): void => {
-    const params = recipe ? { ...core.params, ...applyableParams(recipe) } : core.params
+    const params = recipe ? { ...core.params, ...applyableParams(recipe, restorable) } : core.params
     const next = { ...core, params }
     if (output) next.output = output
     if (pending) next.pending = pending
@@ -229,12 +243,21 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   const selectTake = (o: CoreTakeRef): void => {
     // Settings edited but never generated have no take to come back to, and this restore is about
-    // to overwrite them. Captured here rather than on every keystroke: this is the only moment
-    // they can be lost, so it is the only moment worth a write.
+    // to overwrite them. Captured here rather than on every keystroke: this is the only moment they
+    // can be lost, so it is the only moment worth a write. It replaces a stopped run's snapshot,
+    // which the edit has superseded; it never replaces a running one, whose settings are the only
+    // record of what is on the GPU right now.
+    // A snapshot must exist before this overwrites the node's params, or an edit that was never
+    // rendered has nowhere to come back to. Taken on the first click whether or not anything was
+    // edited, because with no baseline that question has no honest answer and losing settings is
+    // the worse outcome. Never over a draft, or the second click would snapshot the first take's
+    // params on top of the real one; never over a running run, whose settings are the only record
+    // of what is on the GPU. A stopped run's snapshot is replaced only by a real edit.
+    const held = activePending(core)?.status
     const draft: CorePendingRun | undefined =
-      !core.pending && edited
-        ? { params: { ...core.params }, prompt: livePrompt, startedAt: Date.now(), status: 'draft' }
-        : undefined
+      held === 'running' || held === 'draft' || (held !== undefined && !edited)
+        ? undefined
+        : { params: { ...core.params }, prompt: livePrompt, startedAt: Date.now(), status: 'draft' }
     setSlot(o.takeId)
     restore(o, o, draft)
   }
@@ -678,7 +701,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                   draft: {
                     tone: 'border-dashed border-zinc-500 hover:border-zinc-400',
                     title: 'Edited since the last render - click to restore these settings',
-                    glyph: <AdjustIcon className="h-4 w-4 text-zinc-400" />,
+                    glyph: <PencilIcon className="h-4 w-4 text-zinc-400" />,
                   },
                   failed: {
                     tone: 'border-red-500/70 hover:border-red-400',

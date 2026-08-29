@@ -99,3 +99,40 @@ def test_prompt_text_for_frame(conn) -> None:
     assert mb.prompt_text_for_frame(conn, gen["frameId"]) is None  # not wired yet
     mb.create_connector(conn, prompt["id"], gen["id"], "out", "prompt")
     assert mb.prompt_text_for_frame(conn, gen["frameId"]) == "a neon city"
+
+
+def test_a_client_write_cannot_drop_a_take_it_had_not_loaded(conn) -> None:
+    """`data` is one JSON blob replaced wholesale, so a browser patch carries whatever that tab last
+    loaded. A render landing between its load and its write used to be erased by it: the file stayed
+    on disk and `core.outputs`, its only record, was gone. Cost two finished videos."""
+    iid = mb.add_core_node(conn, "minimax/h3-reference-to-video", 0, 0)["id"]
+    stale = mb.get_item(conn, iid)["data"]  # what a tab loaded before the render
+
+    mb.set_core_node_output(
+        conn, iid, {"takeId": "landed", "filePath": "takes/x.mp4", "kind": "video", "createdAt": 20}
+    )
+
+    # The tab now writes back its own copy, which has never seen "landed".
+    patch = {"data": {**stale, "core": {**stale["core"], "params": {"steps": 4}}}}
+    mb.client_update_item(conn, iid, patch)
+
+    core = mb.get_item(conn, iid)["data"]["core"]
+    assert [o["takeId"] for o in core["outputs"]] == ["landed"], "the take must survive the write"
+    assert core["params"] == {"steps": 4}, "the client's own edit must still land"
+
+
+def test_a_client_can_still_choose_which_take_is_active(conn) -> None:
+    """Only entries the client could not see are restored, so selecting a take keeps working."""
+    iid = mb.add_core_node(conn, "minimax/h3-reference-to-video", 0, 0)["id"]
+    for n, at in (("a", 10), ("b", 20)):
+        mb.set_core_node_output(
+            conn, iid, {"takeId": n, "filePath": f"takes/{n}.mp4", "kind": "video", "createdAt": at}
+        )
+    data = mb.get_item(conn, iid)["data"]
+    older = next(o for o in data["core"]["outputs"] if o["takeId"] == "a")
+
+    mb.client_update_item(conn, iid, {"data": {**data, "core": {**data["core"], "output": older}}})
+
+    core = mb.get_item(conn, iid)["data"]["core"]
+    assert core["output"]["takeId"] == "a"
+    assert {o["takeId"] for o in core["outputs"]} == {"a", "b"}

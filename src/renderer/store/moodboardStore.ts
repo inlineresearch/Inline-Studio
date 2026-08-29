@@ -8,11 +8,15 @@ import { create } from 'zustand'
 import type { CorePendingRun, MoodboardItem, MoodboardConnector } from '@shared/types'
 import type { MoodboardItemPatch } from '@shared/ipc'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { fitLoaderSize } from '../lib/loaderFit'
+import { resolveMedia } from '@/lib/media'
+import { mediaAspect } from '../lib/mediaSize'
 import { studio } from '@/lib/studio'
 
 /** Training node kinds this canvas can add; they share the Trainer graph's channels. */
 export type TrainingNodeKind = 'train/dataset' | 'train/caption' | 'train/lora' | 'train/loss'
 
+import { useAssetStore } from './assetStore'
 import { useFrameStore } from './frameStore'
 
 /** A board snapshot for the undo/redo stacks. */
@@ -54,6 +58,15 @@ interface MoodboardState {
   addControlSpace: (x: number, y: number) => Promise<MoodboardItem | null>
   /** Append library assets to a loader's ordered asset list (deduped). */
   addLoaderAssets: (itemId: string, assetIds: string[]) => Promise<void>
+  /** Place a library asset on the canvas as its own Load Assets node, sized to its media. */
+  addLoaderFromAssetInLayer: (
+    assetId: string,
+    x: number,
+    y: number,
+    parentId: string | null,
+  ) => Promise<void>
+  /** Size a loader to its media's aspect. Fires once, when the node's first assets land. */
+  fitLoaderToAsset: (itemId: string, assetId: string) => Promise<void>
   /** Remove one asset from a loader. */
   removeLoaderAsset: (itemId: string, assetId: string) => Promise<void>
   /** Move an asset to the front of a loader's list (its hero, fed downstream). */
@@ -425,6 +438,26 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     const next = [...current, ...assetIds.filter((id) => !current.includes(id))]
     if (next.length === current.length) return
     await get().updateItem(itemId, { data: { ...item.data, assetIds: next } })
+    if (current.length === 0) await get().fitLoaderToAsset(itemId, next[0])
+  },
+
+  addLoaderFromAssetInLayer: async (assetId, x, y, parentId) => {
+    const created = await get().addLoader(x, y)
+    if (!created) return
+    // One patch, and no second snapshot: `addLoader` already recorded the whole drop as one step.
+    const patch: MoodboardItemPatch = { data: { ...created.data, assetIds: [assetId] } }
+    if (parentId) patch.parentId = parentId
+    await get().updateItem(created.id, patch, false)
+    await get().fitLoaderToAsset(created.id, assetId)
+  },
+
+  fitLoaderToAsset: async (itemId, assetId) => {
+    const asset = useAssetStore.getState().assets.find((a) => a.id === assetId)
+    if (!asset?.filePath) return
+    const aspect = await mediaAspect(resolveMedia(asset.filePath), asset.kind)
+    if (aspect == null) return
+    // Programmatic layout fit, part of the drop - it must not land on the undo stack of its own.
+    await get().updateItem(itemId, fitLoaderSize(aspect), false)
   },
 
   removeLoaderAsset: async (itemId, assetId) => {

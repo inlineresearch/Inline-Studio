@@ -306,8 +306,9 @@ def add_trim(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
 def add_loader(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     # A "Load Assets" node holds library asset refs in its data (no frame, no frame_inputs) and
     # feeds its hero (first) asset downstream via graph_build.
+    # Portrait by default; the renderer refits it to the real aspect once its first asset lands.
     return _insert_item(
-        conn, item_type="loader", x=x, y=y, width=220, height=200, data={"assetIds": []}
+        conn, item_type="loader", x=x, y=y, width=240, height=340, data={"assetIds": []}
     )
 
 
@@ -323,6 +324,42 @@ def add_prompt(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     return _insert_item(
         conn, item_type="prompt", x=x, y=y, width=240, height=120, data={"promptText": ""}
     )
+
+
+# How many recent renders a Core node keeps in its on-node take history (newest first). Bounds the
+# JSON we carry on the moodboard item; older entries drop off (their files stay in takes/).
+_CORE_HISTORY_MAX = 24
+
+
+def client_update_item(
+    conn: sqlite3.Connection, item_id: str, patch: dict[str, Any]
+) -> dict[str, Any]:
+    """``update_item`` for a write the browser originated, with the take history held back.
+
+    ``data`` is stored as one JSON blob and replaced wholesale, so a client patch carries whatever
+    that tab last loaded. A render landing between its load and its write was therefore erased by
+    it: the take file stayed on disk and its only record, `core.outputs`, was gone. The renderer has
+    no business setting these, so they are taken from the row rather than from the patch.
+
+    Take *selection* still works, because that is `output` alone and the client may set it: only
+    entries the client cannot see are restored.
+    """
+    data = patch.get("data")
+    core = data.get("core") if isinstance(data, dict) else None
+    if isinstance(core, dict):
+        stored = (get_item(conn, item_id).get("data") or {}).get("core") or {}
+        history = stored.get("outputs")
+        if history is not None:
+            seen = {o.get("takeId") for o in (core.get("outputs") or []) if isinstance(o, dict)}
+            missed = [o for o in history if o.get("takeId") not in seen]
+            if missed:
+                merged = [*missed, *(core.get("outputs") or [])]
+                merged.sort(key=lambda o: o.get("createdAt") or 0, reverse=True)
+                patch = {
+                    **patch,
+                    "data": {**data, "core": {**core, "outputs": merged[:_CORE_HISTORY_MAX]}},
+                }
+    return update_item(conn, item_id, patch)
 
 
 def update_item(conn: sqlite3.Connection, item_id: str, patch: dict[str, Any]) -> dict[str, Any]:
@@ -348,11 +385,6 @@ def update_item(conn: sqlite3.Connection, item_id: str, patch: dict[str, Any]) -
     return get_item(conn, item_id)
 
 
-# How many recent renders a Core node keeps in its on-node take history (newest first). Bounds the
-# JSON we carry on the moodboard item; older entries drop off (their files stay in takes/).
-_CORE_HISTORY_MAX = 24
-
-
 def set_core_node_output(conn: sqlite3.Connection, item_id: str, output: dict[str, Any]) -> None:
     """Record a render a Core media node produced: make it the node's active ``output`` and prepend
     it to the node's ``outputs`` take history (newest first, deduped by takeId, capped). A fresh
@@ -366,6 +398,10 @@ def set_core_node_output(conn: sqlite3.Connection, item_id: str, output: dict[st
     if item["type"] != "core" or not core:
         return
     take_id = output.get("takeId")
+    # The node's own params beside the runner's resolved ones. Only these can answer "has this node
+    # changed since it rendered": `params` holds what the runner received, a different set with
+    # different values (`model` is a runner id, not the checkpoint filename the node picked).
+    output = {**output, "nodeParams": dict(core.get("params") or {})}
     prior = [o for o in (core.get("outputs") or []) if o.get("takeId") != take_id]
     outputs = [output, *prior][:_CORE_HISTORY_MAX]
     update_item(
