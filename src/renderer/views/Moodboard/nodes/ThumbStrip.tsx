@@ -32,6 +32,7 @@ export function ThumbStrip({
   onSelect,
   onRemove,
   edge = 'bottom',
+  leading,
 }: {
   items: StripItem[]
   selected?: number
@@ -39,10 +40,13 @@ export function ThumbStrip({
   /** When provided, each thumbnail gets a hover × that calls this with its index. */
   onRemove?: (index: number) => void
   edge?: 'top' | 'bottom'
+  /** A tile pinned before the items, owning no media of its own. Used for the Current slot, whose
+   *  presence is also what forces the strip open on a node with fewer than two takes. */
+  leading?: React.ReactNode
 }): React.JSX.Element | null {
   const manage = !!onRemove
-  if (items.length === 0) return null
-  if (!manage && items.length <= 1) return null
+  if (items.length === 0 && !leading) return null
+  if (!manage && !leading && items.length <= 1) return null
   const scrim =
     edge === 'top'
       ? 'top-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent pt-1.5 pb-5'
@@ -54,6 +58,7 @@ export function ThumbStrip({
     <div
       className={`nodrag nowheel absolute inset-x-0 z-10 flex max-h-[55%] flex-wrap gap-1 overflow-y-auto px-1.5 ${scrim}`}
     >
+      {leading}
       {items.map((it, i) => (
         <div key={it.id} className="group/thumb relative shrink-0">
           <button

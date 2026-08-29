@@ -129,12 +129,14 @@ def char_apply(
     arch: str = encode.FLUX2_KLEIN_ARCH,
     prefer: str | None = None,
     limit: int | None = None,
+    keep_roles: tuple[str, ...] | None = None,
 ) -> AppliedCharacter | None:
     """How a character applies on ``arch``, or None when none is picked. An unreadable pick raises
     rather than silently generating the wrong person.
 
     ``arch`` matters because a model without a reference channel can only take the adapter, and its
-    payloads are keyed separately."""
+    payloads are keyed separately. ``keep_roles`` narrows which of them are sent at all, per render,
+    so testing a character face-only does not mean writing a second character."""
     name = str(chosen or "").strip()
     if not name:
         return None
@@ -164,6 +166,9 @@ def char_apply(
     if not references:
         mode = "lora"
     refs, roles = ([], []) if mode == "lora" else _extract(doc, digest, arch)
+    if keep_roles is not None:
+        kept = [i for i, role in enumerate(roles) if role in keep_roles]
+        refs, roles = [refs[i] for i in kept], [roles[i] for i in kept]
     if limit is not None:
         refs, roles = _fit_roles(refs, roles, limit)
     return AppliedCharacter(

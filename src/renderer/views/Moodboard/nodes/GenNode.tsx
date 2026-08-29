@@ -29,6 +29,7 @@ import {
   NodeBadge,
   NodeBadgeRow,
   VideoGlyph,
+  RunningDots,
 } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
 import { NodeRunToolbar } from './NodeRunToolbar'
@@ -371,22 +372,32 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
               </>
             )}
 
-            {/* Multiple takes → a thumbnail strip; click one to make it this node's chosen output
-                (its hero), so the shown image is what flows to anything wired downstream. */}
-            {!busy && (
-              <ThumbStrip
-                items={ordered.map((t) => ({
-                  id: t.id,
-                  url: resolveMedia(t.filePath),
-                  kind: t.kind,
-                }))}
-                selected={safeTakeIdx}
-                onSelect={(i) => {
-                  void setHero(frameId, ordered[i].id)
-                  setTakeIdx(0)
-                }}
-              />
-            )}
+            {/* Takes behind a Current slot; click a take to make it this node's chosen output (its
+                hero), so the shown image is what flows downstream. The strip used to vanish while
+                busy, which hid the history exactly when there was a render to compare against. */}
+            <ThumbStrip
+              items={ordered.map((t) => ({
+                id: t.id,
+                url: resolveMedia(t.filePath),
+                kind: t.kind,
+              }))}
+              selected={busy ? -1 : safeTakeIdx}
+              onSelect={(i) => {
+                void setHero(frameId, ordered[i].id)
+                setTakeIdx(0)
+              }}
+              leading={
+                busy ? (
+                  <div
+                    key="current"
+                    title={`Rendering${pct === null ? '' : ` ${pct}%`}`}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border-2 border-accent bg-black/70 text-emerald-300"
+                  >
+                    <RunningDots />
+                  </div>
+                ) : undefined
+              }
+            />
           </div>
 
           {/* Footer: model picker + settings (adjust). Run lives on the graph's output node. */}

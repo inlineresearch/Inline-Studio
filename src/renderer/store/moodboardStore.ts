@@ -5,7 +5,7 @@
  * to main via studio().moodboard.
  */
 import { create } from 'zustand'
-import type { MoodboardItem, MoodboardConnector } from '@shared/types'
+import type { CorePendingRun, MoodboardItem, MoodboardConnector } from '@shared/types'
 import type { MoodboardItemPatch } from '@shared/ipc'
 import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
@@ -96,9 +96,14 @@ interface MoodboardState {
   updateItem: (id: string, patch: MoodboardItemPatch, recordHistory?: boolean) => Promise<void>
   /** Merge into an item's `data`. Node selections (dataset, run, hyperparams) live there. */
   patchItemData: (id: string, data: Record<string, unknown>) => Promise<void>
-  /** Restore the text of the prompt node wired into `nodeId`'s `prompt` input (no-op if none). Used
-   * when switching a gen node's take history so the shown image's prompt is restored non-destructively. */
+  /** Restore the text of the prompt node wired into `nodeId`'s `prompt` input (no-op if none).
+   * Only ever from an explicit "use these settings", never from browsing take history. */
   setConnectedPromptText: (nodeId: string, text: string) => Promise<void>
+  /** The text of the prompt node wired into `nodeId`'s `prompt` input, or undefined. */
+  connectedPromptText: (nodeId: string) => string | undefined
+  /** Record (or clear) a Core node's submitted-but-unlanded run. Never an undo step: the user did
+   * not edit anything, and a snapshot on the stack would make one ⌘Z look like it did nothing. */
+  setPendingRun: (nodeId: string, pending: CorePendingRun | null) => Promise<void>
   deleteItem: (id: string) => Promise<void>
   /** Delete one render from a Core node's output history (and its file). */
   removeCoreOutput: (itemId: string, takeId: string) => Promise<void>
@@ -772,6 +777,32 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
     }
+  },
+
+  connectedPromptText: (nodeId) => {
+    const { items, connectors } = get()
+    const conn = connectors.find(
+      (c) =>
+        c.toItemId === nodeId && (c.data as { targetHandle?: string }).targetHandle === 'prompt',
+    )
+    if (!conn) return undefined
+    const node = items.find((i) => i.id === conn.fromItemId && i.type === 'prompt')
+    const text = node?.data.promptText
+    return typeof text === 'string' ? text : undefined
+  },
+
+  setPendingRun: async (nodeId, pending) => {
+    // Reloaded first because `updateItem` PUTs the whole `data` blob: writing it from a client copy
+    // that Core has since added a take to silently drops that take, which is how a finished render
+    // went missing with only its file left behind.
+    await get().load()
+    const item = get().items.find((i) => i.id === nodeId)
+    const core = item?.data.core
+    if (!item || !core) return
+    const next: NonNullable<MoodboardItem['data']['core']> = { ...core }
+    if (pending) next.pending = pending
+    else delete next.pending
+    await get().updateItem(nodeId, { data: { ...item.data, core: next } }, false)
   },
 
   setConnectedPromptText: async (nodeId, text) => {

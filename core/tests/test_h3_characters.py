@@ -147,7 +147,10 @@ def test_the_reference_node_asks_for_references_over_an_adapter(tmp_path, monkey
 
     seen: dict[str, object] = {}
 
-    def fake(chosen: str, arch: str = "", prefer: str | None = None, limit: int | None = None):
+    def fake(
+        chosen: str, arch: str = "", prefer: str | None = None,
+        limit: int | None = None, **_: Any,
+    ):
         seen["arch"], seen["prefer"], seen["limit"] = arch, prefer, limit
         return None
 
@@ -168,7 +171,10 @@ def test_a_node_with_no_reference_channel_takes_whatever_the_character_prefers(m
 
     seen: dict[str, object] = {}
 
-    def fake(chosen: str, arch: str = "", prefer: str | None = None, limit: int | None = None):
+    def fake(
+        chosen: str, arch: str = "", prefer: str | None = None,
+        limit: int | None = None, **_: Any,
+    ):
         seen["prefer"], seen["limit"] = prefer, limit
         return None
 
@@ -237,7 +243,10 @@ def test_wired_images_keep_priority_over_the_character(monkeypatch) -> None:
 
     seen: dict[str, Any] = {}
 
-    def fake(chosen: str, arch: str = "", prefer: str | None = None, limit: int | None = None):
+    def fake(
+        chosen: str, arch: str = "", prefer: str | None = None,
+        limit: int | None = None, **_: Any,
+    ):
         seen["limit"] = limit
         return AppliedCharacter("Ada", [f"r{i}" for i in range(limit or 0)], "freckles")
 
@@ -544,3 +553,14 @@ def test_the_h3_node_leaves_the_role_lines_off_unless_asked() -> None:
         f for f in DESCRIPTORS[ref.node_type].params if f.key == "character_role_lines"
     )
     assert field.default is False
+
+
+def test_the_node_defaults_to_every_reference_the_model_takes() -> None:
+    """A smaller default would quietly change what every existing graph renders."""
+    from inline_core.models.minimaxh3.runner import DESCRIPTORS, REFERENCE_LIMITS, VARIANTS
+
+    ref = next(v for v in VARIANTS if v.references)
+    params = {f.key: f for f in DESCRIPTORS[ref.node_type].params}
+    assert params["character_references"].default == REFERENCE_LIMITS.max_images
+    assert params["character_references"].max == REFERENCE_LIMITS.max_images
+    assert params["character_reference_roles"].default == "all"

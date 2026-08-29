@@ -486,3 +486,14 @@ export function UploadIcon({ className }: { className?: string }): React.JSX.Ele
     </Icon>
   )
 }
+
+/** The working indicator on a running node's Current slot: three dots lighting in sequence. */
+export function RunningDots({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <span className={`flex items-center gap-[3px] ${className ?? ''}`}>
+      <span className="run-dot h-1 w-1 rounded-full bg-current" />
+      <span className="run-dot h-1 w-1 rounded-full bg-current" />
+      <span className="run-dot h-1 w-1 rounded-full bg-current" />
+    </span>
+  )
+}

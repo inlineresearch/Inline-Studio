@@ -21,7 +21,7 @@ import torch
 
 from ...device.policy import DevicePolicy
 from ...errors import CancelledError, ComponentError
-from ...graph.descriptor import NodeDescriptor, ParamField, Port, Widget
+from ...graph.descriptor import NodeDescriptor, Option, ParamField, Port, Widget
 from ...graph.runners import NodeResult, NodeRunner
 from ...graph.schema import Node, PortKind
 from ...media import MediaKind
@@ -103,9 +103,22 @@ def _params(variant: Variant) -> tuple[ParamField, ...]:
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
     ]
     if variant.references:
+        # References are 99.8% of what the conditioner reads (26k tokens against a 60 token prompt)
+        # and sit on the video's own rotary clock, so the model will reproduce them as frames.
+        fields.append(
+            ParamField(
+                "character_references", "Character references", Widget.NUMBER,
+                REFERENCE_LIMITS.max_images, min=1, max=REFERENCE_LIMITS.max_images, step=1,
+            )
+        )
+        fields.append(
+            ParamField(
+                "character_reference_roles", "Character reference roles", Widget.SELECT, "all",
+                options=(Option("all", "Face, body and clothing"), Option("face", "Face only")),
+            )
+        )
         # Off by default: one render had the model replay the references as its opening frames with
-        # these on, and none has yet shown them helping. Off, a character's roles still decide which
-        # references are sent, they just stop being named in the prompt.
+        # these on, and none has yet shown them helping.
         fields.append(
             ParamField(
                 "character_role_lines", "Name character reference roles in the prompt",
@@ -287,11 +300,16 @@ def _apply_character(
     # The cap is applied inside `char_apply` so the slots divide by role: trimming the tail here
     # dropped whichever role happened to be last, which for a character with wardrobe is its cloth.
     wired = len([v for v in (inputs.get("references") or []) if v is not None])
+    budget = int(params.get("character_references") or REFERENCE_LIMITS.max_images)
+    keep = None if params.get("character_reference_roles", "all") == "all" else (cf.ROLE_FACE,)
     applied = characters.char_apply(
         chosen,
         ARCH,
         prefer="reference" if variant.references else None,
-        limit=max(0, REFERENCE_LIMITS.max_images - wired) if variant.references else None,
+        limit=max(0, min(budget, REFERENCE_LIMITS.max_images - wired))
+        if variant.references
+        else None,
+        keep_roles=keep if variant.references else None,
     )
     if applied is None:
         return None

@@ -316,7 +316,22 @@ export interface MoodboardItemData {
     /** Recent renders (newest first); `output` points at the active one. Drives the take-history
      * strip on generation nodes. */
     outputs?: CoreTakeRef[]
+    /** The last submitted run, which has no take yet. Drives the strip's Current slot. */
+    pending?: CorePendingRun
   }
+}
+
+/** A run as submitted, held until it lands as a take.
+ *
+ * Recorded because a running generation's settings live nowhere else: the node's params can be
+ * edited while it renders, and until it finishes there is no take carrying the recipe it used. */
+export interface CorePendingRun {
+  /** Node params at submit. */
+  params?: Record<string, unknown>
+  /** Upstream prompt text at submit. */
+  prompt?: string
+  startedAt: number
+  status: 'draft' | 'running' | 'cancelled' | 'failed'
 }
 
 /** One render in a Core node's history: the media file plus the recipe fields that let switching to

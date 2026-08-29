@@ -107,3 +107,25 @@ def test_krea2_applies_a_character_only_as_its_adapter(tmp_path: Path) -> None:
 
     # The Flux payload is untouched by any of this: the two archs are keyed separately.
     assert ax.char_apply("Ada.char").lora is None
+
+
+def test_a_render_can_send_fewer_of_a_characters_references_than_it_holds(tmp_path: Path) -> None:
+    """References are ~99.8% of what H3's conditioner reads and sit on the video's own rotary
+    clock, so their count is the lever on how hard they pull. Dialling it must not mean
+    re-encoding the character."""
+    from inline_core.characters import apply as ax
+    from inline_core.characters import charfile as cf
+    from inline_core.characters import encode, library
+
+    roles = [cf.ROLE_FACE, cf.ROLE_FACE, cf.ROLE_BODY, cf.ROLE_CLOTH, cf.ROLE_CLOTH]
+    images = [_image(tmp_path / f"r{i}.png") for i in range(len(roles))]
+    library.save(encode.char_encode(images, name="Ada", roles=roles))
+    arch = encode.FLUX2_KLEIN_ARCH
+
+    assert len(ax.char_apply("Ada.char", arch, prefer="reference", limit=9).refs) == 5
+    assert len(ax.char_apply("Ada.char", arch, prefer="reference", limit=3).refs) == 3
+    face_only = ax.char_apply(
+        "Ada.char", arch, prefer="reference", limit=9, keep_roles=(cf.ROLE_FACE,)
+    )
+    assert face_only is not None
+    assert face_only.roles == [cf.ROLE_FACE] * 2, "body and clothing must not be sent"
