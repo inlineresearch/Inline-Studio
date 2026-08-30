@@ -334,16 +334,8 @@ _CORE_HISTORY_MAX = 24
 def client_update_item(
     conn: sqlite3.Connection, item_id: str, patch: dict[str, Any]
 ) -> dict[str, Any]:
-    """``update_item`` for a write the browser originated, with the take history held back.
-
-    ``data`` is stored as one JSON blob and replaced wholesale, so a client patch carries whatever
-    that tab last loaded. A render landing between its load and its write was therefore erased by
-    it: the take file stayed on disk and its only record, `core.outputs`, was gone. The renderer has
-    no business setting these, so they are taken from the row rather than from the patch.
-
-    Take *selection* still works, because that is `output` alone and the client may set it: only
-    entries the client cannot see are restored.
-    """
+    """``update_item`` for a browser write, with take history held back: ``data`` is replaced
+    wholesale, so a stale patch erased renders that landed after the tab last loaded."""
     data = patch.get("data")
     core = data.get("core") if isinstance(data, dict) else None
     if isinstance(core, dict):
@@ -398,9 +390,7 @@ def set_core_node_output(conn: sqlite3.Connection, item_id: str, output: dict[st
     if item["type"] != "core" or not core:
         return
     take_id = output.get("takeId")
-    # The node's own params beside the runner's resolved ones. Only these can answer "has this node
-    # changed since it rendered": `params` holds what the runner received, a different set with
-    # different values (`model` is a runner id, not the checkpoint filename the node picked).
+    # The node's own params beside the runner's: only these answer "changed since it rendered".
     output = {**output, "nodeParams": dict(core.get("params") or {})}
     prior = [o for o in (core.get("outputs") or []) if o.get("takeId") != take_id]
     outputs = [output, *prior][:_CORE_HISTORY_MAX]

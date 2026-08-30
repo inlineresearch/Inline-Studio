@@ -564,3 +564,23 @@ def test_the_node_defaults_to_every_reference_the_model_takes() -> None:
     assert params["character_references"].default == REFERENCE_LIMITS.max_images
     assert params["character_references"].max == REFERENCE_LIMITS.max_images
     assert params["character_reference_roles"].default == "all"
+
+
+def test_a_full_reference_input_names_the_wiring_not_the_character(monkeypatch) -> None:
+    """Nine wired images leave the character no slot, which is not the same fact as an empty .char.
+
+    It used to raise "has no minimax-h3 references ... write it again", sending the user off to
+    rebuild a character that was never the problem.
+    """
+    from inline_core.errors import ComponentError
+    from inline_core.models.minimaxh3.runner import REFERENCE_LIMITS, VARIANTS, _apply_character
+
+    ref = next(v for v in VARIANTS if v.references)
+    inputs = {
+        "character": [type("I", (), {"file": "x.char"})()],
+        "references": ["img"] * REFERENCE_LIMITS.max_images,
+    }
+    with pytest.raises(ComponentError) as raised:
+        _apply_character(inputs, ref, {})
+    assert "no slot left" in str(raised.value)
+    assert "Compile References" not in str(raised.value), "the character is not at fault"

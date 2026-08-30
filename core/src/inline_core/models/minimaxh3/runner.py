@@ -103,8 +103,7 @@ def _params(variant: Variant) -> tuple[ParamField, ...]:
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
     ]
     if variant.references:
-        # References are 99.8% of what the conditioner reads (26k tokens against a 60 token prompt)
-        # and sit on the video's own rotary clock, so the model will reproduce them as frames.
+        # References are ~99.8% of what the conditioner reads, so their count is the only lever.
         fields.append(
             ParamField(
                 "character_references", "Character references", Widget.NUMBER,
@@ -117,8 +116,7 @@ def _params(variant: Variant) -> tuple[ParamField, ...]:
                 options=(Option("all", "Face, body and clothing"), Option("face", "Face only")),
             )
         )
-        # Off by default: one render had the model replay the references as its opening frames with
-        # these on, and none has yet shown them helping.
+        # Off by default: unvalidated, and one render replayed the references as opening frames.
         fields.append(
             ParamField(
                 "character_role_lines", "Name character reference roles in the prompt",
@@ -295,20 +293,21 @@ def _apply_character(
     from ...characters import charfile as cf
     from ...graph.loader_runners import LoraRef
 
-    # The reference partition cannot run on an adapter alone, so it asks for references outright
-    # rather than taking the adapter a character prefers by default.
-    # The cap is applied inside `char_apply` so the slots divide by role: trimming the tail here
-    # dropped whichever role happened to be last, which for a character with wardrobe is its cloth.
+    # Capped inside `char_apply` so the slots divide by role, not by arrival order.
     wired = len([v for v in (inputs.get("references") or []) if v is not None])
     budget = int(params.get("character_references") or REFERENCE_LIMITS.max_images)
+    slots = max(0, min(budget, REFERENCE_LIMITS.max_images - wired))
     keep = None if params.get("character_reference_roles", "all") == "all" else (cf.ROLE_FACE,)
+    if variant.references and slots == 0:
+        raise ComponentError(
+            f"{variant.title} takes {REFERENCE_LIMITS.max_images} images and {wired} are wired, so "
+            f"{chosen} has no slot left. Unwire one, or raise Character references."
+        )
     applied = characters.char_apply(
         chosen,
         ARCH,
         prefer="reference" if variant.references else None,
-        limit=max(0, min(budget, REFERENCE_LIMITS.max_images - wired))
-        if variant.references
-        else None,
+        limit=slots if variant.references else None,
         keep_roles=keep if variant.references else None,
     )
     if applied is None:
@@ -546,13 +545,8 @@ class MiniMaxH3Runner(NodeRunner):
 
 
 def _reference_tokens(request: Request) -> tuple[int, int]:
-    """Wired image references and what they cost the vision tower.
-
-    Counted through `resolve_reference_image_size`, which is what actually decides it: the pipeline
-    re-resizes every reference onto a 2048 short edge on the way in, upscaling included. Reading the
-    stored pixels instead under-reports a downscaled reference by 16x and sent a user to change a
-    setting that could not have helped.
-    """
+    """Wired image references and their vision-tower cost, counted through the 2048 short edge the
+    pipeline forces: the stored pixels under-report a downscaled reference 16x."""
     from .vendor.packing_ref2va import resolve_reference_image_size
 
     images = [r for r in request.references if getattr(r, "kind", None) == ReferenceKind.IMAGE]
@@ -602,9 +596,7 @@ def _oom(request: Request, *, host: bool = False, held: int = 0) -> str:
     if not images:
         return canvas
     cost = f", which is {tokens:,} vision tokens" if tokens else ""
-    # Fewer references is the only lever here. Every one is resized onto a 2048 short edge inside
-    # the pipeline whatever it was stored at, so the resolution setting cannot reduce this, and the
-    # canvas cannot either: references are encoded before a frame exists.
+    # Fewer references is the only lever: resolution cannot reduce this, nor can the canvas.
     return (
         f"{where} ran out encoding {images} reference(s){cost}. Each one costs about 4,000 tokens "
         "whatever resolution it was stored at, so wire fewer references. Neither the canvas nor "

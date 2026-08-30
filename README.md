@@ -195,7 +195,9 @@ Getting the same person across shots normally means training a LoRA for each one
 same reference photos into every node by hand. Build a character once instead, then pick it from a
 dropdown.
 
-![Two reference photos compiled into a portable character file, then the same person generated in an office, a cafe, a park, a street and at a lakeside](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/character_showcase.png)
+<video src="https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/char-mm.mp4" controls muted loop playsinline width="100%"></video>
+
+[**Workflow: Minimax H3. Consistent face, body & cloths via reference identity →**](https://inlinestudio.art/workflows/minimax-h3-guided-consistent-characters-via-reference-identity-face-body-cloths)
 
 Drop in a photo or two and Inline Studio compiles a **`.char`**: one portable file holding your
 references and an identity fingerprint. Describe the scene, and the references carry the likeness.

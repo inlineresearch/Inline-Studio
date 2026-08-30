@@ -97,27 +97,15 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const frames = useFrameStore((s) => s.frames)
   const takesByFrame = useFrameStore((s) => s.takesByFrame)
   const openLightbox = useLightboxStore((s) => s.open)
-  // Which slot the strip shows. Deliberately not persisted: a saved browse position means reopening
-  // a project to a node quietly displaying history instead of what it will render.
+  // Not persisted: a saved browse position reopens a project showing history, not the present.
   const [slot, setSlot] = useState<SlotId>('current')
-  // Follow each render as it lands. Core promotes a finished take to the node's active output, so
-  // this fires exactly once per render - and once per deliberate take click, which selects the id
-  // it is already on. Selecting Current leaves the output alone, so it does not fight this.
+  // Follow each render as it lands: Core promotes a finished take to the node's active output.
   const activeTakeId = item?.data.core?.output?.takeId
   useEffect(() => {
     if (activeTakeId) setSlot(activeTakeId)
   }, [activeTakeId])
-  // The live prompt, so the Current slot shows what Generate will actually send rather than the
-  // text of whichever take happens to be active.
-  const livePrompt = useMoodboardStore((s) => {
-    const conn = s.connectors.find(
-      (c) =>
-        c.toItemId === itemId && (c.data as { targetHandle?: string }).targetHandle === 'prompt',
-    )
-    const node = conn && s.items.find((i) => i.id === conn.fromItemId && i.type === 'prompt')
-    const text = node ? node.data.promptText : undefined
-    return typeof text === 'string' ? text : undefined
-  })
+  // What Generate will actually send, so the front slot never shows an older take's prompt.
+  const livePrompt = useMoodboardStore((s) => s.connectedPromptText(itemId))
   const coreType = item?.type === 'core' ? item.data.core?.type : undefined
   const descriptor = useCoreNodesStore((s) =>
     coreType ? s.descriptors.find((d) => d.type === coreType) : undefined,
@@ -211,23 +199,18 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   // Take history for the on-node output strip (newest first). Older items predate history and only
   // carry a single `output` - treat that as a one-entry history. `output` marks the active take.
-  // The node's own params, minus the dropdowns Core fills from installed files: a take records the
-  // runner's `model`, not the checkpoint filename, so writing it back broke the node's model pick.
+  // Minus the installed-file dropdowns: a take records the runner's `model`, not the filename.
   const restorable = restorableKeys(descriptor?.params)
   const edited = hasEdits(core, livePrompt)
   const slots = buildSlots(core, busy || executing, edited)
-  // A slot that has gone falls back to the active output: when a render lands it replaces Current in
-  // the first position, and the selection should follow it there rather than highlighting nothing.
+  // A slot that has gone falls back to the active output rather than highlighting nothing.
   const shown = slots.some((e) => e.id === slot) ? slot : (core.output?.takeId ?? 'current')
 
   const shownPrompt = slotPrompt(core, shown, livePrompt)
   const shownMedia = slotMedia(core, shown)
   const rendering = (busy || executing) && shown === 'current'
-  // Selecting a slot restores the graph that produced it: its settings onto this node's params, its
-  // prompt onto the wired prompt node. Safe for a take because the take carries its own recipe; safe
-  // for Current because a run in flight is snapshotted at submit, which is what it exists for.
-  // The *seed* is never restored: pinning one makes every re-generation identical and turns on the
-  // node cache, so connection and control changes stop taking effect until it is reset.
+  // Selecting a slot restores the graph that produced it, seed excluded: a pinned seed turns on
+  // the node cache and freezes re-generation.
   const restore = (
     recipe: { params?: Record<string, unknown>; prompt?: string } | undefined,
     output?: CoreTakeRef,
@@ -247,12 +230,8 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
     // can be lost, so it is the only moment worth a write. It replaces a stopped run's snapshot,
     // which the edit has superseded; it never replaces a running one, whose settings are the only
     // record of what is on the GPU right now.
-    // A snapshot must exist before this overwrites the node's params, or an edit that was never
-    // rendered has nowhere to come back to. Taken on the first click whether or not anything was
-    // edited, because with no baseline that question has no honest answer and losing settings is
-    // the worse outcome. Never over a draft, or the second click would snapshot the first take's
-    // params on top of the real one; never over a running run, whose settings are the only record
-    // of what is on the GPU. A stopped run's snapshot is replaced only by a real edit.
+    // A snapshot must exist before this overwrites the node's params. Never over a draft or a
+    // running run: see "the draft survives browsing" in docs/generation-recipe.md. A stopped run's snapshot is replaced only by a real edit.
     const held = activePending(core)?.status
     const draft: CorePendingRun | undefined =
       held === 'running' || held === 'draft' || (held !== undefined && !edited)
