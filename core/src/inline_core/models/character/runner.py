@@ -61,6 +61,10 @@ ENCODE = NodeDescriptor(
     output_kind=None,
     inputs=(
         Port("images", "References", PortKind.IMAGE_LIST, required=True),
+        # Body and wardrobe as their own wires, so each reference carries what it is *of*. They
+        # compete with the face for a model's reference slots rather than adding to them.
+        Port("body", "Body references", PortKind.IMAGE_LIST, required=False),
+        Port("cloth", "Clothing references", PortKind.IMAGE_LIST, required=False),
         Port("description", "Description", PortKind.TEXT, required=False),
     ),
     outputs=(Port("character", "Character", PortKind.CHARACTER),),
@@ -98,9 +102,11 @@ COMPILE_REFS = NodeDescriptor(
             "arch", "Model", Widget.SELECT, encode.FLUX2_KLEIN_ARCH,
             options=tuple(Option(value=a, label=a) for a in encode.REFERENCE_POLICIES),
         ),
-        # On the face: it decides both the file size and, for H3, whether the run fits the card.
+        # On the face because it decides how big the .char is. It does *not* decide what a render
+        # costs: H3 re-resizes every reference onto a 2048 short edge on the way in whatever this
+        # says, so the only lever on the vision tower is how many references are wired.
         ParamField(
-            "ref_resolution", "Resized Reference Resolution", Widget.NUMBER, 1024,
+            "ref_resolution", "Stored Reference Resolution", Widget.NUMBER, 1024,
             min=encode.NO_REFERENCE_CAP, max=8192, step=64, on_face=True,
         ),
     ),
@@ -332,9 +338,20 @@ class EncodeCharacterRunner(NodeRunner):
 
     def run(self, node: Node, inputs: dict[str, list[Any]], ctx: ExecutionContext) -> NodeResult:
         _require_encoders()
-        refs = list(inputs.get("images") or [])
-        if not refs:
-            raise ValueError("A character needs at least one reference image.")
+        # Order is the manifest's order and therefore the prompt's numbering: face, then body,
+        # then cloth, which is the priority the slot allocation also uses.
+        grouped = [
+            (cf.ROLE_FACE, list(inputs.get("images") or [])),
+            (cf.ROLE_BODY, list(inputs.get("body") or [])),
+            (cf.ROLE_CLOTH, list(inputs.get("cloth") or [])),
+        ]
+        refs = [ref for _role, wired in grouped for ref in wired]
+        roles = [role for role, wired in grouped for _ref in wired]
+        if not inputs.get("images"):
+            raise ValueError(
+                "A character needs at least one face reference. Body and clothing references "
+                "condition on top of an identity; they cannot carry one on their own."
+            )
         name = str(node.params.get("name") or "").strip() or "Character"
         # A wired description wins over the typed one, so a Prompt node can drive it.
         description = str(_first(inputs.get("description")) or node.params.get("description") or "")
@@ -345,8 +362,14 @@ class EncodeCharacterRunner(NodeRunner):
         def report(fraction: float, status: str) -> None:
             ctx.emitter.emit(progress_event(ctx, node, Phase.ENCODE, fraction, status=status))
 
-        doc = encode.char_encode(paths, name=name, description=description, on_progress=report)
-        logger.info("Encoded character %s from %d reference(s)", name, len(paths))
+        doc = encode.char_encode(
+            paths, name=name, roles=roles, description=description, on_progress=report
+        )
+        counts = {role: roles.count(role) for role in cf.ROLES if roles.count(role)}
+        logger.info(
+            "Encoded character %s from %d reference(s): %s",
+            name, len(paths), ", ".join(f"{n} {role}" for role, n in counts.items()),
+        )
         return NodeResult(outputs={"character": Identity(doc=doc)})
 
 

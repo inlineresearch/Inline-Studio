@@ -21,7 +21,7 @@ import torch
 
 from ...device.policy import DevicePolicy
 from ...errors import CancelledError, ComponentError
-from ...graph.descriptor import NodeDescriptor, ParamField, Port, Widget
+from ...graph.descriptor import NodeDescriptor, Option, ParamField, Port, Widget
 from ...graph.runners import NodeResult, NodeRunner
 from ...graph.schema import Node, PortKind
 from ...media import MediaKind
@@ -102,6 +102,27 @@ def _params(variant: Variant) -> tuple[ParamField, ...]:
         ParamField("num_inference_steps", "Steps", Widget.NUMBER, 50, min=1, max=200, step=1),
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
     ]
+    if variant.references:
+        # References are ~99.8% of what the conditioner reads, so their count is the only lever.
+        fields.append(
+            ParamField(
+                "character_references", "Character references", Widget.NUMBER,
+                REFERENCE_LIMITS.max_images, min=1, max=REFERENCE_LIMITS.max_images, step=1,
+            )
+        )
+        fields.append(
+            ParamField(
+                "character_reference_roles", "Character reference roles", Widget.SELECT, "all",
+                options=(Option("all", "Face, body and clothing"), Option("face", "Face only")),
+            )
+        )
+        # Off by default: unvalidated, and one render replayed the references as opening frames.
+        fields.append(
+            ParamField(
+                "character_role_lines", "Name character reference roles in the prompt",
+                Widget.BOOLEAN, False,
+            )
+        )
     fields.append(
         ParamField(
             "model", "Diffusion model", Widget.SELECT, "",
@@ -207,7 +228,7 @@ def build_request(
         multiple=CANVAS_MULTIPLE,
         minimum=CANVAS_MULTIPLE,
     )
-    character = _apply_character(inputs, variant)
+    character = _apply_character(inputs, variant, params)
     loras: tuple[Any, ...] = ()
     references: tuple[Any, ...] = ()
     if variant.references:
@@ -261,18 +282,33 @@ def _character_file(inputs: dict[str, list[Any]]) -> str:
     return name
 
 
-def _apply_character(inputs: dict[str, list[Any]], variant: Variant) -> _Character | None:
+def _apply_character(
+    inputs: dict[str, list[Any]], variant: Variant, params: dict[str, Any]
+) -> _Character | None:
     """A wired character as references or as its adapter, or None when none is wired."""
     chosen = _character_file(inputs)
     if not chosen:
         return None
     from ...characters import apply as characters
+    from ...characters import charfile as cf
     from ...graph.loader_runners import LoraRef
 
-    # The reference partition cannot run on an adapter alone, so it asks for references outright
-    # rather than taking the adapter a character prefers by default.
+    # Capped inside `char_apply` so the slots divide by role, not by arrival order.
+    wired = len([v for v in (inputs.get("references") or []) if v is not None])
+    budget = int(params.get("character_references") or REFERENCE_LIMITS.max_images)
+    slots = max(0, min(budget, REFERENCE_LIMITS.max_images - wired))
+    keep = None if params.get("character_reference_roles", "all") == "all" else (cf.ROLE_FACE,)
+    if variant.references and slots == 0:
+        raise ComponentError(
+            f"{variant.title} takes {REFERENCE_LIMITS.max_images} images and {wired} are wired, so "
+            f"{chosen} has no slot left. Unwire one, or raise Character references."
+        )
     applied = characters.char_apply(
-        chosen, ARCH, prefer="reference" if variant.references else None
+        chosen,
+        ARCH,
+        prefer="reference" if variant.references else None,
+        limit=slots if variant.references else None,
+        keep_roles=keep if variant.references else None,
     )
     if applied is None:
         return None
@@ -295,23 +331,19 @@ def _apply_character(inputs: dict[str, list[Any]], variant: Variant) -> _Charact
             "Wire it through Compile References with Model set to minimax-h3 and write it again, "
             "or wire images into this node's References input."
         )
-    how = "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)"
-    logger.info("Applying character %s by %s", applied.name, how)
-    # H3 resolves `<Picture N>`, not FLUX.2's ordinal prose, and the character's images land after
-    # whatever the user already wired.
-    wired = len([v for v in (inputs.get("references") or []) if v is not None])
-    # Trimmed here rather than by the caller, so the prefix can never name a position that was
-    # dropped: a character is a library artefact and H3's 9 images is not every model's limit.
-    keep = list(applied.refs)[: max(0, REFERENCE_LIMITS.max_images - wired)]
-    if len(keep) < len(applied.refs):
-        logger.info(
-            "%s: using %d of %s's %d references, the most it takes beside %d wired",
-            variant.title, len(keep), chosen, len(applied.refs), wired,
-        )
-        applied.refs = keep
+    counts = {role: applied.roles.count(role) for role in cf.ROLES if applied.roles.count(role)}
+    logger.info(
+        "Applying character %s by %s (%s), beside %d wired",
+        applied.name,
+        "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)",
+        ", ".join(f"{n} {role}" for role, n in counts.items()) or "no references",
+        wired,
+    )
     return _Character(
-        refs=keep,
-        prefix=applied.prompt_prefix(wired + 1, style="token"),
+        refs=applied.refs,
+        prefix=applied.prompt_prefix(
+            wired + 1, style="token", role_lines=bool(params.get("character_role_lines"))
+        ),
         lora=(
             LoraRef(file=str(applied.lora), strength=applied.lora_strength)
             if applied.lora is not None
@@ -513,11 +545,10 @@ class MiniMaxH3Runner(NodeRunner):
 
 
 def _reference_tokens(request: Request) -> tuple[int, int]:
-    """Wired image references and what they cost the vision tower, measured from the pixels.
+    """Wired image references and their vision-tower cost, counted through the 2048 short edge the
+    pipeline forces: the stored pixels under-report a downscaled reference 16x."""
+    from .vendor.packing_ref2va import resolve_reference_image_size
 
-    Read off the files rather than a setting, because the size that matters was decided when the
-    character was compiled and nothing on this node records it.
-    """
     images = [r for r in request.references if getattr(r, "kind", None) == ReferenceKind.IMAGE]
     tokens = 0
     for ref in images:
@@ -526,9 +557,10 @@ def _reference_tokens(request: Request) -> tuple[int, int]:
 
             with Image.open(getattr(ref.value, "path", ref.value)) as handle:
                 width, height = handle.size
+            resolved_h, resolved_w = resolve_reference_image_size(width, height)
         except Exception:  # noqa: BLE001 - an error path must not raise a second error
             continue
-        tokens += (width // 32) * (height // 32)
+        tokens += (resolved_w // 32) * (resolved_h // 32)
     return len(images), tokens
 
 
@@ -564,12 +596,11 @@ def _oom(request: Request, *, host: bool = False, held: int = 0) -> str:
     if not images:
         return canvas
     cost = f", which is {tokens:,} vision tokens" if tokens else ""
-    # Named alone because references are encoded before a frame exists: the canvas cannot move this
-    # step at all, and a hint that leads with it sends the user to resize for nothing.
+    # Fewer references is the only lever: resolution cannot reduce this, nor can the canvas.
     return (
-        f"{where} ran out encoding {images} reference(s){cost}. The canvas does not affect this "
-        "step. Lower Resized Reference Resolution on the Compile References node and write the "
-        "character again - halving it quarters the tokens - or wire fewer references."
+        f"{where} ran out encoding {images} reference(s){cost}. Each one costs about 4,000 tokens "
+        "whatever resolution it was stored at, so wire fewer references. Neither the canvas nor "
+        "Resized Reference Resolution affects this step."
     )
 
 

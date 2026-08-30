@@ -32,22 +32,48 @@ class AppliedCharacter:
         description: str,
         lora: Path | None = None,
         lora_strength: float = 1.0,
+        roles: list[str] | None = None,
     ) -> None:
         self.name = name
         self.refs = refs
         self.description = description
+        #: One role per ref, in the same order. All face when a character predates roles, which is
+        #: what keeps an old character's prompt byte-identical to what it used to produce.
+        self.roles = roles or [cf.ROLE_FACE] * len(refs)
         #: A trained adapter, which for a model with no reference channel is the only route.
         self.lora = lora
         #: What it fuses at. Set on Attach Adapter, because an overfit adapter is only usable
         #: turned down and the character wire carries no controls of its own.
         self.lora_strength = lora_strength
 
-    def prompt_prefix(self, first_position: int, style: str = "ordinal") -> str:
+    def _role_lines(self, first_position: int, style: str) -> str:
+        """Sentences binding each role to the positions it actually landed on.
+
+        Written from the allocation rather than alongside it, so the numbers cannot drift from the
+        references. Silent when everything is face: an old character keeps its exact prompt.
+        """
+        grouped: dict[str, list[int]] = {}
+        for offset, role in enumerate(self.roles[: len(self.refs)]):
+            grouped.setdefault(role, []).append(first_position + offset)
+        if set(grouped) <= {cf.ROLE_FACE}:
+            return ""
+        out = ""
+        for role in cf.ROLES:
+            numbers = grouped.get(role)
+            if numbers:
+                out += f" {_positions(style, numbers)} show {self.name}'s {_ROLE_BINDINGS[role]}."
+        return out
+
+    def prompt_prefix(
+        self, first_position: int, style: str = "ordinal", role_lines: bool = False
+    ) -> str:
         """Text naming the positions the character lands on, so positional prompting resolves.
 
         ``style`` because a model only resolves the form it was trained on: FLUX.2 reads the ordinal
         prose below, MiniMax H3 reads ``<Picture N>`` tokens (``models/references.py``), and handing
         either the other one names positions it cannot see.
+
+        ``role_lines`` defaults off: the bindings are unvalidated, see docs/characters.md.
         """
         if not self.refs:
             # A LoRA carries the likeness, so the description is all the prompt needs.
@@ -64,6 +90,8 @@ class AppliedCharacter:
             ordinals = [str(n) for n in positions]
             which = f"Images {', '.join(ordinals[:-1])} and {ordinals[-1]} show"
         line = f"{which} {self.name}, the same character in every image."
+        if role_lines:
+            line += self._role_lines(first_position, style)
         detail = " ".join(self.description.split())
         if not detail:
             return f"{line} "
@@ -73,18 +101,42 @@ class AppliedCharacter:
         return f"{line} {detail} "
 
 
+def _positions(style: str, numbers: list[int]) -> str:
+    """How a role line refers *back* to positions, in prose, never re-declaring them."""
+    # Never `<Picture N>`: that is H3's reserved label and repeating it replayed the references.
+    noun = "Picture" if style == "token" else "Image"
+    if len(numbers) == 1:
+        return f"{noun} {numbers[0]}"
+    return f"{noun}s {', '.join(str(n) for n in numbers[:-1])} and {numbers[-1]}"
+
+
+#: What each role binds to. Naming only, never describing: "slim build" or "red jacket" would be
+#: text competing with the reference images, which is the caption-overrides-identity failure the
+#: LoRA evals already found.
+_ROLE_BINDINGS = {
+    cf.ROLE_FACE: "face",
+    cf.ROLE_BODY: "full body and build",
+    cf.ROLE_CLOTH: "outfit",
+}
+
+
 def _cache_root() -> Path:
     return data_dir() / "characters"
 
 
 def char_apply(
-    chosen: str, arch: str = encode.FLUX2_KLEIN_ARCH, prefer: str | None = None
+    chosen: str,
+    arch: str = encode.FLUX2_KLEIN_ARCH,
+    prefer: str | None = None,
+    limit: int | None = None,
+    keep_roles: tuple[str, ...] | None = None,
 ) -> AppliedCharacter | None:
     """How a character applies on ``arch``, or None when none is picked. An unreadable pick raises
     rather than silently generating the wrong person.
 
     ``arch`` matters because a model without a reference channel can only take the adapter, and its
-    payloads are keyed separately."""
+    payloads are keyed separately. ``keep_roles`` narrows which of them are sent at all, per render,
+    so testing a character face-only does not mean writing a second character."""
     name = str(chosen or "").strip()
     if not name:
         return None
@@ -113,14 +165,42 @@ def char_apply(
     # No reference channel on this arch, so the adapter is the only way it can apply at all.
     if not references:
         mode = "lora"
-    refs = [] if mode == "lora" else _extract(doc, digest, arch)
+    refs, roles = ([], []) if mode == "lora" else _extract(doc, digest, arch)
+    if keep_roles is not None:
+        kept = [i for i, role in enumerate(roles) if role in keep_roles]
+        refs, roles = [refs[i] for i in kept], [roles[i] for i in kept]
+    if limit is not None:
+        refs, roles = _fit_roles(refs, roles, limit)
     return AppliedCharacter(
         doc.manifest.name or path.stem,
         refs,
         description,
         lora if mode == "lora" else None,
         strength,
+        roles=roles,
     )
+
+
+def _fit_roles(
+    refs: list[AssetRef], roles: list[str], limit: int
+) -> tuple[list[AssetRef], list[str]]:
+    """Cut to what a model takes, dividing the slots by role rather than by arrival.
+
+    Trimming the tail instead would drop whichever role happens to be last, so a character with
+    face, body and cloth would silently lose its wardrobe on any model that takes fewer than it
+    holds. Order is preserved, because order is what the prompt numbers.
+    """
+    if limit >= len(refs) or limit <= 0:
+        return refs[: max(0, limit)], roles[: max(0, limit)]
+    counts = {role: roles.count(role) for role in cf.ROLES}
+    share = encode.allocate_roles(counts, limit)
+    keep: list[int] = []
+    taken = dict.fromkeys(cf.ROLES, 0)
+    for index, role in enumerate(roles):
+        if taken[role] < share.get(role, 0):
+            taken[role] += 1
+            keep.append(index)
+    return [refs[i] for i in keep], [roles[i] for i in keep]
 
 
 def _extract_lora(doc: cf.CharDoc, digest: str, arch: str) -> Path | None:
@@ -172,11 +252,13 @@ def _recompile(doc: cf.CharDoc, path: Path, arch: str = encode.FLUX2_KLEIN_ARCH)
     return doc
 
 
-def _extract(doc: cf.CharDoc, digest: str, arch: str) -> list[AssetRef]:
+def _extract(doc: cf.CharDoc, digest: str, arch: str) -> tuple[list[AssetRef], list[str]]:
     payload = doc.manifest.payloads.get(arch) or {}
-    files = [str(entry.get("path")) for entry in payload.get("files") or []]
+    entries = list(payload.get("files") or [])
+    files = [str(entry.get("path")) for entry in entries]
+    roles = [cf.role_of(entry) for entry in entries]
     if not files:
-        return []
+        return [], []
 
     root = _cache_root() / digest
     marker = root / ".complete"
@@ -194,7 +276,7 @@ def _extract(doc: cf.CharDoc, digest: str, arch: str) -> list[AssetRef]:
         staging.replace(root)
         _prune(_cache_root())
 
-    return [AssetRef(ref="path", path=str(root / Path(member).name)) for member in files]
+    return [AssetRef(ref="path", path=str(root / Path(member).name)) for member in files], roles
 
 
 def _prune(root: Path) -> None:

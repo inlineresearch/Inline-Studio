@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { type NodeProps } from '@xyflow/react'
 import { isModelPort } from '@shared/coreNodes'
 import { isExtensionNode, extensionOf } from '@shared/extensions'
@@ -14,6 +14,18 @@ import { useLightboxStore } from '../../../store/lightboxStore'
 import { matchControlAspect } from '../../../lib/matchControlAspect'
 import { resolveCoreInputThumbs } from './coreInputThumbs'
 import { CoreOutputPreview, CoreOutputThumb } from './CoreOutputPreview'
+import type { SlotId } from './takeSlots'
+import {
+  applyableParams,
+  buildSlots,
+  activePending,
+  hasEdits,
+  restorableKeys,
+  slotMedia,
+  slotPrompt,
+  slotRecipe,
+} from './takeSlots'
+import type { CorePendingRun, CoreTakeRef } from '@shared/types'
 import { NodeFrame } from './NodeFrame'
 import { bottomStyle, compactNodeMinHeight, topStyle } from './nodeSize'
 import { PortHandle } from './PortHandle'
@@ -34,6 +46,9 @@ import {
   SquareIcon,
   TypeIcon,
   WandIcon,
+  RunningDots,
+  StopIcon,
+  PencilIcon,
 } from './NodeBadge'
 import { resolveMedia } from '@/lib/media'
 
@@ -82,6 +97,15 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   const frames = useFrameStore((s) => s.frames)
   const takesByFrame = useFrameStore((s) => s.takesByFrame)
   const openLightbox = useLightboxStore((s) => s.open)
+  // Not persisted: a saved browse position reopens a project showing history, not the present.
+  const [slot, setSlot] = useState<SlotId>('current')
+  // Follow each render as it lands: Core promotes a finished take to the node's active output.
+  const activeTakeId = item?.data.core?.output?.takeId
+  useEffect(() => {
+    if (activeTakeId) setSlot(activeTakeId)
+  }, [activeTakeId])
+  // What Generate will actually send, so the front slot never shows an older take's prompt.
+  const livePrompt = useMoodboardStore((s) => s.connectedPromptText(itemId))
   const coreType = item?.type === 'core' ? item.data.core?.type : undefined
   const descriptor = useCoreNodesStore((s) =>
     coreType ? s.descriptors.find((d) => d.type === coreType) : undefined,
@@ -175,22 +199,51 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
   // Take history for the on-node output strip (newest first). Older items predate history and only
   // carry a single `output` - treat that as a one-entry history. `output` marks the active take.
-  const outputs = core.outputs ?? (core.output ? [core.output] : [])
-  const activeTakeId = core.output?.takeId
-  // Switching a take restores that image's recipe non-destructively: its settings onto this node's
-  // params, and its prompt onto the wired prompt node (if one still exists). No nodes are created.
-  // The take's *seed* is deliberately NOT restored - keep the node's current seed so browsing history
-  // never pins a fixed seed (which would make every re-generation identical and turn on the node
-  // cache, so connection/control changes would stop taking effect until the seed was reset).
-  const setActiveOutput = (o: NonNullable<typeof core.output>): void => {
-    let params = core.params
-    if (o.params) {
-      const restored: Record<string, unknown> = { ...o.params }
-      delete restored.seed
-      params = { ...core.params, ...restored }
-    }
-    void updateItem(itemId, { data: { ...item.data, core: { ...core, output: o, params } } })
-    if (typeof o.prompt === 'string') void setConnectedPromptText(itemId, o.prompt)
+  // Minus the installed-file dropdowns: a take records the runner's `model`, not the filename.
+  const restorable = restorableKeys(descriptor?.params)
+  const edited = hasEdits(core, livePrompt)
+  const slots = buildSlots(core, busy || executing, edited)
+  // A slot that has gone falls back to the active output rather than highlighting nothing.
+  const shown = slots.some((e) => e.id === slot) ? slot : (core.output?.takeId ?? 'current')
+
+  const shownPrompt = slotPrompt(core, shown, livePrompt)
+  const shownMedia = slotMedia(core, shown)
+  const rendering = (busy || executing) && shown === 'current'
+  // Selecting a slot restores the graph that produced it, seed excluded: a pinned seed turns on
+  // the node cache and freezes re-generation.
+  const restore = (
+    recipe: { params?: Record<string, unknown>; prompt?: string } | undefined,
+    output?: CoreTakeRef,
+    pending?: CorePendingRun,
+  ): void => {
+    const params = recipe ? { ...core.params, ...applyableParams(recipe, restorable) } : core.params
+    const next = { ...core, params }
+    if (output) next.output = output
+    if (pending) next.pending = pending
+    void updateItem(itemId, { data: { ...item.data, core: next } })
+    if (typeof recipe?.prompt === 'string') void setConnectedPromptText(itemId, recipe.prompt)
+  }
+
+  const selectTake = (o: CoreTakeRef): void => {
+    // Settings edited but never generated have no take to come back to, and this restore is about
+    // to overwrite them. Captured here rather than on every keystroke: this is the only moment they
+    // can be lost, so it is the only moment worth a write. It replaces a stopped run's snapshot,
+    // which the edit has superseded; it never replaces a running one, whose settings are the only
+    // record of what is on the GPU right now.
+    // A snapshot must exist before this overwrites the node's params. Never over a draft or a
+    // running run: see "the draft survives browsing" in docs/generation-recipe.md. A stopped run's snapshot is replaced only by a real edit.
+    const held = activePending(core)?.status
+    const draft: CorePendingRun | undefined =
+      held === 'running' || held === 'draft' || (held !== undefined && !edited)
+        ? undefined
+        : { params: { ...core.params }, prompt: livePrompt, startedAt: Date.now(), status: 'draft' }
+    setSlot(o.takeId)
+    restore(o, o, draft)
+  }
+
+  const selectCurrent = (): void => {
+    setSlot('current')
+    restore(slotRecipe(core, 'current'))
   }
 
   // Real "models missing" signal from the requirements check (replaces the old options heuristic,
@@ -541,20 +594,27 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           {/* Edge-to-edge output preview. */}
           <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
             {references.length > 0 && <ReferenceStrip references={references} />}
-            {core.output ? (
-              <CoreOutputPreview
-                filePath={core.output.filePath}
-                kind={core.output.kind}
-                name={core.output.prompt || descriptor.title}
-                onExpand={(kind) =>
-                  core.output &&
-                  openLightbox({
-                    src: resolveMedia(core.output.filePath),
-                    kind,
-                    name: core.output.prompt || descriptor.title,
-                  })
+            {shownMedia ? (
+              // Dimmed while rendering rather than blanked: an empty card through a long render
+              // reads as broken, and the previous take is the most useful thing to look at.
+              <div
+                className={
+                  rendering ? 'h-full w-full opacity-40 transition-opacity' : 'h-full w-full'
                 }
-              />
+              >
+                <CoreOutputPreview
+                  filePath={shownMedia.filePath}
+                  kind={shownMedia.kind}
+                  name={shownMedia.prompt || descriptor.title}
+                  onExpand={(kind) =>
+                    openLightbox({
+                      src: resolveMedia(shownMedia.filePath),
+                      kind,
+                      name: shownMedia.prompt || descriptor.title,
+                    })
+                  }
+                />
+              </div>
             ) : (
               <div className="flex h-full w-full items-center justify-center px-4">
                 <span className="text-center text-[10px] text-zinc-600">
@@ -605,46 +665,86 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
             )}
           </div>
 
-          {/* Take history: every render this node produced, newest first. Click one to make it the
-              active output (shown large + flowed downstream). Only shown once there's more than one. */}
-          {outputs.length > 1 && (
-            <div className="nowheel flex shrink-0 gap-1 overflow-x-auto border-t border-border bg-surface/90 px-1.5 py-1.5">
-              {outputs.map((o) => (
+          {/* Take history behind a permanent Current slot. Current holds the node's live settings,
+              which is what makes browsing reversible: selecting it again is how you get back. */}
+          <div className="nowheel flex shrink-0 gap-1 overflow-x-auto border-t border-border bg-surface/90 px-1.5 py-1.5">
+            {slots.map((entry) => {
+              const take = entry.take
+              const active = entry.id === shown
+              const ring = active
+                ? 'border-emerald-400 ring-1 ring-emerald-400/40'
+                : 'border-border hover:border-zinc-500'
+              if (!take) {
+                // One slot for everything that is not a finished render: edited, running, stopped.
+                const face = {
+                  draft: {
+                    tone: 'border-dashed border-zinc-500 hover:border-zinc-400',
+                    title: 'Edited since the last render - click to restore these settings',
+                    glyph: <PencilIcon className="h-4 w-4 text-zinc-400" />,
+                  },
+                  failed: {
+                    tone: 'border-red-500/70 hover:border-red-400',
+                    title: 'Failed - click to restore the settings it ran with',
+                    glyph: <StopIcon className="h-4 w-4 text-red-400" />,
+                  },
+                  cancelled: {
+                    tone: 'border-amber-500/70 hover:border-amber-400',
+                    title: 'Cancelled - click to restore the settings it ran with',
+                    glyph: <StopIcon className="h-4 w-4 text-amber-400" />,
+                  },
+                  running: {
+                    tone: ring,
+                    title: `Rendering${pct === null ? '' : ` ${pct}%`} - click to restore its settings`,
+                    // Dots mean working, so no other state may wear them.
+                    glyph: <RunningDots className="text-emerald-300" />,
+                  },
+                }[entry.state === 'take' ? 'draft' : entry.state]
+                return (
+                  <button
+                    key="current"
+                    onClick={selectCurrent}
+                    title={face.title}
+                    className={`nodrag relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded border bg-black/60 transition-colors ${active ? ring : face.tone}`}
+                  >
+                    {face.glyph}
+                    {entry.state === 'running' && (
+                      <span className="absolute inset-x-0 bottom-0 h-0.5 bg-emerald-400/70" />
+                    )}
+                  </button>
+                )
+              }
+              return (
                 <button
-                  key={o.takeId}
-                  onClick={() => setActiveOutput(o)}
-                  title={o.takeId === activeTakeId ? 'Active take' : 'Use this take'}
-                  className={`nodrag relative h-11 w-11 shrink-0 overflow-hidden rounded border transition-colors ${
-                    o.takeId === activeTakeId
-                      ? 'border-emerald-400 ring-1 ring-emerald-400/40'
-                      : 'border-border hover:border-zinc-500'
-                  }`}
+                  key={entry.id}
+                  onClick={() => selectTake(take)}
+                  title={active ? 'Shown' : 'Use this take'}
+                  className={`nodrag relative h-11 w-11 shrink-0 overflow-hidden rounded border transition-colors ${ring}`}
                 >
-                  <CoreOutputThumb filePath={o.filePath} kind={o.kind} />
+                  <CoreOutputThumb filePath={take.filePath} kind={take.kind} />
                   {/* Only when a character was applied and a score was actually measured: an
                       unmeasurable take must not read as a zero-scoring one. */}
-                  {o.continuityScore !== undefined && (
+                  {take.continuityScore !== undefined && (
                     <span
-                      title={scoreTitle(o.continuityScore, o.continuityFaceOnly)}
-                      className={`pointer-events-none absolute left-0.5 top-0.5 rounded bg-black/85 px-1 text-[8px] leading-tight ${scoreTone(o.continuityScore)}`}
+                      title={scoreTitle(take.continuityScore, take.continuityFaceOnly)}
+                      className={`pointer-events-none absolute left-0.5 top-0.5 rounded bg-black/85 px-1 text-[8px] leading-tight ${scoreTone(take.continuityScore)}`}
                     >
-                      {Math.round(o.continuityScore)}
-                      {scoreSuffix(o.continuityFaceOnly)}
+                      {Math.round(take.continuityScore)}
+                      {scoreSuffix(take.continuityFaceOnly)}
                     </span>
                   )}
                 </button>
-              ))}
-            </div>
-          )}
+              )
+            })}
+          </div>
 
-          {/* The active take's prompt (restored from its recipe on switch), so the shown image's
-              prompt is visible without opening Adjust. */}
-          {core.output?.prompt && (
+          {/* The selected slot's prompt: the browsed take's, or the live one on Current. It used to
+              always show the active take's, so an edited prompt left the node advertising the old. */}
+          {shownPrompt && (
             <div
               className="shrink-0 truncate border-t border-border bg-surface/90 px-2 py-1 text-[10px] text-zinc-400"
-              title={core.output.prompt}
+              title={shownPrompt}
             >
-              {core.output.prompt}
+              {shownPrompt}
             </div>
           )}
 

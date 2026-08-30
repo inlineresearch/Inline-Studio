@@ -76,6 +76,7 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
       const assetIds = ((data.assetIds as string[] | undefined) ?? []).filter((id) => known.has(id))
       if (created && assetIds.length) {
         await store.updateItem(created.id, { data: { ...created.data, assetIds } }, false)
+        await store.fitLoaderToAsset(created.id, assetIds[0])
       }
     } else if (it.type === 'frame' && (data.fal as { modelId?: string } | undefined)?.modelId) {
       // A fal gen node - Core authored it with the model + params.

@@ -10,6 +10,7 @@ import {
   ASSET_DND_TYPE,
   MEDIA_FILE_DND_TYPE,
 } from '../../../lib/dnd'
+import { LOADER_CHROME_H, LOADER_MIN_BODY, LOADER_MIN_W } from '../../../lib/loaderFit'
 import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
 import { resolveMedia } from '@/lib/media'
 import {
@@ -18,8 +19,8 @@ import {
   pickFilesViaInput,
 } from '../../../lib/importFiles'
 import { useLightboxStore } from '../../../store/lightboxStore'
-import { VideoPreview } from '../../../components/VideoPreview'
 import { Waveform } from '../../../components/Waveform'
+import { MediaBody } from './MediaBody'
 import { NodeFrame } from './NodeFrame'
 import { ImageGlyph, NodeBadge, NodeBadgeRow, StarIcon, UploadIcon } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
@@ -119,6 +120,8 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
   }
 
   const heroName = cur ? (assets.find((a) => a.id === cur.assetId)?.name ?? 'asset') : 'asset'
+  // Audio renders as a waveform, so the media body only ever sees the other two kinds.
+  const mediaKind: 'image' | 'video' = cur?.kind === 'video' ? 'video' : 'image'
 
   return (
     <>
@@ -131,8 +134,8 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
       <NodeFrame
         id={id}
         selected={!!selected}
-        minWidth={200}
-        minHeight={170}
+        minWidth={LOADER_MIN_W}
+        minHeight={LOADER_MIN_BODY + LOADER_CHROME_H}
         padded={false}
         subtleSelect
       >
@@ -144,33 +147,21 @@ export function LoaderNode({ id, selected }: NodeProps): React.JSX.Element {
         >
           <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-black">
             {cur ? (
-              cur.kind === 'video' ? (
-                <VideoPreview
-                  src={cur.url}
-                  poster={cur.poster}
-                  onContextMenu={(e) =>
-                    onMediaContextMenu(e, { src: cur.saveSrc, name: heroName, kind: 'video' })
-                  }
-                  onDoubleClick={() =>
-                    openLightbox({ src: cur.saveSrc, kind: 'video', name: heroName })
-                  }
-                  className="h-full w-full object-contain"
-                />
-              ) : cur.kind === 'audio' ? (
+              cur.kind === 'audio' ? (
                 <div className="flex h-full w-full items-center px-2">
                   <Waveform url={cur.waveform ?? null} className="h-1/2 w-full text-emerald-400" />
                 </div>
               ) : (
-                <img
+                <MediaBody
                   src={cur.url}
-                  alt=""
+                  kind={mediaKind}
+                  poster={cur.poster}
                   onContextMenu={(e) =>
-                    onMediaContextMenu(e, { src: cur.saveSrc, name: heroName, kind: 'image' })
+                    onMediaContextMenu(e, { src: cur.saveSrc, name: heroName, kind: mediaKind })
                   }
                   onDoubleClick={() =>
-                    openLightbox({ src: cur.saveSrc, kind: 'image', name: heroName })
+                    openLightbox({ src: cur.saveSrc, kind: mediaKind, name: heroName })
                   }
-                  className="h-full w-full object-contain"
                 />
               )
             ) : (

@@ -365,6 +365,32 @@ export function SparkleIcon({ className }: { className?: string }): React.JSX.El
   )
 }
 
+/** The fal wordmark in a bordered chip - marks a node that runs on fal, not locally. */
+export function FalIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className ?? 'h-3.5 w-3.5 shrink-0'}
+      aria-hidden="true"
+    >
+      <rect x="1" y="4" width="22" height="16" rx="3" stroke="currentColor" strokeWidth="2" />
+      <text
+        x="12"
+        y="12.6"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill="currentColor"
+        fontSize="10"
+        fontWeight="700"
+        letterSpacing="-0.4"
+      >
+        FAL
+      </text>
+    </svg>
+  )
+}
+
 /** Box - a loader-style node (`icon:"box"`). */
 export function BoxIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -458,5 +484,34 @@ export function UploadIcon({ className }: { className?: string }): React.JSX.Ele
     <Icon className={className}>
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
     </Icon>
+  )
+}
+
+/** The working indicator on a running node's Current slot: three dots lighting in sequence. */
+export function RunningDots({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <span className={`flex items-center gap-[3px] ${className ?? ''}`}>
+      <span className="run-dot h-1 w-1 rounded-full bg-current" />
+      <span className="run-dot h-1 w-1 rounded-full bg-current" />
+      <span className="run-dot h-1 w-1 rounded-full bg-current" />
+    </span>
+  )
+}
+
+/** Pencil, marking the strip slot whose settings have been edited but not yet rendered. */
+export function PencilIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
   )
 }

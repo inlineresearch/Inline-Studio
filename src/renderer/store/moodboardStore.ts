@@ -5,14 +5,18 @@
  * to main via studio().moodboard.
  */
 import { create } from 'zustand'
-import type { MoodboardItem, MoodboardConnector } from '@shared/types'
+import type { CorePendingRun, MoodboardItem, MoodboardConnector } from '@shared/types'
 import type { MoodboardItemPatch } from '@shared/ipc'
 import { ipcErrorMessage } from '../lib/ipcError'
+import { fitLoaderSize } from '../lib/loaderFit'
+import { resolveMedia } from '@/lib/media'
+import { mediaAspect } from '../lib/mediaSize'
 import { studio } from '@/lib/studio'
 
 /** Training node kinds this canvas can add; they share the Trainer graph's channels. */
 export type TrainingNodeKind = 'train/dataset' | 'train/caption' | 'train/lora' | 'train/loss'
 
+import { useAssetStore } from './assetStore'
 import { useFrameStore } from './frameStore'
 
 /** A board snapshot for the undo/redo stacks. */
@@ -54,6 +58,15 @@ interface MoodboardState {
   addControlSpace: (x: number, y: number) => Promise<MoodboardItem | null>
   /** Append library assets to a loader's ordered asset list (deduped). */
   addLoaderAssets: (itemId: string, assetIds: string[]) => Promise<void>
+  /** Place a library asset on the canvas as its own Load Assets node, sized to its media. */
+  addLoaderFromAssetInLayer: (
+    assetId: string,
+    x: number,
+    y: number,
+    parentId: string | null,
+  ) => Promise<void>
+  /** Size a loader to its media's aspect. Fires once, when the node's first assets land. */
+  fitLoaderToAsset: (itemId: string, assetId: string) => Promise<void>
   /** Remove one asset from a loader. */
   removeLoaderAsset: (itemId: string, assetId: string) => Promise<void>
   /** Move an asset to the front of a loader's list (its hero, fed downstream). */
@@ -96,9 +109,14 @@ interface MoodboardState {
   updateItem: (id: string, patch: MoodboardItemPatch, recordHistory?: boolean) => Promise<void>
   /** Merge into an item's `data`. Node selections (dataset, run, hyperparams) live there. */
   patchItemData: (id: string, data: Record<string, unknown>) => Promise<void>
-  /** Restore the text of the prompt node wired into `nodeId`'s `prompt` input (no-op if none). Used
-   * when switching a gen node's take history so the shown image's prompt is restored non-destructively. */
+  /** Restore the text of the prompt node wired into `nodeId`'s `prompt` input (no-op if none).
+   * Only ever from an explicit "use these settings", never from browsing take history. */
   setConnectedPromptText: (nodeId: string, text: string) => Promise<void>
+  /** The text of the prompt node wired into `nodeId`'s `prompt` input, or undefined. */
+  connectedPromptText: (nodeId: string) => string | undefined
+  /** Record (or clear) a Core node's submitted-but-unlanded run. Never an undo step: the user did
+   * not edit anything, and a snapshot on the stack would make one ⌘Z look like it did nothing. */
+  setPendingRun: (nodeId: string, pending: CorePendingRun | null) => Promise<void>
   deleteItem: (id: string) => Promise<void>
   /** Delete one render from a Core node's output history (and its file). */
   removeCoreOutput: (itemId: string, takeId: string) => Promise<void>
@@ -420,6 +438,26 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     const next = [...current, ...assetIds.filter((id) => !current.includes(id))]
     if (next.length === current.length) return
     await get().updateItem(itemId, { data: { ...item.data, assetIds: next } })
+    if (current.length === 0) await get().fitLoaderToAsset(itemId, next[0])
+  },
+
+  addLoaderFromAssetInLayer: async (assetId, x, y, parentId) => {
+    const created = await get().addLoader(x, y)
+    if (!created) return
+    // One patch, and no second snapshot: `addLoader` already recorded the whole drop as one step.
+    const patch: MoodboardItemPatch = { data: { ...created.data, assetIds: [assetId] } }
+    if (parentId) patch.parentId = parentId
+    await get().updateItem(created.id, patch, false)
+    await get().fitLoaderToAsset(created.id, assetId)
+  },
+
+  fitLoaderToAsset: async (itemId, assetId) => {
+    const asset = useAssetStore.getState().assets.find((a) => a.id === assetId)
+    if (!asset?.filePath) return
+    const aspect = await mediaAspect(resolveMedia(asset.filePath), asset.kind)
+    if (aspect == null) return
+    // Programmatic layout fit, part of the drop - it must not land on the undo stack of its own.
+    await get().updateItem(itemId, fitLoaderSize(aspect), false)
   },
 
   removeLoaderAsset: async (itemId, assetId) => {
@@ -772,6 +810,32 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
     } catch (e) {
       set({ error: ipcErrorMessage(e) })
     }
+  },
+
+  connectedPromptText: (nodeId) => {
+    const { items, connectors } = get()
+    const conn = connectors.find(
+      (c) =>
+        c.toItemId === nodeId && (c.data as { targetHandle?: string }).targetHandle === 'prompt',
+    )
+    if (!conn) return undefined
+    const node = items.find((i) => i.id === conn.fromItemId && i.type === 'prompt')
+    const text = node?.data.promptText
+    return typeof text === 'string' ? text : undefined
+  },
+
+  setPendingRun: async (nodeId, pending) => {
+    // Reloaded first because `updateItem` PUTs the whole `data` blob: writing it from a client copy
+    // that Core has since added a take to silently drops that take, which is how a finished render
+    // went missing with only its file left behind.
+    await get().load()
+    const item = get().items.find((i) => i.id === nodeId)
+    const core = item?.data.core
+    if (!item || !core) return
+    const next: NonNullable<MoodboardItem['data']['core']> = { ...core }
+    if (pending) next.pending = pending
+    else delete next.pending
+    await get().updateItem(nodeId, { data: { ...item.data, core: next } }, false)
   },
 
   setConnectedPromptText: async (nodeId, text) => {

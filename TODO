@@ -1,26 +1,20 @@
 Backlog
 - Remove frame node entirely
 - Update asset node to resize based on input
-- drag drop from output to spawn asset node
-- double click, search node
 
 
 settings
 - project output share settings
 - Group based settings
-- HF Token
 
 handle: 
-- Clearly mention if gated model download failed 
 
 New models
-- Ltx 2.5
+- Minimax union CN
 
 Training: 
-- Snapshot export on checkpoint
+- Improve ui for edit dataset/trigger name
 
 Char
 - Body & cloth cosistency
-- Support for minimax & krea2
-- Look into this error: https://www.reddit.com/r/StableDiffusion/comments/1vp0xct/comment/p3vef5w/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button
 

@@ -24,10 +24,12 @@ import { NodeFrame } from './NodeFrame'
 import {
   AdjustIcon,
   AudioGlyph,
+  FalIcon,
   ImageGlyph,
   NodeBadge,
   NodeBadgeRow,
   VideoGlyph,
+  RunningDots,
 } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
 import { NodeRunToolbar } from './NodeRunToolbar'
@@ -38,24 +40,6 @@ import { resolveMedia } from '@/lib/media'
 
 interface GenNodeData extends Record<string, unknown> {
   frameId: string
-}
-
-/** Two-sparkle mark flagging an AI/API-backed node. Matches the toolbar's create button. */
-function SparkleIcon(): React.JSX.Element {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-3.5 w-3.5 shrink-0 text-emerald-400"
-    >
-      <path d="M12 3l1.9 4.8L18.6 9.7 13.9 11.6 12 16.4 10.1 11.6 5.4 9.7 10.1 7.8Z" />
-      <path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9Z" />
-    </svg>
-  )
 }
 
 /**
@@ -262,7 +246,9 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
       />
       {/* Title + live price-estimate badges - float above the node. */}
       <NodeBadgeRow dragNodeId={id}>
-        <NodeBadge icon={<SparkleIcon />}>Generate</NodeBadge>
+        <NodeBadge icon={<FalIcon className="h-3.5 w-3.5 shrink-0 text-emerald-400" />}>
+          Generate
+        </NodeBadge>
         {price && (
           <NodeBadge
             tone="info"
@@ -386,22 +372,32 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
               </>
             )}
 
-            {/* Multiple takes → a thumbnail strip; click one to make it this node's chosen output
-                (its hero), so the shown image is what flows to anything wired downstream. */}
-            {!busy && (
-              <ThumbStrip
-                items={ordered.map((t) => ({
-                  id: t.id,
-                  url: resolveMedia(t.filePath),
-                  kind: t.kind,
-                }))}
-                selected={safeTakeIdx}
-                onSelect={(i) => {
-                  void setHero(frameId, ordered[i].id)
-                  setTakeIdx(0)
-                }}
-              />
-            )}
+            {/* Takes behind a Current slot; click a take to make it this node's chosen output (its
+                hero), so the shown image is what flows downstream. The strip used to vanish while
+                busy, which hid the history exactly when there was a render to compare against. */}
+            <ThumbStrip
+              items={ordered.map((t) => ({
+                id: t.id,
+                url: resolveMedia(t.filePath),
+                kind: t.kind,
+              }))}
+              selected={busy ? -1 : safeTakeIdx}
+              onSelect={(i) => {
+                void setHero(frameId, ordered[i].id)
+                setTakeIdx(0)
+              }}
+              leading={
+                busy ? (
+                  <div
+                    key="current"
+                    title={`Rendering${pct === null ? '' : ` ${pct}%`}`}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border-2 border-accent bg-black/70 text-emerald-300"
+                  >
+                    <RunningDots />
+                  </div>
+                ) : undefined
+              }
+            />
           </div>
 
           {/* Footer: model picker + settings (adjust). Run lives on the graph's output node. */}

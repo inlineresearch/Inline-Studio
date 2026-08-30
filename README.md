@@ -90,8 +90,8 @@ Both versions are printed at launch, and Inline Studio checks PyPI once a day in
 says so when either half is behind:
 
 ```
-Versions: inline-core 1.3.11, inline-studio-frontend 1.3.10
-UPDATE AVAILABLE: inline-studio-frontend 1.3.10 -> 1.3.11
+Versions: inline-core 1.3.13, inline-studio-frontend 1.3.12
+UPDATE AVAILABLE: inline-studio-frontend 1.3.12 -> 1.3.13
   Update with: ./webui.sh --install  (or: pip install -U inline-studio-frontend)
 ```
 
@@ -195,7 +195,9 @@ Getting the same person across shots normally means training a LoRA for each one
 same reference photos into every node by hand. Build a character once instead, then pick it from a
 dropdown.
 
-![Two reference photos compiled into a portable character file, then the same person generated in an office, a cafe, a park, a street and at a lakeside](https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/character_showcase.png)
+<video src="https://raw.githubusercontent.com/inlineresearch/Inline-Studio/main/screenshots/char-mm.mp4" controls muted loop playsinline width="100%"></video>
+
+[**Workflow: Minimax H3. Consistent face, body & cloths via reference identity →**](https://inlinestudio.art/workflows/minimax-h3-guided-consistent-characters-via-reference-identity-face-body-cloths)
 
 Drop in a photo or two and Inline Studio compiles a **`.char`**: one portable file holding your
 references and an identity fingerprint. Describe the scene, and the references carry the likeness.

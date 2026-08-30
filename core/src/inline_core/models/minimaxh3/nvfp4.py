@@ -163,9 +163,13 @@ class NVFP4Linear(nn.Module):
         rows, cols = self.weight.shape[0], self.weight.shape[1] * 2
         scales = from_blocked(self.weight_scale.to(torch.float32), rows, cols // BLOCK)
         global_scale = float(self.weight_scale_2)
-        # Row-chunked so the whole weight never exists: the conditioner runs on one short prompt, so
-        # the output is a few kilobytes while the dequantised weight would be hundreds of megabytes.
-        parts: list[torch.Tensor] = []
+        # Row-chunked so the whole dequantised weight never exists, and written into one output
+        # rather than concatenated: `torch.cat` holds every chunk *and* the result, which doubles
+        # the peak. That is invisible on a short prompt and 2 GB once references push the sequence
+        # past twenty thousand tokens.
+        out = torch.empty(
+            (*x.shape[:-1], self.out_features), dtype=x.dtype, device=x.device
+        )
         for start, stop in _row_chunks(rows, cols):
             if start >= self.out_features:
                 break
@@ -173,9 +177,10 @@ class NVFP4Linear(nn.Module):
                 self.weight[start:stop], scales[start:stop], global_scale, x.dtype
             )
             block = block[: self.out_features - start, : self.in_features]
-            bias = None if self.bias is None else self.bias[start : start + block.shape[0]]
-            parts.append(torch.nn.functional.linear(x, block, bias))
-        return torch.cat(parts, dim=-1)
+            end = start + block.shape[0]
+            bias = None if self.bias is None else self.bias[start:end]
+            out[..., start:end] = torch.nn.functional.linear(x, block, bias)
+        return out
 
     def extra_repr(self) -> str:
         return f"in_features={self.in_features}, out_features={self.out_features}, nvfp4"

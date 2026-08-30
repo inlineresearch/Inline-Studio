@@ -20,8 +20,8 @@ import {
   pickFilesViaInput,
 } from '../../../lib/importFiles'
 import { useLightboxStore } from '../../../store/lightboxStore'
-import { VideoPreview } from '../../../components/VideoPreview'
 import { Waveform } from '../../../components/Waveform'
+import { MediaBody } from './MediaBody'
 import { NodeFrame } from './NodeFrame'
 import { FilmIcon, NodeBadge, NodeBadgeRow, StarIcon, UploadIcon } from './NodeBadge'
 import { ThumbStrip } from './ThumbStrip'
@@ -79,7 +79,9 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // A "Load Assets" loader: a pure viewer with no generation. It's freely resizable (the aspect
   // auto-fit below is skipped) and passes its loaded asset straight through as its output.
   const isLoader = !!item?.data.loader
-  const mediaFit = isLoader ? 'object-contain' : 'object-cover'
+  const mediaFit = isLoader ? 'contain' : 'cover'
+  // Audio renders as a waveform, so the media body only ever sees the other two kinds.
+  const mediaKind: 'image' | 'video' = cur?.kind === 'video' ? 'video' : 'image'
 
   // Fit the node height to the media's aspect ratio at the current width, so the
   // body shows the image edge-to-edge with no black bars. The `lastFit` guard makes
@@ -228,60 +230,33 @@ export function FrameNode({ id, data, selected }: NodeProps): React.JSX.Element 
             className="relative flex flex-1 items-center justify-center overflow-hidden bg-black"
           >
             {cur ? (
-              cur.kind === 'video' ? (
-                // `cur.url` is the playable source (transcoded preview when needed);
-                // the poster shows while that transcode is still in progress.
-                <VideoPreview
-                  src={cur.url}
-                  poster={cur.poster}
-                  onLoadedMetadata={(e) => {
-                    const v = e.currentTarget
-                    if (v.videoWidth && v.videoHeight) setAspect(v.videoWidth / v.videoHeight)
-                  }}
-                  onContextMenu={(e) =>
-                    onMediaContextMenu(e, {
-                      src: cur.saveSrc,
-                      name: frame ? `Frame ${frame.name}` : 'input',
-                      kind: 'video',
-                    })
-                  }
-                  onDoubleClick={() =>
-                    openLightbox({
-                      src: cur.saveSrc,
-                      kind: 'video',
-                      name: frame ? `Frame ${frame.name}` : 'input',
-                    })
-                  }
-                  className={`h-full w-full ${mediaFit}`}
-                />
-              ) : cur.kind === 'audio' ? (
+              cur.kind === 'audio' ? (
                 <div className="flex h-full w-full items-center px-2">
                   <Waveform url={cur.waveform ?? null} className="h-1/2 w-full text-emerald-400" />
                 </div>
               ) : (
-                <img
+                // `cur.url` is the playable source (transcoded preview when needed);
+                // the poster shows while that transcode is still in progress.
+                <MediaBody
                   src={cur.url}
-                  alt=""
-                  onLoad={(e) => {
-                    const img = e.currentTarget
-                    if (img.naturalWidth && img.naturalHeight)
-                      setAspect(img.naturalWidth / img.naturalHeight)
-                  }}
+                  kind={mediaKind}
+                  poster={cur.poster}
+                  fit={mediaFit}
+                  onAspect={setAspect}
                   onContextMenu={(e) =>
                     onMediaContextMenu(e, {
                       src: cur.saveSrc,
                       name: frame ? `Frame ${frame.name}` : 'input',
-                      kind: 'image',
+                      kind: mediaKind,
                     })
                   }
                   onDoubleClick={() =>
                     openLightbox({
                       src: cur.saveSrc,
-                      kind: 'image',
+                      kind: mediaKind,
                       name: frame ? `Frame ${frame.name}` : 'input',
                     })
                   }
-                  className={`h-full w-full ${mediaFit}`}
                 />
               )
             ) : isLoader ? (

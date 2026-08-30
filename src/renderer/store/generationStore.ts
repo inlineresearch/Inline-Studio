@@ -146,6 +146,18 @@ export const useGenerationStore = create<GenerationState>((set) => ({
       busyByFrame: { ...s.busyByFrame, [itemId]: true },
       progressByFrame: { ...s.progressByFrame, [itemId]: 0 },
     }))
+    // Snapshot before the call: the node's params can be edited while it renders, and until a take
+    // lands there is nothing else holding the recipe this run is using.
+    const board = useMoodboardStore.getState()
+    const core = board.items.find((i) => i.id === itemId)?.data.core
+    if (core) {
+      void board.setPendingRun(itemId, {
+        params: { ...core.params },
+        prompt: board.connectedPromptText(itemId),
+        startedAt: Date.now(),
+        status: 'running',
+      })
+    }
     try {
       const res = await studio().generation.runWorkflow(itemId)
       if (!res.ok) {
@@ -312,6 +324,15 @@ function openMissingModels(itemId: string, error: string): boolean {
 
 export function subscribeGenerationEvents(): () => void {
   const gen = useGenerationStore.getState()
+  // A stopped one keeps its snapshot, and so its slot. Browsing history overwrites the node's
+  // params, so after a comparison this is the only copy of the settings that were submitted;
+  // clearing it on stop lost them for good. The next run on this node replaces it.
+  const markPending = async (nodeId: string, status: 'cancelled' | 'failed'): Promise<void> => {
+    const board = useMoodboardStore.getState()
+    const pending = board.items.find((i) => i.id === nodeId)?.data.core?.pending
+    if (pending) await board.setPendingRun(nodeId, { ...pending, status })
+  }
+
   // Finish any generations still running when the app last closed; their events arrive below.
   void gen.resumePending()
   // A page refresh throws away this tab's copy of the queue while Core keeps working, and a run
@@ -341,6 +362,7 @@ export function subscribeGenerationEvents(): () => void {
     }),
     studio().events.onGenerationError((e) => {
       gen.finishRun(e.frameId ?? e.targetFrameId)
+      void markPending(e.frameId ?? e.targetFrameId, 'failed')
       // The node that stopped, which for a chain is rarely the one the run was started from.
       gen.setFailedNode(e.frameId ?? e.targetFrameId)
       // A missing weight file is a thing to fix, not a sentence to read: open the popup that can
@@ -350,6 +372,7 @@ export function subscribeGenerationEvents(): () => void {
     }),
     studio().events.onGenerationCancelled((e) => {
       gen.finishRun(e.targetFrameId)
+      void markPending(e.targetFrameId, 'cancelled')
     }),
   ]
   return () => unsubs.forEach((u) => u())

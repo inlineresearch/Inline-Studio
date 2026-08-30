@@ -49,3 +49,38 @@ body {
   border-radius: 0;
   background: transparent;
 }
+
+/* The Current slot's working tile: three dots lighting 1-2-3 on a loop. A percentage was worse than
+   nothing there - a run inside a model load reports none for minutes, so the tile sat at 0% and read
+   as stuck. */
+@keyframes run-dot-cycle {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  20% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 0.2;
+  }
+}
+
+.run-dot {
+  animation: run-dot-cycle 1.2s linear infinite;
+}
+
+.run-dot:nth-child(2) {
+  animation-delay: 0.4s;
+}
+
+.run-dot:nth-child(3) {
+  animation-delay: 0.8s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-dot {
+    animation: none;
+    opacity: 0.7;
+  }
+}

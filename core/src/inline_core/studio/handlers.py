@@ -245,7 +245,7 @@ def register_studio_handlers(
         "moodboard:addGenNode",
         lambda mid, x, y: mb.add_gen_node(conn(), mid, x, y, kind="image", params={}, title=mid),
     )
-    reg("moodboard:updateItem", lambda iid, patch: mb.update_item(conn(), iid, patch))
+    reg("moodboard:updateItem", lambda iid, patch: mb.client_update_item(conn(), iid, patch))
     reg("moodboard:deleteItem", lambda iid: mb.delete_item(conn(), iid))
 
     def remove_core_output(item_id: str, take_id: str) -> None:
