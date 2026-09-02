@@ -29,6 +29,8 @@ interface ModelRequirementsState {
   byType: Record<string, ModelRequirements>
   /** What each key was asked for, so a reload after a download repeats the same question. */
   asked: Record<string, { nodeType: string; params?: Record<string, unknown> }>
+  /** The registryVersion each cached answer was fetched at, so a stale one is re-asked. */
+  loadedFor: Record<string, string | null>
   /** The node type whose popup is open, or null. */
   openFor: string | null
   /** Per node type → per component id → live download state. */
@@ -39,7 +41,12 @@ interface ModelRequirementsState {
    * A node type is not always enough: Train LoRA's components follow the architecture in its own
    * settings, so two of them on different archs would otherwise overwrite each other's answer.
    */
-  load: (nodeType: string, params?: Record<string, unknown>, key?: string) => Promise<void>
+  load: (
+    nodeType: string,
+    params?: Record<string, unknown>,
+    key?: string,
+    refresh?: boolean,
+  ) => Promise<void>
   checkOnUse: (
     nodeType: string,
     reason: string,
@@ -77,20 +84,44 @@ function patch(
   return next
 }
 
+/** Requirement requests still awaiting an answer, by cache key. */
+const inFlight = new Map<string, Promise<void>>()
+
 export const useModelRequirementsStore = create<ModelRequirementsState>((set, get) => ({
   byType: {},
   asked: {},
+  loadedFor: {},
   openFor: null,
   downloads: {},
 
-  load: async (nodeType, params, key) => {
+  load: async (nodeType, params, key, refresh = false) => {
     const at = key ?? nodeType
-    const res = await studio().models.requirements(nodeType, params)
-    if (!res.ok) return
-    set((s) => ({
-      byType: { ...s.byType, [at]: res.value },
-      asked: { ...s.asked, [at]: { nodeType, params } },
-    }))
+    const version = useCoreNodesStore.getState().registryVersion
+
+    // Answered already, and nothing on disk has moved since. The canvas renders only the visible
+    // nodes, so panning or a fitView remounts them and re-runs this effect; without the check,
+    // importing a seven-node graph asked Core the same questions about thirty times.
+    if (!refresh && get().byType[at] && get().loadedFor[at] === version) {
+      const asked = get().asked[at]
+      if (JSON.stringify(asked?.params ?? null) === JSON.stringify(params ?? null)) return
+    }
+
+    // Coalesced so a burst of nodes of one type asks once rather than once each.
+    const flight = inFlight.get(at)
+    if (flight) return flight
+
+    const request = (async () => {
+      const res = await studio().models.requirements(nodeType, params)
+      if (!res.ok) return
+      set((s) => ({
+        byType: { ...s.byType, [at]: res.value },
+        asked: { ...s.asked, [at]: { nodeType, params } },
+        loadedFor: { ...s.loadedFor, [at]: version },
+      }))
+    })().finally(() => inFlight.delete(at))
+
+    inFlight.set(at, request)
+    return request
   },
 
   /** Load, then offer the registry whatever this node is missing. Used where a node is chosen. */
@@ -140,7 +171,8 @@ export const useModelRequirementsStore = create<ModelRequirementsState>((set, ge
     // Re-asked exactly as before, because a keyed entry's answer depends on the params it carried.
     for (const key of keysFor(get(), e.nodeType)) {
       const asked = get().asked[key]
-      if (asked) void get().load(asked.nodeType, asked.params, key)
+      // Forced: the files landed under models/ a moment ago and registryVersion has not moved yet.
+      if (asked) void get().load(asked.nodeType, asked.params, key, true)
     }
     void useCoreNodesStore.getState().load()
   },

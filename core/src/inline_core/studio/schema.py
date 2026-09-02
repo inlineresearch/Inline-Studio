@@ -12,14 +12,17 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS project (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL
+  updated_at  INTEGER NOT NULL,
+  -- Set once the Workflows popup has auto-opened for this project, so a dismissal sticks. Lives
+  -- here rather than in the app data dir so it travels with the portable project folder.
+  workflows_prompted INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sequences (
@@ -305,6 +308,9 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
     _migrate_renames(conn)  # v7 -> v8: shot -> frame
 
     _add_column_if_missing(conn, "assets", "folder_id", "TEXT")
+
+    # v21 -> v22: the Workflows popup auto-opens once per project.
+    _add_column_if_missing(conn, "project", "workflows_prompted", "INTEGER NOT NULL DEFAULT 0")
 
     # v18 -> v19: a Control LoRA pairs a reference clip with each target. Both are additive and
     # nullable/defaulted, so an existing project reads as a clip-mode dataset with no references.

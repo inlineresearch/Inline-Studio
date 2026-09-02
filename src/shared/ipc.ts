@@ -63,6 +63,9 @@ import type {
   ExportResult,
   ProjectExportResult,
   ProjectMediaDirs,
+  WorkflowCatalogue,
+  WorkflowDetail,
+  WorkflowSort,
 } from './types'
 import type { Result } from './result'
 import type { CoreModels, ModelRequirements } from './coreNodes'
@@ -218,6 +221,16 @@ export const IpcChannels = {
     downloadRegistry: 'models:downloadRegistry',
     cancelRegistryDownload: 'models:cancelRegistryDownload',
     downloadQueue: 'models:downloadQueue',
+  },
+  workflows: {
+    /** The published catalogue, proxied by Core with an ETag disk cache. */
+    list: 'workflows:list',
+    /** One workflow with its graph. Uncached upstream, so each call counts as a view. */
+    detail: 'workflows:detail',
+    /** Beacon an event the site cannot observe on its own, chiefly a completed import. */
+    event: 'workflows:event',
+    /** Remember that the popup has auto-opened for this project. */
+    markPrompted: 'workflows:markPrompted',
   },
   extensions: {
     /** Installed extensions + whether the machine has the tools to install more. */
@@ -693,6 +706,18 @@ export interface InlineStudioApi {
     cancelRegistryDownload(modelId: string): Promise<Result<void>>
     /** What is downloading and what is waiting, so a reopened popup shows the same thing. */
     downloadQueue(): Promise<Result<{ active: string | null; queued: string[] }>>
+  }
+  workflows: {
+    /**
+     * The published catalogue. `refresh` forces a conditional GET; without it a cached copy is
+     * served as-is. An unreachable site degrades to the saved entries marked `stale`.
+     */
+    list(sort?: WorkflowSort, refresh?: boolean): Promise<Result<WorkflowCatalogue>>
+    /** One workflow with its graph. Null when the site is unreachable and nothing is cached. */
+    detail(slug: string): Promise<Result<WorkflowDetail | null>>
+    /** Fire-and-forget; a counter that did not move never surfaces as an error. */
+    event(slug: string, event: 'import'): Promise<Result<void>>
+    markPrompted(): Promise<Result<void>>
   }
   extensions: {
     /** Installed extensions + whether git/uv are available to install more. */

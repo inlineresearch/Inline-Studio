@@ -11,13 +11,17 @@
 function Svg({
   className,
   children,
+  // Newer Material Symbols glyphs are drawn on a 960 grid with a flipped origin, so an icon
+  // copied from those has to bring its own box rather than be rescaled by hand.
+  viewBox = '0 0 24 24',
 }: {
   className?: string
   children: React.ReactNode
+  viewBox?: string
 }): React.JSX.Element {
   return (
     <svg
-      viewBox="0 0 24 24"
+      viewBox={viewBox}
       fill="currentColor"
       className={className ?? 'h-[1em] w-[1em]'}
       aria-hidden="true"
@@ -54,11 +58,39 @@ export function HistoryIcon({ className }: { className?: string }): React.JSX.El
   )
 }
 
-/** `account_tree` - a linked Comfy workflow. */
+/** `rebase_edit` - the published workflow catalogue. */
 export function WorkflowIcon({ className }: { className?: string }): React.JSX.Element {
   return (
+    <Svg className={className} viewBox="0 -960 960 960">
+      <path d="M400-80v-164l294-292q12-12 26.5-18t30.5-6q16 0 30.5 6t26.5 18l49 50q11 12 17 26.5t6 29.5q0 15-6.5 29.5T856-374L564-80H400Zm397-348-50-49 50 49ZM480-160h50l162-162-25-25-25-25-162 162v50Zm187-187-25-25 25 25 25 25-25-25ZM430-590l-56-57 73-73H313q-9 26-28 45t-45 28v334q35 13 57.5 43.5T320-200q0 50-35 85t-85 35q-50 0-85-35t-35-85q0-39 22.5-69t57.5-43v-335q-35-13-57.5-43.5T80-760q0-50 35-85t85-35q39 0 69.5 22.5T313-800h134l-73-73 56-57 170 170-170 170Zm415-255q35 35 35 85t-35 85q-35 35-85 35t-85-35q-35-35-35-85t35-85q35-35 85-35t85 35ZM200-160q17 0 28.5-11.5T240-200q0-17-11.5-28.5T200-240q-17 0-28.5 11.5T160-200q0 17 11.5 28.5T200-160Zm0-560q17 0 28.5-11.5T240-760q0-17-11.5-28.5T200-800q-17 0-28.5 11.5T160-760q0 17 11.5 28.5T200-720Zm560 0q17 0 28.5-11.5T800-760q0-17-11.5-28.5T760-800q-17 0-28.5 11.5T720-760q0 17 11.5 28.5T760-720ZM200-200Zm0-560Zm560 0Z" />
+    </Svg>
+  )
+}
+
+/** `place_item` - a workflow imported onto the canvas. Deliberately not a download arrow: the
+ *  card shows both counts and they must not read as the same number. */
+export function ImportIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className} viewBox="0 -960 960 960">
+      <path d="M200-120q-33 0-56.5-23.5T120-200v-400q0-33 23.5-56.5T200-680h160v80H200v400h560v-400H600v-80h160q33 0 56.5 23.5T840-600v400q0 33-23.5 56.5T760-120H200Zm280-200L320-480l56-56 64 63v-487h80v487l64-63 56 56-160 160Z" />
+    </Svg>
+  )
+}
+
+/** `visibility` - a view count. */
+export function EyeIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
     <Svg className={className}>
-      <path d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3z" />
+      <path d="M12 6.5c3.79 0 7.17 2.13 8.82 5.5-1.65 3.37-5.03 5.5-8.82 5.5S4.83 15.37 3.18 12C4.83 8.63 8.21 6.5 12 6.5m0-2C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5m0 5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5m0-2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9" />
+    </Svg>
+  )
+}
+
+/** `open_in_new` - a link that leaves the app. */
+export function ExternalLinkIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Svg className={className}>
+      <path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3z" />
     </Svg>
   )
 }

@@ -19,10 +19,17 @@ interface Point {
   y: number
 }
 
-/** Rebuild the recipe onto the board near `drop`. Returns the number of nodes created. */
-export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise<number> {
+/** What a rebuild produced: the new node ids, and which of them is the recipe's target. */
+export interface RebuiltGraph {
+  ids: string[]
+  /** The node the recipe was authored around, so a caller can point the user at it. */
+  targetId: string | null
+}
+
+/** Rebuild the recipe onto the board near `drop`. */
+export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise<RebuiltGraph> {
   const graph = recipe.graph
-  if (!graph?.items?.length) return 0
+  if (!graph?.items?.length) return { ids: [], targetId: null }
   const store = useMoodboardStore.getState()
 
   const target = graph.items.find((i) => i.id === recipe.target) ?? graph.items[0]
@@ -110,6 +117,8 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
     if (created) idMap.set(it.id, created.id)
   }
 
+  // Sequential on purpose: `list_board` orders connectors by `created_at`, and that order is what
+  // numbers a list port's reference images. Creating them concurrently would shuffle the numbering.
   for (const c of graph.connectors ?? []) {
     const from = idMap.get(c.fromItemId)
     const to = idMap.get(c.toItemId)
@@ -121,5 +130,5 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
     await store.connect(from, to, src, cd.targetHandle ?? null)
   }
 
-  return idMap.size
+  return { ids: [...idMap.values()], targetId: idMap.get(target.id) ?? null }
 }

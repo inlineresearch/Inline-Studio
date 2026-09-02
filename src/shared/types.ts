@@ -18,6 +18,8 @@ export interface Project {
   path: string
   createdAt: number
   updatedAt: number
+  /** True once the Workflows popup has auto-opened here, so a dismissal sticks. */
+  workflowsPrompted?: boolean
 }
 
 /** Lightweight entry for the "recent projects" list (stored in app userData). */
@@ -954,3 +956,99 @@ export interface ExportResult {
   /** Names of frames skipped because they had no Output yet. */
   skipped: string[]
 }
+
+// --- published workflow catalogue (inlinestudio.art) ------------------------------------------
+
+/** Which axis a category sits on. The Workflows rail draws the two as separate blocks. */
+export type WorkflowCategoryKind = 'type' | 'model'
+
+export interface WorkflowCategory {
+  slug: string
+  name: string
+  kind?: WorkflowCategoryKind
+}
+
+/** One entry in the Workflows popup. Counts come from the catalogue, not from this install. */
+export interface WorkflowSummary {
+  slug: string
+  title: string
+  summary: string
+  tags: string[]
+  heroUrl: string | null
+  heroType: 'image' | 'video'
+  heroPosterUrl?: string | null
+  categories: string[]
+  categoryNames: string[]
+  viewCount: number
+  downloadCount: number
+  importCount: number
+  shareCount: number
+  nodeCount: number
+  modelCount: number
+  inputCount: number
+  publishedAt: string | null
+  updatedAt: string | null
+  /** The write-up on inlinestudio.art. On the card so the link costs no detail fetch. */
+  pageUrl?: string
+}
+
+export interface WorkflowCatalogue {
+  entries: WorkflowSummary[]
+  categories: WorkflowCategory[]
+  /** True when the site was unreachable and these entries are the saved copy. */
+  stale: boolean
+}
+
+/** A node the workflow builds. Served by the catalogue; the app does not draw it. */
+export interface WorkflowNodeSummary {
+  type: string
+  title: string
+  count: number
+  source: string
+}
+
+/** A weight the workflow declares. Display-only: downloads are driven by the app's own reading. */
+export interface WorkflowModelSummary {
+  key: string
+  label: string
+  kind: string
+  url: string
+  required: boolean
+}
+
+/** A file the graph expects in a Load Assets node. Import never fetches these; loaders land empty. */
+export interface WorkflowInputSummary {
+  key: string
+  item_id: string
+  slot: number
+  label: string
+  kind: string
+  filename: string
+  required: boolean
+}
+
+export interface WorkflowDetail {
+  slug: string
+  title: string
+  summary: string
+  tags: string[]
+  categories: string[]
+  categoryNames: string[]
+  heroUrl: string | null
+  heroType: 'image' | 'video'
+  /** The recipe, rebuilt onto the canvas by `buildGraphFromRecipe`. */
+  graph: unknown
+  nodes: WorkflowNodeSummary[]
+  models: WorkflowModelSummary[]
+  inputs: WorkflowInputSummary[]
+  creator: { name?: string; handle?: string; url?: string } | null
+  viewCount: number
+  downloadCount: number
+  importCount: number
+  publishedAt: string | null
+  pageUrl: string
+  stale?: boolean
+}
+
+/** How the Workflows popup orders its cards. Mirrors the catalogue API's `sort` values. */
+export type WorkflowSort = 'views' | 'downloads' | 'newest'

@@ -4,6 +4,7 @@ import { useMoodboardStore } from '../../store/moodboardStore'
 import { LibraryPanel } from '../Library/LibraryPanel'
 import { OutputThumb, type OutputTile } from '../Library/OutputThumb'
 import { useCoreNodesStore } from '../../store/coreNodesStore'
+import { useWorkflowsStore } from '../../store/workflowsStore'
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -11,6 +12,7 @@ import {
   ImageIcon,
   ModelsIcon,
   SparklesIcon,
+  WorkflowIcon,
 } from '../../components/icons'
 import { ModelsPanel } from '../Models/ModelsPanel'
 import { DatasetsPanel } from '../Trainer/DatasetsPanel'
@@ -24,6 +26,26 @@ const TABS: { key: Tab; label: string; Icon: (p: { className?: string }) => Reac
     { key: 'models', label: 'Models', Icon: ModelsIcon },
     { key: 'datasets', label: 'Datasets', Icon: DatasetIcon },
   ]
+
+/** Opens the published workflow catalogue. Not a tab: it is a dialog, not another rail panel, so
+ *  it sits apart from the tab group in both states. */
+function WorkflowsButton({ className }: { className: string }): React.JSX.Element {
+  const open = useWorkflowsStore((s) => s.open)
+  const setOpen = useWorkflowsStore((s) => s.setOpen)
+  return (
+    <button
+      onClick={() => setOpen(!open)}
+      title="Workflows"
+      aria-label="Workflows"
+      aria-pressed={open}
+      className={`flex items-center justify-center rounded-md transition-colors ${
+        open ? 'bg-panel text-white' : 'text-zinc-400 hover:bg-panel hover:text-zinc-200'
+      } ${className}`}
+    >
+      <WorkflowIcon className="h-5 w-5" />
+    </button>
+  )
+}
 
 /** Collapsible left rail for the canvas; node creation lives in the floating toolbar instead.
  *
@@ -93,6 +115,8 @@ export function SideMenu(): React.JSX.Element {
             <t.Icon className="h-5 w-5" />
           </button>
         ))}
+        <div className="my-1 h-px w-5 bg-border" />
+        <WorkflowsButton className="h-9 w-9" />
       </div>
     )
   }
@@ -126,6 +150,7 @@ export function SideMenu(): React.JSX.Element {
             )
           })}
         </div>
+        <WorkflowsButton className="h-7 w-7 shrink-0" />
         <button
           onClick={() => setOpen(false)}
           title="Collapse menu"

@@ -181,7 +181,14 @@ class StudioStore:
         conn.commit()
         # TODO(B2/B3): seed the starter graph (empty frame + Prompt -> Z-Image) once the frames and
         # moodboard stores are ported. New projects open with an empty board until then.
-        project = {"id": pid, "name": name, "path": str(folder), "createdAt": now, "updatedAt": now}
+        project = {
+            "id": pid,
+            "name": name,
+            "path": str(folder),
+            "createdAt": now,
+            "updatedAt": now,
+            "workflowsPrompted": False,
+        }
         self._current = project
         self.record_recent(name, str(folder))
         self._remember_last_project(str(folder))
@@ -203,7 +210,9 @@ class StudioStore:
     def _load_project_row(self, folder: Path) -> dict[str, Any]:
         row = (
             self._db()
-            .execute("SELECT id, name, created_at, updated_at FROM project LIMIT 1")
+            .execute(
+                "SELECT id, name, created_at, updated_at, workflows_prompted FROM project LIMIT 1"
+            )
             .fetchone()
         )
         if row is None:
@@ -214,7 +223,16 @@ class StudioStore:
             "path": str(folder),
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
+            "workflowsPrompted": bool(row["workflows_prompted"]),
         }
+
+    def mark_workflows_prompted(self) -> None:
+        """The Workflows popup auto-opens once per project; this is what makes a dismissal stick."""
+        db = self._db()
+        db.execute("UPDATE project SET workflows_prompted = 1")
+        db.commit()
+        if self._current is not None:
+            self._current["workflowsPrompted"] = True
 
     def current_project(self) -> dict[str, Any] | None:
         return self._current or self.restore_last_project()

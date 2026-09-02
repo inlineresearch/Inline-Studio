@@ -8,6 +8,7 @@ import {
   useModelRequirementsStore,
   type ComponentDownload,
 } from './modelRequirementsStore'
+import { useCoreNodesStore } from './coreNodesStore'
 
 const REQS: ModelRequirements = {
   allPresent: false,
@@ -106,5 +107,70 @@ describe('a keyed entry', () => {
     const downloads = useModelRequirementsStore.getState().downloads
     expect(downloads['train/lora:krea2']?.vae?.fraction).toBe(0.5)
     expect(downloads['train/lora:flux2']?.vae?.fraction).toBe(0.5)
+  })
+})
+
+describe('load caching', () => {
+  const stub = (): { nodeType: string; params?: Record<string, unknown> }[] => {
+    const asked: { nodeType: string; params?: Record<string, unknown> }[] = []
+    setStudioClient({
+      models: {
+        requirements: async (nodeType: string, params?: Record<string, unknown>) => {
+          asked.push({ nodeType, params })
+          return ok(REQS)
+        },
+      },
+    } as unknown as InlineStudioApi)
+    return asked
+  }
+
+  const reset = (): void =>
+    useModelRequirementsStore.setState({ byType: {}, asked: {}, loadedFor: {} })
+
+  it('asks Core once for a type it has already answered', async () => {
+    reset()
+    const asked = stub()
+    const store = useModelRequirementsStore.getState()
+    // The canvas remounts a node whenever it scrolls back into view, so this is the common case.
+    await store.load('zimage')
+    await store.load('zimage')
+    await store.load('zimage')
+    expect(asked).toHaveLength(1)
+  })
+
+  it('coalesces concurrent asks about one type into a single call', async () => {
+    reset()
+    const asked = stub()
+    const store = useModelRequirementsStore.getState()
+    await Promise.all([store.load('zimage'), store.load('zimage'), store.load('zimage')])
+    expect(asked).toHaveLength(1)
+  })
+
+  it('re-asks when refresh is set, which is how a finished download refreshes', async () => {
+    reset()
+    const asked = stub()
+    const store = useModelRequirementsStore.getState()
+    await store.load('zimage')
+    await store.load('zimage', undefined, undefined, true)
+    expect(asked).toHaveLength(2)
+  })
+
+  it('re-asks when the registry moves, so a dropped-in file is picked up', async () => {
+    reset()
+    const asked = stub()
+    const store = useModelRequirementsStore.getState()
+    await store.load('zimage')
+    useCoreNodesStore.setState({ registryVersion: 'v2' })
+    await store.load('zimage')
+    expect(asked).toHaveLength(2)
+  })
+
+  it('re-asks when the same key is given different params', async () => {
+    reset()
+    const asked = stub()
+    const store = useModelRequirementsStore.getState()
+    await store.load('train/lora', { arch: 'krea2' }, 'train/lora')
+    await store.load('train/lora', { arch: 'flux2' }, 'train/lora')
+    expect(asked).toHaveLength(2)
   })
 })
