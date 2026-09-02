@@ -20,6 +20,7 @@ from . import config as cfg
 from . import fal as _fal
 from . import frames as fr
 from . import moodboard as mb
+from . import workflows as wf
 from .store import StudioStore
 
 
@@ -118,6 +119,16 @@ def register_studio_handlers(
     reg("settings:setCoreUrl", store.set_core_url)
     reg("core:status", core_status)
     reg("core:models", core_models)
+
+    # --- published workflow catalogue (the Workflows popup) --------------------------------------
+    def _version() -> str:
+        return app_version or __version__
+
+    reg("workflows:list",
+        lambda sort="views", refresh=False: wf.list_workflows(sort, refresh, _version()))
+    reg("workflows:detail", lambda slug: wf.workflow_detail(slug, _version()))
+    reg("workflows:event", lambda slug, event: wf.record_event(slug, event, _version()))
+    reg("workflows:markPrompted", store.mark_workflows_prompted)
 
     # --- model requirements + explicit downloads (the node's "missing models" popup) ------------
     if model_downloads is not None:

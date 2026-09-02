@@ -4,7 +4,7 @@ import { useAssetStore } from '../../store/assetStore'
 import { useCharacterStore } from '../../store/characterStore'
 import { getAssetDragIds } from '../../lib/dnd'
 import { CloseIcon, DownloadIcon, EditIcon, PlusIcon } from '../../components/icons'
-import { buildCharacterEditChain, buildCharacterStarter } from '../../lib/starterGraph'
+import { buildCharacterEditChain, buildCharacterStarter } from '../../lib/characterChains'
 import { useUiStore } from '../../store/uiStore'
 
 /** Where a chain lands: what the user is looking at. */

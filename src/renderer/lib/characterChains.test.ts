@@ -1,6 +1,6 @@
 /** The character chain's handles must be the port ids the Core descriptors declare. */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { buildCharacterStarter } from './starterGraph'
+import { buildCharacterStarter } from './characterChains'
 import { useMoodboardStore } from '../store/moodboardStore'
 
 const added: { type: string; id: string }[] = []

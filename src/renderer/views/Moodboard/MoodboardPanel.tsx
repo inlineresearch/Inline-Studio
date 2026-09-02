@@ -82,8 +82,9 @@ import { CanvasToolbar } from './CanvasToolbar'
 import { AddNodeMenu, type AddNodeKind } from './AddNodeMenu'
 import { BY_ID_TYPES } from './nodeKinds'
 import { FirstRunHints } from './GettingStarted/FirstRunHints'
-import { StarterCards } from './GettingStarted/StarterCards'
-import { useStarterGraph } from './GettingStarted/useStarterGraph'
+import { WorkflowsDialog } from '../Workflows/WorkflowsDialog'
+import { useWorkflowsAutoOpen } from '../Workflows/useWorkflowsAutoOpen'
+import { useWorkflowImport } from './useWorkflowImport'
 import { Modal } from '../../components/Modal'
 import { readRecipeFromBlob, readRecipeFromJsonFile, type Recipe } from '../../lib/pngRecipe'
 import { buildGraphFromRecipe } from '../../lib/recipeGraph'
@@ -340,8 +341,15 @@ function Board(): React.JSX.Element {
   const setCanvasSelection = useUiStore((s) => s.setCanvasSelection)
   const setCanvasCenter = useUiStore((s) => s.setCanvasCenter)
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const { screenToFlowPosition, getNodes, getViewport, setViewport, fitView, setCenter } =
-    useReactFlow()
+  const {
+    screenToFlowPosition,
+    getNodes,
+    getViewport,
+    setViewport,
+    fitView,
+    fitBounds,
+    setCenter,
+  } = useReactFlow()
   const projectId = useProjectStore((s) => s.current?.id ?? null)
   // Restore the canvas pan/zoom where the user left it, once per project open (after its board
   // loads); a project with no saved view falls back to fit-all.
@@ -628,8 +636,8 @@ function Board(): React.JSX.Element {
     return screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
   }
 
-  const loading = useMoodboardStore((s) => s.loading)
-  const { onPick: onPickStarter } = useStarterGraph({ setNodes, fitView, centre })
+  const { importWorkflow } = useWorkflowImport({ setNodes, fitBounds, centre })
+  useWorkflowsAutoOpen()
 
   /** The topmost layer whose rectangle contains an absolute flow point (or null). */
   const layerAt = (pos: { x: number; y: number }, exceptId?: string): MoodboardItem | null => {
@@ -1121,10 +1129,8 @@ function Board(): React.JSX.Element {
           <Background gap={22} size={2.5} color="#525a66" />
         </ReactFlow>
 
-        {/* Gate on loading too: items is briefly empty while the board loads, and the cards
-            flashing in and out reads as a glitch. */}
-        {items.length === 0 && !loading && <StarterCards onPick={onPickStarter} />}
         <FirstRunHints wrapperRef={wrapperRef} />
+        <WorkflowsDialog onImport={importWorkflow} />
 
         {genError && <GenErrorToast message={genError} onDismiss={() => setGenError(null)} />}
 
