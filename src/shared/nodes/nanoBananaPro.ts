@@ -3,7 +3,11 @@
  * See https://fal.ai/models/fal-ai/nano-banana-pro/edit.
  */
 import { constantEndpoint, approxPrice, selectParam, numberParam } from './builders'
-import type { NodeDef, ResolvedInputs } from './types'
+import { withCharacterPrompt, withCharacterRefs, type NodeDef, type ResolvedInputs } from './types'
+
+// fal documents no ceiling; Google documents 14 references, of which 5 is the identity band.
+const MAX_IMAGES = 14
+const MAX_CHARACTER_IMAGES = 5
 
 const ASPECT_RATIOS = [
   'auto',
@@ -26,7 +30,16 @@ export const NANO_BANANA_PRO: NodeDef = {
   category: 'Image',
   provider: 'fal',
   outputKind: 'image',
-  inputs: [{ id: 'image_urls', label: 'Image(s)', kind: 'image[]', required: true }],
+  inputs: [
+    { id: 'image_urls', label: 'Image(s)', kind: 'image[]', required: true },
+    { id: 'character', label: 'Character', kind: 'character', required: false },
+  ],
+  character: {
+    port: 'image_urls',
+    style: 'ordinal',
+    maxImages: MAX_IMAGES,
+    maxRefs: MAX_CHARACTER_IMAGES,
+  },
   params: [
     selectParam('aspect_ratio', 'Aspect ratio', ASPECT_RATIOS, 'auto'),
     selectParam('resolution', 'Resolution', RESOLUTIONS, '1K'),
@@ -35,8 +48,8 @@ export const NANO_BANANA_PRO: NodeDef = {
   outputs: [{ id: 'images', label: 'Image(s)', kind: 'image[]' }],
   resolveEndpoint: constantEndpoint('fal-ai/nano-banana-pro/edit'),
   buildRequest: (params, resolved: ResolvedInputs) => ({
-    prompt: String(params.prompt ?? ''),
-    image_urls: resolved.images,
+    prompt: withCharacterPrompt(resolved, String(params.prompt ?? '')),
+    image_urls: withCharacterRefs(NANO_BANANA_PRO, resolved, 'image_urls'),
     aspect_ratio: params.aspect_ratio ?? 'auto',
     resolution: params.resolution ?? '1K',
     num_images: Number(params.num_images ?? 1),

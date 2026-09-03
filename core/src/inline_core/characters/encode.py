@@ -52,9 +52,16 @@ MINIMAX_H3_POLICY: dict[str, Any] = {
     "max_aspect": 4.0,
 }
 
+#: One profile for every hosted fal endpoint, because they want the same pixels: they declare no
+#: frame grid, and what actually bounds a reference is the wire, not the model - a reference travels
+#: base64 from Core to the browser, back to Core, and on to fal.
+FAL_REF_ARCH = "fal-ref"
+FAL_REF_POLICY: dict[str, Any] = {"max_pixels": 1024 * 1024, "multiple_of": 8}
+
 REFERENCE_POLICIES: dict[str, dict[str, Any]] = {
     FLUX2_KLEIN_ARCH: PAYLOAD_POLICY,
     MINIMAX_H3_ARCH: MINIMAX_H3_POLICY,
+    FAL_REF_ARCH: FAL_REF_POLICY,
 }
 
 

@@ -19,6 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from ..characters import library
 from . import frames as fr
 from . import moodboard as mb
 from .activity import ActivityRun
@@ -75,7 +76,41 @@ def resolve_fal_inputs(conn: Any, folder: Path, frame_id: str) -> dict[str, Any]
         "audios": audios,
         "byHandle": by_handle,
         "prompt": mb.prompt_text_for_frame(conn, frame_id),
+        "character": wired_character(conn, frame_id),
     }
+
+
+#: Where each node that can name an *already saved* character keeps that name. Load picks one, Write
+#: has just made one; the rest of the chain only holds an identity that has never reached disk.
+_CHARACTER_FILE_PARAM = {"character/load": "file", "character/write": "filename"}
+
+
+def wired_character(conn: Any, frame_id: str) -> str | None:
+    """The `.char` on this frame's Character port, off the connector: inputs hold only media."""
+    board = mb.list_board(conn)
+    items = board["items"]
+    item_id = next((i["id"] for i in items if i.get("frameId") == frame_id), None)
+    if item_id is None:
+        return None
+    by_id = {i["id"]: i for i in items}
+    for connector in board["connectors"]:
+        if connector["toItemId"] != item_id:
+            continue
+        if (connector.get("data") or {}).get("targetHandle") != "character":
+            continue
+        core = ((by_id.get(connector["fromItemId"]) or {}).get("data") or {}).get("core") or {}
+        key = _CHARACTER_FILE_PARAM.get(str(core.get("type") or ""))
+        if key is None:
+            # Every other character node emits an identity that lives only inside a running graph.
+            # A hosted request cannot execute one, so say what to add rather than quietly rendering
+            # a stranger - the same thing MiniMax H3 tells the user.
+            raise ValueError(
+                "That character has not been saved yet. Wire it through Write .char first."
+            )
+        chosen = library.target_name((core.get("params") or {}).get(key))
+        if chosen:
+            return chosen
+    return None
 
 
 # --- output parsing (the standard fal response shapes) -------------------------------------------
@@ -156,6 +191,9 @@ _MODERATION_MARKERS = (
     "safety system",
     "safety filter",
     "nsfw",
+    # Seedance 2.0 refuses a reference image carrying a face with this wording, which shares no
+    # word with the markers above.
+    "likeness",
 )
 
 
@@ -194,6 +232,19 @@ def _fal_error_detail(response: Any) -> str:
 
 def is_moderation_detail(detail: str) -> bool:
     return any(marker in detail.lower() for marker in _MODERATION_MARKERS)
+
+
+def _no_output_message(response: Any) -> str:
+    """Why a completed request carried no output, read from the body it did carry."""
+    detail = _fal_error_detail(response)
+    if not detail:
+        return "The model returned no output."
+    if is_moderation_detail(detail):
+        return (
+            "Blocked by the model's content filter, so nothing was generated. The provider said: "
+            f"{detail} Adjust the prompt or input image and run again."
+        )
+    return f"The model returned no output. The provider said: {detail}"
 
 
 def fal_error_message(error: Any) -> str:
@@ -270,6 +321,7 @@ class FalGeneration:
         self._store = store
         self._events = events
         self._activity = activity
+        self._characters: Any = None
         #: frame id -> the project it was submitted against, which doubles as the "still live" flag.
         self._active: dict[str, Any] = {}
         self._run_ids: dict[str, str] = {}
@@ -314,6 +366,42 @@ class FalGeneration:
                 ref=project,
             )
         asyncio.create_task(self._run(frame_id, request, key, project))
+
+    def set_characters(self, characters: Any) -> None:
+        """Wire the character library in, so a take generated with one carries its continuity
+        score. Optional: without it takes are saved exactly as before."""
+        self._characters = characters
+
+    def _continuity(self, chosen: str | None, path: Path) -> dict[str, Any]:
+        """`characterId` + what scoring measured, or just the character when nothing measured."""
+        if not chosen or self._characters is None:
+            return {}
+        result = self._characters.score_take(path, chosen)
+        if not result or result.get("score") is None:
+            # How much of a clip could not be read is a fact even when none of it scored.
+            blind = (result or {}).get("noFace")
+            return {"characterId": chosen, **({"continuityNoFace": blind} if blind else {})}
+        out: dict[str, Any] = {
+            "characterId": chosen,
+            "continuityScore": result["score"],
+            "continuityFaceOnly": not result.get("subjectCounted", True),
+            "continuityGallery": result.get("gallery"),
+            # No face behind the number means DINOv2 answered alone, which measures framing rather
+            # than identity - the one thing it must never be read as.
+            "continuitySubjectOnly": not result.get("faceBearing", True),
+        }
+        # Video only: a distribution is a different claim from a number, and the reader cannot tell
+        # them apart from the headline alone.
+        for key, field in (
+            ("frames", "continuityFrames"),
+            ("noFace", "continuityNoFace"),
+            ("mean", "continuityMean"),
+            ("min", "continuityMin"),
+            ("minAt", "continuityMinAt"),
+        ):
+            if result.get(key) is not None:
+                out[field] = result[key]
+        return out
 
     def cancel(self, frame_id: str | None = None) -> None:
         for fid in [frame_id] if frame_id else list(self._active.keys()):
@@ -388,11 +476,16 @@ class FalGeneration:
                 result.raise_for_status()
                 refs = parse_outputs(result.json(), output_kind)
                 if not refs:
-                    raise RuntimeError("The model returned no output.")
+                    # A rejection can arrive as a 200 result body while the queue says COMPLETED -
+                    # Seedance refuses a reference image carrying a likeness that way. Without
+                    # reading the body the user is told the model returned nothing, which points
+                    # them at a bug rather than at the reference they need to swap.
+                    raise RuntimeError(_no_output_message(result))
                 take_id = None
+                chosen = request.get("characterFile")
                 for ref in refs:
                     take_id = await self._save(
-                        client, frame_id, ref, handle["requestId"], body, project
+                        client, frame_id, ref, handle["requestId"], body, project, chosen
                     )
                 if take_id:
                     self._events.broadcast(
@@ -422,6 +515,7 @@ class FalGeneration:
         request_id: str,
         params: dict,
         project: Any,
+        chosen: str | None = None,
     ) -> str:
         # Against the project this run was submitted for, not whichever one is open when it lands.
         folder: Path = project.folder
@@ -436,7 +530,13 @@ class FalGeneration:
             is_png = ref["kind"] == "image" and ref["ext"].lower() == ".png"
             if not (is_png and self._embed_recipe(conn, frame_id, data.content, dst)):
                 dst.write_bytes(data.content)
-            take = fr.add_take(conn, frame_id, rel, ref["kind"], params, comfy_prompt_id=request_id)
+            stored = dict(params)
+            if chosen and ref["kind"] in ("image", "video"):
+                try:
+                    stored["continuity"] = self._continuity(chosen, dst)
+                except Exception:  # noqa: BLE001 - metadata must never be why a render fails
+                    logger.warning("Could not score fal take for %s against %s", frame_id, chosen)
+            take = fr.add_take(conn, frame_id, rel, ref["kind"], stored, comfy_prompt_id=request_id)
         return take["id"]
 
     def _embed_recipe(self, conn: Any, frame_id: str, content: bytes, dst: Path) -> bool:

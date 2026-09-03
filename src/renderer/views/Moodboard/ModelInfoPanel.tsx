@@ -1,7 +1,7 @@
 import { getNodeDef, modelOwnerLabel } from '@shared/nodes/registry'
 import { defaultParams, formatPrice, type PortKind } from '@shared/nodes/types'
 import { useGenerationStore } from '../../store/generationStore'
-import { AudioGlyph, ImageGlyph, VideoGlyph, XIcon } from './nodes/NodeBadge'
+import { AudioGlyph, ImageGlyph, SparkleIcon, VideoGlyph, XIcon } from './nodes/NodeBadge'
 
 /** Human label for each port kind. */
 const KIND_LABEL: Record<PortKind, string> = {
@@ -13,11 +13,13 @@ const KIND_LABEL: Record<PortKind, string> = {
   'audio[]': 'Audio',
   text: 'Text',
   path: 'File',
+  character: 'Character',
 }
 
 function KindIcon({ kind }: { kind: PortKind }): React.JSX.Element {
   if (kind === 'video' || kind === 'video[]') return <VideoGlyph className="h-4 w-4" />
   if (kind === 'audio' || kind === 'audio[]') return <AudioGlyph className="h-4 w-4" />
+  if (kind === 'character') return <SparkleIcon className="h-4 w-4" />
   if (kind === 'text') return <span className="text-sm font-bold leading-none">T</span>
   return <ImageGlyph className="h-4 w-4" />
 }

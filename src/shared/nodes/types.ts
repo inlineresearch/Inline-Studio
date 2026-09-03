@@ -19,6 +19,8 @@ export type PortKind =
   | 'audio[]'
   | 'text'
   | 'path'
+  // A saved identity wired in from a Core `character/load` node; it carries a filename, not media.
+  | 'character'
 
 /** A typed input socket on a node (left side). */
 export interface InputPort {
@@ -82,6 +84,33 @@ export interface ResolvedInputs {
    * need this - read it through `portMedia`, never directly, so untagged inputs still resolve.
    */
   byHandle: Record<string, string[]>
+  /** A wired character, already normalised for this endpoint by Core. Absent when none is wired. */
+  character?: AppliedCharacter
+}
+
+/** What a reference is of. Mirrors `charfile.ROLES`; the split is decided when a character is built. */
+export type CharacterRole = 'face' | 'body' | 'cloth'
+
+export const CHARACTER_ROLES: readonly CharacterRole[] = ['face', 'body', 'cloth']
+
+/** Only the form an endpoint documents resolves: ordinal prose, H3's `<Picture N>`, Seedance's `@ImageN`. */
+export type CharacterPromptStyle = 'ordinal' | 'token' | 'at-image'
+
+/** Composed by Core, so ref ordering, the role split and the numbering stay where they already live. */
+export interface AppliedCharacter {
+  name: string
+  /** Normalised references as data URIs, in the order they must be sent. */
+  refs: string[]
+  /** One role (`face` | `body` | `cloth`) per ref, in the same order. */
+  roles: string[]
+  /** Prepended to the user's prompt; names the positions the refs land on. */
+  promptPrefix: string
+}
+
+/** Params alone cannot price a model that bills per reference image. */
+export interface PriceInputs {
+  /** Images that will reach the model's reference port, the character's own included. */
+  referenceImages?: number
 }
 
 /** An estimated cost for one generation. Models price differently (per image / MP / second / …). */
@@ -130,6 +159,17 @@ export interface NodeDef {
   inputs: InputPort[]
   params: ParamField[]
   outputs: OutputPort[]
+  /** How a wired character applies here, or absent on a node that takes none. */
+  character?: {
+    port: string
+    style: CharacterPromptStyle
+    maxImages: number
+    maxRefs: number
+    excludeRoles?: CharacterRole[]
+    /** Name each role in the prompt. Needed once identity references are gone, or the text claims
+     *  a photo of an outfit shows the character's face. */
+    roleLines?: boolean
+  }
   /** Pick the fal endpoint from the resolved inputs (e.g. text-to-image vs image-to-image). PURE. */
   resolveEndpoint(resolved: ResolvedInputs): string
   /**
@@ -138,7 +178,7 @@ export interface NodeDef {
    */
   buildRequest(params: Record<string, unknown>, resolved: ResolvedInputs): Record<string, unknown>
   /** Estimate the USD cost of one generation from the current param values. PURE; optional. */
-  estimatePrice?(params: Record<string, unknown>): PriceEstimate | null
+  estimatePrice?(params: Record<string, unknown>, wired?: PriceInputs): PriceEstimate | null
 }
 
 /** Fill a param-value map from a node def's field defaults (used when creating a fal frame). */
@@ -182,6 +222,22 @@ export function mediaFamily(kind: PortKind): 'image' | 'video' | 'audio' | null 
   if (kind === 'video' || kind === 'video[]') return 'video'
   if (kind === 'audio' || kind === 'audio[]') return 'audio'
   return null
+}
+
+/** Appended, never led: the numbers on the node face come from the wires, and must keep meaning them. */
+export function withCharacterRefs(
+  def: NodeDef,
+  resolved: ResolvedInputs,
+  portId: string,
+): string[] {
+  const wired = portMedia(def, resolved, portId)
+  if (def.character?.port !== portId || !resolved.character) return wired
+  return [...wired, ...resolved.character.refs].slice(0, def.character.maxImages)
+}
+
+/** The user's prompt with a wired character's binding text in front of it. */
+export function withCharacterPrompt(resolved: ResolvedInputs, prompt: string): string {
+  return resolved.character ? resolved.character.promptPrefix + prompt : prompt
 }
 
 /** True when a port accepts several wires, so its order carries meaning. */

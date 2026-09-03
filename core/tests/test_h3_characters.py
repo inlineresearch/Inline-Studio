@@ -87,41 +87,64 @@ def test_an_adapter_only_character_is_the_description_alone() -> None:
 # --- scoring a video take -------------------------------------------------------------------------
 
 
-def _scored(value: float, subject: bool = True) -> dict[str, Any]:
-    return {"score": value, "subjectCounted": subject}
+def _scored(value: float, subject: bool = True, face: bool = True) -> dict[str, Any]:
+    return {"score": value, "subjectCounted": subject, "faceBearing": face}
+
+
+def _frames(count: int) -> list[tuple[float, str]]:
+    """`_sample_frames` carries each frame's timestamp, so a clip's worst moment can be found."""
+    return [(float(i), "f") for i in range(count)]
 
 
 def test_a_video_score_is_the_median_of_the_frames_that_measured(monkeypatch) -> None:
     """A mean lets one blurred frame drag the number; a median survives one bad and one lucky."""
     from inline_core.studio import characters as mod
 
-    monkeypatch.setattr(mod, "_sample_frames", lambda *_a, **_k: ["f"] * 5)
+    monkeypatch.setattr(mod, "_sample_frames", lambda *_a, **_k: _frames(5))
     scores = iter([_scored(80), _scored(12), _scored(78), _scored(82), _scored(79)])
     monkeypatch.setattr(mod.scoring, "score", lambda *_a, **_k: next(scores))
 
     out = mod._score_video(Path("clip.mp4"), {}, [], [], [])
     assert out is not None and out["score"] == 79.0
     assert out["frames"] == 5
+    # The median alone would hide the dip that the eye sees, so the worst frame rides with it.
+    assert out["min"] == 12.0 and out["minAt"] == 1.0
 
 
 def test_a_frame_with_no_face_drops_out_rather_than_scoring_zero(monkeypatch) -> None:
     """`score` returns None for unmeasurable, which is not the same claim as a score of nothing."""
     from inline_core.studio import characters as mod
 
-    monkeypatch.setattr(mod, "_sample_frames", lambda *_a, **_k: ["f"] * 3)
+    monkeypatch.setattr(mod, "_sample_frames", lambda *_a, **_k: _frames(3))
     scores = iter([_scored(90), None, _scored(70)])
     monkeypatch.setattr(mod.scoring, "score", lambda *_a, **_k: next(scores))
 
     out = mod._score_video(Path("clip.mp4"), {}, [], [], [])
     assert out is not None and out["frames"] == 2, "the unmeasurable frame is not counted"
     assert out["score"] == 80.0
+    # Counted rather than silently dropped: how much of the clip could not be read is a fact.
+    assert out["noFace"] == 1
+
+
+def test_a_frame_scored_only_by_the_subject_term_is_not_identity(monkeypatch) -> None:
+    """With no face, `score` falls back to DINOv2 alone - which measures framing and setting, and
+    must never decide identity. Counting it would let a turned head lower the identity number."""
+    from inline_core.studio import characters as mod
+
+    monkeypatch.setattr(mod, "_sample_frames", lambda *_a, **_k: _frames(3))
+    scores = iter([_scored(90), _scored(11, face=False), _scored(70)])
+    monkeypatch.setattr(mod.scoring, "score", lambda *_a, **_k: next(scores))
+
+    out = mod._score_video(Path("clip.mp4"), {}, [], [], [])
+    assert out is not None and out["frames"] == 2 and out["noFace"] == 1
+    assert out["min"] == 70.0, "the subject-only 11 never reaches the identity statistics"
 
 
 def test_one_face_only_frame_makes_the_whole_score_face_only(monkeypatch) -> None:
     """Reporting a blended number when a frame's subject term was noise hides the dropped term."""
     from inline_core.studio import characters as mod
 
-    monkeypatch.setattr(mod, "_sample_frames", lambda *_a, **_k: ["f"] * 2)
+    monkeypatch.setattr(mod, "_sample_frames", lambda *_a, **_k: _frames(2))
     scores = iter([_scored(80), _scored(70, subject=False)])
     monkeypatch.setattr(mod.scoring, "score", lambda *_a, **_k: next(scores))
 

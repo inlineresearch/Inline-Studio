@@ -11,8 +11,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from ..characters import apply, encode, library, scoring, weights
 from ..characters import charfile as cf
-from ..characters import encode, library, scoring, weights
 
 logger = logging.getLogger("inline_core.studio.characters")
 
@@ -37,8 +37,8 @@ SCORE_FRAMES = 5
 _EDGE_SECONDS = 0.5
 
 
-def _sample_frames(src: Path, count: int = SCORE_FRAMES) -> list[Any]:
-    """Evenly spaced frames as PIL images, or [] when ffmpeg cannot read the file."""
+def _sample_frames(src: Path, count: int = SCORE_FRAMES) -> list[tuple[float, Any]]:
+    """Evenly spaced ``(seconds, image)`` samples; the timestamp locates a clip's worst frame."""
     import io
     import subprocess
 
@@ -49,7 +49,7 @@ def _sample_frames(src: Path, count: int = SCORE_FRAMES) -> list[Any]:
     exe = ffmpeg_exe()
     if exe is None or not src.is_file():
         return []
-    frames: list[Any] = []
+    frames: list[tuple[float, Any]] = []
     duration = _duration_seconds(src)
     if duration is None or duration <= 0:
         return []
@@ -70,31 +70,52 @@ def _sample_frames(src: Path, count: int = SCORE_FRAMES) -> list[Any]:
             continue
         try:
             with Image.open(io.BytesIO(proc.stdout)) as handle:
-                frames.append(handle.convert("RGB"))
+                frames.append((offset, handle.convert("RGB")))
         except Exception:  # noqa: BLE001 - a frame that will not decode is one fewer sample
             continue
     return frames
 
 
 def _duration_seconds(src: Path) -> float | None:
-    """The clip's length via ffprobe, or None. ffprobe is often absent, so this is best-effort."""
+    """The clip's length. The ffmpeg fallback matters: imageio-ffmpeg ships no ffprobe at all."""
     import subprocess
 
-    from ..ffmpeg import ffprobe_exe
+    from ..ffmpeg import ffmpeg_exe, ffprobe_exe
 
     exe = ffprobe_exe()
+    if exe is not None:
+        try:
+            proc = subprocess.run(
+                [exe, "-v", "quiet", "-show_entries", "format=duration",
+                 "-of", "default=nw=1:nk=1", str(src)],
+                capture_output=True,
+                timeout=30,
+            )
+            return float(proc.stdout.decode().strip())
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    return _duration_from_ffmpeg(src, ffmpeg_exe())
+
+
+def _duration_from_ffmpeg(src: Path, exe: str | None) -> float | None:
+    """`Duration: 00:00:05.02` out of ffmpeg's banner, which it prints for any input it can open."""
+    import re
+    import subprocess
+
     if exe is None:
         return None
     try:
-        proc = subprocess.run(
-            [exe, "-v", "quiet", "-show_entries", "format=duration",
-             "-of", "default=nw=1:nk=1", str(src)],
-            capture_output=True,
-            timeout=30,
-        )
-        return float(proc.stdout.decode().strip())
-    except (OSError, subprocess.SubprocessError, ValueError):
+        proc = subprocess.run([exe, "-i", str(src)], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
         return None
+    # ffmpeg writes the banner to stderr and exits non-zero because no output was asked for.
+    found = re.search(
+        r"Duration:\s*(\d+):(\d\d):(\d\d(?:\.\d+)?)", proc.stderr.decode("utf-8", "replace")
+    )
+    if not found:
+        return None
+    hours, minutes, seconds = found.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
 
 def _score_video(
@@ -103,27 +124,40 @@ def _score_video(
     face_refs: list[list[float]],
     subject_refs: list[list[float]],
     framings: list[float],
+    count: int = SCORE_FRAMES,
 ) -> dict[str, Any] | None:
-    """One score for a clip: the median across the frames that measured, never a mean.
+    """A clip's identity as a distribution: the median, plus the worst frame and when it happened.
 
-    A frame where no face was found returns None from ``score`` and drops out rather than counting
-    as a zero, and the median survives one blurred frame and one lucky one alike. ``frames`` rides
-    along so a number from two samples is not read as a number from five.
+    A frame with no face is counted but never scored - it is not a wrong face, and DINOv2 alone
+    measures framing rather than identity.
     """
     from statistics import median
 
-    measured = [
-        result
-        for frame in _sample_frames(src)
-        if (result := scoring.score(frame, centroids, face_refs, subject_refs, framings))
-    ]
-    if not measured:
-        return None
-    out = dict(measured[len(measured) // 2])
-    out["score"] = round(median(float(m["score"]) for m in measured), 1)
+    samples: list[dict[str, Any]] = []
+    blind = 0
+    for seconds, frame in _sample_frames(src, count):
+        result = scoring.score(frame, centroids, face_refs, subject_refs, framings)
+        if result is None or not result.get("faceBearing"):
+            blind += 1
+            continue
+        samples.append({**result, "at": round(seconds, 2)})
+    if not samples:
+        # Nothing measurable is not a zero, but how many frames were looked at is still a fact.
+        return {"noFace": blind, "frames": 0} if blind else None
+
+    values = [float(s["score"]) for s in samples]
+    worst = min(samples, key=lambda s: float(s["score"]))
+    out = dict(samples[len(samples) // 2])
+    out.pop("at", None)
+    out["score"] = round(median(values), 1)
+    out["mean"] = round(sum(values) / len(values), 1)
+    out["min"] = round(float(worst["score"]), 1)
+    out["minAt"] = worst["at"]
     # Face-only if any sampled frame could not be spoken to by the subject term.
-    out["subjectCounted"] = all(m.get("subjectCounted", True) for m in measured)
-    out["frames"] = len(measured)
+    out["subjectCounted"] = all(s.get("subjectCounted", True) for s in samples)
+    out["frames"] = len(samples)
+    out["noFace"] = blind
+    out["samples"] = samples
     return out
 
 
@@ -171,9 +205,56 @@ class Characters:
             self._changed()
         return removed
 
+    # --- applying -------------------------------------------------------------------------------
+
+    def apply_fal(self, request: dict[str, Any]) -> dict[str, Any]:
+        """References as data URIs plus the prompt naming them, composed where the rules live."""
+        from .fal import file_to_data_uri
+
+        file = str(request.get("file") or "").strip()
+        if not file:
+            raise ValueError("No character was wired into that node.")
+        limit = int(request.get("limit") or 0)
+        if limit <= 0:
+            raise ValueError(
+                "The wired images already fill this model's reference slots, so the character has "
+                "none left. Unwire one to make room."
+            )
+        raw_roles = request.get("keepRoles")
+        keep = tuple(str(r) for r in raw_roles) if raw_roles is not None else None
+        applied = apply.char_apply(
+            file, encode.FAL_REF_ARCH, prefer="reference", limit=limit, keep_roles=keep
+        )
+        if applied is None or not applied.refs:
+            # An endpoint that refuses a whole role leaves nothing to send from a character built
+            # only of that role, and the reason is worth naming: this is the endpoint's policy, not
+            # a broken character.
+            dropped = sorted(set(cf.ROLES) - set(keep)) if keep is not None else []
+            if dropped:
+                raise ValueError(
+                    f"This model does not accept {', '.join(dropped)} references, and {file} has "
+                    "nothing else to send. Add a body or wardrobe reference, or use a model that "
+                    "takes the whole character."
+                )
+            raise ValueError(
+                f"{file} has no references to send. Add some on the canvas and write it again."
+            )
+        return {
+            "name": applied.name,
+            "refs": [file_to_data_uri(Path(ref.path or "")) for ref in applied.refs],
+            "roles": list(applied.roles),
+            "promptPrefix": applied.prompt_prefix(
+                int(request.get("firstPosition") or 1),
+                style=str(request.get("style") or "ordinal"),
+                role_lines=bool(request.get("roleLines")),
+            ),
+        }
+
     # --- scoring --------------------------------------------------------------------------------
 
-    def score_take(self, image_path: Path | str, chosen: str) -> dict[str, Any] | None:
+    def score_take(
+        self, image_path: Path | str, chosen: str, frames: int = SCORE_FRAMES
+    ) -> dict[str, Any] | None:
         """Continuity score, or None. Never raises: metadata must not fail a render."""
         try:
             path = library.resolve(chosen)
@@ -197,25 +278,43 @@ class Characters:
                     centroids.pop(encoder_id, None)
             if not centroids:
                 return None
-            face_refs = scoring.load_embeds(
-                doc.members, str(doc.manifest.scoring.get("faceEmbeds") or "")
-            )
-            subject_refs = scoring.load_embeds(
-                doc.members, str(doc.manifest.scoring.get("subjectEmbeds") or "")
-            )
+            face_refs, subject_refs, gallery = self._gallery(doc)
             framings = [float(f) for f in (doc.manifest.scoring.get("refFramings") or [])]
             from PIL import Image
 
             path_in = Path(image_path)
             if path_in.suffix.lower() in _VIDEO_SUFFIXES:
-                return _score_video(path_in, centroids, face_refs, subject_refs, framings)
-            with Image.open(path_in) as handle:
-                return scoring.score(
-                    handle.convert("RGB"), centroids, face_refs, subject_refs, framings
+                result = _score_video(
+                    path_in, centroids, face_refs, subject_refs, framings, frames
                 )
+            else:
+                with Image.open(path_in) as handle:
+                    result = scoring.score(
+                        handle.convert("RGB"), centroids, face_refs, subject_refs, framings
+                    )
+            # Which gallery answered is part of the measurement: the two are not the same claim.
+            return {**result, "gallery": gallery} if result else result
         except Exception as error:  # noqa: BLE001 - scoring is never worth failing a render over
             logger.warning("Could not score %s against %s: %s", image_path, chosen, error)
             return None
+
+    def _gallery(
+        self, doc: cf.CharDoc
+    ) -> tuple[list[list[float]], list[list[float]], str]:
+        """The frozen originals when frozen, else the ref gallery: freezing writes to their file."""
+        if encode.originals_frozen(doc.manifest):
+            try:
+                face, subject = encode.frozen_originals(doc)
+                if any(face):
+                    return face, subject, "frozen"
+            except Exception as error:  # noqa: BLE001 - a tampered or unreadable freeze is not fatal
+                logger.warning("Falling back off the frozen gallery for %s: %s",
+                               doc.manifest.name, error)
+        return (
+            scoring.load_embeds(doc.members, str(doc.manifest.scoring.get("faceEmbeds") or "")),
+            scoring.load_embeds(doc.members, str(doc.manifest.scoring.get("subjectEmbeds") or "")),
+            "refs",
+        )
 
     # --- internals ------------------------------------------------------------------------------
 

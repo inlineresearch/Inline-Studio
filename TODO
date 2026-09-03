@@ -17,5 +17,6 @@ Training:
 
 Char
 - Multi char ref via pose
+- auto-tuning by looping a test that runs prompts and checks % score to improve per character
 
 

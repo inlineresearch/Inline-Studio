@@ -17,7 +17,18 @@ import {
   ASSET_DND_TYPE,
   FRAME_DND_TYPE,
 } from '../../../lib/dnd'
+import { useCharacterStore } from '../../../store/characterStore'
 import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
+import { wiredCharacterFile } from '@shared/nodes/wiredCharacter'
+import {
+  clipScoreLabel,
+  clipScoreTitle,
+  clipScoreTone,
+  scoreSuffix,
+  scoreTitle,
+  scoreTone,
+  takeContinuity,
+} from '../../../lib/continuity'
 import { VideoPreview } from '../../../components/VideoPreview'
 import { Waveform } from '../../../components/Waveform'
 import { NodeFrame } from './NodeFrame'
@@ -28,6 +39,7 @@ import {
   ImageGlyph,
   NodeBadge,
   NodeBadgeRow,
+  SparkleIcon,
   VideoGlyph,
   RunningDots,
 } from './NodeBadge'
@@ -96,6 +108,8 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
   const inputsByFrame = useFrameStore((s) => s.inputsByFrame)
   const assets = useAssetStore((s) => s.assets)
   const connectors = useMoodboardStore((s) => s.connectors)
+  const items = useMoodboardStore((s) => s.items)
+  const characters = useCharacterStore((s) => s.characters)
   const run = useGenerationStore((s) => s.run)
   const cancel = useGenerationStore((s) => s.cancel)
   const setModel = useGenerationStore((s) => s.setModel)
@@ -137,6 +151,8 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
   }
   const safeTakeIdx = ordered.length ? Math.min(takeIdx, ordered.length - 1) : 0
   const take = ordered.length ? ordered[safeTakeIdx] : undefined
+  // A fal take keeps its continuity inside `params`; the Core path stores it on the moodboard item.
+  const continuity = take ? takeContinuity(take) : null
   // The node's wired/dropped inputs, resolved to thumbnails (same as the Frame node). Shown as a
   // strip at the top so dropping several images one-by-one visibly accumulates and each is removable.
   const inputThumbs = resolveInputThumbs(inputs, { assets, allFrames, takesByFrame, inputsByFrame })
@@ -172,8 +188,28 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
       : unmet.length > 0 && !untagged
         ? `Wire ${unmet.map((p) => p.label.toLowerCase()).join(' & ')}`
         : null
+  // Computed here rather than reported back by the run: the user needs it before they pay for one.
+  const characterWired = connectors.some(
+    (c) => c.toItemId === id && (c.data?.targetHandle as string | undefined) === 'character',
+  )
+  const excluded = def.character?.excludeRoles ?? []
+  const identityRefused =
+    characterWired && excluded.includes('face') ? excluded.join(' and ') : null
+  // What will reach the reference port: the wired images plus whatever the character contributes.
+  // The character's count comes from the library rather than being re-derived - Core owns the rules.
+  const referenceImageCount = (() => {
+    const port = def.character?.port
+    if (!port) return inputs.length
+    const wiredOnPort = inputs.filter((i) => i.handle === port || !i.handle).length
+    const chosen = characterWired ? wiredCharacterFile(id, connectors, items) : null
+    const summary = chosen ? characters.find((c) => c.file === chosen) : undefined
+    const fromCharacter = summary ? Math.min(summary.refs, def.character?.maxRefs ?? 0) : 0
+    return Math.min(wiredOnPort + fromCharacter, def.character?.maxImages ?? Infinity)
+  })()
   const pct = typeof progress === 'number' ? Math.round(progress * 100) : null
-  const price = def.estimatePrice?.(frame.params) ?? null
+  // A model billing per reference image cannot be priced from params alone, and the character's own
+  // references are part of that count - on H3 the difference is four images, $0.32.
+  const price = def.estimatePrice?.(frame.params, { referenceImages: referenceImageCount }) ?? null
 
   // Left-edge input dots, in order - each only appears when the model's API takes that input.
   // They're spaced evenly down the edge (rendered below), so 1/2/3 dots lay out cleanly.
@@ -186,17 +222,23 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
     },
     ...ports.map((p) => {
       const family = mediaFamily(p.kind)
+      const character = p.kind === 'character'
       return {
         id: handleIdForPort(def, p),
-        colorClass: family === 'audio' ? '!bg-violet-400' : '!bg-emerald-400',
-        icon:
-          family === 'audio' ? (
-            <AudioGlyph className="h-3.5 w-3.5" />
-          ) : family === 'video' ? (
-            <VideoGlyph className="h-3.5 w-3.5" />
-          ) : (
-            <ImageGlyph className="h-3.5 w-3.5" />
-          ),
+        colorClass: character
+          ? '!bg-fuchsia-400'
+          : family === 'audio'
+            ? '!bg-violet-400'
+            : '!bg-emerald-400',
+        icon: character ? (
+          <SparkleIcon className="h-3.5 w-3.5" />
+        ) : family === 'audio' ? (
+          <AudioGlyph className="h-3.5 w-3.5" />
+        ) : family === 'video' ? (
+          <VideoGlyph className="h-3.5 w-3.5" />
+        ) : (
+          <ImageGlyph className="h-3.5 w-3.5" />
+        ),
         label: p.required ? p.label : `${p.label} (optional)`,
       }
     }),
@@ -256,6 +298,17 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
             tooltip="Rough estimate only - the actual generation cost can differ with resolution, output size and options. Check fal.ai's pricing page for accurate, up-to-date rates."
           >
             {formatPrice(price)}
+          </NodeBadge>
+        )}
+        {/* A wired character whose identity this model refuses. Said before the run, not after:
+            the render still costs money and still comes back with somebody else's face. */}
+        {identityRefused && (
+          <NodeBadge
+            tone="info"
+            accent="text-amber-300"
+            tooltip={`This model refuses ${identityRefused} references, so the character's identity is not sent - only its build and wardrobe, and the face in the result will not be your character. For a video that holds the character, use MiniMax H3 Reference to Video; for a still, Nano Banana Pro.`}
+          >
+            no identity
           </NodeBadge>
         )}
       </NodeBadgeRow>
@@ -370,6 +423,35 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
                   />
                 </div>
               </>
+            )}
+
+            {/* Only when a character was applied and a score was actually measured - an
+                unmeasurable take must not read as a zero-scoring one. A clip shows its worst frame
+                beside the headline, because a mean hides the break the eye will see. */}
+            {!busy && continuity && continuity.continuityScore !== undefined && (
+              <span
+                title={
+                  take?.kind === 'video'
+                    ? clipScoreTitle(continuity)
+                    : scoreTitle(
+                        continuity.continuityScore,
+                        continuity.continuityFaceOnly,
+                        continuity.continuitySubjectOnly,
+                      )
+                }
+                className={`pointer-events-none absolute right-2 top-2 rounded-full bg-black/85 px-2 py-0.5 text-[10px] font-medium backdrop-blur ${
+                  take?.kind === 'video'
+                    ? clipScoreTone(continuity)
+                    : scoreTone(continuity.continuityScore)
+                }`}
+              >
+                {take?.kind === 'video'
+                  ? clipScoreLabel(continuity)
+                  : `${Math.round(continuity.continuityScore)}${scoreSuffix(
+                      continuity.continuityFaceOnly,
+                      continuity.continuitySubjectOnly,
+                    )}`}
+              </span>
             )}
 
             {/* Takes behind a Current slot; click a take to make it this node's chosen output (its

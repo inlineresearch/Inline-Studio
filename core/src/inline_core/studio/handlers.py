@@ -334,8 +334,9 @@ def register_studio_handlers(
         reg("characters:delete", lambda file: characters.delete(file))
         reg("characters:createFromTake",
             lambda tid, name: characters.create_from_take(tid, name))
+        reg("characters:applyFal", lambda request: characters.apply_fal(request))
     else:
-        for ch in ("list", "delete", "createFromTake"):
+        for ch in ("list", "delete", "createFromTake", "applyFal"):
             reg(f"characters:{ch}", not_wired("Characters"))
 
     # --- LoRA training (dataset CRUD + the training run subprocess) ------------------------------

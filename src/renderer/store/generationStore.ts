@@ -5,7 +5,14 @@
  */
 import { create } from 'zustand'
 import { getNodeDef } from '@shared/nodes/registry'
-import { emptyResolvedInputs, mediaFamily, portMedia } from '@shared/nodes/types'
+import {
+  CHARACTER_ROLES,
+  emptyResolvedInputs,
+  mediaFamily,
+  portMedia,
+  withCharacterRefs,
+  type ResolvedInputs,
+} from '@shared/nodes/types'
 import type { FalRunRequest } from '@shared/ipc'
 import { ipcErrorMessage } from '../lib/ipcError'
 import { studio } from '@/lib/studio'
@@ -108,17 +115,36 @@ export const useGenerationStore = create<GenerationState>((set) => ({
         if (!def.promptOptional && !resolved.value.prompt) {
           return fail('Connect a Prompt node with some text to generate.')
         }
-        const inputs = {
+        const inputs: ResolvedInputs = {
           ...emptyResolvedInputs(),
           images: resolved.value.images,
           videos: resolved.value.videos,
           audios: resolved.value.audios,
           byHandle: resolved.value.byHandle ?? {},
         }
+        // Compiled in Core, which owns reference ordering, the role split and the numbering; the
+        // browser only knows how many slots the wired images already took.
+        const characterFile = resolved.value.character ?? undefined
+        if (def.character && characterFile) {
+          const wired = portMedia(def, inputs, def.character.port).length
+          const excluded = def.character.excludeRoles ?? []
+          const applied = await studio().characters.applyFal({
+            file: characterFile,
+            limit: Math.min(def.character.maxRefs, def.character.maxImages - wired),
+            firstPosition: wired + 1,
+            style: def.character.style,
+            keepRoles: CHARACTER_ROLES.filter((role) => !excluded.includes(role)),
+            roleLines: def.character.roleLines,
+          })
+          if (!applied.ok) return fail(applied.error)
+          inputs.character = applied.value
+        }
         // A required media port with nothing behind it would go out as an empty URL, and fal
         // answers that with a 422 "failed to download the file" that says nothing about the cause.
+        // A character feeding that port satisfies it: its references are real images.
         const starved = def.inputs.filter(
-          (p) => p.required && mediaFamily(p.kind) && portMedia(def, inputs, p.id).length === 0,
+          (p) =>
+            p.required && mediaFamily(p.kind) && withCharacterRefs(def, inputs, p.id).length === 0,
         )
         if (starved.length > 0) {
           return fail(
@@ -131,6 +157,7 @@ export const useGenerationStore = create<GenerationState>((set) => ({
           endpoint: def.resolveEndpoint(inputs),
           body: def.buildRequest(runParams, inputs),
           outputKind: def.outputKind,
+          characterFile,
         }
       }
       const res = await studio().generation.run(frameId, request)

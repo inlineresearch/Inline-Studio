@@ -6,6 +6,7 @@
  * - `InlineStudioApi` is the exact backend surface the web client implements against Core; the
  *   preload. The renderer imports this type; the main process implements it.
  */
+import type { AppliedCharacter, CharacterPromptStyle, CharacterRole } from './nodes/types'
 import type {
   ActiveGeneration,
   Project,
@@ -257,6 +258,8 @@ export const IpcChannels = {
     delete: 'characters:delete',
     /** Turn a generated take into a character, so a good render becomes reusable. */
     createFromTake: 'characters:createFromTake',
+    /** A character compiled for one fal endpoint: normalised refs + the prompt text naming them. */
+    applyFal: 'characters:applyFal',
   },
   moodboard: {
     list: 'moodboard:list',
@@ -404,6 +407,24 @@ export interface ResolvedFalInputs {
   /** The same URIs keyed by the input port each was wired to; untagged inputs are absent. */
   byHandle: Record<string, string[]>
   prompt: string | null
+  /** The `.char` filename wired into the node's Character port, or null when none is. */
+  character: string | null
+}
+
+/** What one endpoint needs a character normalised to, so `characters:applyFal` can compile it. */
+export interface FalCharacterRequest {
+  /** The `.char` filename, as `ResolvedFalInputs.character` reported it. */
+  file: string
+  /** Reference slots left for the character after the wired images. */
+  limit: number
+  /** The position its first reference lands on in the request's image list, 1-based. */
+  firstPosition: number
+  /** How this endpoint addresses a reference in the prompt. */
+  style: CharacterPromptStyle
+  /** Which roles this endpoint accepts. Absent means all of them. */
+  keepRoles?: CharacterRole[]
+  /** Name each role in the prompt, for an endpoint sent only part of the character. */
+  roleLines?: boolean
 }
 
 /** A prebuilt fal request the browser hands to the backend to run (fal defs are studio-side). */
@@ -411,6 +432,8 @@ export interface FalRunRequest {
   endpoint: string
   body: Record<string, unknown>
   outputKind: 'image' | 'video' | 'audio'
+  /** The character applied, so the relay can score what fal returns against it. */
+  characterFile?: string
 }
 
 export interface CreateProjectInput {
@@ -757,6 +780,9 @@ export interface InlineStudioApi {
     /** Save a generated take as a new character. Creating, editing and building one otherwise
      * happen on the canvas, through the character nodes. */
     createFromTake(takeId: string, name: string): Promise<Result<CharacterSummary>>
+    /** Compile a character for one fal endpoint. Composed in Core so reference ordering, the role
+     * split and the position numbering stay where they already live. */
+    applyFal(request: FalCharacterRequest): Promise<Result<AppliedCharacter>>
   }
   moodboard: {
     /** The board's items + connectors. */

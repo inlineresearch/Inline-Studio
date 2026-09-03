@@ -3,6 +3,7 @@ import { dotPorts, handleIdForPort, portIdForHandle } from './handles'
 import { MINIMAX_H3_I2V } from './minimaxH3I2V'
 import { MINIMAX_H3_REF2V } from './minimaxH3Ref2V'
 import { SEEDANCE_I2V } from './seedanceI2V'
+import { SEEDANCE_REF2V } from './seedanceRef2V'
 import { SONILO_V2M } from './soniloVideoToMusic'
 import { emptyResolvedInputs, portMedia, type NodeDef, type ResolvedInputs } from './types'
 
@@ -30,11 +31,12 @@ describe('canvas handle ids', () => {
     expect(portIdForHandle(MINIMAX_H3_I2V, undefined)).toBeNull()
   })
 
-  it('orders dots media-first, then audio', () => {
+  it('orders dots media-first, then audio, then character', () => {
     expect(dotPorts(MINIMAX_H3_REF2V).map((p) => p.id)).toEqual([
       'reference_image_urls',
       'reference_video_urls',
       'reference_audio_urls',
+      'character',
     ])
   })
 })
@@ -87,5 +89,36 @@ describe('portMedia', () => {
 
   it('returns nothing for an unknown port', () => {
     expect(portMedia(SEEDANCE_I2V, emptyResolvedInputs(), 'nope')).toEqual([])
+  })
+})
+
+describe('the character dot', () => {
+  it('renders last, after every media and audio port', () => {
+    // Placed after the media dots so adding it never shifts the position of a dot a user already
+    // knows, and so the strip still reads media-then-audio top to bottom.
+    expect(dotPorts(SEEDANCE_REF2V).map((p) => p.id)).toEqual([
+      'image_urls',
+      'video_urls',
+      'audio_urls',
+      'character',
+    ])
+  })
+
+  it('keeps its own handle id, never a legacy one', () => {
+    // It arrived long after `in`/`audio` were fixed, so it has no legacy id to inherit - and it
+    // must not take `in`, which every existing media connector already stores.
+    const character = SEEDANCE_REF2V.inputs.find((p) => p.kind === 'character')
+    expect(character && handleIdForPort(SEEDANCE_REF2V, character)).toBe('character')
+    expect(portIdForHandle(SEEDANCE_REF2V, 'character')).toBe('character')
+    expect(handleIdForPort(SEEDANCE_REF2V, SEEDANCE_REF2V.inputs[0])).toBe('in')
+  })
+
+  it('draws no media, so it never claims a resolved input', () => {
+    // `mediaFamily` is null for it, which is what keeps every media accessor inert.
+    const resolved: ResolvedInputs = {
+      ...emptyResolvedInputs(),
+      images: ['data:image/png;base64,a'],
+    }
+    expect(portMedia(SEEDANCE_REF2V, resolved, 'character')).toEqual([])
   })
 })

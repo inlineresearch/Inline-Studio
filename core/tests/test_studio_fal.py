@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from inline_core.studio import fal
 from inline_core.studio import frames as fr
 from inline_core.studio import moodboard as mb
@@ -250,3 +252,92 @@ def test_fal_active_reports_runs_in_flight() -> None:
 
     gen.cancel("frame-1")
     assert gen.active() == []
+
+
+def test_a_completed_request_can_still_carry_a_rejection_instead_of_output() -> None:
+    """Seedance answers a reference image carrying a face with a 200 whose body is the refusal,
+    while the queue reports COMPLETED. Reading only the queue told the user the model returned
+    nothing, which points at a bug rather than at the reference they have to swap."""
+
+    class _Response:
+        def __init__(self, payload: object) -> None:
+            self._payload = payload
+            self.text = str(payload)
+
+        def json(self) -> object:
+            return self._payload
+
+    refusal = _Response(
+        {
+            "detail": [
+                {
+                    "loc": ["body", "image_urls"],
+                    "msg": "The images or videos provided may contain likenesses of real people "
+                    "or other private information that cannot be processed.",
+                    "type": "content_policy_violation",
+                }
+            ]
+        }
+    )
+    message = fal._no_output_message(refusal)
+    assert "content filter" in message
+    assert "likenesses of real people" in message
+
+    # An empty body still says something, rather than inventing a reason it does not have.
+    assert fal._no_output_message(_Response({})) == "The model returned no output."
+
+    # A non-moderation reason is passed through rather than dressed up as a filter block.
+    other = _Response({"detail": "the upstream model timed out"})
+    assert fal._no_output_message(other) == (
+        "The model returned no output. The provider said: the upstream model timed out"
+    )
+
+
+def _character_board(source_type: str, params: dict) -> dict:
+    return {
+        "items": [
+            {"id": "src", "type": "core",
+             "data": {"core": {"type": source_type, "params": params}}},
+            {"id": "gen", "type": "frame", "frameId": "F"},
+        ],
+        "connectors": [
+            {"fromItemId": "src", "toItemId": "gen", "data": {"targetHandle": "character"}}
+        ],
+    }
+
+
+def test_a_character_reaches_a_fal_node_from_write_as_well_as_load(monkeypatch) -> None:
+    """Write .char is the node a user has in hand right after building a character, and it names the
+    file it just saved under `filename` rather than `file`. Reading only Load's param meant the
+    character silently never reached the request and the endpoint rendered a stranger."""
+    monkeypatch.setattr(
+        fal.mb, "list_board",
+        lambda conn: _character_board("character/write", {"filename": "  /models/emmy-s500-v6"}),
+    )
+    # A typed path and a missing suffix both reduce to what `library.resolve` accepts.
+    assert fal.wired_character(object(), "F") == "emmy-s500-v6.char"
+
+    monkeypatch.setattr(
+        fal.mb, "list_board",
+        lambda conn: _character_board("character/load", {"file": "emmy-s500-v6.char"}),
+    )
+    assert fal.wired_character(object(), "F") == "emmy-s500-v6.char"
+
+
+def test_an_unsaved_character_says_so_rather_than_rendering_a_stranger(monkeypatch) -> None:
+    """Every other character node emits an identity that exists only inside a running graph, and a
+    fal request cannot execute one. Silently dropping it is the worst outcome: the render succeeds
+    and looks like the character simply did not work."""
+    monkeypatch.setattr(
+        fal.mb, "list_board",
+        lambda conn: _character_board("character/encode", {"name": "emmy"}),
+    )
+    with pytest.raises(ValueError, match="Write .char first"):
+        fal.wired_character(object(), "F")
+
+
+def test_no_character_wire_is_not_an_error(monkeypatch) -> None:
+    board = _character_board("character/load", {"file": "x.char"})
+    board["connectors"] = []
+    monkeypatch.setattr(fal.mb, "list_board", lambda conn: board)
+    assert fal.wired_character(object(), "F") is None
