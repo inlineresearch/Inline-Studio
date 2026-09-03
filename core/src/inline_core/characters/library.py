@@ -33,6 +33,18 @@ def file_name(name: str) -> str:
     return f"{cleaned or 'character'}{SUFFIX}"
 
 
+def target_name(raw: Any) -> str | None:
+    """A typed "save as" value reduced to a library filename, or None when it names nothing.
+
+    A path is reduced to its last part: a character written anywhere else is one the pickers cannot
+    offer. Shared with the relay, which has to turn the same param into something `resolve` accepts.
+    """
+    name = str(raw or "").strip().replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not name:
+        return None
+    return name if name.lower().endswith(SUFFIX) else f"{name}{SUFFIX}"
+
+
 def unique_name(name: str) -> str:
     """``Ada.char``, ``Ada-2.char``, ... so saving a second Ada never overwrites the first."""
     base = file_name(name)

@@ -84,11 +84,14 @@ export function ModelPicker({
   }, [open])
 
   return (
-    <div className="relative" ref={rootRef}>
+    // `flex-1 min-w-0` so the trigger below can measure the footer rather than a fixed cap: a node
+    // wide enough to show "Seedance 2.0 · Reference → Video" should show it.
+    <div className="relative min-w-0 flex-1" ref={rootRef}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="nodrag flex max-w-[150px] items-center gap-1 rounded-md bg-black/40 px-2 py-1 text-[11px] font-medium text-zinc-200 hover:bg-black/60"
-        title="Choose a model"
+        // inline-flex keeps the pill hugging a short title; max-w-full stops it at the node edge.
+        className="nodrag inline-flex max-w-full items-center gap-1 rounded-md bg-black/40 px-2 py-1 text-[11px] font-medium text-zinc-200 hover:bg-black/60"
+        title={current ? `${current.title} - choose a model` : 'Choose a model'}
       >
         <span className="truncate">{current?.title ?? 'Select model'}</span>
         <ChevronDownIcon />

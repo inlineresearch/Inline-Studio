@@ -111,3 +111,50 @@ describe('canWire', () => {
     expect(canWire({ source: 'p', target: null }, ITEMS, DESCRIPTORS)).toBe(false)
   })
 })
+
+describe('a character wire onto a fal node', () => {
+  const FAL = [...ITEMS, item('fal', 'frame')]
+
+  it('lands on the Character handle', () => {
+    expect(
+      canWire(
+        { source: 'enc', target: 'fal', sourceHandle: 'character', targetHandle: 'character' },
+        FAL,
+        DESCRIPTORS,
+      ),
+    ).toBe(true)
+  })
+
+  it('is refused on an image handle', () => {
+    // A fal node has no Core descriptor, so the ordinary kind check has no target kind to compare
+    // against and would wave this through - and a character carries a filename, not an image, so
+    // it would resolve to nothing at render time.
+    expect(
+      canWire(
+        { source: 'enc', target: 'fal', sourceHandle: 'character', targetHandle: 'in' },
+        FAL,
+        DESCRIPTORS,
+      ),
+    ).toBe(false)
+  })
+
+  it('does not stop an image output reaching a fal media input', () => {
+    expect(
+      canWire(
+        { source: 'gen', target: 'fal', sourceHandle: 'image', targetHandle: 'in' },
+        FAL,
+        DESCRIPTORS,
+      ),
+    ).toBe(true)
+  })
+
+  it('refuses an image output on the Character handle', () => {
+    expect(
+      canWire(
+        { source: 'gen', target: 'fal', sourceHandle: 'image', targetHandle: 'character' },
+        FAL,
+        DESCRIPTORS,
+      ),
+    ).toBe(false)
+  })
+})

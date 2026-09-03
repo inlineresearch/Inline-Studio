@@ -400,3 +400,108 @@ def test_the_subject_term_matches_the_closest_reference_not_their_mean() -> None
     assert result is not None
     # Against the mean this is ~70; against the closest reference it is a match.
     assert result["subjectScore"] == 100.0
+
+
+def _clip_samples(monkeypatch, rows: list[tuple[float, object]]) -> None:
+    """Stand in for ffmpeg: `_score_video` is being tested, not frame extraction."""
+    from inline_core.studio import characters as sc
+
+    monkeypatch.setattr(sc, "_sample_frames", lambda src, count=5: rows)
+
+
+def test_a_clip_reports_where_identity_dropped_not_just_a_headline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mean hides the thing that matters. A clip holding at 80 while dipping to 40 has a visible
+    identity break, and the reader needs the minimum and when it happened to go and look."""
+    from inline_core.studio import characters as sc
+
+    scores = [(0.5, 82.0), (1.5, 78.0), (2.5, 41.0), (3.5, 80.0), (4.5, 79.0)]
+    _clip_samples(monkeypatch, [(at, object()) for at, _ in scores])
+    remaining = [value for _, value in scores]
+    monkeypatch.setattr(
+        sc.scoring,
+        "score",
+        lambda frame, *a, **k: {
+            "score": remaining.pop(0),
+            "faceBearing": True,
+            "subjectCounted": True,
+        },
+    )
+
+    out = sc._score_video(Path("clip.mp4"), {}, [], [], [])
+    assert out is not None
+    assert out["min"] == 41.0 and out["minAt"] == 2.5
+    assert out["mean"] == pytest.approx(72.0, abs=0.1)
+    # The headline stays the median, which is the scale every existing take already carries.
+    assert out["score"] == 79.0
+    assert out["frames"] == 5 and out["noFace"] == 0
+
+
+def test_a_frame_with_no_face_is_counted_never_scored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A turned head, a motion blur or a subject out of frame is not a wrong face. Scoring one as
+    zero would make every clip with natural movement look like a failure - and with no face,
+    `score` would otherwise fall back to DINOv2 alone, which must never decide identity."""
+    from inline_core.studio import characters as sc
+
+    results = [
+        {"score": 80.0, "faceBearing": True, "subjectCounted": True},
+        # Measurable, but off the subject term only: no face was found in this frame.
+        {"score": 12.0, "faceBearing": False, "subjectCounted": True},
+        None,
+        {"score": 76.0, "faceBearing": True, "subjectCounted": True},
+    ]
+    _clip_samples(monkeypatch, [(float(i), object()) for i in range(len(results))])
+    monkeypatch.setattr(sc.scoring, "score", lambda frame, *a, **k: results.pop(0))
+
+    out = sc._score_video(Path("clip.mp4"), {}, [], [], [])
+    assert out is not None
+    # The 12.0 never reaches the statistics: it is a framing number, not an identity one.
+    assert out["frames"] == 2 and out["noFace"] == 2
+    assert out["min"] == 76.0 and out["mean"] == 78.0
+    assert all(s["score"] in (80.0, 76.0) for s in out["samples"])
+
+
+def test_a_clip_where_nothing_measured_carries_no_score(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not measured and scored zero are different facts, and the second is the one that misleads."""
+    from inline_core.studio import characters as sc
+
+    _clip_samples(monkeypatch, [(0.5, object()), (1.5, object())])
+    monkeypatch.setattr(sc.scoring, "score", lambda frame, *a, **k: None)
+
+    out = sc._score_video(Path("clip.mp4"), {}, [], [], [])
+    # How many frames were looked at is still worth reporting; a score is not invented.
+    assert out == {"noFace": 2, "frames": 0}
+    assert out.get("score") is None
+
+
+def test_a_clip_duration_falls_back_to_ffmpeg_when_ffprobe_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`imageio-ffmpeg` ships ffmpeg without ffprobe, so on a default install there is no probe.
+    Without a duration no frames are sampled, which made every video continuity score come back
+    silent rather than wrong - the worst shape for a number a user is meant to trust."""
+    from inline_core import ffmpeg as ff
+    from inline_core.studio import characters as sc
+
+    monkeypatch.setattr(ff, "ffprobe_exe", lambda: None)
+    monkeypatch.setattr(ff, "ffmpeg_exe", lambda: "/usr/bin/ffmpeg")
+
+    class _Proc:
+        # ffmpeg prints its banner to stderr and exits non-zero when no output was asked for.
+        stderr = b"  Duration: 00:01:05.02, start: 0.000000, bitrate: 1234 kb/s\n"
+        stdout = b""
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _Proc())
+    assert sc._duration_seconds(Path("clip.mp4")) == pytest.approx(65.02)
+
+
+def test_no_duration_anywhere_yields_no_frames_rather_than_a_wrong_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from inline_core import ffmpeg as ff
+    from inline_core.studio import characters as sc
+
+    monkeypatch.setattr(ff, "ffprobe_exe", lambda: None)
+    monkeypatch.setattr(ff, "ffmpeg_exe", lambda: None)
+    assert sc._duration_seconds(Path("clip.mp4")) is None

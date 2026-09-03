@@ -10,17 +10,19 @@ import { mediaFamily, type InputPort, type NodeDef } from './types'
 
 /** Ports share a dot-naming group when they draw from the same media bucket - except audio, which
  *  has always had its own dot, so it groups on its own. */
-function dotGroup(port: InputPort): 'media' | 'audio' | null {
+function dotGroup(port: InputPort): 'media' | 'audio' | 'character' | null {
+  if (port.kind === 'character') return 'character'
   const family = mediaFamily(port.kind)
   if (family === null) return null
   return family === 'audio' ? 'audio' : 'media'
 }
 
-/** The ports a Generate node renders dots for, in top-to-bottom order (media first, then audio). */
+/** The ports a Generate node renders dots for, in top-to-bottom order (media, audio, character). */
 export function dotPorts(def: NodeDef): InputPort[] {
   return [
     ...def.inputs.filter((p) => dotGroup(p) === 'media'),
     ...def.inputs.filter((p) => dotGroup(p) === 'audio'),
+    ...def.inputs.filter((p) => dotGroup(p) === 'character'),
   ]
 }
 
@@ -28,6 +30,8 @@ export function dotPorts(def: NodeDef): InputPort[] {
 export function handleIdForPort(def: NodeDef, port: InputPort): string {
   const group = dotGroup(port)
   if (group === null) return port.id
+  // Character came after the legacy ids, so it never inherits one - its handle is always its id.
+  if (group === 'character') return port.id
   const peers = def.inputs.filter((p) => dotGroup(p) === group)
   return peers[0] === port ? (group === 'audio' ? 'audio' : 'in') : port.id
 }

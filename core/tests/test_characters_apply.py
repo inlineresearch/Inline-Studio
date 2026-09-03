@@ -129,3 +129,54 @@ def test_a_render_can_send_fewer_of_a_characters_references_than_it_holds(tmp_pa
     )
     assert face_only is not None
     assert face_only.roles == [cf.ROLE_FACE] * 2, "body and clothing must not be sent"
+
+
+def test_seedance_gets_at_image_tokens_not_prose(tmp_path: Path) -> None:
+    """Seedance addresses a reference as `@ImageN`; prose names a position it cannot resolve, and
+    H3's `<Picture N>` is another model's reserved label."""
+    from inline_core.characters import apply as ax
+
+    applied = ax.AppliedCharacter("Emmy", [object(), object()], "black hair")  # type: ignore[list-item]
+
+    at_image = applied.prompt_prefix(3, style="at-image")
+    assert at_image.startswith("@Image3 and @Image4 show Emmy,")
+    assert "<Picture" not in at_image
+    # The description still lands, and still ends as a sentence rather than running into the prompt.
+    assert at_image.endswith("black hair. ")
+
+    # One reference is singular, and must not emit a dangling "and".
+    single = ax.AppliedCharacter("Emmy", [object()], "")  # type: ignore[list-item]
+    assert single.prompt_prefix(1, style="at-image").startswith("@Image1 shows Emmy,")
+
+    # The other styles are untouched by the new branch.
+    assert applied.prompt_prefix(3).startswith("Images 3 and 4 show Emmy,")
+    assert applied.prompt_prefix(3, style="token").startswith("<Picture 3> <Picture 4> show")
+
+
+def test_a_role_line_never_re_declares_an_at_image_token(tmp_path: Path) -> None:
+    """Repeating a reserved label made H3 replay its references as the opening frames. Nothing has
+    shown Seedance is different, so a role line refers back in prose."""
+    from inline_core.characters import apply as ax
+    from inline_core.characters import charfile as cf
+
+    applied = ax.AppliedCharacter(
+        "Emmy", [object(), object()], "", roles=[cf.ROLE_FACE, cf.ROLE_BODY]  # type: ignore[list-item]
+    )
+    text = applied.prompt_prefix(1, style="at-image", role_lines=True)
+    # Declared once each in the leading clause; the role lines point back without re-declaring.
+    assert text.count("@Image1") == 1 and text.count("@Image2") == 1
+    assert "Image 1 shows Emmy's face." in text
+    assert "Image 2 shows Emmy's full body and build." in text
+
+
+def test_the_fal_policy_normalises_a_reference_into_one_megapixel() -> None:
+    """Hosted endpoints declare no frame grid, so the cap that matters is the wire: a reference
+    travels base64 three times before it reaches fal."""
+    from inline_core.characters import encode
+
+    assert encode.reference_policy(encode.FAL_REF_ARCH) == encode.FAL_REF_POLICY
+    big = Image.new("RGB", (4000, 3000))
+    out = encode.normalise_reference(big, encode.reference_policy(encode.FAL_REF_ARCH))
+    assert out.width * out.height <= 1024 * 1024
+    # Aspect is preserved; only the area shrinks.
+    assert abs(out.width / out.height - 4 / 3) < 0.02

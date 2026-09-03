@@ -61,7 +61,8 @@ class AppliedCharacter:
         for role in cf.ROLES:
             numbers = grouped.get(role)
             if numbers:
-                out += f" {_positions(style, numbers)} show {self.name}'s {_ROLE_BINDINGS[role]}."
+                verb = "shows" if len(numbers) == 1 else "show"
+                out += f" {_positions(style, numbers)} {verb} {self.name}'s {_ROLE_BINDINGS[role]}."
         return out
 
     def prompt_prefix(
@@ -70,8 +71,8 @@ class AppliedCharacter:
         """Text naming the positions the character lands on, so positional prompting resolves.
 
         ``style`` because a model only resolves the form it was trained on: FLUX.2 reads the ordinal
-        prose below, MiniMax H3 reads ``<Picture N>`` tokens (``models/references.py``), and handing
-        either the other one names positions it cannot see.
+        prose below, MiniMax H3 reads ``<Picture N>`` tokens (``models/references.py``), Seedance
+        2.0 reads ``@ImageN``, and handing any of them another names positions it cannot see.
 
         ``role_lines`` defaults off: the bindings are unvalidated, see docs/characters.md.
         """
@@ -84,6 +85,13 @@ class AppliedCharacter:
             tokens = " ".join(f"<Picture {n}>" for n in positions)
             plural = "" if len(positions) == 1 else "each"
             which = f"{tokens} {'shows' if not plural else 'show'}"
+        elif style == "at-image":
+            # Seedance's own addressing syntax, so each position is declared exactly once here.
+            tokens = [f"@Image{n}" for n in positions]
+            if len(tokens) == 1:
+                which = f"{tokens[0]} shows"
+            else:
+                which = f"{', '.join(tokens[:-1])} and {tokens[-1]} show"
         elif len(positions) == 1:
             which = f"Image {positions[0]} shows"
         else:
@@ -103,7 +111,8 @@ class AppliedCharacter:
 
 def _positions(style: str, numbers: list[int]) -> str:
     """How a role line refers *back* to positions, in prose, never re-declaring them."""
-    # Never `<Picture N>`: that is H3's reserved label and repeating it replayed the references.
+    # Never `<Picture N>` or `@ImageN`: a reserved label repeated replayed the references on H3, and
+    # nothing has established that Seedance treats a second `@ImageN` as a reference either.
     noun = "Picture" if style == "token" else "Image"
     if len(numbers) == 1:
         return f"{noun} {numbers[0]}"

@@ -45,9 +45,42 @@ describe('MiniMax H3 · text → video', () => {
     expect(at(99)).toBe(15)
   })
 
-  it('prices at $0.26 per second of 2K output', () => {
-    expect(MINIMAX_H3_T2V.estimatePrice?.({ duration: 5 })?.amount).toBeCloseTo(1.3, 5)
-    expect(MINIMAX_H3_T2V.estimatePrice?.({ duration: 15 })?.amount).toBeCloseTo(3.9, 5)
+  it('offers every resolution fal documents, not 2K alone', () => {
+    // Pinning it to 2K charged a draft at the most expensive tier there is.
+    const field = MINIMAX_H3_T2V.params.find((p) => p.key === 'resolution')
+    expect(field?.widget === 'select' && field.options.map((o) => o.value)).toEqual([
+      '480P',
+      '768P',
+      '2K',
+      '4K',
+    ])
+    expect(field?.default).toBe('2K')
+  })
+
+  it('sends the picked resolution rather than a hardcoded one', () => {
+    const body = MINIMAX_H3_T2V.buildRequest(
+      { prompt: 'p', resolution: '480P' },
+      emptyResolvedInputs(),
+    )
+    expect(body.resolution).toBe('480P')
+    // A node saved before the param had options falls back rather than sending something invalid.
+    expect(MINIMAX_H3_T2V.buildRequest({ prompt: 'p' }, emptyResolvedInputs()).resolution).toBe(
+      '2K',
+    )
+    expect(
+      MINIMAX_H3_T2V.buildRequest({ prompt: 'p', resolution: '8K' }, emptyResolvedInputs())
+        .resolution,
+    ).toBe('2K')
+  })
+
+  it('prices per second by resolution, from fal’s published rates', () => {
+    const at = (resolution: string, duration = 5): number | undefined =>
+      MINIMAX_H3_T2V.estimatePrice?.({ resolution, duration })?.amount
+    expect(at('480P')).toBeCloseTo(0.25, 5)
+    expect(at('768P')).toBeCloseTo(0.3, 5)
+    expect(at('2K')).toBeCloseTo(0.65, 5)
+    expect(at('4K')).toBeCloseTo(0.8, 5)
+    expect(at('2K', 15)).toBeCloseTo(1.95, 5)
     expect(MINIMAX_H3_T2V.estimatePrice?.({ duration: 5 })?.approx).toBe(true)
   })
 })
@@ -156,5 +189,34 @@ describe('H3 registry wiring', () => {
       expect(getNodeDef(id)?.id).toBe(id)
       expect(modelOwnerLabel(id)).toBe('MiniMax')
     }
+  })
+})
+
+describe('MiniMax H3 reference-image surcharge', () => {
+  it('charges nothing extra for the first five references', () => {
+    const base = MINIMAX_H3_REF2V.estimatePrice?.({ resolution: '2K', duration: 5 })?.amount
+    for (const n of [0, 1, 5]) {
+      expect(
+        MINIMAX_H3_REF2V.estimatePrice?.({ resolution: '2K', duration: 5 }, { referenceImages: n })
+          ?.amount,
+      ).toBeCloseTo(base ?? 0, 5)
+    }
+  })
+
+  it('adds $0.08 for each reference past the fifth', () => {
+    // A character contributing its whole set is exactly the case params alone cannot see: nine
+    // references is four chargeable ones, $0.32 the estimate used to miss.
+    const at = (referenceImages: number): number | undefined =>
+      MINIMAX_H3_REF2V.estimatePrice?.({ resolution: '2K', duration: 5 }, { referenceImages })
+        ?.amount
+    expect(at(6)).toBeCloseTo(0.65 + 0.08, 5)
+    expect(at(9)).toBeCloseTo(0.65 + 0.32, 5)
+  })
+
+  it('leaves the endpoints without a reference port alone', () => {
+    // Only reference-to-video bills per image; text and image to video have nothing to count.
+    const wired = { referenceImages: 9 }
+    expect(MINIMAX_H3_T2V.estimatePrice?.({ duration: 5 }, wired)?.amount).toBeCloseTo(0.65, 5)
+    expect(MINIMAX_H3_I2V.estimatePrice?.({ duration: 5 }, wired)?.amount).toBeCloseTo(0.65, 5)
   })
 })

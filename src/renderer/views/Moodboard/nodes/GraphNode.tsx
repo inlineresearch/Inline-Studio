@@ -725,11 +725,15 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                       unmeasurable take must not read as a zero-scoring one. */}
                   {take.continuityScore !== undefined && (
                     <span
-                      title={scoreTitle(take.continuityScore, take.continuityFaceOnly)}
+                      title={scoreTitle(
+                        take.continuityScore,
+                        take.continuityFaceOnly,
+                        take.continuitySubjectOnly,
+                      )}
                       className={`pointer-events-none absolute left-0.5 top-0.5 rounded bg-black/85 px-1 text-[8px] leading-tight ${scoreTone(take.continuityScore)}`}
                     >
                       {Math.round(take.continuityScore)}
-                      {scoreSuffix(take.continuityFaceOnly)}
+                      {scoreSuffix(take.continuityFaceOnly, take.continuitySubjectOnly)}
                     </span>
                   )}
                 </button>

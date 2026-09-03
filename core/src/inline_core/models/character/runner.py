@@ -620,12 +620,7 @@ class WriteCharacterRunner(NodeRunner):
 
 
 def _target_name(raw: Any) -> str | None:
-    """The filename to write, inside models/characters. A path is reduced to its last part: a
-    character written anywhere else is one the pickers cannot offer."""
-    name = str(raw or "").strip().replace("\\", "/").rsplit("/", 1)[-1].strip()
-    if not name:
-        return None
-    return name if name.lower().endswith(".char") else f"{name}.char"
+    return library.target_name(raw)
 
 
 def _apply_mode(doc: cf.CharDoc, mode: str) -> None:

@@ -338,7 +338,7 @@ export interface CorePendingRun {
 
 /** One render in a Core node's history: the media file plus the recipe fields that let switching to
  * it restore the node's settings and its prompt (the reproducible-recipe feature). */
-export interface CoreTakeRef {
+export interface CoreTakeRef extends TakeContinuity {
   takeId: string
   filePath: string
   kind: 'image' | 'video' | 'audio'
@@ -350,13 +350,34 @@ export interface CoreTakeRef {
   nodeParams?: Record<string, unknown>
   /** The prompt this take used (from the upstream prompt node), for display + restore. */
   prompt?: string
+}
+
+/** Spread onto a Core take ref; a fal take carries it inside `Take.params.continuity`. */
+export interface TakeContinuity {
   /** The character file applied to this take, when one was. */
   characterId?: string
-  /** 0-100 identity match against that character's centroid. Absent means "not measured", which
-   * is a different fact from a low score, so it must never be defaulted to zero. */
+  /** 0-100 identity match against that character's references. Absent means "not measured", which
+   * is a different fact from a low score, so it must never be defaulted to zero. On a video this
+   * is the median across the frames that measured. */
   continuityScore?: number
   /** The score is the face term alone: the references cannot speak to this take's framing. */
   continuityFaceOnly?: boolean
+  /** No face was found, so DINOv2 answered alone. That measures framing, not identity, and the
+   * number must never be read as an identity match. */
+  continuitySubjectOnly?: boolean
+  /** Video: how many sampled frames carried a measurable face. */
+  continuityFrames?: number
+  /** Video: sampled frames with no face at all - turned away, blurred, or out of frame. Counted
+   * and reported, never scored as zero, and never part of the statistics below. */
+  continuityNoFace?: number
+  /** Video: the mean across measured frames. What "held at" means. */
+  continuityMean?: number
+  /** Video: the worst measured frame. The real signal - a mean hides a visible identity break. */
+  continuityMin?: number
+  /** Video: when that worst frame occurred, in seconds. */
+  continuityMinAt?: number
+  /** Which gallery the identity term was measured against. */
+  continuityGallery?: 'frozen' | 'refs'
 }
 
 /** One saved character in `models/characters/`, as the library panel lists it. */

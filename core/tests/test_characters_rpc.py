@@ -286,3 +286,102 @@ def test_rescoring_a_stale_character_keeps_its_trained_adapter(
     assert rebuilt.manifest.reserved.get("members") == ["keep-me"]
     # And it did actually rescore, or the assertions above pass on a file nothing touched.
     assert cf.centroid_valid(rebuilt.manifest, "dinov2-base", "2"), "scoring was not rebuilt"
+
+
+def test_apply_fal_compiles_a_character_for_a_hosted_endpoint(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A fal node builds its request in the browser, which cannot read a `.char`. So it asks for the
+    references already normalised, ordered and numbered - none of which it should re-derive."""
+    from inline_core.characters import encode, library
+
+    doc = encode.char_encode(
+        [_ref(tmp_path / f"r{i}.png", (60 + i * 40, 90, 120)) for i in range(3)],
+        name="Emmy",
+        description="black hair",
+    )
+    library.save(doc)
+
+    result = rpc(
+        client,
+        "characters:applyFal",
+        {"file": "Emmy.char", "limit": 9, "firstPosition": 3, "style": "at-image"},
+    )
+    assert result["ok"] is True, result
+    value = result["value"]
+    assert value["name"] == "Emmy"
+    assert len(value["refs"]) == 3
+    # Data URIs, the same transport a wired image already takes to the browser and back.
+    assert all(r.startswith("data:image/png;base64,") for r in value["refs"])
+    assert len(value["roles"]) == len(value["refs"])
+    # Numbered from where the wired images left off, in the syntax this endpoint documents.
+    assert value["promptPrefix"] == (
+        "@Image3, @Image4 and @Image5 show Emmy, the same character in every image. black hair. "
+    )
+
+
+def test_apply_fal_caps_the_character_at_the_slots_left(client: TestClient, tmp_path: Path) -> None:
+    """The endpoint's ceiling is shared with whatever the user wired, so the character takes what is
+    left rather than what it holds."""
+    from inline_core.characters import encode, library
+
+    doc = encode.char_encode(
+        [_ref(tmp_path / f"c{i}.png", (30 * i, 100, 140)) for i in range(4)], name="Cap"
+    )
+    library.save(doc)
+
+    two = rpc(client, "characters:applyFal", {"file": "Cap.char", "limit": 2, "firstPosition": 1})
+    assert two["ok"] is True and len(two["value"]["refs"]) == 2
+
+    # No slots left is a message the user can act on, not a silent run with no character.
+    none_left = rpc(client, "characters:applyFal", {"file": "Cap.char", "limit": 0})
+    assert none_left["ok"] is False
+    assert "reference slots" in none_left["error"]
+
+
+def _ref(path: Path, colour: tuple[int, int, int]) -> Path:
+    Image.new("RGB", (900, 700), colour).save(path)
+    return path
+
+
+def test_apply_fal_drops_a_role_the_endpoint_refuses(client: TestClient, tmp_path: Path) -> None:
+    """Seedance refuses any reference carrying a face, so sending them costs the user two minutes
+    and a charge to be told no. The endpoint's own policy belongs in the request it builds."""
+    from inline_core.characters import charfile as cf
+    from inline_core.characters import encode, library
+
+    library.save(
+        encode.char_encode(
+            [_ref(tmp_path / "f.png", (200, 170, 150)), _ref(tmp_path / "c.png", (40, 90, 160))],
+            name="Roles",
+            roles=[cf.ROLE_FACE, cf.ROLE_CLOTH],
+            description="black hair",
+        )
+    )
+
+    kept = rpc(client, "characters:applyFal", {
+        "file": "Roles.char", "limit": 9, "firstPosition": 1,
+        "style": "at-image", "keepRoles": ["body", "cloth"], "roleLines": True,
+    })
+    assert kept["ok"] is True, kept
+    assert kept["value"]["roles"] == ["cloth"], "the face reference never reaches the request"
+    # With identity gone, the prompt has to say what the remaining image is, not claim it is her.
+    assert "outfit" in kept["value"]["promptPrefix"]
+
+
+def test_apply_fal_names_the_policy_when_nothing_is_left_to_send(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A face-only character on a face-refusing endpoint has nothing to send. Saying "no references"
+    would read as a broken character rather than as the endpoint's rule."""
+    from inline_core.characters import encode, library
+
+    face = [_ref(tmp_path / "only.png", (200, 170, 150))]
+    library.save(encode.char_encode(face, name="FaceOnly"))
+
+    out = rpc(client, "characters:applyFal", {
+        "file": "FaceOnly.char", "limit": 9, "firstPosition": 1,
+        "style": "at-image", "keepRoles": ["body", "cloth"],
+    })
+    assert out["ok"] is False
+    assert "does not accept face references" in out["error"]

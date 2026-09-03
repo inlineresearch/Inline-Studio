@@ -202,7 +202,8 @@ dropdown.
 Drop in a photo or two and Inline Studio compiles a **`.char`**: one portable file holding your
 references and an identity fingerprint. Describe the scene, and the references carry the likeness.
 On MiniMax H3 the same person moves and speaks, in video with sound. Every take comes back with a
-continuity score out of 100, so drift shows up as a number.
+continuity score out of 100, so drift shows up as a number. On a clip the score carries the worst
+frame and the second it happened, so a dip cannot hide behind an average.
 
 - **FLUX.2** applies a character with no training at all. The references ride in the prompt's token
   sequence, so picking one costs nothing but the render.
@@ -210,6 +211,13 @@ continuity score out of 100, so drift shows up as a number.
   then reuses it on every render.
 - **MiniMax H3** does both. Reference to Video reads the references directly, and its other three
   nodes have no reference channel, so they take a trained adapter instead.
+- **Hosted models** take a character too. Wire one into Nano Banana Pro or MiniMax H3 Reference to
+  Video on fal and the references and locked description go out with the request, the same as on a
+  local node.
+
+Not every hosted model will take a face. Seedance 2.0 rejects any reference image with one in it, so
+a character reaches it as build and wardrobe only. The node says so before you run, rather than
+after you have paid for a video of somebody else.
 
 [**How characters work, in detail →**](https://inlinestudio.art/characters)
 
@@ -341,6 +349,9 @@ The initial provider is **[fal](https://fal.ai)**: FLUX.2, FLUX.2 Edit, GPT Imag
 Seedance, MiniMax H3, LTX, Sonilo and more. Add your [key](https://fal.ai/dashboard/keys) in
 Settings. MiniMax H3 and LTX are on the canvas both ways, as API nodes and as local nodes with no
 per-render cost.
+
+Your [characters](#characters) work here too. Nano Banana Pro and MiniMax H3 Reference to Video take
+a `.char` from the same wire a local node uses, and score what comes back against it.
 
 Local and hosted mix freely in one project, and either way the frame keeps its full take history.
 

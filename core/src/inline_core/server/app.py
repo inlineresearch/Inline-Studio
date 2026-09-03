@@ -428,6 +428,8 @@ def create_app(
         # Rescan on change, so a new character reaches the node's dropdown without a restart.
         characters_service = Characters(studio_store, events, on_change=catalog.rescan)
         core_generation.set_characters(characters_service)
+        # The hosted path needs it more, not less: on fal there is nothing to check before the call.
+        fal_generation.set_characters(characters_service)
 
         def node_param_fallbacks(node_type: str) -> dict[str, Any]:
             """What a node's params resolve to when the item stores none, for the PNG recipe."""

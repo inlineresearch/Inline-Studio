@@ -10,9 +10,16 @@ describe('characters wire contract', () => {
     }
   })
 
-  it('offers browsing only, since the nodes own creating and editing', () => {
+  it('offers browsing and applying, never a second way to edit', () => {
     // Two paths to edit a character would drift; the canvas chain is the one that exists.
-    expect(Object.keys(IpcChannels.characters).sort()).toEqual(['createFromTake', 'delete', 'list'])
+    // `applyFal` reads one out for an endpoint - a fal node builds its request in the browser, so
+    // it has to ask for the compiled references rather than reaching into the file itself.
+    expect(Object.keys(IpcChannels.characters).sort()).toEqual([
+      'applyFal',
+      'createFromTake',
+      'delete',
+      'list',
+    ])
   })
 
   it('declares the library-changed event channel', () => {

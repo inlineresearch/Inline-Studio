@@ -161,3 +161,35 @@ def test_the_graph_validates_and_only_the_list_port_takes_many_edges() -> None:
     for port in FLUX2.inputs:
         if port.id != "image":
             assert port.kind is not PortKind.IMAGE_LIST, f"{port.id} would silently accept fan-in"
+
+
+def test_two_compile_nodes_both_reach_write_dot_char(store: StudioStore) -> None:
+    """A character compiled for two models is two Compile References nodes into one Write, and the
+    payload port is the case that regressed twice - `payloads` kept only the last wire, so a graph
+    that compiled for two models wrote a `.char` carrying one."""
+
+    def list_ports(node_type: str, port_id: str) -> bool:
+        return node_type == "character/write" and port_id == "payloads"
+
+    conn = store.conn()
+    encode_node = mb.add_core_node(conn, "character/encode", 0, 0)
+    write = mb.add_core_node(conn, "character/write", 600, 0)
+    mb.create_connector(conn, encode_node["id"], write["id"], "character", "character")
+
+    compiled = []
+    for arch in ("fal-ref", "minimax-h3"):
+        node = mb.add_core_node(conn, "character/references", 300, 0)
+        mb.update_item(conn, node["id"], {"data": {"core": {
+            "type": "character/references", "params": {"arch": arch}}}})
+        mb.create_connector(conn, encode_node["id"], node["id"], "character", "character")
+        mb.create_connector(conn, node["id"], write["id"], "payload", "payloads")
+        compiled.append(node["id"])
+
+    graph, _ = build_workflow_graph(conn, store.folder(), write["id"], list_ports)
+    nodes = {n["id"]: n for n in graph["nodes"]}
+    edges = nodes[write["id"]]["inputs"]["payloads"]
+    assert [e["from"] for e in edges] == compiled, "both payloads survive, in wiring order"
+    # The identity itself is wired once and shared, not encoded per model.
+    assert nodes[write["id"]]["inputs"]["character"] == [
+        {"from": encode_node["id"], "output": "character"}
+    ]

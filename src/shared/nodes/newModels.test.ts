@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { emptyResolvedInputs, type ResolvedInputs } from './types'
+import { emptyResolvedInputs, mediaFamily, type ResolvedInputs } from './types'
 import { NANO_BANANA_2 } from './nanoBanana2'
 import { NANO_BANANA_PRO } from './nanoBananaPro'
 import { KREA_V2 } from './kreaV2'
@@ -79,7 +79,7 @@ describe('seedance 2.0 (video)', () => {
     expect(body).toMatchObject({ image_url: 'data:frame' })
   })
   it('reference-to-video: maps image/video/audio buckets and declares an audio input', () => {
-    expect(SEEDANCE_REF2V.inputs.some((p) => p.kind === 'audio')).toBe(true)
+    expect(SEEDANCE_REF2V.inputs.some((p) => mediaFamily(p.kind) === 'audio')).toBe(true)
     const body = SEEDANCE_REF2V.buildRequest(
       { prompt: '@Image1 dances to @Audio1' },
       { ...emptyResolvedInputs(), images: ['i1'], videos: ['v1'], audios: ['a1'] },
