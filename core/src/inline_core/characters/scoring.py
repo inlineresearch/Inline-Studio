@@ -54,6 +54,15 @@ SUBJECT_FRAMING_RATIO = 2.5
 #: A reference wider than a close-up: chest-up is 11-14% of frame, medium and wider below 5%.
 WIDE_REF_FRACTION = 0.05
 
+#: Where a garment sits down the frame, as fractions of the height. A two-piece outfit needs both
+#: an upper and a lower band; the whole-torso band catches a dress that spans them.
+GARMENT_BANDS = {"upper": (0.10, 0.55), "lower": (0.45, 1.00), "torso": (0.20, 0.80)}
+
+#: Above this face area the shot is a close-up and the clothes are out of frame. Uncalibrated: it
+#: comes from twelve labelled renders of one character, where the two groups sat a factor of ten
+#: apart, so it is a wide gate rather than a measured boundary.
+GARMENT_FRAMING_CEILING = 0.05
+
 #: Square input YuNet and SFace expect after our own resize.
 _DETECT_SIZE = 640
 
@@ -367,6 +376,64 @@ def score(
         # False means the number above is face-only: the references cannot speak to this framing.
         "subjectCounted": subject_usable,
         "framingDistance": round(distance, 1) if distance is not None else None,
+    }
+
+
+def garment_crops(image: Any) -> list[tuple[str, Any]]:
+    """The bands of the frame a garment sits in.
+
+    Frame-relative, not anchored to the detected face. Anchoring to the face was tried and is
+    worse: on a full-body shot the face box is a few pixels, so every band it implies is noise, and
+    the render that plainly wore the reference outfit ranked near the bottom.
+    """
+    width, height = image.width, image.height
+    out: list[tuple[str, Any]] = []
+    for name, (top, bottom) in GARMENT_BANDS.items():
+        box = (int(width * 0.10), int(height * top), int(width * 0.90), int(height * bottom))
+        if box[2] - box[0] > 48 and box[3] - box[1] > 48:
+            out.append((name, image.crop(box)))
+    return out
+
+
+def wardrobe(
+    image: Any, garment_refs: list[list[float]], framing: float | None = None
+) -> dict[str, Any] | None:
+    """How well the render's clothes match the wardrobe references, or None when there are none.
+
+    Each reference keeps its best band and the references are then averaged, so a two-piece outfit
+    photographed as a top and a bottom is not punished for the top matching only the upper band.
+
+    Reported apart from the blended score, never folded into it: every character number measured so
+    far is face 0.8 + subject 0.2, and quietly adding a third term would move all of them.
+    """
+    gallery = [v for v in garment_refs if v]
+    if not gallery:
+        return None
+    # A close-up has no clothes in it to judge, and 18-19 out of 100 there means "not in frame",
+    # not "wrong outfit". Measured 0.26-1.14% face area with the garment visible against
+    # 11.3-16.6% without, so the gate sits an order of magnitude clear of both.
+    covered = framing is None or framing <= GARMENT_FRAMING_CEILING
+    best: list[float] = []
+    band_of: dict[int, str] = {}
+    crops = garment_crops(image)
+    vectors = [(name, embed_subject(crop)) for name, crop in crops]
+    for index, ref in enumerate(gallery):
+        scored = [
+            (to_percent(cosine(vector, ref)), name) for name, vector in vectors if vector
+        ]
+        if not scored:
+            continue
+        top, name = max(scored)
+        best.append(top)
+        band_of[index] = name
+    if not best:
+        return None
+    return {
+        "wardrobeScore": round(sum(best) / len(best), 1),
+        "wardrobePerRef": [round(v, 1) for v in best],
+        # False means the clothes are not in frame, which is not the same as the wrong clothes.
+        "wardrobeCounted": covered,
+        "wardrobeBands": band_of,
     }
 
 

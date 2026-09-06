@@ -54,6 +54,9 @@ import type {
   TrainingProgressEvent,
   CaptionProgressEvent,
   TrainingLogEvent,
+  SweepResult,
+  TuneProgressEvent,
+  TuneDoneEvent,
   TrainingSampleEvent,
   TrainingSnapshot,
   TrainingDoneEvent,
@@ -260,6 +263,8 @@ export const IpcChannels = {
     createFromTake: 'characters:createFromTake',
     /** A character compiled for one fal endpoint: normalised refs + the prompt text naming them. */
     applyFal: 'characters:applyFal',
+    /** A finished sweep's result, so a node still reports it after a reload. */
+    sweepResult: 'characters:sweepResult',
   },
   moodboard: {
     list: 'moodboard:list',
@@ -281,6 +286,7 @@ export const IpcChannels = {
     addCaption: 'moodboard:addCaption',
     addTrainer: 'moodboard:addTrainer',
     addLossGraph: 'moodboard:addLossGraph',
+    addLogTail: 'moodboard:addLogTail',
     addResource: 'moodboard:addResource',
     updateItem: 'moodboard:updateItem',
     deleteItem: 'moodboard:deleteItem',
@@ -354,6 +360,11 @@ export const IpcChannels = {
     captionProgress: 'events:captionProgress',
     trainingDone: 'events:trainingDone',
     trainingNodeBound: 'events:trainingNodeBound',
+    tuneProgress: 'events:tuneProgress',
+    tuneLog: 'events:tuneLog',
+    tuneDone: 'events:tuneDone',
+    tuneError: 'events:tuneError',
+    tuneNodeBound: 'events:tuneNodeBound',
     trainingError: 'events:trainingError',
     /** Main → renderer: periodic host + GPU telemetry for the Trainer tab. */
     systemStats: 'events:systemStats',
@@ -783,6 +794,7 @@ export interface InlineStudioApi {
     /** Compile a character for one fal endpoint. Composed in Core so reference ordering, the role
      * split and the position numbering stay where they already live. */
     applyFal(request: FalCharacterRequest): Promise<Result<AppliedCharacter>>
+    sweepResult(runId: string): Promise<Result<SweepResult>>
   }
   moodboard: {
     /** The board's items + connectors. */
@@ -822,6 +834,8 @@ export interface InlineStudioApi {
     addTrainer(x: number, y: number): Promise<Result<MoodboardItem>>
     /** Plot a run's loss curve. */
     addLossGraph(x: number, y: number): Promise<Result<MoodboardItem>>
+    /** A log tail that shows whatever run is wired into it. */
+    addLogTail(x: number, y: number): Promise<Result<MoodboardItem>>
     /** Utility: read-only host telemetry node. */
     addResource(x: number, y: number): Promise<Result<MoodboardItem>>
     updateItem(id: string, patch: MoodboardItemPatch): Promise<Result<MoodboardItem>>
@@ -917,6 +931,11 @@ export interface InlineStudioApi {
     onTrainingDone(callback: (e: TrainingDoneEvent) => void): () => void
     /** A Train LoRA node bound to the run its graph just started. */
     onTrainingNodeBound(callback: (e: TrainingNodeBoundEvent) => void): () => void
+    onTuneProgress(callback: (e: TuneProgressEvent) => void): () => void
+    onTuneLog(callback: (e: TrainingLogEvent) => void): () => void
+    onTuneDone(callback: (e: TuneDoneEvent) => void): () => void
+    onTuneError(callback: (e: { runId: string; error: string }) => void): () => void
+    onTuneNodeBound(callback: (e: TrainingNodeBoundEvent) => void): () => void
     onTrainingError(callback: (e: TrainingErrorEvent) => void): () => void
     /** Subscribe to periodic host + GPU telemetry. Returns an unsubscribe fn. */
     onSystemStats(callback: (e: SystemStatsEvent) => void): () => void

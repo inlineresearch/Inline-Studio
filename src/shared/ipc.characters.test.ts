@@ -19,6 +19,7 @@ describe('characters wire contract', () => {
       'createFromTake',
       'delete',
       'list',
+      'sweepResult',
     ])
   })
 

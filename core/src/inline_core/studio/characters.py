@@ -170,6 +170,13 @@ class Characters:
         # The catalog caches its scan, so a new character stays invisible to the node dropdown
         # until something rescans. Same hook the trained-LoRA path uses.
         self._on_change = on_change
+        #: Set once the sweep service exists, so a node can read a finished run back.
+        self._tuning: Any = None
+        #: Wardrobe embeddings by character id - re-derived per take otherwise, on every render.
+        self._garments: dict[str, list[list[float]]] = {}
+
+    def set_tuning(self, tuning: Any) -> None:
+        self._tuning = tuning
 
     # --- reads ----------------------------------------------------------------------------------
 
@@ -250,7 +257,36 @@ class Characters:
             ),
         }
 
+    def sweep_result(self, run_id: str) -> dict[str, Any]:
+        """A sweep's findings, so a node still reports them after the page reloads."""
+        if self._tuning is None:
+            raise ValueError("Reference sweeps are not wired on this server.")
+        return self._tuning.result(run_id)
+
     # --- scoring --------------------------------------------------------------------------------
+
+    def _garment_refs(self, doc: Any) -> list[list[float]]:
+        """The wardrobe references, embedded whole - they are already garment crops, not scenes."""
+        import io
+
+        from PIL import Image
+
+        cached = self._garments.get(doc.manifest.char_id)
+        if cached is not None:
+            return cached
+        out: list[list[float]] = []
+        for ref in doc.manifest.refs:
+            if ref.get("role") != "cloth":
+                continue
+            member = doc.members.get(str(ref.get("path")))
+            if not member:
+                continue
+            with Image.open(io.BytesIO(member)) as handle:
+                vector = scoring.embed_subject(handle.convert("RGB"))
+            if vector:
+                out.append(vector)
+        self._garments[doc.manifest.char_id] = out
+        return out
 
     def score_take(
         self, image_path: Path | str, chosen: str, frames: int = SCORE_FRAMES
@@ -289,9 +325,16 @@ class Characters:
                 )
             else:
                 with Image.open(path_in) as handle:
+                    image = handle.convert("RGB")
                     result = scoring.score(
-                        handle.convert("RGB"), centroids, face_refs, subject_refs, framings
+                        image, centroids, face_refs, subject_refs, framings
                     )
+                    if result:
+                        dressed = scoring.wardrobe(
+                            image, self._garment_refs(doc), scoring.face_fraction(image)
+                        )
+                        if dressed:
+                            result = {**result, **dressed}
             # Which gallery answered is part of the measurement: the two are not the same claim.
             return {**result, "gallery": gallery} if result else result
         except Exception as error:  # noqa: BLE001 - scoring is never worth failing a render over

@@ -38,6 +38,11 @@ def _unlink(folder: Path, relatives: list[str]) -> None:
 GENERATION_NODE_SIZE = (320, 480)
 #: Loaders and other plumbing have no preview, so growing them would only cost canvas space.
 COMPACT_NODE_SIZE = (200, 120)
+#: A node whose face carries a prompt box: four text rows plus its heading need the width.
+PROMPTED_NODE_SIZE = (340, 300)
+#: A reference sweep also publishes a findings table, which scrolls inside the node rather than
+#: opening tall and empty before there is anything to show.
+SWEEP_NODE_SIZE = (440, 380)
 
 
 def core_node_size(models: list[dict[str, Any]], core_type: str) -> tuple[int, int]:
@@ -47,6 +52,15 @@ def core_node_size(models: list[dict[str, Any]], core_type: str) -> tuple[int, i
     descriptor = next((m for m in models if m.get("type") == core_type), None)
     if descriptor and descriptor.get("outputKind"):
         return GENERATION_NODE_SIZE
+    if descriptor:
+        params = descriptor.get("params") or []
+        faced = [p for p in params if p.get("onFace", p.get("widget") == "select")]
+        # A prompt box or a findings table is unreadable at the compact width, and a node that
+        # opens clipped reads as broken rather than as needing a drag.
+        if core_type == "character/finetune":
+            return SWEEP_NODE_SIZE
+        if any(p.get("widget") == "textarea" for p in faced):
+            return PROMPTED_NODE_SIZE
     return COMPACT_NODE_SIZE
 
 
@@ -280,6 +294,7 @@ def register_studio_handlers(
     reg("moodboard:addCaption", lambda x, y: mb.add_caption(conn(), x, y))
     reg("moodboard:addTrainer", lambda x, y: mb.add_trainer(conn(), x, y))
     reg("moodboard:addLossGraph", lambda x, y: mb.add_loss_graph(conn(), x, y))
+    reg("moodboard:addLogTail", lambda x, y: mb.add_log_tail(conn(), x, y))
     reg("moodboard:addResource", lambda x, y: mb.add_resource(conn(), x, y))
 
     # --- generation -----------------------------------------------------------------------------
@@ -335,8 +350,9 @@ def register_studio_handlers(
         reg("characters:createFromTake",
             lambda tid, name: characters.create_from_take(tid, name))
         reg("characters:applyFal", lambda request: characters.apply_fal(request))
+        reg("characters:sweepResult", lambda run_id: characters.sweep_result(run_id))
     else:
-        for ch in ("list", "delete", "createFromTake", "applyFal"):
+        for ch in ("list", "delete", "createFromTake", "applyFal", "sweepResult"):
             reg(f"characters:{ch}", not_wired("Characters"))
 
     # --- LoRA training (dataset CRUD + the training run subprocess) ------------------------------

@@ -244,6 +244,8 @@ TRAIN_DATASET = "train/dataset"
 TRAIN_CAPTION = "train/caption"
 TRAIN_LORA = "train/lora"
 TRAIN_LOSS = "train/loss"
+#: Shows the lines any run streams, keyed by the run id it reads off its incoming wire.
+LOG_TAIL = "log/tail"
 
 
 def add_train_dataset(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
@@ -272,6 +274,12 @@ def add_trainer(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
 def add_loss_graph(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
     return _insert_item(
         conn, item_type=TRAIN_LOSS, x=x, y=y, width=320, height=220, data={"runId": None},
+    )
+
+
+def add_log_tail(conn: sqlite3.Connection, x: float, y: float) -> dict[str, Any]:
+    return _insert_item(
+        conn, item_type=LOG_TAIL, x=x, y=y, width=460, height=320, data={"runId": None},
     )
 
 

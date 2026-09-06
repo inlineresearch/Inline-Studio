@@ -162,6 +162,7 @@ export type MoodboardItemType =
   | 'train/lora'
   /** Plots a training run's loss curve. */
   | 'train/loss'
+  | 'log/tail'
   /** Utility: read-only host telemetry (CPU/RAM/VRAM). No handles. */
   | 'resource'
 
@@ -365,6 +366,10 @@ export interface TakeContinuity {
   /** No face was found, so DINOv2 answered alone. That measures framing, not identity, and the
    * number must never be read as an identity match. */
   continuitySubjectOnly?: boolean
+  /** 0-100 match against the character's wardrobe references, set only when the clothes were in
+   * frame. Reported beside the score, never inside it: the score is face 0.8 + subject 0.2 and
+   * every number measured so far would move if a third term were folded in. */
+  continuityWardrobe?: number
   /** Video: how many sampled frames carried a measurable face. */
   continuityFrames?: number
   /** Video: sampled frames with no face at all - turned away, blurred, or out of frame. Counted
@@ -1073,3 +1078,74 @@ export interface WorkflowDetail {
 
 /** How the Workflows popup orders its cards. Mirrors the catalogue API's `sort` values. */
 export type WorkflowSort = 'views' | 'downloads' | 'newest'
+
+/** Core → renderer: how far a reference sweep has got. */
+export interface TuneProgressEvent {
+  runId: string
+  done: number
+  total: number
+  fraction: number
+}
+
+/** What a sweep measured. Read by the node face, its panel, and the HTML report alike. */
+export interface SweepResult {
+  id: string
+  status: string
+  error: string
+  done: number
+  total: number
+  warnings: string[]
+  character: string
+  target: string
+  refs: number
+  /** Which gallery answered: the frozen originals, or the current references. Not the same claim. */
+  gallery: string
+  report: string
+  spent: number
+  /** The one line the node face shows when it finishes. */
+  headline: string
+  /** Never dropped: a polished panel is where "face only" stops being obvious. */
+  caveat: string
+  combinations: { key: string; adjusted: number; mean: number; spread: number; tested: number }[]
+  contributions: {
+    index: number
+    delta: number
+    spread: number
+    pairs: number
+    verdict: 'keep' | 'neutral' | 'consider-removing' | 'keeps-the-wardrobe'
+    perPrompt: Record<string, number>
+    framingShift: number
+    /** The same paired difference on the clothes, or null where they were never in frame. */
+    wardrobeDelta: number | null
+    wardrobePairs: number
+  }[]
+  /** Only the references the sweep flagged, re-measured on seeds it never rendered. */
+  confirmations?: {
+    index: number
+    initial: number
+    retest: number
+    spread: number
+    pairs: number
+    pooled: number
+    pooledPairs: number
+    agrees: boolean
+    verdict: 'removal confirmed' | 'not confirmed' | 'reversed' | 'not re-tested'
+  }[]
+  cells: {
+    combination: string
+    prompt: string
+    seed: number
+    score: number | null
+    path: string
+    faceFraction: number | null
+    /** Null where the clothes were never in frame, which is not the same as a bad match. */
+    wardrobe: number | null
+  }[]
+}
+
+/** Core → renderer: a sweep reached a terminal state, and what it found. */
+export interface TuneDoneEvent {
+  runId: string
+  status: string
+  result: SweepResult
+}

@@ -14,7 +14,13 @@ import { mediaAspect } from '../lib/mediaSize'
 import { studio } from '@/lib/studio'
 
 /** Training node kinds this canvas can add; they share the Trainer graph's channels. */
-export type TrainingNodeKind = 'train/dataset' | 'train/caption' | 'train/lora' | 'train/loss'
+/** Named for the add-path they share, not the Training menu: the Logger is added the same way. */
+export type TrainingNodeKind =
+  | 'train/dataset'
+  | 'train/caption'
+  | 'train/lora'
+  | 'train/loss'
+  | 'log/tail'
 
 import { useAssetStore } from './assetStore'
 import { useFrameStore } from './frameStore'
@@ -214,6 +220,9 @@ async function copyOne(
       break
     case 'train/loss':
       res = await m.addLossGraph(x, y)
+      break
+    case 'log/tail':
+      res = await m.addLogTail(x, y)
       break
     case 'resource':
       res = await m.addResource(x, y)
@@ -521,7 +530,9 @@ export const useMoodboardStore = create<MoodboardState>((set, get) => ({
             ? m.addCaption(x, y)
             : kind === 'train/lora'
               ? m.addTrainer(x, y)
-              : m.addLossGraph(x, y)
+              : kind === 'log/tail'
+                ? m.addLogTail(x, y)
+                : m.addLossGraph(x, y)
       const res = await call
       if (!res.ok) {
         set({ error: res.error })

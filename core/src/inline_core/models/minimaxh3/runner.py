@@ -303,12 +303,16 @@ def _apply_character(
             f"{variant.title} takes {REFERENCE_LIMITS.max_images} images and {wired} are wired, so "
             f"{chosen} has no slot left. Unwire one, or raise Character references."
         )
+    # A reference sweep varies the set per render and must do so through this same path, or it
+    # measures something production never runs. None on every normal render.
+    wired_char = (inputs.get("character") or [None])[0]
     applied = characters.char_apply(
         chosen,
         ARCH,
         prefer="reference" if variant.references else None,
         limit=slots if variant.references else None,
         keep_roles=keep if variant.references else None,
+        select=getattr(wired_char, "select", None),
     )
     if applied is None:
         return None

@@ -211,7 +211,7 @@ def _clean_data(item: dict[str, Any], wired: frozenset[str] = frozenset()) -> di
             "overwrite": bool(data.get("overwrite") or False),
             "captioner": data.get("captioner") or "",
         }
-    if kind in ("train/dataset", "train/loss", "resource"):
+    if kind in ("train/dataset", "train/loss", "log/tail", "resource"):
         return {}
     if kind == "controlSpace":
         out: dict[str, Any] = {}

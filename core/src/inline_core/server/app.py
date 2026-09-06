@@ -179,6 +179,7 @@ def create_app(
     # Assigned further down with the studio wiring; the lifespan closure reads them at startup.
     activity_registry: Any = None
     training_bridge: Any = None
+    tuning_bridge: Any = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # noqa: ANN202
@@ -187,6 +188,8 @@ def create_app(
             activity_registry.bind_loop(asyncio.get_running_loop())
         if training_bridge is not None:
             training_bridge.bind_loop(asyncio.get_running_loop())
+        if tuning_bridge is not None:
+            tuning_bridge.bind_loop(asyncio.get_running_loop())
         catalog.ensure_dirs()
         catalog.scan()
         if stats is not None:
@@ -419,6 +422,36 @@ def create_app(
         training_bridge = register_training_nodes(
             registry, training_service, on_bound=bind_training_node
         )
+        # Reference sweeps: a durable service off the graph, driven by a node that blocks on it.
+        from ..models.character import register_finetune_node
+        from ..studio.finetune import CharacterTuning, renderer_for
+
+        def tuning_root() -> Path:
+            return studio_store.folder() / "tuning_runs"
+
+        tuning_store = FileTakeStore(takes_root)
+        tuning_service = CharacterTuning(
+            events, lambda target: renderer_for(target, tuning_store, policy), tuning_root
+        )
+
+        def bind_tuning_node(item_id: str, run_id: str) -> None:
+            """Persist the run on its node and tell the canvas, so a Logger can find its stream."""
+            from ..studio import moodboard as studio_moodboard
+
+            try:
+                item = studio_moodboard.get_item(studio_store.conn(), item_id)
+            except ValueError:
+                return  # the node was deleted while its sweep was starting
+            studio_moodboard.update_item(
+                studio_store.conn(), item_id, {"data": {**item["data"], "runId": run_id}}
+            )
+            events.broadcast("events:tuneNodeBound", {"itemId": item_id, "runId": run_id})
+
+        tuning_bridge = register_finetune_node(
+            registry, tuning_service, tuning_root, on_bound=bind_tuning_node
+        )
+        activity.set_canceller("tuning", tuning_service.cancel)
+
         try:
             from ..models.character import set_training_bridge
 
@@ -430,6 +463,8 @@ def create_app(
         core_generation.set_characters(characters_service)
         # The hosted path needs it more, not less: on fal there is nothing to check before the call.
         fal_generation.set_characters(characters_service)
+        # So a finetune node can read a finished sweep back after a reload.
+        characters_service.set_tuning(tuning_service)
 
         def node_param_fallbacks(node_type: str) -> dict[str, Any]:
             """What a node's params resolve to when the item stores none, for the PNG recipe."""

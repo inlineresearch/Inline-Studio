@@ -12,6 +12,7 @@ export const ADD_NODE_KINDS = [
   'train/caption',
   'train/lora',
   'train/loss',
+  'log/tail',
   'resource',
 ] as const
 
@@ -39,5 +40,6 @@ export const BY_ID_TYPES: ReadonlySet<string> = new Set([
   'train/caption',
   'train/lora',
   'train/loss',
+  'log/tail',
   'resource',
 ])

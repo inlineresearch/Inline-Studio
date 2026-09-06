@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -139,13 +140,15 @@ def char_apply(
     prefer: str | None = None,
     limit: int | None = None,
     keep_roles: tuple[str, ...] | None = None,
+    select: Sequence[int] | None = None,
 ) -> AppliedCharacter | None:
     """How a character applies on ``arch``, or None when none is picked. An unreadable pick raises
     rather than silently generating the wrong person.
 
     ``arch`` matters because a model without a reference channel can only take the adapter, and its
     payloads are keyed separately. ``keep_roles`` narrows which of them are sent at all, per render,
-    so testing a character face-only does not mean writing a second character."""
+    so testing a character face-only does not mean writing a second character. ``select`` names
+    individual references by position, which is what lets a sweep measure one reference's worth."""
     name = str(chosen or "").strip()
     if not name:
         return None
@@ -175,6 +178,10 @@ def char_apply(
     if not references:
         mode = "lora"
     refs, roles = ([], []) if mode == "lora" else _extract(doc, digest, arch)
+    # Before the role filter and the cap, so both still divide over what was actually selected.
+    if select is not None:
+        chosen_indices = sorted({i for i in select if 0 <= i < len(refs)})
+        refs, roles = [refs[i] for i in chosen_indices], [roles[i] for i in chosen_indices]
     if keep_roles is not None:
         kept = [i for i, role in enumerate(roles) if role in keep_roles]
         refs, roles = [refs[i] for i in kept], [roles[i] for i in kept]

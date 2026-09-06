@@ -390,6 +390,10 @@ class FalGeneration:
             # than identity - the one thing it must never be read as.
             "continuitySubjectOnly": not result.get("faceBearing", True),
         }
+        # Only where the clothes were in frame: on a close-up the number means "not visible", and
+        # showing that beside an identity score reads as the wardrobe having failed.
+        if result.get("wardrobeCounted"):
+            out["continuityWardrobe"] = result["wardrobeScore"]
         # Video only: a distribution is a different claim from a number, and the reader cannot tell
         # them apart from the headline alone.
         for key, field in (

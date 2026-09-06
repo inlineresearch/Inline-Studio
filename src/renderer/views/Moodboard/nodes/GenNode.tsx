@@ -437,6 +437,7 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
                         continuity.continuityScore,
                         continuity.continuityFaceOnly,
                         continuity.continuitySubjectOnly,
+                        continuity.continuityWardrobe,
                       )
                 }
                 className={`pointer-events-none absolute right-2 top-2 rounded-full bg-black/85 px-2 py-0.5 text-[10px] font-medium backdrop-blur ${

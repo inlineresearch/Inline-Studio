@@ -8,6 +8,8 @@ import { subscribeModelChanges } from './store/modelsTreeStore'
 import { subscribeCharacterChanges } from './store/characterStore'
 import { subscribeModelRegistry } from './store/modelRegistryStore'
 import { subscribeTrainingEvents } from './store/trainingStore'
+import { subscribeLogEvents } from './store/logStore'
+import { subscribeTuningEvents } from './store/tuningStore'
 import { ProjectLauncher } from './views/ProjectLauncher/ProjectLauncher'
 import { Workspace } from './views/Workspace/Workspace'
 import { UpdateBanner } from './components/UpdateBanner'
@@ -36,6 +38,8 @@ export function App(): React.JSX.Element {
   useEffect(() => subscribeGenerationEvents(), [])
   useEffect(() => subscribeActivityEvents(), [])
   useEffect(() => subscribeTrainingEvents(), [])
+  useEffect(() => subscribeLogEvents(), [])
+  useEffect(() => subscribeTuningEvents(), [])
   useEffect(() => subscribeModelChanges(), [])
   // The character library is global rather than per-project, so it is subscribed here and never
   // reset on project close.

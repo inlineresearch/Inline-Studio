@@ -505,3 +505,56 @@ def test_no_duration_anywhere_yields_no_frames_rather_than_a_wrong_one(
     monkeypatch.setattr(ff, "ffprobe_exe", lambda: None)
     monkeypatch.setattr(ff, "ffmpeg_exe", lambda: None)
     assert sc._duration_seconds(Path("clip.mp4")) is None
+
+
+def _flat(colour: tuple[int, int, int], size: tuple[int, int] = (400, 900)) -> object:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    return Image.new("RGB", size, colour)
+
+
+def test_wardrobe_keeps_each_reference_best_band_then_averages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A two-piece outfit shot as a top and a bottom must not be punished for each matching once."""
+    bands = iter(scoring.GARMENT_BANDS)
+    vectors = {name: [1.0 if i == n else 0.0 for i in range(3)] for n, name in enumerate(bands)}
+    order = [vectors[name] for name in scoring.GARMENT_BANDS]
+    calls = iter(order)
+    monkeypatch.setattr(scoring, "embed_subject", lambda _image: next(calls))
+
+    # One reference matches the upper band exactly, the other the lower band exactly.
+    found = scoring.wardrobe(_flat((10, 20, 30)), [order[0], order[1]], framing=0.01)
+
+    assert found is not None
+    assert found["wardrobePerRef"] == [100.0, 100.0]
+    assert found["wardrobeScore"] == 100.0
+
+
+def test_a_close_up_reports_the_clothes_as_out_of_frame_not_as_wrong(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(scoring, "embed_subject", lambda _image: [1.0, 0.0, 0.0])
+
+    found = scoring.wardrobe(_flat((10, 20, 30)), [[0.0, 1.0, 0.0]], framing=0.16)
+
+    assert found is not None
+    # The number is still reported, but flagged: 18 out of 100 on a close-up means "not in frame".
+    assert found["wardrobeCounted"] is False
+
+
+def test_a_full_body_shot_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scoring, "embed_subject", lambda _image: [1.0, 0.0, 0.0])
+
+    found = scoring.wardrobe(_flat((10, 20, 30)), [[1.0, 0.0, 0.0]], framing=0.003)
+
+    assert found is not None and found["wardrobeCounted"] is True
+
+
+def test_a_character_with_no_wardrobe_references_has_no_wardrobe_score() -> None:
+    assert scoring.wardrobe(_flat((10, 20, 30)), []) is None
+
+
+def test_garment_bands_are_dropped_when_the_image_is_too_small_to_hold_one() -> None:
+    assert scoring.garment_crops(_flat((0, 0, 0), size=(20, 20))) == []

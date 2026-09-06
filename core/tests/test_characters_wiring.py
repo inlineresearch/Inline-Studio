@@ -235,3 +235,35 @@ def test_take_metadata_names_the_wired_character(
 
     assert "character" not in flux2.FLUX2.defaults()
     assert flux2._character_file({"character": [_wired("Ada.char")]}) == "Ada.char"
+
+
+def test_a_character_in_params_reaches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`scripts/character_bench.py` passed the character as a node param for months. FLUX.2 declares
+    no such param, so every benchmark render was unconditioned and then scored against the character
+    it never saw. Anything driving a runner directly has to wire it, and this is the trap."""
+    flux2 = pytest.importorskip("inline_core.models.flux2.runner")
+    _install_character(tmp_path, monkeypatch, refs=1)
+
+    assert flux2._character_file({"prompt": ["a photo"]}) == ""
+    assert flux2._character_file({"character": [_wired("Ada.char")], "prompt": ["a photo"]}) == (
+        "Ada.char"
+    )
+
+
+def test_no_script_passes_a_character_as_a_node_param() -> None:
+    """FLUX.2 reads the character from its input port, so a param is dropped in silence.
+
+    Three separate benchmark scripts have shipped this bug, and each one scored unconditioned
+    renders against a character for months. A grep is a blunt guard and it is the one that would
+    have caught all three.
+    """
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    offenders = [
+        path.name
+        for path in sorted(scripts.glob("*.py"))
+        if 'params["character"]' in path.read_text()
+        or '"character": character' in path.read_text()
+    ]
+    assert offenders == []

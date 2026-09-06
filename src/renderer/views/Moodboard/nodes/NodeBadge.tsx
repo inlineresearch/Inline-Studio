@@ -460,6 +460,16 @@ export function ChartIcon({ className }: { className?: string }): React.JSX.Elem
   )
 }
 
+/** Terminal prompt - the Logger node. */
+export function TerminalIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Icon className={className}>
+      <path d="m5 8 4 4-4 4" />
+      <path d="M13 16h6" />
+    </Icon>
+  )
+}
+
 /** Alert triangle - the "models missing" hint on a model node (opens the model popup). */
 export function AlertIcon({ className }: { className?: string }): React.JSX.Element {
   return (

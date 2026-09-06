@@ -573,6 +573,16 @@ class _Character:
     strength: float = 1.0
 
 
+def _character_select(inputs: dict[str, Any]) -> Any:
+    """Which references a sweep asked for, or None for every normal render.
+
+    A reference sweep varies the set per render, and it has to do so through this exact path: a
+    caller that resolved references itself would measure a different code path than production.
+    """
+    wired = (inputs.get("character") or [None])[0]
+    return getattr(wired, "select", None) if wired is not None else None
+
+
 def _apply_character(inputs: dict[str, Any], wired: int) -> _Character | None:
     """A wired character's references and prompt prefix, or None when none is wired.
 
@@ -584,7 +594,7 @@ def _apply_character(inputs: dict[str, Any], wired: int) -> _Character | None:
         return None
     from ...characters import apply as characters
 
-    applied = characters.char_apply(chosen)
+    applied = characters.char_apply(chosen, select=_character_select(inputs))
     if applied is None or (not applied.refs and applied.lora is None):
         return None
     how = "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)"

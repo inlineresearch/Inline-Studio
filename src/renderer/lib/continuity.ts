@@ -8,18 +8,33 @@ export function scoreTone(score: number): string {
   return 'text-red-300'
 }
 
-export function scoreTitle(score: number, faceOnly = false, subjectOnly = false): string {
+export function scoreTitle(
+  score: number,
+  faceOnly = false,
+  subjectOnly = false,
+  wardrobe?: number,
+): string {
   const base = `Continuity ${Math.round(score)} of 100 against the applied character`
+  // Appended rather than blended: it answers a different question, and the two disagree often
+  // enough that averaging them would hide both.
+  const dressed =
+    wardrobe === undefined
+      ? ''
+      : ` Wardrobe ${Math.round(wardrobe)} of 100 against the character's clothing references.`
   // No face at all is a different claim from a face measured without its subject term, and the
   // second one is the one that must not read as an identity match.
   if (subjectOnly) {
-    return `${base}. No face was found, so this is the subject term alone: it compares framing and
-setting, not identity. Treat it as unmeasured.`.replace(/\s+/g, ' ')
+    return (
+      `${base}. No face was found, so this is the subject term alone: it compares framing and
+setting, not identity. Treat it as unmeasured.`.replace(/\s+/g, ' ') + dressed
+    )
   }
-  if (!faceOnly) return base
+  if (!faceOnly) return base + dressed
   // Say which term was dropped and how to get it back, not hide noise behind a total.
-  return `${base}. Face only: the references are all closely cropped, so they cannot judge this
-framing. Add a full-body reference to score the whole subject.`.replace(/\s+/g, ' ')
+  return (
+    `${base}. Face only: the references are all closely cropped, so they cannot judge this
+framing. Add a full-body reference to score the whole subject.`.replace(/\s+/g, ' ') + dressed
+  )
 }
 
 /** A short marker for the score pill, so a face-only number is not read as a whole-subject one. */

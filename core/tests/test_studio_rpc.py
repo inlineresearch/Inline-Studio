@@ -90,6 +90,7 @@ def test_full_project_and_canvas_flow(client) -> None:
         "character/references",
         "character/adapter",
         "character/write",
+        "character/finetune",
     }
     assert rpc(client, "core:status")["value"]["running"] is True
 

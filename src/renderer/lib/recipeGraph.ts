@@ -96,7 +96,8 @@ export async function buildGraphFromRecipe(recipe: Recipe, drop: Point): Promise
       it.type === 'train/dataset' ||
       it.type === 'train/caption' ||
       it.type === 'train/lora' ||
-      it.type === 'train/loss'
+      it.type === 'train/loss' ||
+      it.type === 'log/tail'
     ) {
       created = await store.addTrainingNode(it.type, x, y)
       // Settings travel; the dataset and run they were bound to do not.

@@ -17,6 +17,8 @@ from .requirements import ModelComponent
 #: Every node that runs an encoder. The rest of the character family only moves bytes around.
 ENCODER_NODES = (
     "character/encode", "character/edit", "character/verify-refs", "character/ingest-approved",
+    # A sweep scores every render, so it needs the encoders before the first one, not the last.
+    "character/finetune",
 )
 
 

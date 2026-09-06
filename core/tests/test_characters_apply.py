@@ -180,3 +180,70 @@ def test_the_fal_policy_normalises_a_reference_into_one_megapixel() -> None:
     assert out.width * out.height <= 1024 * 1024
     # Aspect is preserved; only the area shrinks.
     assert abs(out.width / out.height - 4 / 3) < 0.02
+
+
+def test_select_names_individual_references_for_a_sweep(tmp_path: Path) -> None:
+    """Leave-one-out needs "this set minus reference i". `keep_roles` cannot say that: it removes a
+    whole role, so dropping one of two face references was not expressible."""
+    from inline_core.characters import apply as ax
+    from inline_core.characters import charfile as cf
+    from inline_core.characters import encode, library
+
+    images = [_image(tmp_path / f"r{i}.png") for i in range(3)]
+    library.save(
+        encode.char_encode(
+            images, name="Sel", roles=[cf.ROLE_FACE, cf.ROLE_BODY, cf.ROLE_CLOTH]
+        )
+    )
+    arch = encode.FLUX2_KLEIN_ARCH
+
+    full = ax.char_apply("Sel.char", arch, prefer="reference")
+    assert full is not None and full.roles == [cf.ROLE_FACE, cf.ROLE_BODY, cf.ROLE_CLOTH]
+
+    minus_body = ax.char_apply("Sel.char", arch, prefer="reference", select=[0, 2])
+    assert minus_body is not None and minus_body.roles == [cf.ROLE_FACE, cf.ROLE_CLOTH]
+
+    # Order follows the payload, not the order the caller happened to write, so the prompt numbers
+    # a sweep produces match the numbers a normal render would.
+    assert [r.path for r in minus_body.refs] == [full.refs[0].path, full.refs[2].path]
+    reversed_ask = ax.char_apply("Sel.char", arch, prefer="reference", select=[2, 0])
+    assert reversed_ask is not None
+    assert [r.path for r in reversed_ask.refs] == [r.path for r in minus_body.refs]
+
+
+def test_select_tolerates_a_stale_index_rather_than_failing_a_sweep(tmp_path: Path) -> None:
+    """A long sweep must not die on iteration 40 because a duplicate or an out-of-range index crept
+    into a combination."""
+    from inline_core.characters import apply as ax
+    from inline_core.characters import encode, library
+
+    library.save(
+        encode.char_encode([_image(tmp_path / f"s{i}.png") for i in range(2)], name="Stale")
+    )
+    applied = ax.char_apply(
+        "Stale.char", encode.FLUX2_KLEIN_ARCH, prefer="reference", select=[1, 1, 99]
+    )
+    assert applied is not None and len(applied.refs) == 1
+
+
+def test_select_runs_before_the_cap_so_the_cap_still_divides_by_role(tmp_path: Path) -> None:
+    """`_fit_roles` splits the slots by role. Selecting after it would hand the cap a set it had
+    already balanced, and the role ratio would be computed against references that are not sent."""
+    from inline_core.characters import apply as ax
+    from inline_core.characters import charfile as cf
+    from inline_core.characters import encode, library
+
+    images = [_image(tmp_path / f"c{i}.png") for i in range(4)]
+    library.save(
+        encode.char_encode(
+            images,
+            name="Cap",
+            roles=[cf.ROLE_FACE, cf.ROLE_FACE, cf.ROLE_BODY, cf.ROLE_CLOTH],
+        )
+    )
+    applied = ax.char_apply(
+        "Cap.char", encode.FLUX2_KLEIN_ARCH, prefer="reference", select=[0, 2, 3], limit=2
+    )
+    assert applied is not None and len(applied.refs) == 2
+    # Face survives the cut: it is what identity is carried by, and it was in the selection.
+    assert cf.ROLE_FACE in applied.roles

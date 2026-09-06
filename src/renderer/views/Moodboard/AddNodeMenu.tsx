@@ -17,7 +17,15 @@ import { useMenuPlacement } from './useMenuPlacement'
 import { addableCoreNodes, type NodeDescriptor } from '@shared/coreNodes'
 import { isExtensionNode, extensionOf } from '@shared/extensions'
 import { listNodeDefs, groupByOwner } from '@shared/nodes/registry'
-import { CaptionGlyph, ChartIcon, CpuIcon, FalIcon, LayersIcon, WandIcon } from './nodes/NodeBadge'
+import {
+  CaptionGlyph,
+  ChartIcon,
+  CpuIcon,
+  FalIcon,
+  LayersIcon,
+  TerminalIcon,
+  WandIcon,
+} from './nodes/NodeBadge'
 
 import type { AddNodeKind } from './nodeKinds'
 
@@ -58,6 +66,7 @@ const ENTRIES: Entry[] = [
   { kind: 'train/caption', label: 'Caption', icon: <CaptionGlyph />, category: TRAINING },
   { kind: 'train/lora', label: 'Train LoRA', icon: <WandIcon />, category: TRAINING },
   { kind: 'train/loss', label: 'Graph', icon: <ChartIcon />, category: TRAINING },
+  { kind: 'log/tail', label: 'Logger', icon: <TerminalIcon />, category: TRAINING },
   { kind: 'resource', label: 'Resources', icon: <CpuIcon />, category: TRAINING },
 ]
 

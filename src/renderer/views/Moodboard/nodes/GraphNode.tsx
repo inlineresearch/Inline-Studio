@@ -51,6 +51,7 @@ import {
   PencilIcon,
 } from './NodeBadge'
 import { resolveMedia } from '@/lib/media'
+import { SweepResults } from './SweepResults'
 
 interface GraphNodeData extends Record<string, unknown> {
   itemId: string
@@ -284,7 +285,13 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
   // Run belongs on whatever ends the graph. A media node always ends one; a node with no media
   // output ends it only when nothing downstream consumes it, which is what separates Write .char
   // (the end of a character graph) from a loader feeding the node that will run it.
-  const feedsSomething = connectors.some((c) => c.fromItemId === itemId)
+  // A display reads a run; it does not run one. Counting it as a consumer took the Run control
+  // off the sweep node the moment a Logger was wired to it, leaving no way to start it.
+  const feedsSomething = connectors.some(
+    (c) =>
+      c.fromItemId === itemId &&
+      !DISPLAY_ONLY.has(items.find((i) => i.id === c.toItemId)?.type ?? ''),
+  )
   const showRun = !isLoader || !feedsSomething
   const fileParam = core?.params?.file
   // Name the weights rather than saying "Auto": the point of the label is to tell you what will
@@ -442,6 +449,23 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
           <div className="flex h-full w-full flex-col gap-1 px-2 py-1.5">
             {faceParams.length > 0 ? (
               faceParams.map((field) => {
+                if (field.widget === 'textarea') {
+                  // A one-line input would hide nine of ten prompts, which is the whole param.
+                  const held = core.params?.[field.key]
+                  return (
+                    <FaceField key={field.key} label={field.label}>
+                      <textarea
+                        key={field.key}
+                        rows={4}
+                        value={String(held ?? field.default ?? '')}
+                        placeholder={field.label}
+                        title={field.label}
+                        onChange={(e) => setParam(field.key, e.target.value, field.widget)}
+                        className="nodrag nowheel w-full min-w-0 resize-none rounded border border-border bg-panel px-1.5 py-1 font-mono text-[10px] leading-snug text-zinc-200 outline-none focus:border-accent"
+                      />
+                    </FaceField>
+                  )
+                }
                 if (field.widget !== 'select') {
                   // Unset shows the default the run will actually use; cleared stays cleared. The
                   // two are distinguishable, and a box reading empty beside a strength of 1 is the
@@ -449,18 +473,19 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                   const held = core.params?.[field.key]
                   const isNumber = field.widget === 'number'
                   return (
-                    <input
-                      key={field.key}
-                      type={isNumber ? 'number' : 'text'}
-                      min={isNumber ? field.min : undefined}
-                      max={isNumber ? field.max : undefined}
-                      step={isNumber ? field.step : undefined}
-                      value={String(held ?? field.default ?? '')}
-                      placeholder={field.label}
-                      title={field.label}
-                      onChange={(e) => setParam(field.key, e.target.value, field.widget)}
-                      className="nodrag w-full min-w-0 rounded border border-border bg-panel px-1.5 py-1 text-[10px] text-zinc-200 outline-none focus:border-accent"
-                    />
+                    <FaceField key={field.key} label={field.label}>
+                      <input
+                        type={isNumber ? 'number' : 'text'}
+                        min={isNumber ? field.min : undefined}
+                        max={isNumber ? field.max : undefined}
+                        step={isNumber ? field.step : undefined}
+                        value={String(held ?? field.default ?? '')}
+                        placeholder={field.label}
+                        title={field.label}
+                        onChange={(e) => setParam(field.key, e.target.value, field.widget)}
+                        className="nodrag w-full min-w-0 rounded border border-border bg-panel px-1.5 py-1 text-[10px] text-zinc-200 outline-none focus:border-accent"
+                      />
+                    </FaceField>
                   )
                 }
                 const opts = field.options ?? []
@@ -476,23 +501,24 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                 // name the graph arrived with is gone.
                 const shown = optionsWithPick(opts, String(selected))
                 return (
-                  <select
-                    key={field.key}
-                    value={String(selected)}
-                    onChange={(e) => setParam(field.key, e.target.value)}
-                    title={field.label}
-                    className="nodrag w-full min-w-0 rounded border border-border bg-panel px-1.5 py-1 text-[10px] text-zinc-200 outline-none focus:border-accent"
-                  >
-                    {/* Only when nothing resolved: otherwise the concrete file is already shown. */}
-                    {!hasAuto && !field.default && (
-                      <option value="">{`Select ${field.label}`}</option>
-                    )}
-                    {shown.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
+                  <FaceField key={field.key} label={field.label}>
+                    <select
+                      value={String(selected)}
+                      onChange={(e) => setParam(field.key, e.target.value)}
+                      title={field.label}
+                      className="nodrag w-full min-w-0 rounded border border-border bg-panel px-1.5 py-1 text-[10px] text-zinc-200 outline-none focus:border-accent"
+                    >
+                      {/* Only when nothing resolved: otherwise the concrete file is already shown. */}
+                      {!hasAuto && !field.default && (
+                        <option value="">{`Select ${field.label}`}</option>
+                      )}
+                      {shown.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </FaceField>
                 )
               })
             ) : fileLabel ? (
@@ -506,6 +532,10 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
               <span className="min-w-0 flex-1 truncate px-1 text-[10px] text-zinc-500">
                 {descriptor.title}
               </span>
+            )}
+            {/* A sweep publishes its own progress and verdict; every other loader has none. */}
+            {descriptor.type === 'character/finetune' && (
+              <SweepResults runId={(item.data.runId as string | null | undefined) ?? null} />
             )}
             {otherParams.length > 0 && (
               <div className="flex justify-end">
@@ -729,6 +759,7 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
                         take.continuityScore,
                         take.continuityFaceOnly,
                         take.continuitySubjectOnly,
+                        take.continuityWardrobe,
                       )}
                       className={`pointer-events-none absolute left-0.5 top-0.5 rounded bg-black/85 px-1 text-[8px] leading-tight ${scoreTone(take.continuityScore)}`}
                     >
@@ -782,5 +813,26 @@ export function GraphNode({ id, data, selected }: NodeProps): React.JSX.Element 
 
       {handles}
     </>
+  )
+}
+
+/** Nodes that only show what a run produced, so wiring one never changes what a graph does. */
+const DISPLAY_ONLY: ReadonlySet<string> = new Set(['log/tail', 'train/loss'])
+
+/** A face control with its name above it: a placeholder disappears the moment there is a value. */
+function FaceField({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <label className="flex min-w-0 flex-col gap-0.5">
+      <span className="truncate text-[9px] uppercase tracking-wide text-zinc-500" title={label}>
+        {label}
+      </span>
+      {children}
+    </label>
   )
 }

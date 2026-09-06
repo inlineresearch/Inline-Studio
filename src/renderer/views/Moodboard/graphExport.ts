@@ -40,6 +40,7 @@ const REBUILDABLE = new Set([
   'train/caption',
   'train/lora',
   'train/loss',
+  'log/tail',
   'resource',
 ])
 
@@ -89,6 +90,7 @@ function cleanData(item: MoodboardItem): Record<string, unknown> {
       return { overwrite: data.overwrite ?? false, captioner: data.captioner ?? '' }
     case 'train/dataset':
     case 'train/loss':
+    case 'log/tail':
     case 'resource':
       return {}
     case 'controlSpace':

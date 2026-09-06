@@ -69,6 +69,7 @@ import { TrainDatasetNode } from '../Trainer/nodes/TrainDatasetNode'
 import { CaptionNode } from '../Trainer/nodes/CaptionNode'
 import { TrainerNode } from '../Trainer/nodes/TrainerNode'
 import { LossGraphNode } from '../Trainer/nodes/LossGraphNode'
+import { LoggerNode } from './nodes/LoggerNode'
 import { TrimNode } from './nodes/TrimNode'
 import { LoaderNode } from './nodes/LoaderNode'
 import { ControlSpaceNode } from './nodes/ControlSpaceNode'
@@ -149,6 +150,7 @@ const nodeTypes: NodeTypes = {
   'train/caption': CaptionNode,
   'train/lora': TrainerNode,
   'train/loss': LossGraphNode,
+  'log/tail': LoggerNode,
 }
 
 const edgeTypes: EdgeTypes = {
@@ -796,6 +798,7 @@ function Board(): React.JSX.Element {
       case 'train/caption':
       case 'train/lora':
       case 'train/loss':
+      case 'log/tail':
         void addTrainingNode(kind, m.flowX, m.flowY)
         break
       case 'resource':
